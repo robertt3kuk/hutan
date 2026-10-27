@@ -1982,6 +1982,100 @@ fn the_model_list_is_a_popover_that_opens_on_the_model_in_use(cx: &mut TestAppCo
     assert_eq!(open_row(cx), None);
 }
 
+/// F-15: scrolling the Model list to its end stops there; the sheet around it does not scroll.
+#[gpui::test]
+fn a_list_in_the_sheet_keeps_the_wheel_at_its_end_and_the_sheet_does_not_scroll(
+    cx: &mut TestAppContext,
+) {
+    let mut models = Vec::new();
+    for minor in 1..=30 {
+        models.push(format!(
+            r#"{{"provider":"anthropic","kind":"chat","id":"claude-opus-4-{minor}","name":"Claude opus 4.{minor}"}}"#
+        ));
+    }
+    let env = Env::with_models(&models.join(","));
+    let (view, cx) = open(cx, &env);
+    // A short window: the form is taller than the sheet and scrolls.
+    cx.simulate_resize(gpui::size(gpui::px(1000.0), gpui::px(460.0)));
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            ..LauncherPreset::default()
+        },
+    );
+    ready(&view, cx);
+    view.update(cx, |wb, cx| wb.launcher_set_kind(LaunchKind::Chat, cx));
+    wait_until(cx, "the OMP models", |cx| {
+        view.read_with(
+            cx,
+            |wb, cx| matches!(wb.launcher_models(cx), Models::Ready(m) if m.len() == 30),
+        )
+    });
+    common::settle(cx);
+    let wheel = |cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, dy: f32| {
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(dy))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        draw(cx);
+    };
+    let top = |cx: &VisualTestContext| {
+        bounds_of(&view, cx, Region::Launcher("project"))
+            .unwrap()
+            .top()
+    };
+
+    // The sheet scrolls under the wheel where nothing else takes it (the control).
+    let rest = top(cx);
+    let at = bounds_of(&view, cx, Region::Launcher("project"))
+        .unwrap()
+        .center();
+    wheel(cx, at, -40.0);
+    let moved = top(cx);
+    assert!(moved < rest, "the form scrolls: {rest:?} → {moved:?}");
+    wheel(cx, at, 400.0);
+    assert_eq!(top(cx), rest, "and back to its top");
+
+    // The Model list opens; the wheel over it scrolls it, to its end and past.
+    click(&view, cx, Region::Launcher("model"));
+    common::settle(cx);
+    draw(cx);
+    let list = bounds_of(&view, cx, Region::Launcher("model-popover")).expect("the popover");
+    let before = top(cx);
+    let offset = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, _| {
+            let scroll = wb.launcher().unwrap().model_scroll();
+            (scroll.offset().y, scroll.max_offset().y)
+        })
+    };
+    let (start, max) = offset(cx);
+    assert!(max > gpui::px(0.0), "the 30 models scroll");
+    for _ in 0..80 {
+        wheel(cx, list.center(), -30.0);
+    }
+    let (end, _) = offset(cx);
+    assert_eq!(end, -max, "the list reached its end (from {start:?})");
+    assert_eq!(
+        top(cx),
+        before,
+        "the sheet did not move while the list scrolled"
+    );
+    // More notches at the end: still nothing moves.
+    for _ in 0..10 {
+        wheel(cx, list.center(), -30.0);
+    }
+    assert_eq!(offset(cx).0, -max);
+    assert_eq!(
+        top(cx),
+        before,
+        "the notch that arrives at the end stops there"
+    );
+}
+
 // SANDBOX-1: the Safety row ---------------------------------------------------------------------
 
 /// The Safety row's choices as `(label, unavailable reason)`.

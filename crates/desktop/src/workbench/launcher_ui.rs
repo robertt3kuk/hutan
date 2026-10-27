@@ -15,7 +15,7 @@ use super::panels::field_box;
 use super::render::probe;
 use super::send_key::send_key_control;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::scroll::ScrollExt as _;
+use super::ui::scroll::{ScrollAreaExt as _, ScrollExt as _};
 use super::ui::{self, Button, FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::VimConfig;
@@ -225,7 +225,7 @@ impl Workbench {
                 .flex()
                 .flex_col()
                 .max_h(px(tokens.sidebar_row * 6.0))
-                .overflow_y_scroll()
+                .scroll_y_contained(&launcher.project_scroll)
                 .rounded(px(tokens.radius))
                 .border_1()
                 .border_color(theme.border);
@@ -601,8 +601,7 @@ impl Workbench {
                             .flex()
                             .flex_col()
                             .max_h(px(tokens.sidebar_row * MODEL_POPOVER_ROWS))
-                            .track_scroll(&launcher.model_scroll)
-                            .overflow_y_scroll();
+                            .scroll_y_contained(&launcher.model_scroll);
                         for (at, row) in rows.into_iter().enumerate() {
                             let model = row.model;
                             let model_group = row.group.clone();
@@ -913,7 +912,7 @@ impl Workbench {
                 .flex()
                 .flex_col()
                 .max_h(px(tokens.sidebar_row * 4.5))
-                .overflow_y_scroll()
+                .scroll_y_contained(&launcher.worktree_scroll)
                 .rounded(px(tokens.radius))
                 .border_1()
                 .border_color(theme.border);
@@ -1163,7 +1162,7 @@ impl Workbench {
                 .flex()
                 .flex_col()
                 .max_h(px(tokens.sidebar_row * 4.5))
-                .overflow_y_scroll();
+                .scroll_y_contained(&launcher.after_scroll);
             if candidates.is_empty() {
                 after = after.child(
                     div()

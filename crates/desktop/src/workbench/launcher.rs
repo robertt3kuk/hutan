@@ -252,6 +252,11 @@ pub struct Launcher {
     pub(crate) open_row: Option<LauncherStop>,
     /// The Model popover's scroll: it opens on the model a start would use.
     pub(crate) model_scroll: gpui::ScrollHandle,
+    /// The scroll of the project, worktree and "after" lists inside the sheet: each keeps the
+    /// wheel while it has rows to scroll to (`ui::scroll`).
+    pub(crate) project_scroll: gpui::ScrollHandle,
+    pub(crate) worktree_scroll: gpui::ScrollHandle,
+    pub(crate) after_scroll: gpui::ScrollHandle,
     /// Frames left in which the popover scrolls to the model in use.
     pub(crate) model_reveal: std::cell::Cell<u8>,
     pub(crate) prompt: TextInput,
@@ -1265,6 +1270,9 @@ impl Workbench {
             contain_network: true,
             open_row: None,
             model_scroll: gpui::ScrollHandle::new(),
+            project_scroll: gpui::ScrollHandle::new(),
+            worktree_scroll: gpui::ScrollHandle::new(),
+            after_scroll: gpui::ScrollHandle::new(),
             model_reveal: std::cell::Cell::new(0),
             prompt: TextInput::new(),
             title: TextInput::new(),
