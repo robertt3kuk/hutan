@@ -131,7 +131,7 @@ Files are read and written by the daemon, never by a client: it is the one place
 
 ```mermaid
 flowchart LR
-  C[desktop buffer store / CLI / agent] -->|fs.read · fs.write.* · fs.list · fs.find · fs.search · fs.watch| R[router: Read / Mutate]
+  C[desktop buffer store / CLI / agent] -->|fs.read · fs.write.* · fs.list · fs.find · fs.search · fs.watch · fs.create|rename|move|copy|trash|restore| R[router: Read / Mutate]
   R --> F[FileService]
   F --> CF[confine: canonical path below a tracked root,<br/>openat O_NOFOLLOW per component]
   F --> W[WatchHub: one notify watcher per root<br/>while a connection holds interest]
@@ -144,6 +144,7 @@ flowchart LR
 - **Roots** are the folders of the daemon's workspaces and projects and the git checkouts its sessions work in; `picked` (a file the user chose) reaches further, an agent's never does. Reads open from the root descriptor without following links; a write goes to a temporary file in the target's directory, is flushed and `renameat`ed over it, with the target's mode, after a version check (`conflict` with the current version).
 - **Bounded everywhere**: 1 MiB chunks under the 4 MiB frame, 64 MiB per file, 8 uploads (30 s idle expiry), 4 searches per connection, finder indexes of 200 000 paths (8 roots kept), 256 watched paths per connection, 500 changes per `fs.changed`, a bounded channel from each platform watcher; no unbounded channel (a test greps for it). A full connection queue drops an `fs.changed` and the next one says `overflow`; it never closes the connection.
 - **Watchers** exist only while a client has interest; the desktop's `BufferStore` (E-5) will hold open documents and expanded folders as interest and reconcile on `fs.changed`, treating its own `write_id` as no news.
+- **File operations** (protocol 0.54, `files/ops.rs`, `files/trash.rs`; ADR 0012 amendment 2026-10-27): create, rename, move, copy, trash and restore use the same confinement (the folder of a path is canonical and opened from the root's descriptor; the last component is never followed), refuse `.git` and the root itself, never overwrite (exclusive `renameatx_np`, `clonefile`, `O_EXCL`), and tell the `WatchHub` which paths they are about to change so that the asking connection's `fs.changed` events are `origin: self`. The Trash is `NSFileManager trashItemAtURL` (behind the `Trash` trait; tests inject a folder) and its undo tickets live in memory. All six are Mutate in the router; no MCP tool.
 - **`fs.search`** runs on a task of its own per request (the connection goes on reading, so `fs.search.cancel` arrives); everything else is answered in order.
 
 ## Language servers (E-11b, ADR 0012 amendment 2026-10-21, protocol 0.39)

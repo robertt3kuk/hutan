@@ -1,4 +1,5 @@
-//! `hutan fs ls|cat|stat|write|find|search` and `hutan open` (protocol 0.33) against a real
+//! `hutan fs ls|cat|stat|write|find|search|mkdir|touch|mv|cp|trash|restore` and `hutan open`
+//! (protocol 0.33, 0.54) against a real
 //! daemon, a temporary repository it tracks, and the real `hutan` binary: the smoke of the file
 //! service from a shell, the conflict path included.
 
@@ -9,13 +10,18 @@ use crate::common;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use std::sync::Arc;
+
 use common::{HUTAN, Out, TestDaemon, command, finish};
+use hutan_daemon::files::trash::FolderTrash;
 use tokio::io::AsyncWriteExt as _;
 
 /// A daemon that tracks a temporary repository (canonical path).
 struct Repo {
     t: TestDaemon,
     root: PathBuf,
+    /// Where `fs trash` puts files: a folder, never the user's Trash.
+    trash: PathBuf,
     _work: tempfile::TempDir,
 }
 
@@ -35,7 +41,10 @@ impl Repo {
         std::fs::write(root.join("src/lib.rs"), "pub mod router;\n").unwrap();
         std::fs::write(root.join("README.md"), "# repo\n").unwrap();
         std::fs::write(root.join("target/out.rs"), "fn route() {}\n").unwrap();
-        let t = TestDaemon::start().await;
+        let trash = work.path().canonicalize().unwrap().join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        let backend = Arc::new(FolderTrash::new(&trash));
+        let t = TestDaemon::start_with(|config| config.fs_trash = Some(backend)).await;
         let opened = t
             .hutan(&[
                 "api",
@@ -48,6 +57,7 @@ impl Repo {
         Self {
             t,
             root,
+            trash,
             _work: work,
         }
     }
@@ -312,4 +322,141 @@ async fn write_replaces_a_file_and_a_stale_expect_is_a_conflict() {
         .ok();
     assert_eq!(picked.stdout, "outside");
     repo.t.stop().await;
+}
+
+// ---- file operations (protocol 0.54) -----------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mkdir_touch_mv_cp_trash_and_restore_work_from_a_shell() {
+    let repo = Repo::new().await;
+    let at = |relative: &str| repo.root.join(relative);
+
+    // mkdir, mkdir -p, touch.
+    let made = repo
+        .hutan(&["fs", "mkdir", "docs", "build/out", "-p", "--json"])
+        .await;
+    assert_eq!(made.code, 0, "{made:?}");
+    assert_eq!(made.json()["items"].as_array().unwrap().len(), 2);
+    assert!(at("docs").is_dir() && at("build/out").is_dir());
+    assert_eq!(repo.hutan(&["fs", "mkdir", "docs"]).await.code, 1);
+    let again = repo.hutan(&["fs", "mkdir", "-p", "docs"]).await.ok();
+    assert!(again.stdout.contains("docs"), "{again:?}");
+    let touched = repo.hutan(&["fs", "touch", "docs/new.txt"]).await.ok();
+    assert!(touched.stdout.starts_with("created "), "{touched:?}");
+    assert_eq!(std::fs::read_to_string(at("docs/new.txt")).unwrap(), "");
+    let exists = repo.hutan(&["fs", "touch", "docs/new.txt"]).await;
+    assert_eq!(exists.code, 1, "{exists:?}");
+    assert!(exists.stderr.contains("exists"), "{exists:?}");
+
+    // mv: a rename, into a folder, several into a folder, the refusals.
+    let renamed = repo
+        .hutan(&["fs", "mv", "docs/new.txt", "docs/renamed.txt"])
+        .await
+        .ok();
+    assert!(renamed.stdout.contains("->"), "{renamed:?}");
+    assert!(at("docs/renamed.txt").exists() && !at("docs/new.txt").exists());
+    repo.hutan(&["fs", "mv", "README.md", "src", "build"])
+        .await
+        .ok();
+    assert!(at("build/README.md").exists() && at("build/src/lib.rs").exists());
+    let not_a_folder = repo
+        .hutan(&["fs", "mv", "build/README.md", "docs/renamed.txt", "nowhere"])
+        .await;
+    assert_eq!(not_a_folder.code, 2, "{not_a_folder:?}");
+    let taken = repo
+        .hutan(&["fs", "mv", "build/README.md", "docs/renamed.txt"])
+        .await;
+    assert_eq!(taken.code, 1, "{taken:?}");
+    assert!(taken.stderr.contains("exists"), "{taken:?}");
+    assert!(at("build/README.md").exists(), "nothing was overwritten");
+    // A case-only rename.
+    repo.hutan(&["fs", "mv", "build/README.md", "build/Readme.md"])
+        .await
+        .ok();
+    assert!(
+        std::fs::read_dir(at("build"))
+            .unwrap()
+            .any(|e| e.unwrap().file_name() == "Readme.md")
+    );
+
+    // cp: a file, a tree into a folder; the original stays.
+    repo.hutan(&["fs", "cp", "build/Readme.md", "docs/copy.md"])
+        .await
+        .ok();
+    repo.hutan(&["fs", "cp", "build/src", "docs"]).await.ok();
+    assert_eq!(
+        std::fs::read_to_string(at("docs/copy.md")).unwrap(),
+        "# repo\n"
+    );
+    assert!(at("docs/src/router.rs").exists() && at("build/src/router.rs").exists());
+    let json = repo
+        .hutan(&["fs", "cp", "docs/copy.md", "docs/copy.md", "--json"])
+        .await;
+    assert_eq!(json.code, 1, "{json:?}");
+    assert_eq!(json.json()["items"][0]["error"]["data"]["reason"], "exists");
+
+    // trash prints a ticket and removes nothing for good; restore puts it back.
+    let trashed = repo
+        .hutan(&["fs", "trash", "docs/copy.md", "docs/missing.md", "docs/src"])
+        .await;
+    assert_eq!(trashed.code, 1, "one of the paths is missing: {trashed:?}");
+    assert!(
+        trashed.stdout.contains("undo with: hutan fs restore"),
+        "{trashed:?}"
+    );
+    assert!(!at("docs/copy.md").exists() && !at("docs/src").exists());
+    assert_eq!(std::fs::read_dir(&repo.trash).unwrap().count(), 2);
+    let ticket = trashed
+        .stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("undo with: hutan fs restore "))
+        .unwrap()
+        .to_owned();
+    let restored = repo.hutan(&["fs", "restore", &ticket]).await.ok();
+    assert!(restored.stdout.contains("restored"), "{restored:?}");
+    assert!(at("docs/copy.md").exists() && at("docs/src/lib.rs").exists());
+    let used = repo.hutan(&["fs", "restore", &ticket]).await;
+    assert_eq!(used.code, 1, "{used:?}");
+    let json = repo
+        .hutan(&["fs", "trash", "docs/copy.md", "--json"])
+        .await
+        .ok()
+        .json();
+    assert!(json["ticket"].as_str().is_some());
+    assert_eq!(json["items"][0]["entry"]["name"], "copy.md");
+
+    // Outside the workspaces, and below .git: refused per item, the exit code says so.
+    let outside = repo._work.path().canonicalize().unwrap().join("loose.txt");
+    std::fs::write(&outside, "loose").unwrap();
+    let refused = repo
+        .hutan(&["fs", "trash", outside.to_str().unwrap()])
+        .await;
+    assert_eq!(refused.code, 1, "{refused:?}");
+    assert!(refused.stderr.contains("refused"), "{refused:?}");
+    assert!(outside.exists());
+    let git = repo.hutan(&["fs", "touch", ".git/hook"]).await;
+    assert_eq!(git.code, 1, "{git:?}");
+    assert!(!at(".git/hook").exists());
+    // cp --picked takes a source from outside the workspaces, mv never does.
+    let picked = repo
+        .hutan(&[
+            "fs",
+            "cp",
+            "--picked",
+            outside.to_str().unwrap(),
+            "from-outside.txt",
+        ])
+        .await
+        .ok();
+    assert!(picked.stdout.contains("copied"), "{picked:?}");
+    assert_eq!(
+        std::fs::read_to_string(at("from-outside.txt")).unwrap(),
+        "loose"
+    );
+    assert_eq!(
+        repo.hutan(&["fs", "cp", outside.to_str().unwrap(), "again.txt"])
+            .await
+            .code,
+        1
+    );
 }

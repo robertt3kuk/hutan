@@ -135,7 +135,8 @@ pub enum Command {
     #[command(subcommand)]
     Memory(MemoryCommand),
     /// Files through the daemon, the one place permissions are enforced: list, print, write
-    /// (atomically, with a version check), find and search (`hutan fs ls|cat|stat|write|find|search`)
+    /// (atomically, with a version check), find and search (`hutan fs ls|cat|stat|write|find|search`),
+    /// and make, move, copy and trash them (`hutan fs mkdir|touch|mv|cp|trash|restore`)
     #[command(subcommand)]
     Fs(FsCommand),
     /// A session's terminal output: search the scrollback and the screen
@@ -1227,6 +1228,24 @@ pub enum FsCommand {
     Find(FsFindArgs),
     /// Search file contents: `path:line:text` per hit, honouring `.gitignore`
     Search(FsSearchArgs),
+    /// Make folders (never over something that exists; `-p` makes the folders above too and
+    /// accepts a folder that is there)
+    Mkdir(FsMkdirArgs),
+    /// Make empty files; a path that exists is an error (a file is never replaced, and its time
+    /// is not touched)
+    Touch(FsPathsArgs),
+    /// Move or rename: `FROM TO`, or `FROM… FOLDER` (each goes into the folder). Within one
+    /// workspace root, never over something that exists; one item failing does not undo the
+    /// others
+    Mv(FsMoveArgs),
+    /// Copy files and folders (recursive, copy-on-write where the volume can): `FROM TO`, or
+    /// `FROM… FOLDER`. Never over something that exists; a copy may cross workspace roots
+    Cp(FsCopyArgs),
+    /// Move paths to the system Trash (nothing is deleted) and print a ticket that
+    /// `hutan fs restore` takes
+    Trash(FsPathsArgs),
+    /// Put back what a trash ticket holds, where it was, never over something that exists
+    Restore(FsRestoreArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -1327,6 +1346,46 @@ pub struct FsPathArgs {
     /// A path you chose yourself: allowed outside the workspaces (never from an agent's session)
     #[arg(long)]
     pub picked: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FsMkdirArgs {
+    /// The folders to make
+    #[arg(required = true, num_args = 1..)]
+    pub paths: Vec<PathBuf>,
+    /// Make the missing folders above too; a folder that exists is fine
+    #[arg(short = 'p', long)]
+    pub parents: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FsPathsArgs {
+    #[arg(required = true, num_args = 1..)]
+    pub paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct FsMoveArgs {
+    /// The sources, then the new path (or the folder they go into)
+    #[arg(required = true, num_args = 2.., value_name = "FROM… TO")]
+    pub paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct FsCopyArgs {
+    /// The sources, then the new path (or the folder they go into)
+    #[arg(required = true, num_args = 2.., value_name = "FROM… TO")]
+    pub paths: Vec<PathBuf>,
+    /// The sources are files you chose yourself: they may lie outside the workspaces (never
+    /// from an agent's session); the copy always lands inside one
+    #[arg(long)]
+    pub picked: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FsRestoreArgs {
+    /// The ticket `hutan fs trash` printed
+    pub ticket: String,
 }
 
 #[derive(Debug, Args)]

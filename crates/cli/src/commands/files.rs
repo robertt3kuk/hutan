@@ -5,13 +5,18 @@ use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use hutan_client::Client;
-use hutan_protocol::fs::{FileVersion, FsEntry, FsFind, FsKind, FsList, FsSearch, FsWriteBegin};
+use hutan_protocol::control::{ErrorBody, ErrorCode};
+use hutan_protocol::fs::{
+    FileVersion, FsCopy, FsCopyItem, FsCreate, FsCreateKind, FsEntry, FsFind, FsKind, FsList,
+    FsMove, FsMoveItem, FsOpItem, FsOpResults, FsRestore, FsSearch, FsTrash, FsWriteBegin,
+};
 use serde_json::json;
 
 use super::Ctx;
 use super::paths::{absolute, here};
 use crate::args::{
-    FsCommand, FsFindArgs, FsLsArgs, FsPathArgs, FsSearchArgs, FsWriteArgs, OpenArgs,
+    FsCommand, FsCopyArgs, FsFindArgs, FsLsArgs, FsMkdirArgs, FsMoveArgs, FsPathArgs, FsPathsArgs,
+    FsRestoreArgs, FsSearchArgs, FsWriteArgs, OpenArgs,
 };
 use crate::error::CliError;
 
@@ -25,6 +30,12 @@ impl Ctx {
             FsCommand::Write(args) => self.fs_write(&client, args).await,
             FsCommand::Find(args) => self.fs_find(&client, args).await,
             FsCommand::Search(args) => self.fs_search(&client, args).await,
+            FsCommand::Mkdir(args) => self.fs_mkdir(&client, args).await,
+            FsCommand::Touch(args) => self.fs_touch(&client, args).await,
+            FsCommand::Mv(args) => self.fs_mv(&client, args).await,
+            FsCommand::Cp(args) => self.fs_cp(&client, args).await,
+            FsCommand::Trash(args) => self.fs_trash(&client, args).await,
+            FsCommand::Restore(args) => self.fs_restore(&client, args).await,
         }
     }
 
@@ -103,6 +114,229 @@ impl Ctx {
             ));
         }
         Ok(client)
+    }
+
+    /// The daemon must know the file operations (protocol 0.54).
+    fn need_ops(client: &Client) -> Result<(), CliError> {
+        if client.supports_fs_ops() {
+            Ok(())
+        } else {
+            Err(CliError::Failed(
+                "this hutand cannot make, move, copy or trash files (it is older than protocol \
+                 0.54); restart it with `hutan daemon restart`"
+                    .to_owned(),
+            ))
+        }
+    }
+
+    /// Makes each path with `kind`, one request per path (a failing one does not stop the
+    /// rest); `parents` accepts a folder that is there already.
+    async fn fs_make(
+        &self,
+        client: &Client,
+        paths: &[PathBuf],
+        kind: FsCreateKind,
+        parents: bool,
+    ) -> Result<(), CliError> {
+        Self::need_ops(client)?;
+        let mut items = Vec::with_capacity(paths.len());
+        for path in paths {
+            let path = absolute(path)?;
+            let made = client
+                .fs_create(FsCreate {
+                    path: path.clone(),
+                    kind,
+                    parents,
+                })
+                .await;
+            items.push(match made {
+                Ok(entry) => FsOpItem {
+                    path,
+                    entry: Some(entry),
+                    error: None,
+                },
+                // `mkdir -p` of a folder that is there is what was asked for.
+                Err(error) if parents && is_exists(&error) => {
+                    match client.fs_stat(&path, false).await {
+                        Ok(entry) if entry.kind == FsKind::Dir => FsOpItem {
+                            path,
+                            entry: Some(entry),
+                            error: None,
+                        },
+                        _ => item_error(path, error, self)?,
+                    }
+                }
+                Err(error) => item_error(path, error, self)?,
+            });
+        }
+        self.report_items(&FsOpResults { items }, "created")
+    }
+
+    async fn fs_mkdir(&self, client: &Client, args: FsMkdirArgs) -> Result<(), CliError> {
+        self.fs_make(client, &args.paths, FsCreateKind::Dir, args.parents)
+            .await
+    }
+
+    async fn fs_touch(&self, client: &Client, args: FsPathsArgs) -> Result<(), CliError> {
+        self.fs_make(client, &args.paths, FsCreateKind::File, false)
+            .await
+    }
+
+    /// `FROM TO` or `FROM… FOLDER`, as `mv` and `cp` read them: the pairs (`from`, whole new
+    /// path).
+    async fn fs_pairs(
+        &self,
+        client: &Client,
+        paths: &[PathBuf],
+    ) -> Result<Vec<(PathBuf, PathBuf)>, CliError> {
+        let Some((destination, sources)) = paths.split_last() else {
+            return Err(CliError::Usage("give the sources and where they go".into()));
+        };
+        let destination = absolute(destination)?;
+        let into = matches!(
+            client.fs_stat(&destination, false).await,
+            Ok(entry) if entry.kind == FsKind::Dir
+        );
+        if sources.len() > 1 && !into {
+            return Err(CliError::Usage(format!(
+                "{} is not a folder: several sources go into a folder",
+                destination.display()
+            )));
+        }
+        sources
+            .iter()
+            .map(|source| {
+                let from = absolute(source)?;
+                let to = if into {
+                    let name = from.file_name().ok_or_else(|| {
+                        CliError::Usage(format!("{} has no name to move", from.display()))
+                    })?;
+                    destination.join(name)
+                } else {
+                    destination.clone()
+                };
+                Ok((from, to))
+            })
+            .collect()
+    }
+
+    async fn fs_mv(&self, client: &Client, args: FsMoveArgs) -> Result<(), CliError> {
+        Self::need_ops(client)?;
+        let items = self
+            .fs_pairs(client, &args.paths)
+            .await?
+            .into_iter()
+            .map(|(from, to)| FsMoveItem { from, to })
+            .collect();
+        let results = client
+            .fs_move(FsMove { items })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.report_items(&results, "moved")
+    }
+
+    async fn fs_cp(&self, client: &Client, args: FsCopyArgs) -> Result<(), CliError> {
+        Self::need_ops(client)?;
+        let items = self
+            .fs_pairs(client, &args.paths)
+            .await?
+            .into_iter()
+            .map(|(from, to)| FsCopyItem {
+                from,
+                to,
+                picked_from: args.picked,
+            })
+            .collect();
+        let results = client
+            .fs_copy(FsCopy { items })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.report_items(&results, "copied")
+    }
+
+    async fn fs_trash(&self, client: &Client, args: FsPathsArgs) -> Result<(), CliError> {
+        Self::need_ops(client)?;
+        let paths = args
+            .paths
+            .iter()
+            .map(absolute)
+            .collect::<Result<Vec<_>, _>>()?;
+        let trashed = client
+            .fs_trash(FsTrash { paths })
+            .await
+            .map_err(|e| self.fail(e))?;
+        if self.json {
+            self.print(&trashed, String::new)?;
+            return if trashed.items.iter().any(|item| item.error.is_some()) {
+                Err(CliError::Reported)
+            } else {
+                Ok(())
+            };
+        }
+        let results = FsOpResults {
+            items: trashed.items,
+        };
+        let outcome = self.report_items(&results, "moved to the Trash:");
+        if let Some(ticket) = &trashed.ticket {
+            println!("undo with: hutan fs restore {ticket}");
+        }
+        outcome
+    }
+
+    async fn fs_restore(&self, client: &Client, args: FsRestoreArgs) -> Result<(), CliError> {
+        Self::need_ops(client)?;
+        let results = client
+            .fs_restore(FsRestore {
+                ticket: args.ticket,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.report_items(&results, "restored")
+    }
+
+    /// Prints what became of each item: `--json` the whole answer, otherwise a line per item
+    /// (failures on stderr). Exit 1 when any item failed.
+    fn report_items(&self, results: &FsOpResults, verb: &str) -> Result<(), CliError> {
+        let failed = results
+            .items
+            .iter()
+            .filter(|item| item.error.is_some())
+            .count();
+        if self.json {
+            self.print(results, String::new)?;
+            return if failed == 0 {
+                Ok(())
+            } else {
+                Err(CliError::Reported)
+            };
+        }
+        for item in &results.items {
+            match (&item.entry, &item.error) {
+                (Some(entry), _) if entry.path == item.path => {
+                    println!("{verb} {}", entry.path.display());
+                }
+                (Some(entry), _) if verb.ends_with(':') => {
+                    println!(
+                        "{verb} {} (was {})",
+                        entry.path.display(),
+                        item.path.display()
+                    );
+                }
+                (Some(entry), _) => {
+                    println!("{verb} {} -> {}", item.path.display(), entry.path.display());
+                }
+                (None, Some(error)) => eprintln!("{}", item_message(&item.path, error)),
+                (None, None) => {}
+            }
+        }
+        if failed == 0 {
+            Ok(())
+        } else {
+            Err(CliError::Failed(format!(
+                "{failed} of {} failed",
+                results.items.len()
+            )))
+        }
     }
 
     async fn fs_ls(&self, client: &Client, args: FsLsArgs) -> Result<(), CliError> {
@@ -272,6 +506,49 @@ impl Ctx {
         }
         self.print(&result, String::new)
     }
+}
+
+/// What `fs.create` of one path answered with, as an item of a batch; an error that is not the
+/// daemon's answer (a lost connection) ends the command.
+fn item_error(
+    path: PathBuf,
+    error: hutan_client::ClientError,
+    ctx: &Ctx,
+) -> Result<FsOpItem, CliError> {
+    match error {
+        hutan_client::ClientError::Remote(body) => Ok(FsOpItem {
+            path,
+            entry: None,
+            error: Some(body),
+        }),
+        other => Err(ctx.fail(other)),
+    }
+}
+
+/// The daemon refused because the path exists already.
+fn is_exists(error: &hutan_client::ClientError) -> bool {
+    matches!(
+        error,
+        hutan_client::ClientError::Remote(body)
+            if body.code == ErrorCode::Conflict
+                && body.data.as_ref().and_then(|data| data["reason"].as_str()) == Some("exists")
+    )
+}
+
+/// An item's error as one line: the path and what the daemon said (which names the path again
+/// when it matters).
+fn item_message(path: &Path, error: &ErrorBody) -> String {
+    let reason = error
+        .data
+        .as_ref()
+        .and_then(|data| data["reason"].as_str())
+        .map(|reason| format!(" [{reason}]"))
+        .unwrap_or_default();
+    let kind = match error.code {
+        ErrorCode::Forbidden => "refused",
+        _ => "failed",
+    };
+    format!("{kind}: {}: {}{reason}", path.display(), error.message)
 }
 
 /// `path[:line[:col]]`; a file whose name ends in `:digits` is taken as it is when it exists.
