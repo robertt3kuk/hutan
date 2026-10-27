@@ -117,7 +117,9 @@ impl ChatView {
             return parsed.clone();
         }
         self.markdown_parsed += 1;
-        let parsed = Rc::new(markdown::parse(text));
+        // A chat keeps the line breaks its writer typed (GitHub's "breaks"): "print 1 to 120, one
+        // per line" is 120 lines, not one wrapped paragraph.
+        let parsed = Rc::new(markdown::parse_breaks(text));
         self.parsed.insert(entry.id, (entry.rev, parsed.clone()));
         parsed
     }

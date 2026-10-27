@@ -42,10 +42,32 @@ pub enum Inline {
     LineBreak,
 }
 
-/// Blocks of `text`.
+/// How the single newline inside a paragraph reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Newlines {
+    /// A space (CommonMark): the lines of a paragraph flow together.
+    Soft,
+    /// A line break (GitHub's "breaks" mode, what chat users expect): every line stays a line.
+    Hard,
+}
+
+/// The mark between two lines of a paragraph that is a line break (Unicode's line separator).
+/// [`inline`] reads it as [`Inline::LineBreak`]; the text of a message holds it as itself, as a
+/// line break too.
+const HARD_NEWLINE: char = '\u{2028}';
+
+/// Blocks of `text`, CommonMark's way: a single newline inside a paragraph is a space.
 pub fn parse(text: &str) -> Vec<Block> {
     let lines: Vec<&str> = text.lines().collect();
-    parse_lines(&lines, 0)
+    parse_lines(&lines, 0, Newlines::Soft)
+}
+
+/// Blocks of `text` with GitHub-flavoured Markdown's "breaks": a single newline inside a
+/// paragraph (or a list item or a quote) is a line break, as chat users write. Code blocks,
+/// tables and everything else read as in [`parse`].
+pub fn parse_breaks(text: &str) -> Vec<Block> {
+    let lines: Vec<&str> = text.lines().collect();
+    parse_lines(&lines, 0, Newlines::Hard)
 }
 
 // ---- blocks ---------------------------------------------------------------------------------
@@ -234,7 +256,7 @@ fn interrupts_paragraph(line: &str) -> bool {
         || list_marker(line).is_some_and(|m| !m.ordered || m.number == 1)
 }
 
-fn parse_lines(lines: &[&str], depth: usize) -> Vec<Block> {
+fn parse_lines(lines: &[&str], depth: usize, newlines: Newlines) -> Vec<Block> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -244,8 +266,10 @@ fn parse_lines(lines: &[&str], depth: usize) -> Vec<Block> {
             continue;
         }
         if depth >= MAX_DEPTH {
-            let (paragraph, next) = paragraph(lines, i);
-            out.push(Block::Paragraph(vec![Inline::Text(paragraph)]));
+            let (paragraph, next) = paragraph(lines, i, newlines);
+            out.push(Block::Paragraph(vec![Inline::Text(
+                paragraph.replace(HARD_NEWLINE, "\n"),
+            )]));
             i = next;
             continue;
         }
@@ -286,11 +310,11 @@ fn parse_lines(lines: &[&str], depth: usize) -> Vec<Block> {
                 inner.push(rest.strip_prefix(' ').unwrap_or(rest));
                 i += 1;
             }
-            out.push(Block::Quote(parse_lines(&inner, depth + 1)));
+            out.push(Block::Quote(parse_lines(&inner, depth + 1, newlines)));
             continue;
         }
         if let Some(first) = list_marker(line) {
-            let (block, next) = list(lines, i, first.ordered, first.number, depth);
+            let (block, next) = list(lines, i, first.ordered, first.number, depth, newlines);
             out.push(block);
             i = next;
             continue;
@@ -311,15 +335,16 @@ fn parse_lines(lines: &[&str], depth: usize) -> Vec<Block> {
             });
             continue;
         }
-        let (text, next) = paragraph(lines, i);
+        let (text, next) = paragraph(lines, i, newlines);
         out.push(Block::Paragraph(parse_inline(&text)));
         i = next;
     }
     out
 }
 
-/// The paragraph starting at `start`: its lines joined by `\n`, and the index after it.
-fn paragraph(lines: &[&str], start: usize) -> (String, usize) {
+/// The paragraph starting at `start`: its lines joined by `\n` (by [`HARD_NEWLINE`] when every
+/// line break is kept), and the index after it.
+fn paragraph(lines: &[&str], start: usize, newlines: Newlines) -> (String, usize) {
     let mut text = String::new();
     let mut i = start;
     while i < lines.len() {
@@ -328,7 +353,10 @@ fn paragraph(lines: &[&str], start: usize) -> (String, usize) {
             break;
         }
         if !text.is_empty() {
-            text.push('\n');
+            text.push(match newlines {
+                Newlines::Soft => '\n',
+                Newlines::Hard => HARD_NEWLINE,
+            });
         }
         text.push_str(line.trim_start());
         i += 1;
@@ -336,7 +364,14 @@ fn paragraph(lines: &[&str], start: usize) -> (String, usize) {
     (text, i)
 }
 
-fn list(lines: &[&str], start: usize, ordered: bool, number: u64, depth: usize) -> (Block, usize) {
+fn list(
+    lines: &[&str],
+    start: usize,
+    ordered: bool,
+    number: u64,
+    depth: usize,
+    newlines: Newlines,
+) -> (Block, usize) {
     let mut items = Vec::new();
     let mut i = start;
     while i < lines.len() {
@@ -377,7 +412,7 @@ fn list(lines: &[&str], start: usize, ordered: bool, number: u64, depth: usize) 
             }
             i += 1;
         }
-        items.push(parse_lines(&content, depth + 1));
+        items.push(parse_lines(&content, depth + 1, newlines));
         // The next item follows directly or after blank lines.
         let next = (i..lines.len()).find(|j| !lines[*j].trim().is_empty());
         match next {
@@ -448,6 +483,11 @@ fn inline(s: &str, depth: usize) -> Vec<Inline> {
                         out.push(Inline::LineBreak);
                         i += 2;
                     }
+                    Some(HARD_NEWLINE) => {
+                        flush(&mut plain, &mut out);
+                        out.push(Inline::LineBreak);
+                        i += 1 + HARD_NEWLINE.len_utf8();
+                    }
                     Some(next) if is_punctuation(next) => {
                         plain.push(next);
                         i += 1 + next.len_utf8();
@@ -457,6 +497,15 @@ fn inline(s: &str, depth: usize) -> Vec<Inline> {
                         i += 1;
                     }
                 }
+                continue;
+            }
+            HARD_NEWLINE => {
+                // A kept line break: the spaces before it are of no use.
+                let trimmed = plain.trim_end_matches(' ').len();
+                plain.truncate(trimmed);
+                flush(&mut plain, &mut out);
+                out.push(Inline::LineBreak);
+                i += width;
                 continue;
             }
             '\n' => {
@@ -476,7 +525,7 @@ fn inline(s: &str, depth: usize) -> Vec<Inline> {
                 let ticks = s[i..].chars().take_while(|c| *c == '`').count();
                 if let Some(end) = code_span_end(s, i, ticks) {
                     flush(&mut plain, &mut out);
-                    let raw = s[i + ticks..end].replace('\n', " ");
+                    let raw = s[i + ticks..end].replace(['\n', HARD_NEWLINE], " ");
                     let code = if raw.len() > 1
                         && raw.starts_with(' ')
                         && raw.ends_with(' ')
@@ -864,6 +913,85 @@ mod tests {
             parse_inline("a\\\nb"),
             vec![text("a"), Inline::LineBreak, text("b")]
         );
+    }
+
+    /// F-14: GitHub's "breaks" mode keeps a single newline as a line break; code stays as it is.
+    #[test]
+    fn breaks_mode_keeps_single_newlines_as_line_breaks() {
+        assert_eq!(
+            parse_breaks("1\n2\n3\n\nnext"),
+            vec![
+                Block::Paragraph(vec![
+                    text("1"),
+                    Inline::LineBreak,
+                    text("2"),
+                    Inline::LineBreak,
+                    text("3"),
+                ]),
+                Block::Paragraph(vec![text("next")]),
+            ]
+        );
+        // The same text in CommonMark's reading flows together.
+        assert_eq!(
+            parse("1\n2\n3"),
+            vec![Block::Paragraph(vec![text("1 2 3")])]
+        );
+        // Trailing spaces and a backslash do not add a second break or leave a mark.
+        assert_eq!(
+            parse_breaks("a  \nb\\\nc"),
+            vec![Block::Paragraph(vec![
+                text("a"),
+                Inline::LineBreak,
+                text("b"),
+                Inline::LineBreak,
+                text("c"),
+            ])]
+        );
+        // Inside emphasis, a link label, a list item and a quote.
+        let blocks = parse_breaks("- one\n  two\n> q1\n> q2\n**a\nb**");
+        assert_eq!(
+            blocks[0],
+            Block::List {
+                ordered: false,
+                start: 1,
+                items: vec![vec![Block::Paragraph(vec![
+                    text("one"),
+                    Inline::LineBreak,
+                    text("two"),
+                ])]],
+            }
+        );
+        assert_eq!(
+            blocks[1],
+            Block::Quote(vec![Block::Paragraph(vec![
+                text("q1"),
+                Inline::LineBreak,
+                text("q2"),
+            ])])
+        );
+        assert_eq!(
+            blocks[2],
+            Block::Paragraph(vec![Inline::Strong(vec![
+                text("a"),
+                Inline::LineBreak,
+                text("b"),
+            ])])
+        );
+        // Fenced code and tables are text as written.
+        assert_eq!(
+            parse_breaks("```\na\nb\n```\n| a | b |\n|---|---|\n| 1 | 2 |"),
+            parse("```\na\nb\n```\n| a | b |\n|---|---|\n| 1 | 2 |")
+        );
+        // A code span that spans two lines stays one run of code.
+        assert_eq!(
+            parse_breaks("`a\nb`"),
+            vec![Block::Paragraph(vec![Inline::Code("a b".into())])]
+        );
+        // The text a renderer gets has the break as a newline.
+        let Block::Paragraph(inlines) = &parse_breaks("x\ny")[0] else {
+            panic!("a paragraph")
+        };
+        assert_eq!(flatten(inlines).text, "x\ny");
     }
 
     #[test]

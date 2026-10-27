@@ -513,6 +513,64 @@ fn markdown_messages_get_a_code_block_with_a_copy_button(cx: &mut TestAppContext
     );
 }
 
+/// F-14: a single newline in an assistant answer is a line break ("print 1 to 120, one per line"
+/// is 120 lines): the card of an answer of four lines is four lines taller than the same words
+/// on one line.
+#[gpui::test]
+fn single_newlines_in_an_answer_are_line_breaks(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let config = env.edited("plain-turn", |entries| {
+        let at = entries
+            .iter()
+            .position(|e| {
+                method(e) == Some("item/completed")
+                    && e["msg"]["params"]["item"]["type"] == "agentMessage"
+            })
+            .unwrap();
+        entries[at]["msg"]["params"]["item"]["text"] = json!("alpha beta gamma delta");
+        let mut second = entries[at].clone();
+        second["msg"]["params"]["item"]["id"] = json!("msg_fixture_2");
+        second["msg"]["params"]["item"]["text"] = json!("alpha\nbeta\ngamma\ndelta");
+        entries.insert(at + 1, second);
+    });
+    let daemon = TestDaemon::start_with_codex(config);
+    let info = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    let (_chat, model) = open_chat(&view, cx, info.id);
+    say(cx, "count");
+    pump(cx, "the turn to end", |cx| {
+        count(&model, cx, is_footer) == 1
+    });
+    assert_eq!(
+        assistant_texts(&model, cx),
+        ["alpha beta gamma delta", "alpha\nbeta\ngamma\ndelta"]
+    );
+    let rows: Vec<usize> = transcript(&model, cx, |t| {
+        t.entries()
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e.body, Body::Assistant(_)))
+            .map(|(index, _)| index)
+            .collect()
+    });
+    pump(cx, "both answers drawn", |cx| {
+        draw(cx);
+        rows.iter()
+            .all(|row| region(&view, cx, Region::ChatEntry(*row)).is_some())
+    });
+    let height = |cx: &VisualTestContext, row: usize| {
+        region(&view, cx, Region::ChatEntry(row))
+            .unwrap()
+            .size
+            .height
+    };
+    let (flat, broken) = (height(cx, rows[0]), height(cx, rows[1]));
+    assert!(
+        broken >= flat + gpui::px(3.0 * 15.0),
+        "four lines ({broken:?}) are three lines taller than one ({flat:?})"
+    );
+}
+
 #[gpui::test]
 fn reasoning_plans_and_warnings_are_cards_of_their_own(cx: &mut TestAppContext) {
     let env = ChatEnv::new();

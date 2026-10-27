@@ -427,7 +427,7 @@ impl ChatView {
         } else {
             let mut ids = Ids::new(format!("question-{id}"));
             Some(blocks(
-                &hutan_chat_view::markdown::parse(&question.spec.prompt),
+                &hutan_chat_view::markdown::parse_breaks(&question.spec.prompt),
                 look,
                 &mut ids,
             ))
