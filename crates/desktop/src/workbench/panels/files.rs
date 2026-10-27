@@ -1143,11 +1143,11 @@ impl FilesPanel {
         };
         if !self.picked.is_empty() {
             self.picked.retain(|p| tree.index_of(p).is_some());
-            if self.picked.len() < 2 {
-                if let Some(only) = self.picked.drain().next() {
-                    self.anchor = Some(only.clone());
-                    self.selected = Some(only);
-                }
+            if self.picked.len() < 2
+                && let Some(only) = self.picked.drain().next()
+            {
+                self.anchor = Some(only.clone());
+                self.selected = Some(only);
             }
         }
         let Some(selected) = self.selected.clone() else {
