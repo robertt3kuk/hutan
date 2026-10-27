@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{Bounds, Context, Pixels, Point, SharedString, Window};
+use gpui::{Bounds, Context, ExternalPaths, Pixels, Point, SharedString, Window};
 
 use super::super::files_names::{drop_folder, edge_scroll, pointless_move};
 use super::super::files_tree::RowKind;
@@ -231,6 +231,31 @@ impl FilesPanel {
             return;
         }
         self.run_drop(items, dir, copy, window, cx);
+    }
+
+    /// Files dropped from Finder (or any other app) on the row of `target` (a folder, or a file:
+    /// its folder), or on the empty part of the tree (`None`: the root above it): they are copied
+    /// in, one undo step for all. Nothing is asked: a copy never replaces anything.
+    pub fn dropped_files(
+        &mut self,
+        paths: &ExternalPaths,
+        target: Option<(&Path, bool)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.spring = None;
+        self.edge_speed = 0.0;
+        let Some(dir) = target
+            .and_then(|(path, is_dir)| drop_folder(path, is_dir))
+            .or_else(|| self.tree.as_ref()?.roots().last().cloned())
+        else {
+            return;
+        };
+        if paths.paths().is_empty() {
+            return;
+        }
+        self.leave_filter(cx);
+        self.copy_in(paths.paths().to_vec(), dir, window, cx);
     }
 
     /// The sheet of the first drop was confirmed: it is not asked again this session.

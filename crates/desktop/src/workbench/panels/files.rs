@@ -1908,8 +1908,29 @@ impl FilesPanel {
                         cx,
                     );
                 });
-                let drag_listener = cx.listener(
+                let drag_listener = cx.listener({
+                    let target = target.clone();
                     move |this, event: &gpui::DragMoveEvent<DraggedRows>, window, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            let over = is_dir.then(|| (target.clone(), event.bounds));
+                            this.drag_over_row(over, window, cx);
+                        }
+                    }
+                });
+                // Files dragged in from Finder: dropped on the row they are copied into its
+                // folder, a closed folder under them springs open.
+                let file_drop_target = target.clone();
+                let file_drop_listener =
+                    cx.listener(move |this, paths: &gpui::ExternalPaths, window, cx| {
+                        this.dropped_files(
+                            paths,
+                            Some((file_drop_target.as_path(), is_dir)),
+                            window,
+                            cx,
+                        );
+                    });
+                let file_drag_listener = cx.listener(
+                    move |this, event: &gpui::DragMoveEvent<gpui::ExternalPaths>, window, cx| {
                         if event.bounds.contains(&event.event.position) {
                             let over = is_dir.then(|| (target.clone(), event.bounds));
                             this.drag_over_row(over, window, cx);
@@ -2025,10 +2046,15 @@ impl FilesPanel {
                                 s.drag_over::<DraggedRows>(move |s, _, _, _| {
                                     s.bg(accent.opacity(0.18))
                                 })
+                                .drag_over::<gpui::ExternalPaths>(move |s, _, _, _| {
+                                    s.bg(accent.opacity(0.18))
+                                })
                             })
                             .when(can_drag, |s| {
                                 s.on_drop(drop_listener)
                                     .on_drag_move::<DraggedRows>(drag_listener)
+                                    .on_drop(file_drop_listener)
+                                    .on_drag_move::<gpui::ExternalPaths>(file_drag_listener)
                             })
                             .child(
                                 div()
@@ -2305,6 +2331,17 @@ impl Render for FilesPanel {
                         this.drag_near_edge(event.event.position, event.bounds, window, cx);
                     },
                 ))
+                .on_drag_move::<gpui::ExternalPaths>(cx.listener(
+                    |this, event: &gpui::DragMoveEvent<gpui::ExternalPaths>, window, cx| {
+                        this.drag_near_edge(event.event.position, event.bounds, window, cx);
+                    },
+                ))
+                // Files dropped from Finder on the empty part of the tree go to its last root.
+                .on_drop(
+                    cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                        this.dropped_files(paths, None, window, cx);
+                    }),
+                )
                 // Rows dropped on the empty part of the tree go to its root.
                 .on_drop(cx.listener(|this, rows: &DraggedRows, window, cx| {
                     let copy = window.modifiers().alt;
@@ -2324,6 +2361,24 @@ impl Render for FilesPanel {
                 .child(self.bar.element())
                 .child(probe(&self.env.regions, Region::Files("tree")))
                 .into_any_element(),
+        };
+        // An empty folder takes files dropped from Finder as well.
+        let body: AnyElement = if self.tree.is_some() && count == 0 {
+            div()
+                .id("files-empty-area")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .on_drop(
+                    cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                        this.dropped_files(paths, None, window, cx);
+                    }),
+                )
+                .child(body)
+                .child(probe(&self.env.regions, Region::Files("tree")))
+                .into_any_element()
+        } else {
+            body
         };
         div()
             .id("files-panel")

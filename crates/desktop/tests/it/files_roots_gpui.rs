@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::{TestDaemon, draw, open_with, wait_until};
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{Entity, ExternalPaths, FileDropEvent, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::WorkspaceId;
 use hutan_desktop::workbench::panels::{
     FILES_FILTER_DEBOUNCE, FileGitMark, FilesFilterStatus, FilesPanel,
@@ -549,4 +549,50 @@ fn the_filter_and_open_editors_look_across_every_root(cx: &mut TestAppContext) {
         open,
         vec![fx.alpha.join("alpha.txt"), fx.beta.join("beta.txt")]
     );
+}
+
+#[gpui::test]
+fn files_dropped_from_finder_on_a_root_row_are_copied_into_that_project(cx: &mut TestAppContext) {
+    use hutan_desktop::theme::DensityExt as _;
+    use hutan_desktop::workbench::style::UiStyle;
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx, WORKSPACE);
+    let panel = files_panel(&view, cx);
+    wait_until(cx, "both roots listed", |cx| {
+        rows(&panel, cx).contains(&"  new.txt".to_owned())
+    });
+    draw(cx);
+    let outside = tempfile::tempdir().unwrap();
+    let logo = outside.path().join("logo.png");
+    fs::write(&logo, "png\n").unwrap();
+
+    // Rows: alpha 0, src 1, alpha.txt 2, beta 3 — the second root's own row.
+    let tree = region(&view, cx, Region::Files("tree"));
+    let row = cx.update(|_, app| UiStyle::get(app).density.ui().sidebar_row - 4.0);
+    let at = gpui::point(
+        tree.origin.x + gpui::px(80.0),
+        tree.origin.y + gpui::px(row * 3.5),
+    );
+    cx.simulate_event(FileDropEvent::Entered {
+        position: at,
+        paths: ExternalPaths([logo.clone()].into_iter().collect()),
+    });
+    draw(cx);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.drop_target().map(Path::to_owned)),
+        Some(fx.beta.clone()),
+        "the root's row is a drop target"
+    );
+    cx.simulate_event(FileDropEvent::Submit { position: at });
+    cx.simulate_event(FileDropEvent::Exited);
+    cx.simulate_event(FileDropEvent::Ended);
+    draw(cx);
+    wait_until(cx, "the copy in beta", |_| {
+        fx.beta.join("logo.png").exists()
+    });
+    assert!(!fx.alpha.join("logo.png").exists());
+    assert!(logo.exists(), "copied, not moved");
+    wait_until(cx, "beta's new row", |cx| {
+        rows(&panel, cx).contains(&"  logo.png".to_owned())
+    });
 }

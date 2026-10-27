@@ -133,6 +133,15 @@ fn failures_sentence(verb: &str, failed: &[(String, String)]) -> String {
     }
 }
 
+/// What a daemon on another Mac says to files from this one (`docs/remote.md`): a path picked here
+/// does not exist there, or is another file. `None` for the daemon of this Mac.
+pub fn remote_refusal(endpoint: Option<&hutan_client::Endpoint>) -> Option<&'static str> {
+    matches!(endpoint, Some(hutan_client::Endpoint::Ssh(_))).then_some(
+        "This window works on a daemon on another Mac: files from this Mac are not copied in \
+         yet, because the daemon would read that path on its own disk (docs/remote.md)",
+    )
+}
+
 fn file_name_of(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
@@ -493,17 +502,7 @@ impl FilesPanel {
             .flatten()
             .collect();
         if !external.is_empty() {
-            let sources = external
-                .into_iter()
-                .map(|from| CopySource {
-                    from,
-                    dir: folder.clone(),
-                    picked: true,
-                    start: 0,
-                })
-                .collect();
-            self.reveal_folder(&folder, cx);
-            self.run_copies(sources, false, window, cx);
+            self.copy_in(external, folder, window, cx);
             return;
         }
         let text = item.and_then(|i| i.text());
@@ -536,6 +535,34 @@ impl FilesPanel {
                 .collect();
             self.run_copies(sources, false, window, cx);
         }
+    }
+
+    /// Copies files that are not in the project (what Finder copied or dropped) into `folder`,
+    /// one journal step for all: the daemon reads them as the user's own choice (`picked_from`).
+    /// A daemon on another Mac cannot: it would read that path on its own disk.
+    pub(super) fn copy_in(
+        &mut self,
+        from: Vec<PathBuf>,
+        folder: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let connection = self.env.sessions.read(cx).connection().clone();
+        if let Some(reason) = remote_refusal(connection.endpoint()) {
+            self.tell(reason, window, cx);
+            return;
+        }
+        let sources = from
+            .into_iter()
+            .map(|from| CopySource {
+                from,
+                dir: folder.clone(),
+                picked: true,
+                start: 0,
+            })
+            .collect();
+        self.reveal_folder(&folder, cx);
+        self.run_copies(sources, false, window, cx);
     }
 
     /// Opens `folder` so what lands in it is seen.
@@ -1177,4 +1204,27 @@ async fn copy_all(connection: Connection, sources: Vec<CopySource>) -> Vec<(Path
         .zip(outcomes)
         .filter_map(|(s, o)| o.map(|o| (s.from, o)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hutan_client::{Endpoint, SshHost};
+
+    #[test]
+    fn only_a_daemon_on_another_mac_refuses_files_from_this_one() {
+        let local = Endpoint::Local(PathBuf::from("/tmp/hutand.sock"));
+        assert_eq!(remote_refusal(Some(&local)), None);
+        assert_eq!(
+            remote_refusal(None),
+            None,
+            "an in-process connection is local"
+        );
+        let host = SshHost::new("studio", "me@studio.local", None).unwrap();
+        let reason = remote_refusal(Some(&Endpoint::Ssh(host))).expect("a remote daemon refuses");
+        assert!(
+            reason.contains("another Mac") && reason.contains("docs/remote.md"),
+            "{reason}"
+        );
+    }
 }

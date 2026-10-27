@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{
-    ClipboardEntry, ClipboardItem, Entity, ExternalPaths, Modifiers, TestAppContext,
+    ClipboardEntry, ClipboardItem, Entity, ExternalPaths, FileDropEvent, Modifiers, TestAppContext,
     VisualTestContext,
 };
 use hutan_desktop::workbench::panels::{FilesEditKind, FilesPanel};
@@ -997,4 +997,186 @@ fn the_tree_scrolls_by_itself_while_a_row_is_dragged_near_its_edge(cx: &mut Test
     assert_eq!(panel.read_with(cx, |p, _| p.scrolled()), stopped);
     cx.simulate_mouse_up(middle, Left, Modifiers::none());
     draw(cx);
+}
+
+/// Files from Finder enter the window at `at`.
+fn finder_enters(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, paths: &[PathBuf]) {
+    cx.simulate_event(FileDropEvent::Entered {
+        position: at,
+        paths: ExternalPaths(paths.iter().cloned().collect()),
+    });
+    draw(cx);
+}
+
+/// The files are let go at `at`.
+fn finder_drops(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>) {
+    cx.simulate_event(FileDropEvent::Submit { position: at });
+    cx.simulate_event(FileDropEvent::Exited);
+    cx.simulate_event(FileDropEvent::Ended);
+    draw(cx);
+}
+
+#[gpui::test]
+fn files_dropped_from_finder_are_copied_into_the_folder_under_them_as_one_undoable_step(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::panels::FILES_SPRING_AFTER;
+    let (daemon, view, cx, panel, (_dir, root), (_other, outside)) = finder_fixture(cx);
+
+    // What Finder drags lives outside the project: a file whose name `docs` has already, another
+    // file and a folder with something inside.
+    let theirs = write(&outside, "readme.md", "theirs\n");
+    let report = write(&outside, "report.pdf", "%PDF\n");
+    write(&outside, "pics/one.png", "png\n");
+    let dragged = [theirs, report, outside.join("pics")];
+
+    // Over the closed `docs` row it springs open under the files, then they are let go.
+    let docs_row = row_center(&view, cx, 0);
+    finder_enters(cx, docs_row, &dragged);
+    assert!(!panel.read_with(cx, |p, _| p.tree().unwrap().is_expanded(&root.join("docs"))));
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.drop_target().map(Path::to_owned)),
+        Some(root.join("docs")),
+        "the folder under the files is the drop target"
+    );
+    cx.executor()
+        .advance_clock(FILES_SPRING_AFTER + std::time::Duration::from_millis(50));
+    wait_until(cx, "the folder to open under the files", |cx| {
+        panel.read_with(cx, |p, _| p.tree().unwrap().is_expanded(&root.join("docs")))
+    });
+    finder_drops(cx, docs_row);
+    wait_until(cx, "the three copies", |_| {
+        root.join("docs/readme copy.md").exists()
+            && root.join("docs/report.pdf").exists()
+            && root.join("docs/pics/one.png").exists()
+    });
+    assert_eq!(
+        std::fs::read_to_string(root.join("docs/readme.md")).unwrap(),
+        "mine\n",
+        "the taken name is not overwritten"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("docs/readme copy.md")).unwrap(),
+        "theirs\n"
+    );
+    assert!(
+        outside.join("report.pdf").exists() && outside.join("pics/one.png").exists(),
+        "Finder's files are copied, not moved"
+    );
+    idle(&panel, cx);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.journal_depth()),
+        (1, 0),
+        "one drop, one step"
+    );
+
+    // One ⌘Z takes all three away (to the Trash); ⇧⌘Z brings them back.
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("cmd-z");
+    wait_until(cx, "all three gone", |_| {
+        !root.join("docs/readme copy.md").exists()
+            && !root.join("docs/report.pdf").exists()
+            && !root.join("docs/pics").exists()
+    });
+    assert!(in_trash(&daemon, "report.pdf") && in_trash(&daemon, "pics"));
+    cx.simulate_keystrokes("shift-cmd-z");
+    wait_until(cx, "all three back", |_| {
+        root.join("docs/readme copy.md").exists()
+            && root.join("docs/report.pdf").exists()
+            && root.join("docs/pics/one.png").exists()
+    });
+}
+
+/// A project with `docs/readme.md`, `src/lib.rs` and `a.txt`, its tree drawn, and a file of
+/// Finder's outside it.
+fn finder_fixture(
+    cx: &mut TestAppContext,
+) -> (
+    TestDaemon,
+    Entity<Workbench>,
+    &mut VisualTestContext,
+    Entity<FilesPanel>,
+    (tempfile::TempDir, PathBuf),
+    (tempfile::TempDir, PathBuf),
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (dir, root) = scratch();
+    write(&root, "docs/readme.md", "mine\n");
+    write(&root, "src/lib.rs", "// lib\n");
+    write(&root, "a.txt", "alpha\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["docs", "src", "a.txt"]);
+    draw(cx);
+    let (other, outside) = scratch();
+    (daemon, view, cx, panel, (dir, root), (other, outside))
+}
+
+#[gpui::test]
+fn a_file_dropped_from_finder_on_a_file_row_goes_into_that_files_folder(cx: &mut TestAppContext) {
+    let (_daemon, view, cx, panel, (_dir, root), (_other, outside)) = finder_fixture(cx);
+    panel.update(cx, |p, cx| p.toggle(&root.join("docs"), cx));
+    wait_names(&panel, cx, &["docs", "  readme.md", "src", "a.txt"]);
+    draw(cx);
+    let notes = write(&outside, "notes.md", "# notes\n");
+    let on_file = row_center(&view, cx, 1);
+    finder_enters(cx, on_file, std::slice::from_ref(&notes));
+    finder_drops(cx, on_file);
+    wait_until(cx, "the file in the file's folder", |_| {
+        root.join("docs/notes.md").exists()
+    });
+    assert!(!root.join("notes.md").exists());
+}
+
+#[gpui::test]
+fn files_dropped_from_finder_on_the_empty_part_of_the_tree_go_to_the_root(cx: &mut TestAppContext) {
+    let (_daemon, view, cx, panel, (_dir, root), (_other, outside)) = finder_fixture(cx);
+    let last = write(&outside, "last.md", "# last\n");
+    let tree = view
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(hutan_desktop::workbench::Region::Files("tree"))
+        })
+        .expect("the tree is drawn");
+    let on_empty = gpui::point(
+        tree.origin.x + gpui::px(80.0),
+        tree.origin.y + tree.size.height - gpui::px(4.0),
+    );
+    finder_enters(cx, on_empty, std::slice::from_ref(&last));
+    finder_drops(cx, on_empty);
+    wait_until(cx, "the file in the root", |_| {
+        root.join("last.md").exists()
+    });
+    idle(&panel, cx);
+    wait_names(&panel, cx, &["docs", "src", "a.txt", "last.md"]);
+}
+
+#[gpui::test]
+fn files_dropped_into_an_empty_project_are_copied_into_its_root(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_until(cx, "the empty folder to be listed", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.settled() && p.rows().is_empty() && p.root().is_some()
+        })
+    });
+    let (_other, outside) = scratch();
+    let picture = write(&outside, "logo.png", "png\n");
+    let at = view
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(hutan_desktop::workbench::Region::Files("tree"))
+        })
+        .expect("the empty tree area is drawn")
+        .center();
+    finder_enters(cx, at, std::slice::from_ref(&picture));
+    finder_drops(cx, at);
+    wait_until(cx, "the copy in the root", |_| {
+        root.join("logo.png").exists()
+    });
+    idle(&panel, cx);
+    wait_names(&panel, cx, &["logo.png"]);
+    assert_eq!(panel.read_with(cx, |p, _| p.journal_depth()), (1, 0));
 }
