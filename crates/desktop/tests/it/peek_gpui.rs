@@ -182,9 +182,7 @@ fn the_rail_the_window_left_behind_peeks(cx: &mut TestAppContext) {
 // ---- what the peek is ------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_peek_floats_over_the_center_at_the_docks_width_and_changes_nothing(
-    cx: &mut TestAppContext,
-) {
+fn the_peek_floats_over_the_center_at_the_docks_width_and_changes_nothing(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     resize(cx, 1100.0);
     let saved = state(&view, cx);
@@ -206,7 +204,11 @@ fn the_peek_floats_over_the_center_at_the_docks_width_and_changes_nothing(
     assert_eq!(bounds(&view, cx, Region::Rail(Right)), rail);
     // The dock stays on its rail; only the panel it remembers is the one that was clicked.
     assert_eq!(shown(&view, cx, Right), Compact);
-    assert_eq!(chosen(&view, cx, Right), Expanded, "the user's choice stands");
+    assert_eq!(
+        chosen(&view, cx, Right),
+        Expanded,
+        "the user's choice stands"
+    );
     assert_eq!(
         view.read_with(cx, |wb, _| wb.dock_auto_state(Right)),
         AutoState::Collapsed,
@@ -243,7 +245,10 @@ fn in_a_window_under_900_the_peek_is_at_most_300_wide(cx: &mut TestAppContext) {
     click(&view, cx, icon(0));
     let peek = bounds(&view, cx, Region::Peek);
     assert_close(peek.size.width, 300.0);
-    assert_close(peek.right(), f32::from(bounds(&view, cx, Region::Rail(Right)).left()));
+    assert_close(
+        peek.right(),
+        f32::from(bounds(&view, cx, Region::Rail(Right)).left()),
+    );
     // Resizing the window under an open peek keeps it a peek.
     resize(cx, 700.0);
     assert_eq!(peeking(&view, cx), Some(Right));
@@ -277,9 +282,7 @@ fn escape_closes_the_peek_and_gives_the_keyboard_back(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_click_outside_closes_the_peek_and_does_not_reach_what_is_under_it(
-    cx: &mut TestAppContext,
-) {
+fn a_click_outside_closes_the_peek_and_does_not_reach_what_is_under_it(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     resize(cx, 1100.0);
     click(&view, cx, icon(1));
@@ -409,8 +412,8 @@ fn panel_commands_peek_too(cx: &mut TestAppContext) {
     assert_eq!(active(&view, cx, Right), Some(PanelId::new("files")));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(shown(&view, cx, Right), Compact);
-    // Something else taking the focus ends it: a new terminal tab here.
-    cx.dispatch_action(actions::NewTerminal);
+    // Something else taking the focus ends it: moving to the pane on its left.
+    cx.dispatch_action(actions::FocusNeighborLeft);
     draw(cx);
     assert_eq!(peeking(&view, cx), None);
 }
@@ -485,7 +488,7 @@ fn the_left_page_pushes_where_the_center_keeps_its_room(cx: &mut TestAppContext)
     assert_eq!(peeking(&view, cx), None);
     assert_eq!(shown(&view, cx, Left), Expanded);
     assert_eq!(active(&view, cx, Left), Some(PanelId::new("files")));
-    // Projects and Tasks are the sidebar's own pages: at 700 they expand it as before.
+    // Once the window has grown the sidebar is back as its own width, nothing left over.
     resize(cx, 1280.0);
     assert_eq!(shown(&view, cx, Left), Expanded);
 }

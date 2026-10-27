@@ -581,6 +581,11 @@ fn the_toolbar_folds_into_the_more_menu_below_640_pt_and_nothing_overflows(
     let daemon = TestDaemon::start();
     let id = agent(&daemon, "work", true);
     let (view, cx) = open(cx, &daemon);
+    // What is proved is the page in a narrow center, with the panel pushed in beside it (EX-2:
+    // a peek would leave the center alone).
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user("layout.rail_peek", toml::Value::Boolean(false))
+        .unwrap();
     click(&view, cx, Region::Nav("agents"));
     let page = page(&view, cx);
     let p = page.clone();

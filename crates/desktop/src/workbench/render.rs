@@ -208,18 +208,20 @@ impl Render for Workbench {
         let resizing_docks = matches!(self.resizing, Some(Resizing::Dock { .. }));
         let root = div()
             .id("workbench")
-            .key_context(match (
-                resizing_docks,
-                self.layout_undo.is_some(),
-                self.peek.is_some(),
-            ) {
-                (true, true, _) => "Workbench DockResize LayoutToast",
-                (true, false, _) => "Workbench DockResize",
-                (false, true, true) => "Workbench LayoutToast Peek",
-                (false, true, false) => "Workbench LayoutToast",
-                (false, false, true) => "Workbench Peek",
-                (false, false, false) => "Workbench",
-            })
+            .key_context(
+                match (
+                    resizing_docks,
+                    self.layout_undo.is_some(),
+                    self.peek.is_some(),
+                ) {
+                    (true, true, _) => "Workbench DockResize LayoutToast",
+                    (true, false, _) => "Workbench DockResize",
+                    (false, true, true) => "Workbench LayoutToast Peek",
+                    (false, true, false) => "Workbench LayoutToast",
+                    (false, false, true) => "Workbench Peek",
+                    (false, false, false) => "Workbench",
+                },
+            )
             .track_focus(&self.focus_handle)
             .relative()
             .size_full()

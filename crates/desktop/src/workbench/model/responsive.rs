@@ -416,7 +416,11 @@ mod tests {
             let mut r = Responsive::default();
             r.evaluate(&d, 2000.0, true);
             r.evaluate(&d, width, true);
-            assert_eq!(r.effective(&d, DockPosition::Right), rest, "{width} at rest");
+            assert_eq!(
+                r.effective(&d, DockPosition::Right),
+                rest,
+                "{width} at rest"
+            );
             assert_eq!(
                 r.open_as(&d, DockPosition::Right, true),
                 open,

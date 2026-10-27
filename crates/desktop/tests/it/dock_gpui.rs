@@ -687,13 +687,16 @@ fn opening_a_dock_in_a_narrow_window_keeps_it_open_until_the_window_grows(cx: &m
     assert_eq!(chosen(&view, cx, Left), Expanded);
     draw(cx);
     assert_eq!(shown(&view, cx, Left), Expanded, "it stays");
-    // A rail icon opens the right panel the same way.
+    // A rail icon opens the right panel too — but with the sidebar open the center has no room
+    // for the body beside it, so it is a peek over the center (EX-2) and the dock stays a rail.
     click(&view, cx, Region::DockTab(Right, 2));
-    assert_eq!(shown(&view, cx, Right), Expanded);
+    assert_eq!(shown(&view, cx, Right), Compact);
+    assert_eq!(view.read_with(cx, |wb, _| wb.peek_dock()), Some(Right));
     assert_eq!(
         state(&view, cx).docks.right.active,
         Some(PanelId::new("agents"))
     );
+    assert_eq!(shown(&view, cx, Left), Expanded, "the sidebar stays open");
     // ⌘B again is the user's own collapse.
     cx.simulate_keystrokes("cmd-b");
     draw(cx);

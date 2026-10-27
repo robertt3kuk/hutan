@@ -52,8 +52,7 @@ impl Workbench {
     pub(crate) fn agents_page_visible(&self) -> bool {
         let id = PanelId::new(AGENTS_PAGE);
         let docked = DockPosition::ALL.into_iter().any(|pos| {
-            self.dock_body_shown(pos)
-                && self.state.docks.get(pos).active.as_ref() == Some(&id)
+            self.dock_body_shown(pos) && self.state.docks.get(pos).active.as_ref() == Some(&id)
         });
         docked
             || self

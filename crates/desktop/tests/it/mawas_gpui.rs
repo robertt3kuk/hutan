@@ -582,6 +582,11 @@ fn below_640_pt_the_header_folds_today_leaves_and_the_composer_keeps_its_width(
 ) {
     let env = started();
     let (view, cx) = open(cx, &env.daemon);
+    // What is proved is the page in a narrow center, with the panel pushed in beside it (EX-2:
+    // a peek would leave the center alone).
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user("layout.rail_peek", toml::Value::Boolean(false))
+        .unwrap();
     click(&view, cx, Region::Nav("assistant"));
     let panel = panel(&view, cx);
     wait_until(cx, "Mawas to open", |cx| {

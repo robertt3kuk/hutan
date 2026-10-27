@@ -2052,6 +2052,13 @@ impl Workbench {
         if self.peek_panel(&id, cx) {
             return;
         }
+        // The dock the window collapsed that a command opens stays open until the window grows
+        // (the same as a click on its rail icon).
+        if let Some(pos) = self.state.docks.find(&id)
+            && self.dock_auto_state(pos) == super::model::AutoState::Collapsed
+        {
+            self.responsive.open(pos);
+        }
         let dock = self
             .panels
             .get(&id)

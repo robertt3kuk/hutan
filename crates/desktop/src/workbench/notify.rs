@@ -25,8 +25,7 @@ impl Workbench {
         ]
         .into_iter()
         .any(|pos| {
-            self.dock_body_shown(pos)
-                && self.state.docks.get(pos).active.as_ref() == Some(&id)
+            self.dock_body_shown(pos) && self.state.docks.get(pos).active.as_ref() == Some(&id)
         });
         docked
             || (self.state.preset != LayoutPreset::OVERVIEW
