@@ -461,7 +461,23 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
         .into_iter()
         .map(|(label, _)| label.to_string())
         .collect();
-    assert_eq!(labels, ["Open", "Show File History", "Copy Path"]);
+    // History is for a file only; the file operations (EX-7) are on every row.
+    assert_eq!(
+        labels,
+        [
+            "Open",
+            "Show File History",
+            "New File",
+            "New Folder",
+            "Rename",
+            "Duplicate",
+            "Cut",
+            "Copy",
+            "Paste",
+            "Copy Path",
+            "Move to Trash"
+        ]
+    );
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(0, window, cx));
     cx.dispatch_action(actions::ShowFilesMenu(actions::FilesMenuAt {
         path: fx.root.display().to_string(),
@@ -474,8 +490,25 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
         .into_iter()
         .map(|(label, _)| label.to_string())
         .collect();
-    assert_eq!(labels, ["Copy Path"]);
-    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(0, window, cx));
+    assert_eq!(
+        labels,
+        [
+            "New File",
+            "New Folder",
+            "Rename",
+            "Duplicate",
+            "Cut",
+            "Copy",
+            "Paste",
+            "Copy Path",
+            "Move to Trash"
+        ],
+        "a folder has no history of its own"
+    );
+    let copy_path = labels.iter().position(|l| l == "Copy Path").unwrap();
+    view.update_in(cx, |wb, window, cx| {
+        wb.run_menu_entry(copy_path, window, cx)
+    });
 
     // The palette's commands exist.
     let commands: Vec<String> = view.read_with(cx, |wb, _| {
