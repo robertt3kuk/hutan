@@ -183,3 +183,69 @@ impl Tickets {
         self.list.retain(|ticket| !ticket.items.is_empty());
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_trash_moves_into_a_slot_of_its_own_and_names_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        let (trash, file) = (base.join("trash"), base.join("a.txt"));
+        std::fs::write(&file, "a").unwrap();
+        let backend = FolderTrash::new(&trash);
+        let first = backend.trash(&file).unwrap();
+        assert!(!file.exists());
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "a");
+        std::fs::write(&file, "b").unwrap();
+        let second = backend.trash(&file).unwrap();
+        assert_ne!(first, second, "the same name does not collide");
+    }
+
+    #[test]
+    fn tickets_forget_the_oldest_and_lose_what_came_back() {
+        let mut tickets = Tickets::new(2, Duration::from_secs(60));
+        let item = |name: &str| TicketItem {
+            original: PathBuf::from(format!("/r/{name}")),
+            trashed: PathBuf::from(format!("/t/{name}")),
+        };
+        let a = tickets.issue(vec![item("a")]);
+        let b = tickets.issue(vec![item("b1"), item("b2")]);
+        let c = tickets.issue(vec![item("c")]);
+        assert_eq!(tickets.items(&a), None);
+        tickets.settle(&b, &[PathBuf::from("/r/b1")]);
+        assert_eq!(tickets.items(&b), Some(vec![item("b2")]));
+        tickets.settle(&b, &[PathBuf::from("/r/b2")]);
+        assert_eq!(tickets.items(&b), None, "a ticket with nothing left goes");
+        assert_eq!(tickets.items(&c), Some(vec![item("c")]));
+    }
+
+    /// The real thing, with a file this test made in a temporary folder: it goes into the
+    /// user's Trash and is moved straight back out, so nothing stays there. Run by hand
+    /// (`cargo test -p hutan-daemon system_trash -- --ignored`); the gate never touches the
+    /// user's Trash.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "puts a temporary file into the user's real Trash, then takes it out again"]
+    fn system_trash_says_where_the_file_went_and_the_file_can_be_moved_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("hutan-ex6-trash-probe.txt");
+        std::fs::write(&file, "probe").unwrap();
+        let trashed = SystemTrash.trash(&file).unwrap();
+        assert!(!file.exists());
+        assert!(
+            trashed.to_string_lossy().contains(".Trash"),
+            "{}",
+            trashed.display()
+        );
+        assert_eq!(std::fs::read_to_string(&trashed).unwrap(), "probe");
+        std::fs::rename(&trashed, &file).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "probe");
+    }
+}
