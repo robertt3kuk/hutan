@@ -281,27 +281,37 @@ impl ControlService {
             }
             AgentPolicy::Ask => {
                 let grant = grant_key(request);
-                if lock(&self.state).grants.contains(&(origin, grant.clone())) {
+                // Moving files to the Trash always asks: no grant covers it, and none is offered.
+                let each_time = asks_every_time(request);
+                if !each_time && lock(&self.state).grants.contains(&(origin, grant.clone())) {
                     self.audit_auto(origin, &describe, "allow_grant");
                     return Ok(free);
                 }
-                let options = vec![
-                    option(ALLOW_ONCE, "Allow once", PermissionOptionKind::AllowOnce),
-                    option(
+                let mut options = vec![option(
+                    ALLOW_ONCE,
+                    "Allow once",
+                    PermissionOptionKind::AllowOnce,
+                )];
+                if !each_time {
+                    options.push(option(
                         ALLOW_SESSION,
                         "Allow for this session",
                         PermissionOptionKind::AllowAlways,
-                    ),
-                    option(DENY, "Deny", PermissionOptionKind::RejectOnce),
-                ];
+                    ));
+                }
+                options.push(option(DENY, "Deny", PermissionOptionKind::RejectOnce));
                 let who = self.origin_name(origin).await;
                 let title = format!("{who} asks Hutan to {}", describe.title);
+                let mut detail = describe.detail;
+                if each_time {
+                    detail.push_str("\nThis kind of change always asks: no grant covers it.");
+                }
                 let asked = Asked {
                     origin,
                     method,
                     grant,
                     title,
-                    detail: describe.detail,
+                    detail,
                     options,
                     mawas: None,
                 };
@@ -897,8 +907,8 @@ fn grant_of_row(row: GrantRow) -> ControlGrant {
 /// Requests that always ask for Mawas, whatever the grants say (ADR 0017 decision 4): ending or
 /// killing what runs, removing or merging work, typing into a terminal (anything a shell can do),
 /// stopping the daemon, wiping the history index, choosing what runs the assistant itself or
-/// changing its settings, and quitting the window. The widest ones (`daemon.settings.set`,
-/// `assistant.reset`, provider credentials, answering approvals, these grants) are not asked at
+/// changing its settings, quitting the window, and moving files to the Trash (`fs.trash`,
+/// protocol 0.54). The widest ones (`daemon.settings.set`, `assistant.reset`, provider credentials, answering approvals, these grants) are not asked at
 /// all: they are user-only (`router::classification`).
 pub fn always_ask(request: &Request) -> bool {
     match request {
@@ -915,12 +925,20 @@ pub fn always_ask(request: &Request) -> bool {
         | Request::DaemonShutdown(_)
         | Request::HistoryClear(_)
         | Request::AssistantConfigure(_)
-        | Request::CheckpointRemove(_) => true,
+        | Request::CheckpointRemove(_)
+        | Request::FsTrash(_) => true,
         Request::SessionClose(r) => r.stop_running,
         Request::UiRun(r) => r.action == "workbench::Quit",
         Request::UiSetSetting(r) => r.namespace == "assistant",
         _ => false,
     }
+}
+
+/// Requests that ask every time under `[control] agents = "ask"`, whatever was allowed for the
+/// session before: *Allow for this session* is not offered for them. Moving files to the Trash
+/// (`fs.trash`, protocol 0.54): a grant given for one cleanup must not cover the next.
+pub fn asks_every_time(request: &Request) -> bool {
+    matches!(request, Request::FsTrash(_))
 }
 
 fn option(id: &str, label: &str, kind: PermissionOptionKind) -> PermissionOption {

@@ -1231,6 +1231,90 @@ async fn an_agents_file_operations_ask_under_ask_and_the_users_do_not() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_agents_trash_asks_every_time_and_offers_no_session_grant() {
+    let ops = Ops::with(
+        "[control]\nagents = \"ask\"\napproval_timeout_secs = 20\n",
+        |_| {},
+    )
+    .await;
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(ops.at(name), name).unwrap();
+    }
+    let session = shell_in(&ops.env).await;
+    report_working(&ops.env.t, session.id, AgentState::Working, 1).await;
+    let agent = connect_from(&ops.env.t, session.id).await;
+    let trash = |name: &'static str| {
+        let agent = agent.clone();
+        let path = ops.at(name);
+        tokio::spawn(async move { agent.fs_trash(trash_of(&[&path])).await })
+    };
+
+    // Other operations still offer "Allow for this session", and a grant covers the next one.
+    let creating = {
+        let agent = agent.clone();
+        let path = ops.at("m1");
+        tokio::spawn(async move {
+            agent
+                .fs_create(create(&path, FsCreateKind::File, false))
+                .await
+        })
+    };
+    let approval = next_approval(&ops.env.client).await;
+    let ids: Vec<&str> = approval.options.iter().map(|o| o.id.as_str()).collect();
+    assert_eq!(ids, ["allow_once", "allow_session", "deny"]);
+    answer(&ops.env.client, approval.id, "allow_session").await;
+    timeout(WAIT, creating).await.unwrap().unwrap().unwrap();
+    agent
+        .fs_create(create(&ops.at("m2"), FsCreateKind::File, false))
+        .await
+        .unwrap();
+    assert_eq!(pending(&ops.env.client).await, 0, "the grant covers create");
+
+    // Trash: only Allow once / Deny, and the answer covers that call alone.
+    for name in ["a.txt", "b.txt"] {
+        let trashing = trash(name);
+        let approval = next_approval(&ops.env.client).await;
+        let ids: Vec<&str> = approval.options.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(ids, ["allow_once", "deny"], "{}", approval.title);
+        assert!(
+            approval
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.contains("always asks")),
+            "{approval:?}"
+        );
+        assert!(ops.at(name).exists(), "nothing before the answer");
+        answer(&ops.env.client, approval.id, "allow_once").await;
+        timeout(WAIT, trashing).await.unwrap().unwrap().unwrap();
+        assert!(!ops.at(name).exists());
+    }
+    // A grant for the method cannot be given: the option is refused.
+    let trashing = trash("c.txt");
+    let approval = next_approval(&ops.env.client).await;
+    let refused_option = ops
+        .env
+        .client
+        .call::<hutan_protocol::messages::Empty>(Request::ApprovalRespond(
+            hutan_protocol::chat::ApprovalRespond {
+                approval_id: approval.id,
+                option_id: "allow_session".to_owned(),
+            },
+        ))
+        .await;
+    assert!(
+        refused_option.is_err(),
+        "allow_session is not an option here"
+    );
+    answer(&ops.env.client, approval.id, "deny").await;
+    refused(
+        timeout(WAIT, trashing).await.unwrap().unwrap(),
+        ErrorCode::Forbidden,
+    );
+    assert!(ops.at("c.txt").exists());
+    ops.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn under_read_only_an_agent_cannot_operate_on_files_and_under_allow_it_is_not_asked() {
     for (policy, allowed) in [("read_only", false), ("allow", true)] {
         let ops = Ops::with(&format!("[control]\nagents = \"{policy}\"\n"), |_| {}).await;
