@@ -148,14 +148,73 @@ catalog! {
     BrandHutan => ("brand.hutan", "hutan.svg"),
     BrandMawas => ("brand.mawas", "sparkle.svg"),
     ItemFile => ("item.file", "file-code.svg"),
+    ItemFileRust => ("item.file.rust", "file-rs.svg"),
+    ItemFileJavascript => ("item.file.javascript", "file-js.svg"),
+    ItemFileTypescript => ("item.file.typescript", "file-ts.svg"),
+    ItemFilePython => ("item.file.python", "file-py.svg"),
+    ItemFileMarkdown => ("item.file.markdown", "file-md.svg"),
+    ItemFileText => ("item.file.text", "file-text.svg"),
+    ItemFileHtml => ("item.file.html", "file-html.svg"),
+    ItemFileStyle => ("item.file.style", "file-css.svg"),
+    ItemFileData => ("item.file.data", "brackets-curly.svg"),
+    ItemFileConfig => ("item.file.config", "gear-six.svg"),
+    ItemFileShell => ("item.file.shell", "terminal.svg"),
+    ItemFileSql => ("item.file.sql", "file-sql.svg"),
+    ItemFileImage => ("item.file.image", "file-image.svg"),
+    ItemFileArchive => ("item.file.archive", "file-zip.svg"),
+    ItemFilePdf => ("item.file.pdf", "file-pdf.svg"),
+    ItemFileLock => ("item.file.lock", "file-lock.svg"),
     ItemFolder => ("item.folder", "folder.svg"),
     ItemFolderOpen => ("item.folder-open", "folder-open.svg"),
     PanelFiles => ("panel.files", "file-code.svg"),
     PanelInstructions => ("panel.instructions", "file-text.svg"),
+    ActionCollapseAll => ("action.collapse-all", "arrows-in-line-vertical.svg"),
 }
 
 pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
     match path {
+        "file-rs.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-rs.svg"
+        )),
+        "file-js.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-js.svg"
+        )),
+        "file-ts.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-ts.svg"
+        )),
+        "file-py.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-py.svg"
+        )),
+        "file-md.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-md.svg"
+        )),
+        "file-html.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-html.svg"
+        )),
+        "file-css.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-css.svg"
+        )),
+        "brackets-curly.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/brackets-curly.svg"
+        )),
+        "file-image.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-image.svg"
+        )),
+        "file-zip.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-zip.svg"
+        )),
+        "file-pdf.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-pdf.svg"
+        )),
+        "file-lock.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-lock.svg"
+        )),
+        "file-sql.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-sql.svg"
+        )),
+        "arrows-in-line-vertical.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/arrows-in-line-vertical.svg"
+        )),
         "arrow-clockwise.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/arrow-clockwise.svg"
         )),

@@ -629,6 +629,86 @@
           "description": "Pack-root-relative monochrome SVG path",
           "maxLength": 1024
         },
+        "item.file.rust": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.javascript": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.typescript": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.python": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.markdown": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.text": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.html": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.style": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.data": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.config": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.shell": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.sql": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.image": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.archive": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.pdf": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "item.file.lock": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
         "item.folder": {
           "type": "string",
           "description": "Pack-root-relative monochrome SVG path",
@@ -645,6 +725,11 @@
           "maxLength": 1024
         },
         "panel.instructions": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.collapse-all": {
           "type": "string",
           "description": "Pack-root-relative monochrome SVG path",
           "maxLength": 1024

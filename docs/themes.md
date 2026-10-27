@@ -591,8 +591,25 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `brand.hutan`
 - `brand.mawas`
 - `item.file`
+- `item.file.rust`
+- `item.file.javascript`
+- `item.file.typescript`
+- `item.file.python`
+- `item.file.markdown`
+- `item.file.text`
+- `item.file.html`
+- `item.file.style`
+- `item.file.data`
+- `item.file.config`
+- `item.file.shell`
+- `item.file.sql`
+- `item.file.image`
+- `item.file.archive`
+- `item.file.pdf`
+- `item.file.lock`
 - `item.folder`
 - `item.folder-open`
 - `panel.files`
 - `panel.instructions`
+- `action.collapse-all`
 <!-- icons:end -->
