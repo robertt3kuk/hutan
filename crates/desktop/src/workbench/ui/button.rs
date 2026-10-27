@@ -853,6 +853,11 @@ mod audit {
             "a file tree row",
         ),
         (
+            "desktop/src/workbench/panels/files/sections.rs",
+            3,
+            "a section header, a row of Open Editors, a row of Changed by agents",
+        ),
+        (
             "desktop/src/workbench/panels/history_view.rs",
             6,
             "a source checkbox, a scope tab, the scan strip, a group header, a row, a menu entry",
