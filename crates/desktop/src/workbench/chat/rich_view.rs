@@ -295,21 +295,23 @@ impl ChatView {
                 _ => None,
             })
             .map(|(index, text)| {
-                div()
-                    .id(SharedString::from(format!("chat-paste-{index}")))
-                    .relative()
-                    .max_h(px(PASTE_MAX_HEIGHT))
-                    .overflow_y_scroll()
-                    .p(px(tokens.spacing * 2.0))
-                    .rounded(px(tokens.radius))
-                    .bg(theme.bg)
-                    .border_1()
-                    .border_color(theme.border)
-                    .font_family(look.mono.clone())
-                    .text_size(px(tokens.secondary_font_size))
-                    .child(SharedString::from(text.clone()))
-                    .child(probe(&self.regions, Region::Chat("paste")))
-                    .into_any_element()
+                hutan_ui::scroll_y(
+                    SharedString::from(format!("chat-paste-scroll-{index}")),
+                    div()
+                        .id(SharedString::from(format!("chat-paste-{index}")))
+                        .relative()
+                        .max_h(px(PASTE_MAX_HEIGHT))
+                        .p(px(tokens.spacing * 2.0))
+                        .rounded(px(tokens.radius))
+                        .bg(theme.bg)
+                        .border_1()
+                        .border_color(theme.border)
+                        .font_family(look.mono.clone())
+                        .text_size(px(tokens.secondary_font_size))
+                        .child(SharedString::from(text.clone()))
+                        .child(probe(&self.regions, Region::Chat("paste"))),
+                )
+                .into_any_element()
             })
             .collect()
     }

@@ -2190,19 +2190,21 @@ impl Render for MemoryPanel {
             .text_size(px(tokens.font_size))
             .child(header)
             .child(
-                div()
-                    .id("memory-body")
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .gap(px(tokens.spacing))
-                    .px(px(tokens.spacing * 2.0))
-                    .pb(px(tokens.spacing * 2.0))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .children(sections),
+                hutan_ui::scroll_y(
+                    "memory-body-scroll",
+                    div()
+                        .id("memory-body")
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .gap(px(tokens.spacing))
+                        .px(px(tokens.spacing * 2.0))
+                        .pb(px(tokens.spacing * 2.0))
+                        .children(sections),
+                )
+                .tracking(&self.scroll),
             )
             .child(probe(&self.env.regions, Region::Memory("panel")))
     }

@@ -2936,6 +2936,7 @@ impl Workbench {
                                         .w_full()
                                         .max_h(px(list_max)),
                                     )
+                                    .child(self.palette_bar.element())
                                     .child(probe(&self.regions, Region::Palette("list"))),
                             )
                         })

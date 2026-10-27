@@ -334,11 +334,10 @@ impl HistoryPanel {
                     )),
             );
         }
-        div()
+        let page = div()
             .id("history-disabled")
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing * 3.0))
@@ -404,8 +403,8 @@ impl HistoryPanel {
             )
             .when_some(self.error.clone(), |s, error| {
                 s.child(div().text_color(theme.danger).child(shared(error)))
-            })
-            .into_any_element()
+            });
+        hutan_ui::scroll_y("history-disabled-scroll", page).into_any_element()
     }
 
     /// The calm default of the off state: what this is, that it is off, one quiet action.
@@ -872,7 +871,7 @@ impl HistoryPanel {
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let list = div().flex_1().min_h_0().flex().flex_col();
+        let list = div().relative().flex_1().min_h_0().flex().flex_col();
         let note = match (&self.results, &self.catalog, &self.catalog_error) {
             (Results::Failed(error), _, _) => Some(format!("Search failed: {error}")),
             (Results::Hits(hits), _, _) if hits.is_empty() => Some(
@@ -931,6 +930,7 @@ impl HistoryPanel {
             // daemon has.
             None => list
                 .child(gpui::list(self.list.clone(), cx.processor(Self::render_entry)).size_full())
+                .child(self.bar.element())
                 .into_any_element(),
         }
     }

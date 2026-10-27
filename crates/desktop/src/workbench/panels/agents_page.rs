@@ -54,6 +54,10 @@ pub const TICK: Duration = Duration::from_secs(1);
 
 /// Rows built beyond the viewport, in pixels.
 const OVERDRAW: f32 = 240.0;
+/// What a row of the list is tall before it is measured, in pixels: the scrollbar's thumb and
+/// its drags use it for the rows nobody has scrolled to yet, and the real heights replace it as
+/// they are measured.
+const ROW_ESTIMATE: f32 = 64.0;
 /// Content widths (at the default rem) where the columns fold: full, medium, narrow.
 const WIDE_FROM: f32 = 900.0;
 const MEDIUM_FROM: f32 = 640.0;
@@ -145,6 +149,7 @@ pub struct AgentsPage {
     listing: Rc<Listing>,
     listed_key: Option<ListKey>,
     list: ListState,
+    bar: hutan_ui::Scrollbar,
     layout: Layout,
     width: Rc<Cell<f32>>,
     renders: usize,
@@ -189,6 +194,7 @@ impl AgentsPage {
         })
         .detach();
         let presentation = Arc::new(AgentPresentation::empty(Link::Loading, 0));
+        let list = ListState::new(0, ListAlignment::Top, px(OVERDRAW));
         Self {
             env,
             focus: cx.focus_handle(),
@@ -210,7 +216,8 @@ impl AgentsPage {
             presentation,
             listing: Rc::new(Listing::default()),
             listed_key: None,
-            list: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
+            bar: hutan_ui::Scrollbar::for_list(&list, ROW_ESTIMATE),
+            list,
             layout: Layout::Wide,
             width: Rc::new(Cell::new(0.0)),
             renders: 0,
@@ -488,7 +495,8 @@ impl AgentsPage {
     fn sync_list(&mut self, new: &Listing, restart: bool) {
         let old = self.listing.clone();
         if restart || old.rows.is_empty() {
-            self.list.reset(new.rows.len());
+            self.list
+                .reset_with_uniform_height(new.rows.len(), px(ROW_ESTIMATE));
             return;
         }
         if old.rows == new.rows {
@@ -523,6 +531,7 @@ impl AgentsPage {
         );
         if removed > 0 || added > 0 {
             self.list.splice(prefix..prefix + removed, added);
+            self.list.clone().with_uniform_item_height(px(ROW_ESTIMATE));
         }
     }
 
@@ -953,6 +962,7 @@ impl Render for AgentsPage {
                 .flex()
                 .flex_col()
                 .child(gpui::list(self.list.clone(), cx.processor(Self::render_entry)).size_full())
+                .child(self.bar.element())
                 .child(probe(&self.env.regions, Region::AgentsPage("list")))
                 .into_any_element(),
         };

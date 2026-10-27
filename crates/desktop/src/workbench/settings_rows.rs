@@ -374,19 +374,22 @@ impl Workbench {
         let regions = self.regions.clone();
         let menu_probe = probe(&self.regions, Region::Settings("menu"));
         let panel = panel.map(|panel| {
-            panel
-                .relative()
-                .child(menu_probe)
-                .on_mouse_down_out(
-                    cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                        let on_head = regions
-                            .get(Region::SettingsMenu(key))
-                            .is_some_and(|bounds| bounds.contains(&event.position));
-                        if !on_head {
-                            close(this, cx);
-                        }
-                    }),
-                )
+            hutan_ui::scroll_y(
+                gpui::SharedString::from(format!("menu-scroll-{key:?}")),
+                panel
+                    .relative()
+                    .child(menu_probe)
+                    .on_mouse_down_out(cx.listener(
+                        move |this, event: &gpui::MouseDownEvent, _, cx| {
+                            let on_head = regions
+                                .get(Region::SettingsMenu(key))
+                                .is_some_and(|bounds| bounds.contains(&event.position));
+                            if !on_head {
+                                close(this, cx);
+                            }
+                        },
+                    )),
+            )
         });
         div()
             .relative()

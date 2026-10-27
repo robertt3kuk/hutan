@@ -1557,12 +1557,11 @@ impl FileView {
         shown: usize,
         more: usize,
         look: &super::chat::Look,
-    ) -> gpui::Stateful<gpui::Div> {
-        div()
+    ) -> impl IntoElement + use<> {
+        let lines = div()
             .id("file-conflict-diff-lines")
             .flex_none()
             .max_h(px(280.0))
-            .overflow_y_scroll()
             .font_family(look.mono.clone())
             .text_size(px(look.tokens.secondary_font_size))
             .children(
@@ -1584,7 +1583,8 @@ impl FileView {
                         .text_color(look.theme.muted)
                         .child(format!("{more} more lines")),
                 )
-            })
+            });
+        hutan_ui::scroll_y("file-conflict-diff-scroll", lines)
     }
 
     fn render_state(

@@ -20,10 +20,12 @@
 
 mod bar;
 pub mod geometry;
+mod kit;
 mod policy;
 
-pub use bar::{Axis, Mark, Region, ScrollHandleSource, Scrollbar, Scroller};
+pub use bar::{Axis, ListSource, Mark, Region, ScrollHandleSource, Scrollbar, Scroller};
 pub use geometry::Metrics;
+pub use kit::{ScrollY, scroll_y};
 pub use policy::{
     FADE, FADE_REDUCED, HOLD, Policy, Style, Visibility, fade_opacity, set_setting, set_style,
     set_system_always,

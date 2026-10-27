@@ -514,7 +514,7 @@ impl Render for AgentsPanel {
                     )
                     .child(more),
             )
-            .child(list)
+            .child(hutan_ui::scroll_y("agents-list-scroll", list))
     }
 }
 

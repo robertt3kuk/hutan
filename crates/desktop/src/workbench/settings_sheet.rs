@@ -105,6 +105,11 @@ impl SettingsSheet {
         &self.query
     }
 
+    /// The scroll of the page's rows (tests drive and read it).
+    pub fn scroll(&self) -> &gpui::ScrollHandle {
+        &self.scroll
+    }
+
     /// Whether the Problems list is open.
     pub fn problems_open(&self) -> bool {
         self.problems_open
@@ -1437,15 +1442,15 @@ impl Workbench {
                                         .border_r_1()
                                         .border_color(theme.border)
                                         .child(search_box)
-                                        .child(
+                                        .child(hutan_ui::scroll_y(
+                                            "sheet-nav-scroll",
                                             div()
                                                 .id("sheet-nav")
                                                 .flex_1()
-                                                .overflow_y_scroll()
                                                 .px(px(tokens.spacing * 2.0))
                                                 .pb(px(tokens.spacing * 2.0))
                                                 .children(nav),
-                                        ),
+                                        )),
                                 )
                                 .child(
                                     div()
@@ -1477,22 +1482,24 @@ impl Workbench {
                                         )
                                         .children(banner)
                                         .child(
-                                            div()
-                                                .id("sheet-fields")
-                                                .flex_1()
-                                                .min_h_0()
-                                                .overflow_y_scroll()
-                                                .track_scroll(&scroll)
-                                                .px(px(tokens.spacing * 4.0))
-                                                .when(rows.is_empty(), |s| {
-                                                    s.child(
-                                                        div()
-                                                            .py(px(tokens.spacing * 3.0))
-                                                            .text_color(theme.muted)
-                                                            .child("No editable settings."),
-                                                    )
-                                                })
-                                                .children(rows),
+                                            hutan_ui::scroll_y(
+                                                "sheet-fields-scroll",
+                                                div()
+                                                    .id("sheet-fields")
+                                                    .flex_1()
+                                                    .min_h_0()
+                                                    .px(px(tokens.spacing * 4.0))
+                                                    .when(rows.is_empty(), |s| {
+                                                        s.child(
+                                                            div()
+                                                                .py(px(tokens.spacing * 3.0))
+                                                                .text_color(theme.muted)
+                                                                .child("No editable settings."),
+                                                        )
+                                                    })
+                                                    .children(rows),
+                                            )
+                                            .tracking(&scroll),
                                         )
                                         .when_some(message, |s, message| {
                                             s.child(
@@ -1511,27 +1518,29 @@ impl Workbench {
                         // and the footer keep their size.
                         .when(problems_open && problem_count > 0, |s| {
                             s.child(
-                                div()
-                                    .id("sheet-problems")
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .bottom(px(32.0))
-                                    .max_h(px(220.0))
-                                    .overflow_y_scroll()
-                                    .occlude()
-                                    .px(px(tokens.spacing * 4.0))
-                                    .py(px(tokens.spacing * 2.0))
-                                    .bg(theme.surface)
-                                    .border_t_1()
-                                    .border_color(theme.border)
-                                    .children(problem_lines)
-                                    .presented(
-                                        "sheet-problems-motion",
-                                        motion::Kind::Popover,
-                                        true,
-                                        motion::Slide::None,
-                                    ),
+                                hutan_ui::scroll_y(
+                                    "sheet-problems-scroll",
+                                    div()
+                                        .id("sheet-problems")
+                                        .absolute()
+                                        .left_0()
+                                        .right_0()
+                                        .bottom(px(32.0))
+                                        .max_h(px(220.0))
+                                        .occlude()
+                                        .px(px(tokens.spacing * 4.0))
+                                        .py(px(tokens.spacing * 2.0))
+                                        .bg(theme.surface)
+                                        .border_t_1()
+                                        .border_color(theme.border)
+                                        .children(problem_lines),
+                                )
+                                .presented(
+                                    "sheet-problems-motion",
+                                    motion::Kind::Popover,
+                                    true,
+                                    motion::Slide::None,
+                                ),
                             )
                         })
                         .presented(

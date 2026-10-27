@@ -1319,7 +1319,7 @@ impl ChangesView {
                 }
             }
         }
-        list.into_any_element()
+        hutan_ui::scroll_y("changes-review-list-scroll", list).into_any_element()
     }
 
     fn render_review_row(

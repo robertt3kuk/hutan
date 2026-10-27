@@ -13,8 +13,7 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Pixels, Point,
-    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point,
-    prelude::*, px,
+    SharedString, Styled, Window, anchored, deferred, div, point, prelude::*, px,
 };
 use hutan_settings::SettingsLayer;
 
@@ -927,25 +926,27 @@ impl Workbench {
             )
             .child(header)
             .child(
-                div()
-                    .id("panel-settings-fields")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&scroll)
-                    .px(px(tokens.spacing * 3.0))
-                    .when(rows.is_empty(), |s| {
-                        s.child(
-                            div()
-                                .py(px(tokens.spacing * 3.0))
-                                .text_color(theme.muted)
-                                .child(SharedString::from(format!(
-                                    "No options here; see {} in Settings.",
-                                    namespace_title(page)
-                                ))),
-                        )
-                    })
-                    .children(rows),
+                hutan_ui::scroll_y(
+                    "panel-settings-scroll",
+                    div()
+                        .id("panel-settings-fields")
+                        .flex_1()
+                        .min_h_0()
+                        .px(px(tokens.spacing * 3.0))
+                        .when(rows.is_empty(), |s| {
+                            s.child(
+                                div()
+                                    .py(px(tokens.spacing * 3.0))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(format!(
+                                        "No options here; see {} in Settings.",
+                                        namespace_title(page)
+                                    ))),
+                            )
+                        })
+                        .children(rows),
+                )
+                .tracking(&scroll),
             )
             .when_some(message, |s, message| {
                 s.child(

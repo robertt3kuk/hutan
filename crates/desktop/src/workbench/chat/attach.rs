@@ -11,7 +11,7 @@ use crate::workbench::ui::Button;
 use crate::workbench::ui::IconButton;
 use gpui::{
     AnyElement, App, Context, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, Task, div, prelude::*, px,
+    ParentElement, SharedString, Styled, Task, div, prelude::*, px,
 };
 use hutan_client::ClientError;
 use hutan_core::TerminalId;
@@ -806,28 +806,30 @@ impl ChatView {
             Stage::Form(kind) => self.render_attach_form(kind, look, cx),
         };
         Some(
-            div()
-                .id("chat-attach-form")
-                .relative()
-                .flex()
-                .flex_col()
-                .flex_none()
-                .gap(px(tokens.spacing * 1.5))
-                .mx(px(tokens.spacing * 3.0))
-                .mt(px(tokens.spacing * 2.0))
-                .max_h(px(340.0))
-                .overflow_y_scroll()
-                .popover(theme, tokens)
-                .p(px(tokens.spacing * 2.5))
-                .child(header)
-                .child(body)
-                .presented(
-                    "attach-motion",
-                    motion::Kind::Popover,
-                    true,
-                    motion::Slide::None,
-                )
-                .into_any_element(),
+            hutan_ui::scroll_y(
+                "chat-attach-form-scroll",
+                div()
+                    .id("chat-attach-form")
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .gap(px(tokens.spacing * 1.5))
+                    .mx(px(tokens.spacing * 3.0))
+                    .mt(px(tokens.spacing * 2.0))
+                    .max_h(px(340.0))
+                    .popover(theme, tokens)
+                    .p(px(tokens.spacing * 2.5))
+                    .child(header)
+                    .child(body),
+            )
+            .presented(
+                "attach-motion",
+                motion::Kind::Popover,
+                true,
+                motion::Slide::None,
+            )
+            .into_any_element(),
         )
     }
 

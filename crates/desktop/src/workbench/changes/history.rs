@@ -468,7 +468,7 @@ impl ChangesView {
                     ),
             );
         }
-        list.into_any_element()
+        hutan_ui::scroll_y("changes-commits-scroll", list).into_any_element()
     }
 
     fn render_commit(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
@@ -487,7 +487,7 @@ impl ChangesView {
             .gap(px(tokens.spacing * 1.5))
             .child(probe(&self.env.regions, Region::Changes("history-detail")));
         let Some(commit) = self.history_selected() else {
-            return pane.into_any_element();
+            return hutan_ui::scroll_y("changes-commit-detail-scroll", pane).into_any_element();
         };
         let shown = self.history.shown.get(&commit.id);
         let body = shown
@@ -530,9 +530,11 @@ impl ChangesView {
                 }),
         );
         let Some(shown) = shown else {
-            return pane
-                .child(div().text_color(theme.muted).child("Reading the commit…"))
-                .into_any_element();
+            return hutan_ui::scroll_y(
+                "changes-commit-detail-scroll",
+                pane.child(div().text_color(theme.muted).child("Reading the commit…")),
+            )
+            .into_any_element();
         };
         if shown.files.is_empty() {
             pane = pane.child(
@@ -608,6 +610,6 @@ impl ChangesView {
                     .child("This commit changed more files than are listed."),
             );
         }
-        pane.into_any_element()
+        hutan_ui::scroll_y("changes-commit-detail-scroll", pane).into_any_element()
     }
 }

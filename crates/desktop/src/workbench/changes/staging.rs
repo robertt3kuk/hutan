@@ -1056,8 +1056,12 @@ impl ChangesView {
                 theme.warning,
             ));
         }
-        pane.child(probe(&self.env.regions, Region::Changes("stage")))
-            .into_any_element()
+        hutan_ui::scroll_y(
+            "changes-stage-scroll",
+            pane.child(probe(&self.env.regions, Region::Changes("stage"))),
+        )
+        .tracking(&self.staging.scroll)
+        .into_any_element()
     }
 
     /// One hunk: its header with *Stage hunk* · *Discard hunk…* (unstaged) or *Unstage hunk*

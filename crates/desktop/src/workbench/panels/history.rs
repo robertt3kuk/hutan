@@ -55,6 +55,9 @@ pub(crate) use super::history_view::chip;
 
 /// How often the index status is read while indexing settles after Enable or Rebuild.
 const SETTLE_POLL: Duration = Duration::from_millis(500);
+/// What a row of the list is tall before it is measured, in pixels: the scrollbar's thumb and
+/// its drags use it for the rows nobody has scrolled to yet.
+const ROW_ESTIMATE: f32 = 40.0;
 /// The polls stop after the row count has not changed for this long once it is above zero …
 const SETTLE_QUIET: Duration = Duration::from_secs(2);
 /// … or this long while it is still zero (a first scan of large directories takes a while).
@@ -140,6 +143,7 @@ pub struct HistoryPanel {
     pub(super) groups: Vec<super::history_catalog::Group>,
     pub(super) entries: Vec<Entry>,
     pub(super) list: ListState,
+    pub(super) bar: hutan_ui::Scrollbar,
     /// The list starts at the top the next time it is rebuilt (the query, scope or order changed).
     top_wanted: bool,
     pub(super) expanded: HashSet<ItemKey>,
@@ -272,6 +276,7 @@ impl HistoryPanel {
                 store.connection_state() == ConnectionState::Connected,
             )
         };
+        let list = ListState::new(0, ListAlignment::Top, px(400.0));
         let mut panel = Self {
             env,
             search_focus: cx.focus_handle(),
@@ -295,7 +300,8 @@ impl HistoryPanel {
             items: Vec::new(),
             groups: Vec::new(),
             entries: Vec::new(),
-            list: ListState::new(0, ListAlignment::Top, px(400.0)),
+            bar: hutan_ui::Scrollbar::for_list(&list, ROW_ESTIMATE),
+            list,
             top_wanted: true,
             expanded: HashSet::new(),
             collapsed: HashSet::new(),
@@ -938,7 +944,8 @@ impl HistoryPanel {
             },
             Some((None, top)) => top,
         };
-        self.list.reset(self.entries.len());
+        self.list
+            .reset_with_uniform_height(self.entries.len(), px(ROW_ESTIMATE));
         self.list.scroll_to(top);
         cx.notify();
     }

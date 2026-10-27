@@ -1410,23 +1410,25 @@ impl AssistantPanel {
                 }
             }
         }
-        div()
-            .id("assistant-switcher")
-            .size_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(px(tokens.spacing * 2.0))
-            .p(px(tokens.spacing * 3.0))
-            .child(ui::section_label(
-                "What the assistant runs on",
-                &theme,
-                &tokens,
-            ))
-            .children(rows)
-            .child(ui::section_label("Model", &theme, &tokens))
-            .children(models)
-            .into_any_element()
+        hutan_ui::scroll_y(
+            "assistant-switcher-scroll",
+            div()
+                .id("assistant-switcher")
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing * 2.0))
+                .p(px(tokens.spacing * 3.0))
+                .child(ui::section_label(
+                    "What the assistant runs on",
+                    &theme,
+                    &tokens,
+                ))
+                .children(rows)
+                .child(ui::section_label("Model", &theme, &tokens))
+                .children(models),
+        )
+        .into_any_element()
     }
 
     fn notice(

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use common::chat::{ChatEnv, method, says};
 use common::{TestDaemon, draw, open_with, wait_until};
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use hutan_chat_view::{ApprovalState, Body, TurnOutcome};
 use hutan_core::agent::ToolStatus;
 use hutan_core::{ApprovalId, SessionId, SessionState};
@@ -2497,4 +2497,92 @@ fn the_start_sheet_prompt_follows_the_send_key_and_its_hint_switches_it(cx: &mut
         "the sheet has the keys back"
     );
     assert!(!asking(cx));
+}
+
+#[gpui::test]
+fn the_transcript_has_a_scrollbar_that_drags_to_the_first_and_back_to_the_last_entry(
+    cx: &mut TestAppContext,
+) {
+    const TURNS: usize = 20;
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(many_turns(&env, TURNS));
+    let info = daemon.create_chat(&env.cwd());
+    for turn in 1..=TURNS {
+        let _: hutan_protocol::chat::ChatSent =
+            daemon.call(Request::ChatSend(hutan_protocol::chat::ChatSend {
+                session_id: info.id,
+                text: format!("message {turn}"),
+                attachments: vec![],
+            }));
+        std::thread::sleep(Duration::from_millis(5));
+        wait_idle(&daemon, info.id);
+    }
+    let (view, cx) = open(cx, &daemon);
+    let (chat, model) = open_chat(&view, cx, info.id);
+    draw(cx);
+    draw(cx);
+    assert!(
+        !model.read_with(cx, |m, _| m.has_earlier()),
+        "the whole journal is in the list"
+    );
+    let at_tail = chat
+        .read_with(cx, |c, _| c.scrollbar().thumb())
+        .expect("twenty turns do not fit one screen");
+    assert!(
+        chat.read_with(cx, |c, _| c.following_tail()),
+        "the list follows the end"
+    );
+
+    let drag = |cx: &mut VisualTestContext, thumb: gpui::Bounds<gpui::Pixels>, to: f32| {
+        let x = thumb.center().x;
+        cx.simulate_mouse_down(
+            gpui::point(x, thumb.center().y),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.simulate_mouse_move(
+            gpui::point(x, gpui::px(to)),
+            Some(MouseButton::Left),
+            Modifiers::none(),
+        );
+        draw(cx);
+        cx.simulate_mouse_up(
+            gpui::point(x, gpui::px(to)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        draw(cx);
+    };
+
+    // To the top: the first entry of the transcript is at the top of the list.
+    drag(cx, at_tail, -5_000.0);
+    let first = transcript(&model, cx, |t| t.entries()[0].id);
+    assert_eq!(
+        chat.read_with(cx, |c, cx| c.scroll_anchor(cx)),
+        Some((first, gpui::px(0.0))),
+        "the oldest entry is at the top"
+    );
+    assert!(
+        !chat.read_with(cx, |c, _| c.following_tail()),
+        "scrolled away from the end"
+    );
+    let at_top = chat
+        .read_with(cx, |c, _| c.scrollbar().thumb())
+        .expect("scrolled");
+    assert!(at_top.origin.y < at_tail.origin.y, "the thumb rose with it");
+
+    // And back to the end: the thumb is where it was and the list follows the tail again.
+    drag(cx, at_top, 9_000.0);
+    let back = chat
+        .read_with(cx, |c, _| c.scrollbar().thumb())
+        .expect("scrolled");
+    assert_eq!(
+        back.bottom(),
+        at_tail.bottom(),
+        "the thumb is at the end of the track"
+    );
+    assert!(
+        chat.read_with(cx, |c, cx| c.new_below(cx)).is_none(),
+        "the reader is at the bottom"
+    );
 }

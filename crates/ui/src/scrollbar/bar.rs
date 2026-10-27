@@ -3,9 +3,9 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{
-    App, Bounds, DispatchPhase, Hitbox, HitboxBehavior, Hsla, IntoElement, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
-    Styled, Task, Window, canvas, fill, point, px, size,
+    App, Bounds, DispatchPhase, Hitbox, HitboxBehavior, Hsla, IntoElement, ListOffset, ListState,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollHandle, Styled, Task, Window, canvas, fill, point, px, size,
 };
 
 use super::geometry::{
@@ -60,6 +60,80 @@ pub trait Scroller {
 
     /// Scrolls to `offset` (from the start, within `0..=max` of [`metrics`](Self::metrics)).
     fn set_offset(&self, offset: f32, window: &mut Window, cx: &mut App);
+
+    /// The thumb was grabbed: a scroller that measures its content lazily (a list) keeps the
+    /// extent it had until [`drag_ended`](Self::drag_ended), so the thumb does not run away
+    /// from the pointer.
+    fn drag_started(&self) {}
+
+    /// The thumb was let go.
+    fn drag_ended(&self) {}
+}
+
+/// A GPUI list's [`ListState`] as a [`Scroller`], in pixels (the chat, the sessions and agents
+/// lists, history).
+///
+/// A list measures the rows it draws and counts the others as nothing, which makes a thumb of
+/// the measured part and a drag to the top land on the first measured row. So the source gives
+/// every row nobody has drawn yet an estimated height (`estimate`, in pixels) whenever the list
+/// has laid itself out for a new width, and the two ends of the track are the ends of the list:
+/// the first row, and the tail.
+#[derive(Clone, Debug)]
+pub struct ListSource {
+    list: ListState,
+    estimate: Pixels,
+    /// The width the estimate was given for: a new width makes the list forget its heights.
+    width: Cell<Pixels>,
+}
+
+impl ListSource {
+    pub fn new(list: ListState, estimate: f32) -> Self {
+        Self {
+            list,
+            estimate: px(estimate),
+            width: Cell::new(px(-1.0)),
+        }
+    }
+}
+
+impl Scroller for ListSource {
+    fn metrics(&self, _cx: &App) -> Metrics {
+        let viewport = self.list.viewport_bounds();
+        if self.width.replace(viewport.size.width) != viewport.size.width {
+            // The list has just laid out for this width and counts its rows as unmeasured.
+            let _ = self.list.clone().with_uniform_item_height(self.estimate);
+        }
+        Metrics {
+            viewport: f32::from(viewport.size.height),
+            max: f32::from(self.list.max_offset_for_scrollbar().y),
+            offset: f32::from(-self.list.scroll_px_offset_for_scrollbar().y),
+        }
+    }
+
+    fn region(&self, _cx: &App) -> Option<Region> {
+        Some(Region::of(self.list.viewport_bounds()))
+    }
+
+    fn set_offset(&self, offset: f32, _window: &mut Window, _cx: &mut App) {
+        if offset <= 0.5 {
+            // The first row, whatever the rows above the measured ones add up to.
+            self.list.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            });
+        } else {
+            self.list
+                .set_offset_from_scrollbar(point(px(0.0), -px(offset)));
+        }
+    }
+
+    fn drag_started(&self) {
+        self.list.scrollbar_drag_started();
+    }
+
+    fn drag_ended(&self) {
+        self.list.scrollbar_drag_ended();
+    }
 }
 
 /// A GPUI [`ScrollHandle`] as a [`Scroller`], in pixels.
@@ -126,7 +200,7 @@ impl Scroller for ScrollHandleSource {
 
 /// What the bar remembers between frames, shared by its clones.
 #[derive(Default)]
-struct State {
+pub(super) struct State {
     /// Where on the thumb (pixels from its start) the drag took hold, while it is held.
     grab: Cell<Option<f32>>,
     /// The scroll position the last frame saw: a change is scrolling.
@@ -239,6 +313,32 @@ impl Scrollbar {
         Self::of(ScrollHandleSource::new(handle, axis), axis)
     }
 
+    /// A bar over `source` that continues the interaction `state` of an earlier frame's bar: for
+    /// elements that rebuild their bar each frame (`scroll_y`).
+    pub(super) fn with_state(
+        source: impl Scroller + 'static,
+        axis: Axis,
+        state: Rc<State>,
+    ) -> Self {
+        Self {
+            source: Rc::new(source),
+            axis,
+            corner: false,
+            on_paint: None,
+            state,
+        }
+    }
+
+    /// A bar for a `uniform_list`'s scroll handle.
+    pub fn for_uniform_list(handle: &gpui::UniformListScrollHandle) -> Self {
+        Self::new(handle.0.borrow().base_handle.clone(), Axis::Vertical)
+    }
+
+    /// A bar for a `list`'s state whose rows are about `estimate` pixels tall until drawn.
+    pub fn for_list(state: &ListState, estimate: f32) -> Self {
+        Self::of(ListSource::new(state.clone(), estimate), Axis::Vertical)
+    }
+
     /// A bar for a scrolled element inside `outer`, the element that scrolls it the other way:
     /// it sits at the edge of what is visible of both.
     pub fn nested(handle: ScrollHandle, axis: Axis, outer: ScrollHandle) -> Self {
@@ -324,7 +424,9 @@ impl Scrollbar {
 
     fn reset(&self) {
         let state = &self.state;
-        state.grab.set(None);
+        if state.grab.take().is_some() {
+            self.source.drag_ended();
+        }
         state.seen.set(None);
         state.near.set(false);
         state.over_thumb.set(false);
@@ -450,6 +552,7 @@ impl Scrollbar {
             let from = down.along(placed.thumb.origin);
             if placed.thumb.dilate(px(SLOP)).contains(&event.position) {
                 down.state.grab.set(Some(down.along(event.position) - from));
+                down.source.drag_started();
             } else {
                 let towards_end = down.along(event.position) > from;
                 down.source
@@ -468,6 +571,7 @@ impl Scrollbar {
             if let Some(grab) = state.grab.get() {
                 if event.pressed_button != Some(MouseButton::Left) {
                     state.grab.set(None);
+                    drag.source.drag_ended();
                     cx.notify(view);
                     return;
                 }
@@ -501,6 +605,7 @@ impl Scrollbar {
                 && event.button == MouseButton::Left
                 && up.state.grab.take().is_some()
             {
+                up.source.drag_ended();
                 cx.notify(view);
             }
         });

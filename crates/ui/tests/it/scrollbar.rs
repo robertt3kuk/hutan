@@ -378,3 +378,195 @@ fn a_bar_under_an_occluding_overlay_is_not_reached(cx: &mut TestAppContext) {
     );
     assert!(!view.read_with(cx, |p, _| p.bar.held()));
 }
+
+/// A scrolled element built by `scroll_y`, as the desktop's render helpers (a settings page, a
+/// sheet) use it: no field keeps the handle or the bar, the element state does.
+struct Inside {
+    rows: usize,
+    handle: ScrollHandle,
+    thumb: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+}
+
+impl Render for Inside {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let thumb = std::rc::Rc::clone(&self.thumb);
+        self.thumb.set(None);
+        hutan_ui::scroll_y(
+            "inside-scroll",
+            div()
+                .id("inside")
+                .w(px(WIDTH))
+                .h(px(HEIGHT))
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .children((0..self.rows).map(|n| div().h(px(ROW)).child(format!("row {n}")))),
+        )
+        .tracking(&self.handle)
+        .on_paint(move |bounds, _| thumb.set(Some(bounds)))
+    }
+}
+
+fn inside(cx: &mut TestAppContext, rows: usize) -> (Entity<Inside>, &mut VisualTestContext) {
+    let (view, cx) = cx.add_window_view(move |_, _| Inside {
+        rows,
+        handle: ScrollHandle::new(),
+        thumb: Default::default(),
+    });
+    draw(cx);
+    draw(cx);
+    (view, cx)
+}
+
+#[gpui::test]
+fn a_scroll_y_element_has_a_bar_that_follows_it_and_changes_no_extent(cx: &mut TestAppContext) {
+    let (view, cx) = inside(cx, 50);
+    let (handle, thumb) = view.read_with(cx, |p, _| (p.handle.clone(), p.thumb.clone()));
+    // 50 rows of 20 px with 4 px gaps: the bar added no content of its own.
+    let content = 50.0 * ROW + 49.0 * 4.0;
+    assert_eq!(
+        f32::from(handle.max_offset().y),
+        content - HEIGHT,
+        "an absolutely placed bar leaves the scroll extent alone"
+    );
+    let at_top = thumb.get().expect("50 rows do not fit");
+    assert_eq!(
+        f32::from(at_top.right()),
+        WIDTH - 2.0,
+        "it is at the viewport's edge"
+    );
+
+    // Scrolled, the thumb moves and stays at the viewport's edge, not with the content.
+    handle.set_offset(point(px(0.0), px(-400.0)));
+    draw(cx);
+    let scrolled = thumb.get().expect("scrolled");
+    assert!(scrolled.origin.y > at_top.origin.y);
+    assert_eq!(f32::from(scrolled.right()), WIDTH - 2.0);
+
+    // A page click works through it, and a drag to the end reaches the last row.
+    handle.set_offset(point(px(0.0), px(0.0)));
+    draw(cx);
+    cx.simulate_click(point(edge_x(), px(150.0)), Modifiers::none());
+    assert_eq!(f32::from(-handle.offset().y), HEIGHT);
+    draw(cx);
+    let grab = thumb.get().expect("scrollable");
+    cx.simulate_mouse_down(
+        point(edge_x(), grab.origin.y + px(5.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    mouse_move(cx, edge_x(), 5_000.0, true);
+    assert_eq!(f32::from(-handle.offset().y), content - HEIGHT);
+    cx.simulate_mouse_up(
+        point(edge_x(), px(5_000.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+}
+
+#[gpui::test]
+fn the_interaction_state_survives_frames_of_a_scroll_y_element(cx: &mut TestAppContext) {
+    setting(cx, ScrollbarsSetting::Scrolling);
+    let (view, cx) = inside(cx, 50);
+    let (handle, thumb) = view.read_with(cx, |p, _| (p.handle.clone(), p.thumb.clone()));
+    assert!(thumb.get().is_none(), "an overlay bar waits for scrolling");
+    handle.set_offset(point(px(0.0), px(-100.0)));
+    draw(cx);
+    assert!(thumb.get().is_some(), "scrolling shows it");
+    // The element is rebuilt every frame; the fade clock is not.
+    cx.executor().advance_clock(Duration::from_millis(1300));
+    draw(cx);
+    assert!(thumb.get().is_none(), "and it fades");
+}
+
+#[gpui::test]
+fn a_short_scroll_y_element_has_no_bar(cx: &mut TestAppContext) {
+    let (view, cx) = inside(cx, 3);
+    let (handle, thumb) = view.read_with(cx, |p, _| (p.handle.clone(), p.thumb.clone()));
+    assert!(thumb.get().is_none());
+    assert_eq!(f32::from(handle.max_offset().y), 0.0);
+}
+
+/// A `gpui::list` of 100 rows with its bar, the way the chat and the sessions lists have them.
+struct Rows {
+    state: gpui::ListState,
+    bar: Scrollbar,
+}
+
+impl Render for Rows {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _ = cx;
+        div()
+            .relative()
+            .w(px(WIDTH))
+            .h(px(HEIGHT))
+            .child(
+                gpui::list(self.state.clone(), |ix, _, _| {
+                    div()
+                        .h(px(ROW))
+                        .child(format!("row {ix}"))
+                        .into_any_element()
+                })
+                .size_full(),
+            )
+            .child(self.bar.element())
+    }
+}
+
+#[gpui::test]
+fn a_list_bar_drags_to_the_first_row_and_to_the_last(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, _| {
+        let state = gpui::ListState::new(100, gpui::ListAlignment::Top, px(100.0));
+        Rows {
+            bar: Scrollbar::for_list(&state, ROW),
+            state,
+        }
+    });
+    draw(cx);
+    draw(cx);
+    let (state, bar) = view.read_with(cx, |r, _| (r.state.clone(), r.bar.clone()));
+    let thumb = bar.thumb().expect("100 rows do not fit");
+    assert_eq!(
+        f32::from(thumb.origin.y),
+        2.0,
+        "at the top the thumb is at the track's start"
+    );
+
+    // To the end: the last row is the last in view.
+    let grab = thumb.center();
+    cx.simulate_mouse_down(point(grab.x, grab.y), MouseButton::Left, Modifiers::none());
+    mouse_move(cx, grab.x, 5_000.0, true);
+    draw(cx);
+    cx.simulate_mouse_up(
+        point(grab.x, px(5_000.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    draw(cx);
+    let top = state.logical_scroll_top();
+    assert!(
+        (top.item_ix as f32) * ROW + f32::from(top.offset_in_item) >= 100.0 * ROW - HEIGHT - 1.0,
+        "at the end: {top:?}"
+    );
+    assert!(
+        !state.is_scrollbar_dragging(),
+        "the drag ended with the button"
+    );
+
+    // And to the first row.
+    let end = bar.thumb().expect("scrolled");
+    cx.simulate_mouse_down(
+        point(end.center().x, end.center().y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    mouse_move(cx, end.center().x, -5_000.0, true);
+    draw(cx);
+    cx.simulate_mouse_up(
+        point(end.center().x, px(-5_000.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    assert_eq!(state.logical_scroll_top().item_ix, 0);
+    assert_eq!(f32::from(state.logical_scroll_top().offset_in_item), 0.0);
+}

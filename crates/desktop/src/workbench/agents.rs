@@ -764,12 +764,14 @@ impl Workbench {
                             vec![div().child(picker.model_query.clone()).into_any_element()]
                         }))
                         .child(
-                            div()
-                                .id("agent-model-list")
-                                .max_h(px(260.0))
-                                .track_scroll(&picker.scroll)
-                                .overflow_y_scroll()
-                                .children(models),
+                            hutan_ui::scroll_y(
+                                "agent-model-list-scroll",
+                                div()
+                                    .id("agent-model-list")
+                                    .max_h(px(260.0))
+                                    .children(models),
+                            )
+                            .tracking(&picker.scroll),
                         )
                         .children(note)
                         .child(

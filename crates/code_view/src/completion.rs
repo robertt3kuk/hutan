@@ -33,8 +33,7 @@ use std::time::{Duration, Instant};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     Anchor, AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, anchored, deferred, div,
-    point, px,
+    ParentElement as _, Styled as _, anchored, deferred, div, point, px,
 };
 use hutan_buffer::{Edit, Selection, Selections, Utf16Point};
 use hutan_syntax::Token;
@@ -1005,7 +1004,6 @@ impl CodeView {
                     .py(px(8.0))
                     .w(px(cell * 44.0))
                     .max_h(line_h * COMPLETION_ROWS as f32)
-                    .overflow_y_scroll()
                     .when_some(item.detail.clone(), |s, d| {
                         s.child(
                             div()
@@ -1025,7 +1023,7 @@ impl CodeView {
                             .children(code.lines().map(|l| div().child(l.to_owned()))),
                     });
                 }
-                docs
+                hutan_ui::scroll_y("code-completion-docs-scroll", docs)
             })
         });
         let below = point(at.x - px(cell * 3.0), at.y + line_h);

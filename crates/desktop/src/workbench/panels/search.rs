@@ -186,6 +186,7 @@ pub struct SearchPanel {
     /// The selected row (always a match row).
     selected: Option<usize>,
     scroll: UniformListScrollHandle,
+    bar: hutan_ui::Scrollbar,
     /// Bumped by every change of the query: answers of an older search are dropped.
     generation: u64,
     running: Option<Running>,
@@ -222,6 +223,7 @@ impl SearchPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
         cx.observe(&env.sessions, |this, _, cx| this.follow_root(cx))
             .detach();
+        let scroll = UniformListScrollHandle::new();
         let mut panel = Self {
             env,
             query_focus: cx.focus_handle(),
@@ -246,7 +248,8 @@ impl SearchPanel {
             rows: Vec::new(),
             excluded: HashSet::new(),
             selected: None,
-            scroll: UniformListScrollHandle::new(),
+            scroll: scroll.clone(),
+            bar: hutan_ui::Scrollbar::for_uniform_list(&scroll),
             generation: 0,
             running: None,
             task: None,
@@ -312,6 +315,20 @@ impl SearchPanel {
     }
 
     /// `fs.search` answers listed so far.
+    /// The results list's scrollbar (tests read where its thumb is).
+    pub fn scrollbar(&self) -> &hutan_ui::Scrollbar {
+        &self.bar
+    }
+
+    /// How far the results are scrolled and how far they can scroll, in pixels (tests).
+    pub fn scroll_range(&self) -> (f32, f32) {
+        let handle = self.scroll.0.borrow();
+        (
+            -f32::from(handle.base_handle.offset().y),
+            f32::from(handle.base_handle.max_offset().y),
+        )
+    }
+
     pub fn answers(&self) -> u64 {
         self.answers
     }
@@ -2022,17 +2039,23 @@ impl Render for SearchPanel {
 
         let count = self.rows.len();
         let body: AnyElement = if count > 0 {
-            uniform_list(
-                "search-results",
-                count,
-                cx.processor(|this, range: Range<usize>, window, cx| {
-                    this.render_rows(range, window, cx)
-                }),
-            )
-            .track_scroll(&self.scroll)
-            .flex_1()
-            .min_h_0()
-            .into_any_element()
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    uniform_list(
+                        "search-results",
+                        count,
+                        cx.processor(|this, range: Range<usize>, window, cx| {
+                            this.render_rows(range, window, cx)
+                        }),
+                    )
+                    .track_scroll(&self.scroll)
+                    .size_full(),
+                )
+                .child(self.bar.element())
+                .into_any_element()
         } else {
             let hint = match self.status {
                 SearchStatus::Idle => Some("Type to search the project's files. ⌘⇧H replaces."),

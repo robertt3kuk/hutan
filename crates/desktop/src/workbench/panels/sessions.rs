@@ -54,6 +54,10 @@ use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 use crate::workbench::{BadgeSite, DragPreview, Region};
 
 /// Row refresh for the relative ages.
+/// What a row of the list is tall before it is measured, in pixels: the scrollbar's thumb and
+/// its drags use it for the rows nobody has scrolled to yet, and the real heights replace it as
+/// they are measured.
+const ROW_ESTIMATE: f32 = 34.0;
 const AGE_REFRESH: Duration = Duration::from_secs(30);
 
 /// Indent per level of the tree.
@@ -289,6 +293,7 @@ pub struct SessionsPanel {
     layout_builds: Cell<usize>,
     /// The virtualized list: only the rows in view (and a little around) are built and laid out.
     list: ListState,
+    bar: hutan_ui::Scrollbar,
     /// The entries the list's heights are for, and the filter they were laid out under.
     listed: Rc<Vec<Entry>>,
     listed_query: String,
@@ -359,6 +364,7 @@ impl SessionsPanel {
                 }
             }
         });
+        let list = ListState::new(0, ListAlignment::Top, px(300.0));
         Self {
             env,
             query: String::new(),
@@ -375,7 +381,8 @@ impl SessionsPanel {
             drawn: false,
             layout_cache: RefCell::new(None),
             layout_builds: Cell::new(0),
-            list: ListState::new(0, ListAlignment::Top, px(300.0)),
+            bar: hutan_ui::Scrollbar::for_list(&list, ROW_ESTIMATE),
+            list,
             listed: Rc::new(Vec::new()),
             listed_query: String::new(),
             rows: RowContext {
@@ -996,7 +1003,8 @@ impl SessionsPanel {
         let old = std::mem::replace(&mut self.listed, entries.clone());
         if self.listed_query != self.query {
             self.listed_query.clone_from(&self.query);
-            self.list.reset(entries.len());
+            self.list
+                .reset_with_uniform_height(entries.len(), px(ROW_ESTIMATE));
             return;
         }
         let prefix = old
@@ -1015,6 +1023,7 @@ impl SessionsPanel {
         let (removed, added) = (old.len() - prefix - suffix, entries.len() - prefix - suffix);
         if removed > 0 || added > 0 {
             self.list.splice(prefix..prefix + removed, added);
+            self.list.clone().with_uniform_item_height(px(ROW_ESTIMATE));
         }
     }
 
@@ -1333,6 +1342,7 @@ impl Render for SessionsPanel {
 
         let list = div()
             .id("sessions-list")
+            .relative()
             .flex_1()
             .min_h_0()
             .flex()
@@ -1350,6 +1360,7 @@ impl Render for SessionsPanel {
             // Only the rows in view are built: a frame costs what the window shows, not what the
             // daemon has.
             list.child(gpui::list(self.list.clone(), cx.processor(Self::render_entry)).size_full())
+                .child(self.bar.element())
         };
 
         // `⋯`: sort, filters, organize and the panel's settings (the sort menu).

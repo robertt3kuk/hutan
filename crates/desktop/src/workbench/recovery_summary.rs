@@ -355,15 +355,15 @@ impl Workbench {
                                 .child(probe(&regions, Region::Recovery("close"))),
                         ),
                 )
-                .child(
+                .child(hutan_ui::scroll_y(
+                    "recovery-rows-scroll",
                     div()
                         .id("recovery-rows")
                         .flex()
                         .flex_col()
                         .max_h(px(ROWS_MAX_HEIGHT))
-                        .overflow_y_scroll()
                         .children(rows),
-                )
+                ))
                 .child(
                     div().flex().justify_end().child(
                         Button::new("recovery-dismiss-all", "Dismiss all", &theme, &tokens)

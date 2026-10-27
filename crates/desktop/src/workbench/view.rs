@@ -781,6 +781,8 @@ pub struct Workbench {
     pub(crate) palette: Option<PaletteState>,
     /// The scroll of the palette's list; the highlighted row follows the keyboard.
     pub(crate) palette_scroll: gpui::UniformListScrollHandle,
+    /// The scrollbar of the palette's list.
+    pub(crate) palette_bar: hutan_ui::Scrollbar,
     /// Vim state of the text fields of the overlays below (`editor.vim_mode`).
     pub(crate) edits: super::vim_ui::OverlayEdits,
     pub(crate) context_menu: Option<ContextMenu>,
@@ -1318,6 +1320,7 @@ impl Workbench {
         ];
 
         let remote = super::remote::RemoteControl::start(&sessions, window, cx);
+        let palette_scroll = gpui::UniformListScrollHandle::new();
         let mut this = Self {
             last_saved: options
                 .state_path
@@ -1438,7 +1441,8 @@ impl Workbench {
                 options.package_runner,
             ),
             palette: None,
-            palette_scroll: gpui::UniformListScrollHandle::new(),
+            palette_bar: hutan_ui::Scrollbar::for_uniform_list(&palette_scroll),
+            palette_scroll,
             edits: super::vim_ui::OverlayEdits::default(),
             context_menu: None,
             modal: None,
@@ -2159,6 +2163,11 @@ impl Workbench {
                 .scroll_to_item(palette.selected, gpui::ScrollStrategy::Nearest);
             cx.notify();
         }
+    }
+
+    /// The palette list's scrollbar (tests read where its thumb is).
+    pub fn palette_scrollbar(&self) -> &hutan_ui::Scrollbar {
+        &self.palette_bar
     }
 
     /// How far the palette's list is scrolled, in pixels (tests).

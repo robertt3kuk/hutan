@@ -40,6 +40,10 @@ pub(crate) use crate::workbench::regions::Regions;
 pub const KEY_CONTEXT: &str = "HutanChat";
 
 /// Tallest the composer's text grows before it scrolls.
+/// What a row of the list is tall before it is measured, in pixels: the scrollbar's thumb and
+/// its drags use it for the rows nobody has scrolled to yet, and the real heights replace it as
+/// they are measured.
+const ROW_ESTIMATE: f32 = 96.0;
 const COMPOSER_MAX_HEIGHT: f32 = 220.0;
 /// Diameter of the composer's round send / stop button.
 const SEND_SIZE: f32 = 32.0;
@@ -56,6 +60,8 @@ pub struct ChatView {
     pub(super) approvals_seen: std::cell::RefCell<super::cards::ApprovalsSeen>,
     focus_handle: FocusHandle,
     pub(super) list: ListState,
+    /// The scrollbar of the transcript.
+    pub(super) bar: hutan_ui::Scrollbar,
     seen_epoch: u64,
     /// `Transcript::prepended` as of the last sync.
     synced_front: u64,
@@ -180,6 +186,7 @@ impl ChatView {
             queue_seen: std::cell::RefCell::default(),
             approvals_seen: std::cell::RefCell::default(),
             focus_handle: cx.focus_handle(),
+            bar: hutan_ui::Scrollbar::for_list(&list, ROW_ESTIMATE),
             list,
             seen_epoch: 0,
             synced_front: 0,
@@ -234,6 +241,11 @@ impl ChatView {
             .map(|entry| (entry.id, top.offset_in_item))
     }
 
+    /// The transcript's scrollbar (tests read where its thumb is).
+    pub fn scrollbar(&self) -> &hutan_ui::Scrollbar {
+        &self.bar
+    }
+
     /// Whether the list follows the end of the transcript (the reader has not scrolled away).
     pub fn following_tail(&self) -> bool {
         self.list.is_following_tail()
@@ -282,7 +294,7 @@ impl ChatView {
         let transcript = self.model.read(cx).transcript();
         let len = transcript.len();
         if transcript.epoch() != self.seen_epoch || len < self.synced_len {
-            self.list.reset(len);
+            self.list.reset_with_uniform_height(len, px(ROW_ESTIMATE));
             self.parsed.clear();
             self.seen_epoch = transcript.epoch();
             self.synced_front = transcript.prepended();
@@ -295,6 +307,9 @@ impl ChatView {
             if added > 0 {
                 let top = self.list.logical_scroll_top();
                 self.list.splice(0..0, added);
+                // The older entries are not measured yet: an estimate keeps the scrollbar's
+                // thumb and drags honest until they are.
+                self.list.clone().with_uniform_item_height(px(ROW_ESTIMATE));
                 self.synced_len += added;
                 self.synced_front = transcript.prepended();
                 if !self.list.is_following_tail() {
@@ -304,6 +319,7 @@ impl ChatView {
                     });
                 }
             }
+            let mut remeasured = false;
             for (at, entry) in transcript
                 .entries()
                 .iter()
@@ -312,11 +328,23 @@ impl ChatView {
             {
                 if entry.rev > self.synced_rev {
                     self.list.splice(at..at + 1, 1);
+                    remeasured = true;
                 }
             }
+            // A slot that is measured again loses its height until it is drawn: out of view,
+            // the estimate stands in, so the thumb and its drags stay honest.
+            if remeasured {
+                self.list.clone().with_uniform_item_height(px(ROW_ESTIMATE));
+            }
             if len > self.synced_len {
-                self.list
-                    .splice(self.synced_len..self.synced_len, len - self.synced_len);
+                let added = len - self.synced_len;
+                self.list.splice(self.synced_len..self.synced_len, added);
+                // A journal that loads is many entries at once, none measured: an estimate
+                // keeps the thumb and its drags honest. One streaming entry at a time is at the
+                // end the reader follows, measured as it comes.
+                if added > 1 {
+                    self.list.clone().with_uniform_item_height(px(ROW_ESTIMATE));
+                }
             }
         }
         self.synced_len = len;
@@ -339,6 +367,7 @@ impl ChatView {
         for at in footers {
             self.list.splice(at..at + 1, 1);
         }
+        self.list.clone().with_uniform_item_height(px(ROW_ESTIMATE));
         cx.notify();
     }
 
@@ -1521,13 +1550,15 @@ impl ChatView {
         );
         let context_row = self.render_context_row(&context, look, cx);
         let open_pastes = self.render_open_pastes(&context, look);
-        let input = div()
-            .id("chat-input")
-            .relative()
-            .max_h(px(COMPOSER_MAX_HEIGHT))
-            .min_h(px(tokens.font_size * 3.2))
-            .overflow_y_scroll()
-            .child(self.input_text(typing_here, look, cx));
+        let input = hutan_ui::scroll_y(
+            "chat-input-scroll",
+            div()
+                .id("chat-input")
+                .relative()
+                .max_h(px(COMPOSER_MAX_HEIGHT))
+                .min_h(px(tokens.font_size * 3.2))
+                .child(self.input_text(typing_here, look, cx)),
+        );
 
         let send = IconButton::new(
             "chat-send",
@@ -1714,12 +1745,14 @@ impl Render for ChatView {
             self.render_empty(&look, cx)
         } else {
             div()
+                .relative()
                 .size_full()
                 .child(
                     list(self.list.clone(), cx.processor(Self::render_entry))
                         .size_full()
                         .into_any_element(),
                 )
+                .child(self.bar.element())
                 .into_any_element()
         };
         let drop_overlay = self.render_drop_overlay(&look);

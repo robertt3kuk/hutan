@@ -261,6 +261,7 @@ pub struct ProblemsPanel {
     /// The keyboard came while the list was not read yet: its first row is selected once it is.
     select_first: bool,
     scroll: UniformListScrollHandle,
+    bar: hutan_ui::Scrollbar,
     /// The connection state, filter and container the list was read for.
     asked: Option<(ConnectionState, ProblemsSeverity, Option<WorkspaceId>)>,
     loading: bool,
@@ -289,13 +290,15 @@ impl ProblemsPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
         cx.observe(&env.sessions, |this, _, cx| this.sync(cx))
             .detach();
+        let scroll = UniformListScrollHandle::new();
         let mut panel = Self {
             env,
             focus: cx.focus_handle(),
             problems: Problems::Idle,
             selected: None,
             select_first: false,
-            scroll: UniformListScrollHandle::new(),
+            scroll: scroll.clone(),
+            bar: hutan_ui::Scrollbar::for_uniform_list(&scroll),
             asked: None,
             loading: false,
             reload_again: false,
@@ -963,15 +966,21 @@ impl Render for ProblemsPanel {
 
         let count = self.rows().len();
         let body: AnyElement = match &self.problems {
-            Problems::Ready { .. } if count > 0 => uniform_list(
-                "problems-list",
-                count,
-                cx.processor(|this, range, window, cx| this.render_rows(range, window, cx)),
-            )
-            .track_scroll(&self.scroll)
-            .flex_1()
-            .min_h_0()
-            .into_any_element(),
+            Problems::Ready { .. } if count > 0 => div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    uniform_list(
+                        "problems-list",
+                        count,
+                        cx.processor(|this, range, window, cx| this.render_rows(range, window, cx)),
+                    )
+                    .track_scroll(&self.scroll)
+                    .size_full(),
+                )
+                .child(self.bar.element())
+                .into_any_element(),
             Problems::Ready { .. } => empty_state(
                 "No problems",
                 match filter {

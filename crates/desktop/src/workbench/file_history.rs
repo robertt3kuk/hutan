@@ -620,7 +620,9 @@ impl FileHistoryView {
                     ),
             );
         }
-        list.into_any_element()
+        hutan_ui::scroll_y("file-history-list-scroll", list)
+            .tracking(&self.list)
+            .into_any_element()
     }
 
     fn render_detail(&self, look: &Look, stacked: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -642,7 +644,7 @@ impl FileHistoryView {
             .gap(px(tokens.spacing * 1.5))
             .child(probe(&self.env.regions, Region::FileHistory("detail")));
         let Some(commit) = self.selected() else {
-            return pane.into_any_element();
+            return hutan_ui::scroll_y("file-history-detail-scroll", pane).into_any_element();
         };
         let body = self
             .messages
@@ -737,7 +739,7 @@ impl FileHistoryView {
             look,
             &self.diff_x,
         ));
-        pane.into_any_element()
+        hutan_ui::scroll_y("file-history-detail-scroll", pane).into_any_element()
     }
 }
 

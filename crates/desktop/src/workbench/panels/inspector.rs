@@ -606,13 +606,9 @@ impl Render for InspectorPanel {
                     .pb(px(tokens.spacing))
                     .children(tabs),
             )
-            .child(
-                div()
-                    .id("inspector-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(body),
-            )
+            .child(hutan_ui::scroll_y(
+                "inspector-body-scroll",
+                div().id("inspector-body").flex_1().min_h_0().child(body),
+            ))
     }
 }

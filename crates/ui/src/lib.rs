@@ -5,5 +5,6 @@
 pub mod scrollbar;
 
 pub use scrollbar::{
-    Axis, Mark, Metrics, Policy, Region, ScrollHandleSource, Scrollbar, Scroller, Style, Visibility,
+    Axis, ListSource, Mark, Metrics, Policy, Region, ScrollHandleSource, ScrollY, Scrollbar,
+    Scroller, Style, Visibility, scroll_y,
 };

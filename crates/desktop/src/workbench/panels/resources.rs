@@ -1650,7 +1650,7 @@ impl Render for ResourcesPanel {
             ))
             .child(filter_box)
             .child(columns)
-            .child(list)
+            .child(hutan_ui::scroll_y("resources-list-scroll", list).tracking(&self.scroll))
             .child(probe(&self.env.regions, Region::ResourceControl("panel")))
             .child(
                 // The layout above was chosen from the width of the last frame; when this

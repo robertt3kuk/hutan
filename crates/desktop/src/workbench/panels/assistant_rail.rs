@@ -494,29 +494,31 @@ impl AssistantPanel {
                     .into_any_element(),
             );
         }
-        div()
-            .id("assistant-today")
-            .relative()
-            .flex()
-            .flex_col()
-            .h_full()
-            .overflow_y_scroll()
-            .gap(px(tokens.spacing * 3.0))
-            .p(px(tokens.spacing * 3.0))
-            // The rail is a card: a `surface` fill and no hairline. As a page of its own it is
-            // the page's background.
-            .when(!full, |s| s.flex_none().w(px(RAIL_WIDTH)).bg(theme.surface))
-            .when(full, |s| s.flex_1().min_w_0())
-            .children(sections)
-            .child(
-                link("today-memory", "Memory".into())
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(OpenMawasMemory), cx);
-                    })
-                    .child(probe(&self.env.regions, Region::Assistant("today-memory"))),
-            )
-            .child(probe(&self.env.regions, Region::Assistant("today")))
-            .into_any_element()
+        hutan_ui::scroll_y(
+            "assistant-today-scroll",
+            div()
+                .id("assistant-today")
+                .relative()
+                .flex()
+                .flex_col()
+                .h_full()
+                .gap(px(tokens.spacing * 3.0))
+                .p(px(tokens.spacing * 3.0))
+                // The rail is a card: a `surface` fill and no hairline. As a page of its own it
+                // is the page's background.
+                .when(!full, |s| s.flex_none().w(px(RAIL_WIDTH)).bg(theme.surface))
+                .when(full, |s| s.flex_1().min_w_0())
+                .children(sections)
+                .child(
+                    link("today-memory", "Memory".into())
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(OpenMawasMemory), cx);
+                        })
+                        .child(probe(&self.env.regions, Region::Assistant("today-memory"))),
+                )
+                .child(probe(&self.env.regions, Region::Assistant("today"))),
+        )
+        .into_any_element()
     }
 
     fn render_needs_row(

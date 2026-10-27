@@ -272,7 +272,10 @@ impl Workbench {
                         .child(probe(&self.regions, Region::LauncherItem("project", at))),
                 );
             }
-            project_body = project_body.child(list);
+            project_body = project_body.child(
+                hutan_ui::scroll_y("launch-project-scroll", list)
+                    .tracking(&launcher.project_scroll),
+            );
         }
         project_body = project_body.child(note(project_detail.clone(), theme.faint));
 
@@ -694,7 +697,10 @@ impl Workbench {
                                     }
                                 },
                             ))
-                            .child(items)
+                            .child(
+                                hutan_ui::scroll_y("launch-model-scroll", items)
+                                    .tracking(&launcher.model_scroll),
+                            )
                             .child(
                                 div()
                                     .px(px(tokens.spacing * 2.0))
@@ -972,7 +978,10 @@ impl Workbench {
                         .child(probe(&self.regions, Region::LauncherItem("worktree", at))),
                 );
             }
-            where_body = where_body.child(list);
+            where_body = where_body.child(
+                hutan_ui::scroll_y("launch-worktrees-scroll", list)
+                    .tracking(&launcher.worktree_scroll),
+            );
         }
         if let Some(note) = worktrees_note {
             where_body = where_body.child(note);
@@ -1204,7 +1213,15 @@ impl Workbench {
                         .child(probe(&self.regions, Region::LauncherItem("after", at))),
                 );
             }
-            let after_row = row("After", ring(LauncherStop::After, after.into_any_element()));
+            let after_row = row(
+                "After",
+                ring(
+                    LauncherStop::After,
+                    hutan_ui::scroll_y("launch-after-scroll", after)
+                        .tracking(&launcher.after_scroll)
+                        .into_any_element(),
+                ),
+            );
             let system_row = direct.then(|| {
                 row(
                     "System",
@@ -1482,12 +1499,12 @@ impl Workbench {
                     }))
                     // The form scrolls; the primary button stays at the bottom of the pane, so
                     // it is always visible and does not move when rows come and go.
-                    .child(
+                    .child(hutan_ui::scroll_y(
+                        "launcher-inline-form-scroll",
                         div()
                             .id("launcher-inline-form")
                             .flex_1()
                             .min_h_0()
-                            .overflow_y_scroll()
                             .flex()
                             .flex_col()
                             .items_center()
@@ -1495,7 +1512,7 @@ impl Workbench {
                             .pb(px(tokens.spacing * 4.0))
                             .px(px(tokens.spacing * 6.0))
                             .child(div().w_full().max_w(px(680.0)).child(column)),
-                    )
+                    ))
                     .child(
                         div()
                             .flex_none()
@@ -1518,7 +1535,6 @@ impl Workbench {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
             .gap(px(tokens.spacing * 2.5))
             .px(px(tokens.spacing * 4.0))
             .py(px(tokens.spacing * 3.0))
@@ -1534,6 +1550,7 @@ impl Workbench {
             .children(task_fields.then_some(title_row))
             .children(more_rows)
             .children(task_fields.then_some(mode_row));
+        let body = hutan_ui::scroll_y("launch-body-scroll", body);
 
         Some(
             div()

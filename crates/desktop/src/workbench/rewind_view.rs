@@ -347,12 +347,12 @@ impl Workbench {
                         .text_color(theme.muted)
                         .child(SharedString::from(format!("{path} · now → restored"))),
                 )
-                .child(
+                .child(hutan_ui::scroll_y(
+                    "rewind-diff-scroll",
                     div()
                         .id("rewind-diff")
                         .relative()
                         .max_h(px(DIFF_MAX_HEIGHT))
-                        .overflow_y_scroll()
                         .overflow_x_scroll()
                         .rounded(px(tokens.radius))
                         .border_1()
@@ -364,7 +364,7 @@ impl Workbench {
                         .py(px(tokens.spacing))
                         .child(body)
                         .child(probe(&regions, Region::Rewind("diff"))),
-                )
+                ))
         });
 
         let body: AnyElement = match &sheet.phase {
@@ -386,7 +386,7 @@ impl Workbench {
                 .flex()
                 .flex_col()
                 .gap(px(tokens.spacing * 2.0))
-                .child(list)
+                .child(hutan_ui::scroll_y("rewind-files-scroll", list))
                 .children(diff)
                 .into_any_element(),
         };
@@ -672,12 +672,11 @@ impl Workbench {
                 .child("No checkpoint keeps files yet: a turn that changes files gets one.")
                 .into_any_element()
         } else {
-            div()
+            let rows_list = div()
                 .id("checkpoints-rows")
                 .flex()
                 .flex_col()
                 .max_h(px(420.0))
-                .overflow_y_scroll()
                 .children(rows.into_iter().enumerate().map(|(index, row)| {
                     let c = &row.checkpoint;
                     let what = match (c.kind, &row.prompt) {
@@ -750,8 +749,8 @@ impl Workbench {
                                 .child(probe(&regions, Region::CheckpointRewind(index))),
                         )
                         .child(probe(&regions, Region::CheckpointRow(index)))
-                }))
-                .into_any_element()
+                }));
+            hutan_ui::scroll_y("checkpoints-rows-scroll", rows_list).into_any_element()
         };
         Some(
             div()

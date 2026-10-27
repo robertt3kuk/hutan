@@ -457,7 +457,7 @@ impl Render for TasksPanel {
         if let Some(ask) = self.cascade.clone() {
             root = root.child(self.render_cascade(&ask, &theme, &tokens, cx));
         }
-        root.child(list)
+        root.child(hutan_ui::scroll_y("tasks-list-scroll", list))
     }
 }
 

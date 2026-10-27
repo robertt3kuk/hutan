@@ -582,14 +582,14 @@ impl Render for InstructionsPanel {
             }))
             .child(header)
             .children(share_row)
-            .child(
+            .child(hutan_ui::scroll_y(
+                "instructions-list-scroll",
                 div()
                     .id("instructions-list")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
                     .children(body),
-            )
+            ))
     }
 }
 

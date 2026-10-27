@@ -1076,12 +1076,12 @@ impl Workbench {
                         .on_action(cx.listener(|this, _: &setup_actions::Skip, window, cx| {
                             this.skip_setup(window, cx);
                         }))
-                        .child(
+                        .child(hutan_ui::scroll_y(
+                            "setup-body-scroll",
                             div()
                                 .id("setup-body")
                                 .flex_1()
                                 .min_h_0()
-                                .overflow_y_scroll()
                                 .flex()
                                 .flex_col()
                                 .items_center()
@@ -1091,7 +1091,7 @@ impl Workbench {
                                 .pb(px(tokens.spacing * 6.0))
                                 .child(ui::mascot(step.mascot(), 104.0))
                                 .child(body),
-                        )
+                        ))
                         .child(footer)
                         .child(probe(&self.regions, Region::Setup("sheet")))
                         .presented(

@@ -17,7 +17,7 @@ use std::time::Duration;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, anchored, deferred, div, point, px,
+    Styled as _, anchored, deferred, div, point, px,
 };
 
 use crate::diagnostics::Diagnostic;
@@ -423,7 +423,6 @@ impl CodeView {
             .gap(px(6.0))
             .max_w(px(f32::from(layout.cell_width) * 72.0))
             .max_h(px(f32::from(layout.line_height) * 16.0))
-            .overflow_y_scroll()
             .px(px(10.0))
             .py(px(8.0))
             .rounded(px(6.0))
@@ -472,9 +471,13 @@ impl CodeView {
         }
         let below = point(at.x, at.y + layout.line_height);
         Some(
-            deferred(anchored().position(below).child(body))
-                .with_priority(1)
-                .into_any_element(),
+            deferred(
+                anchored()
+                    .position(below)
+                    .child(hutan_ui::scroll_y("code-hover-scroll", body)),
+            )
+            .with_priority(1)
+            .into_any_element(),
         )
     }
 }
