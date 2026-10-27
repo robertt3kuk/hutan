@@ -795,7 +795,7 @@ fn compare_with_head_diffs_the_file_against_its_committed_text(cx: &mut TestAppC
             lines.contains(&(Remove, "two")) && lines.contains(&(Add, "TWO")),
             "{lines:?}"
         );
-        assert_eq!(c.title(), "Compare · a.txt (HEAD) ↔ a.txt");
+        assert_eq!(c.title(), "Compare · a.txt ↔ HEAD");
     });
 
     // A file git does not have has no HEAD to compare with: the tab says why.

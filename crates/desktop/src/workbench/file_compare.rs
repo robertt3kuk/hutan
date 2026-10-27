@@ -78,6 +78,10 @@ pub struct CompareView {
     generation: u64,
     focus: FocusHandle,
     diff_x: ScrollHandle,
+    /// The daemon was connected when last looked at: a tab restored with the window is made
+    /// before the connection is up and reads when it comes.
+    connected: bool,
+    _connection: gpui::Subscription,
 }
 
 impl std::fmt::Debug for CompareView {
@@ -159,6 +163,21 @@ fn unified(left: &str, right: &str, old: &str, new: &str) -> Option<FileDiff> {
 
 impl CompareView {
     pub fn new(env: PanelEnv, left: Side, right: Side, cx: &mut Context<Self>) -> Self {
+        use hutan_client::ConnectionState;
+        let connected = env.sessions.read(cx).connection_state() == ConnectionState::Connected;
+        let subscription = cx.observe(&env.sessions, |this, sessions, cx| {
+            let up = sessions.read(cx).connection_state() == ConnectionState::Connected;
+            let came = up && !this.connected;
+            this.connected = up;
+            if came
+                && !matches!(
+                    this.state,
+                    CompareState::Differs(_) | CompareState::Identical
+                )
+            {
+                this.reload(cx);
+            }
+        });
         let mut view = Self {
             env,
             left,
@@ -167,8 +186,12 @@ impl CompareView {
             generation: 0,
             focus: cx.focus_handle(),
             diff_x: ScrollHandle::new(),
+            connected,
+            _connection: subscription,
         };
-        view.reload(cx);
+        if connected {
+            view.reload(cx);
+        }
         view
     }
 
@@ -194,7 +217,7 @@ impl CompareView {
         }
     }
 
-    /// `Compare · a.rs ↔ b.rs`, `Compare · a.rs (HEAD) ↔ a.rs`.
+    /// `Compare · a.rs ↔ b.rs`, `Compare · a.rs ↔ HEAD`.
     pub fn title(&self) -> String {
         compare_title(&self.left, &self.right)
     }
@@ -237,8 +260,31 @@ impl CompareView {
     }
 }
 
+/// `Compare · a.txt ↔ b.txt`; a file against its HEAD is `Compare · a.txt ↔ HEAD`.
 fn compare_title(left: &Side, right: &Side) -> String {
-    format!("Compare · {} ↔ {}", left.label(), right.label())
+    match (left, right) {
+        (Side::Head(path), Side::File(file)) if path == file => {
+            format!("Compare · {} ↔ HEAD", hutan_code_view::file_name(path))
+        }
+        _ => format!("Compare · {} ↔ {}", left.label(), right.label()),
+    }
+}
+
+/// What the bar under the tab says about the two sides: the paths, as `~/…` when the names are
+/// alike (a file and its HEAD is one path).
+fn compare_bar_text(left: &Side, right: &Side) -> String {
+    use super::workspaces::tilde;
+    match (left, right) {
+        (Side::Head(path), Side::File(file)) if path == file => {
+            format!("{} · HEAD ↔ working copy · read-only", tilde(path))
+        }
+        _ if left.label() == right.label() => format!(
+            "{} ↔ {} · read-only",
+            tilde(left.path()),
+            tilde(right.path())
+        ),
+        _ => format!("{} ↔ {} · read-only", left.label(), right.label()),
+    }
 }
 
 impl Render for CompareView {
@@ -264,13 +310,9 @@ impl Render for CompareView {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .child(SharedString::from(format!(
-                        "{} ↔ {} · read-only",
-                        self.left.path().display(),
-                        match &self.right {
-                            Side::File(path) => path.display().to_string(),
-                            Side::Head(_) => "working copy".to_owned(),
-                        }
+                    .child(SharedString::from(compare_bar_text(
+                        &self.left,
+                        &self.right,
                     ))),
             )
             .children(counts.map(|counts| div().flex_none().child(SharedString::from(counts))))
