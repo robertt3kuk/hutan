@@ -210,6 +210,16 @@ The chrome pairs are the workbench's (design direction `docs/spikes/2026-10-21-c
 - Colors: `button.primary.hover` / `button.primary.pressed` (accent at 0.88 / 0.76 alpha), `button.hover` (`ui.surface.hover`) and `button.pressed` (`ui.surface.hover` one step towards `ui.foreground`) for secondary, ghost and icon buttons, `button.destructive.hover` / `button.destructive.pressed` (`state.error` at 0.12 / 0.22 alpha). A destructive button's text and border are `state.error`; a primary button's text is `ui.on-accent`; the keyboard focus ring is `ui.focus`.
 - Numbers: the default height is `control.height` (28), the compact one `button.height-compact` (24, per density); `button.padding-x` (12) and `button.padding-x-compact` (8); an icon button's hit region `button.icon.hit` (28, its hover fill 4 px smaller) with a `button.icon.size` (16) glyph; `button.disabled-opacity` (0.45).
 
+## Scrollbars
+
+`hutan_ui::Scrollbar` (`docs/design.md` § Scrolling) draws every scroll surface's thumb and track from three optional tokens, all derived from `ui.foreground`, so a sparse pack gets bars that read on its backgrounds:
+
+- `ui.scrollbar.thumb` (`ui.foreground` at alpha 0.28): the thumb at rest;
+- `ui.scrollbar.thumb.active` (alpha 0.5): the thumb under the pointer or while it is dragged;
+- `ui.scrollbar.track` (alpha 0.07): the track behind the thumb, drawn while the pointer is near the edge and always with `appearance.scrollbars = always`; the editor's diagnostic, git and find ticks lie on it in their own tokens (`editor.diagnostic.*`, `editor.diff-gutter.*`, `editor.search-match`).
+
+The thumb, the fade and the ticks follow the user's `appearance.scrollbars = system | always | scrolling`, not the pack.
+
 ## Differences from the hard-coded look
 
 The built-in packs reproduce the previous colors, sizes and fonts. The only deliberate differences are 8-bit alpha quantization of values that were fractions: the dark hairline `#ffffff12` is alpha 0.0706 (was 0.07), the shadow alphas are 0.1216 (light) and 0.4 (dark) (were 0.12, 0.40), and the scrim 0.2784 and 0.5020 (were 0.28, 0.50). Derived tints keep the exact old fractions (0.08, 0.10, 0.16, 0.22, 0.28, 0.13, 0.07). The status bar is 24 px in both densities, as drawn; the unused 22 / 26 table is gone.

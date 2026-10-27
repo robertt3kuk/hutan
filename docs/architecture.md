@@ -54,6 +54,7 @@ crates/
   settings/       layered TOML settings store, schema registry, watcher, keymap, color packs and their registry (`themes/`, ADR 0018; no GPUI; ADR 0010)
   terminal_view/  GPUI terminal element/view over render DTOs, input encoding (UI crate)
   code_view/      GPUI code view (E-5, ADR 0012, UI crate): `FileBuffer` (one file's text, load state, a `syntax` tree only while shown), `CodeView` and its element (shapes only the lines in view, `syntax.*` colors of the pack, mouse selection), find in file; read-only until E-6 (`docs/editor.md`)
+  ui/             UI pieces the GPUI crates share (UI crate, SCROLLBARS): the scrollbar — `Scrollbar` over a `Scroller` (a `ScrollHandle`, a `list`'s state, the editor's pixel offset, the terminal's scrollback in lines), the overlay/always policy and its fade, `scroll_y` for a scrolled element built in a render helper, ticks on the track (`docs/design.md` § Scrolling)
   desktop/        Hutan GPUI app: workbench (docks, pane tree, panels, presets), wiring (UI crate)
 xtask/            bundle, sign, schema export, corpus recording
 ```
@@ -68,6 +69,8 @@ flowchart BT
   settings --> desktop
   settings --> cli
   settings --> terminal_view
+  settings --> ui
+  ui --> terminal_view & code_view & desktop
   core --> terminal & runtime & storage & security & notifications
   buffer
   container -.-> daemon
@@ -83,7 +86,7 @@ flowchart BT
   protocol --> daemon
 ```
 
-Arrows point from dependency to dependent. Forbidden: anything depending on `daemon`; UI crates or `cli` depending on service crates; GPUI in any non-UI crate (UI crates: `desktop`, `terminal_view`, `code_view`, later `chat_view`). The desktop's buffer store (`workbench/files.rs`) reads files only through the daemon (`fs.stat`, `fs.read`).
+Arrows point from dependency to dependent. Forbidden: anything depending on `daemon`; UI crates or `cli` depending on service crates; GPUI in any non-UI crate (UI crates: `desktop`, `terminal_view`, `code_view`, `ui`, later `chat_view`). The desktop's buffer store (`workbench/files.rs`) reads files only through the daemon (`fs.stat`, `fs.read`).
 
 ## Contain: Hutan's Seatbelt boundary (SANDBOX-2, ADR 0021 decisions 3 and 8)
 
