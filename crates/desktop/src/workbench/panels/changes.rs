@@ -120,7 +120,7 @@ pub struct ChangesPanel {
     counts_task: Option<Task<()>>,
     /// The list of groups scrolls on its own; its scrollbar.
     scroll: gpui::ScrollHandle,
-    bar: ui::Scrollbar,
+    bar: hutan_ui::Scrollbar,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -192,7 +192,7 @@ impl ChangesPanel {
             counts_task: None,
             bar: {
                 let regions = env_regions.clone();
-                ui::Scrollbar::new(scroll.clone(), ui::ScrollAxis::Vertical).on_paint(
+                hutan_ui::Scrollbar::new(scroll.clone(), hutan_ui::Axis::Vertical).on_paint(
                     move |bounds, window| {
                         regions.record(
                             window.current_view(),
@@ -959,7 +959,7 @@ impl Render for ChangesPanel {
                         .flex_col()
                         .children(shown.iter().map(|&i| self.group(i, &list[i], cx))),
                 )
-                .child(self.bar.element(&theme))
+                .child(self.bar.element())
                 .into_any_element(),
             other => {
                 // At Home, an empty listing means the Home folder is not a repository: say so

@@ -24,7 +24,8 @@ mod value;
 mod watch;
 
 pub use appearance::{
-    AppearanceMode, AppearanceSettings, Density, ReduceMotionSetting, ThemeOverrides,
+    AppearanceMode, AppearanceSettings, Density, ReduceMotionSetting, ScrollbarsSetting,
+    ThemeOverrides,
 };
 pub use error::{SettingsError, Severity};
 pub use experimental::ExperimentalSettings;

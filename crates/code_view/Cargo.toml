@@ -19,6 +19,7 @@ gpui.workspace = true
 hutan-buffer.workspace = true
 hutan-settings.workspace = true
 hutan-syntax.workspace = true
+hutan-ui.workspace = true
 hutan-vim.workspace = true
 regex.workspace = true
 similar.workspace = true

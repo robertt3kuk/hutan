@@ -196,9 +196,7 @@ pub struct FilesPanel {
     /// A file to select once the folders it is in are listed.
     pending_reveal: Option<PathBuf>,
     scroll: UniformListScrollHandle,
-    bar: ui::Scrollbar,
-    /// Where the scrollbar's thumb was painted last frame (tests); `None` while everything fits.
-    thumb: Rc<Cell<Option<gpui::Bounds<Pixels>>>>,
+    bar: hutan_ui::Scrollbar,
     /// The pointer is over the tree (indent guides on hover).
     hovered: bool,
     /// `fs.list` in flight, per folder; a newer one replaces (cancels) the older.
@@ -285,15 +283,10 @@ impl FilesPanel {
             }),
         ];
         let scroll = UniformListScrollHandle::new();
-        let thumb = Rc::new(Cell::new(None));
-        let bar = ui::Scrollbar::new(
+        let bar = hutan_ui::Scrollbar::new(
             scroll.0.borrow().base_handle.clone(),
-            ui::ScrollAxis::Vertical,
-        )
-        .on_paint({
-            let thumb = Rc::clone(&thumb);
-            move |bounds, _| thumb.set(Some(bounds))
-        });
+            hutan_ui::Axis::Vertical,
+        );
         let mut panel = Self {
             env,
             focus: cx.focus_handle(),
@@ -305,7 +298,6 @@ impl FilesPanel {
             pending_reveal: None,
             scroll,
             bar,
-            thumb,
             hovered: false,
             listing: HashMap::new(),
             restored: HashSet::new(),
@@ -458,7 +450,7 @@ impl FilesPanel {
 
     /// Where the scrollbar's thumb was painted in the last frame; `None` while the rows fit.
     pub fn scrollbar_thumb(&self) -> Option<gpui::Bounds<Pixels>> {
-        self.thumb.get()
+        self.bar.thumb()
     }
 
     /// How far the tree is scrolled down, in pixels (0 at the top).
@@ -1549,7 +1541,6 @@ impl Render for FilesPanel {
             self.begin_rename_of(path, window, cx);
         }
         self.keep_edit_visible();
-        self.thumb.set(None);
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let new_file = ui::IconButton::new(
@@ -1661,7 +1652,7 @@ impl Render for FilesPanel {
                     .track_scroll(&self.scroll)
                     .size_full(),
                 )
-                .child(self.bar.element(&theme))
+                .child(self.bar.element())
                 .child(probe(&self.env.regions, Region::Files("tree")))
                 .into_any_element(),
         };

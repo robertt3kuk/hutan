@@ -193,6 +193,11 @@ colors! {
     ButtonDestructiveHover = "button.destructive.hover", false, Alpha(Color::StateError, 0.12), "Fill of a destructive button under the pointer (its text and border are `state.error`).";
     ButtonDestructivePressed = "button.destructive.pressed", false, Alpha(Color::StateError, 0.22), "Fill of a destructive button while it is pressed.";
 
+    // ---- scrollbars (SCROLLBARS): the thumb and track every scroll surface draws; every one derived ----
+    ScrollbarThumb = "ui.scrollbar.thumb", false, Alpha(Color::Foreground, 0.28), "Thumb of a scrollbar at rest.";
+    ScrollbarThumbActive = "ui.scrollbar.thumb.active", false, Alpha(Color::Foreground, 0.5), "Thumb of a scrollbar under the pointer or while it is dragged.";
+    ScrollbarTrack = "ui.scrollbar.track", false, Alpha(Color::Foreground, 0.07), "Track behind the thumb: shown while the pointer is near the edge, and always with `appearance.scrollbars = always`; the markers of the editor's track lie on it.";
+
     // ---- syntax (E-4): the 22 names of `hutan_syntax::Token`, in its order. Text colors, so
     // opaque; the defaults are the normal ANSI colors, which the terminal contrast check holds
     // to 4.5:1, and the muted and editor foregrounds ----

@@ -308,6 +308,11 @@ pub struct Theme {
     shadow_color: Hsla,
     scrim_color: Hsla,
     drop_target: Hsla,
+    /// Thumb of a scrollbar at rest, under the pointer or dragged, and its track
+    /// (`ui.scrollbar.*`, read through [`Theme::scrollbar_style`]).
+    scrollbar_thumb: Hsla,
+    scrollbar_thumb_active: Hsla,
+    scrollbar_track: Hsla,
     shadow_offset: (f32, f32),
     shadow_blur: f32,
     shadow_spread: f32,
@@ -381,6 +386,9 @@ impl Theme {
             on_accent: color(Color::OnAccent),
             shadow_color: color(Color::Shadow),
             scrim_color: color(Color::Scrim),
+            scrollbar_thumb: color(Color::ScrollbarThumb),
+            scrollbar_thumb_active: color(Color::ScrollbarThumbActive),
+            scrollbar_track: color(Color::ScrollbarTrack),
             drop_target: color(Color::DropTarget),
             shadow_offset: metrics.shadow_offset,
             shadow_blur: metrics.shadow_blur,
@@ -451,6 +459,15 @@ impl Theme {
     /// Dimming layer behind modals and sheets: `ui.scrim`.
     pub fn scrim(&self) -> Hsla {
         self.scrim_color
+    }
+
+    /// The colors of every scrollbar: `ui.scrollbar.thumb`, `.thumb.active` and `.track`.
+    pub fn scrollbar_style(&self) -> hutan_ui::Style {
+        hutan_ui::Style {
+            thumb: self.scrollbar_thumb,
+            thumb_active: self.scrollbar_thumb_active,
+            track: self.scrollbar_track,
+        }
     }
 
     /// Drag-and-drop target highlight: `ui.drop-target`.

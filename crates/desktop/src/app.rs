@@ -569,6 +569,7 @@ pub fn run() {
         init(cx, &LayoutPreset::builtin());
         watch_signals(cx);
         watch_reduce_motion(cx);
+        watch_scroller_style(cx);
         watch_instance(cx, requests);
         if let Err(err) = open_main(cx) {
             tracing::error!("cannot open the workbench window: {err:#}");
@@ -591,6 +592,26 @@ fn watch_reduce_motion(cx: &mut App) {
         let _observer = observer;
         while changes.recv().await.is_some() {
             cx.update(|cx| motion::set_system(cx, accessibility::system_reduce_motion()));
+        }
+    })
+    .detach();
+}
+
+/// Whether macOS keeps its scroll bars on screen, read now and again whenever the preferred
+/// scroller style changes (no restart); `appearance.scrollbars` can override it.
+fn watch_scroller_style(cx: &mut App) {
+    use crate::macos::scrollers;
+    hutan_ui::scrollbar::set_system_always(cx, scrollers::system_keeps_bars());
+    let (changed, mut changes) = tokio::sync::mpsc::channel(4);
+    let Some(observer) = scrollers::observe(changed) else {
+        return;
+    };
+    cx.spawn(async move |cx| {
+        let _observer = observer;
+        while changes.recv().await.is_some() {
+            cx.update(|cx| {
+                hutan_ui::scrollbar::set_system_always(cx, scrollers::system_keeps_bars());
+            });
         }
     })
     .detach();

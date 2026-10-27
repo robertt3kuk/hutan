@@ -22,6 +22,7 @@ pub mod notifications;
 pub mod open_panel;
 pub mod presence;
 pub mod quick_panel;
+pub mod scrollers;
 pub mod status_item;
 
 use std::fmt;

@@ -2614,6 +2614,7 @@ dependencies = [
  "hutan-buffer",
  "hutan-settings",
  "hutan-syntax",
+ "hutan-ui",
  "hutan-vim",
  "regex",
  "similar",
@@ -2710,6 +2711,7 @@ dependencies = [
  "hutan-settings",
  "hutan-storage",
  "hutan-terminal-view",
+ "hutan-ui",
  "hutan-vim",
  "image",
  "libc",
@@ -2897,12 +2899,21 @@ dependencies = [
  "hutan-daemon",
  "hutan-protocol",
  "hutan-settings",
+ "hutan-ui",
  "image",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "unicode-width",
+]
+
+[[package]]
+name = "hutan-ui"
+version = "0.3.0"
+dependencies = [
+ "gpui",
+ "hutan-settings",
 ]
 
 [[package]]

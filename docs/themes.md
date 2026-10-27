@@ -328,6 +328,9 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `button.pressed` | may be translucent | `ui.surface.hover` mixed 0.12 of the way to `ui.foreground` | Fill of a secondary, ghost or icon button while it is pressed: one step past the hover. |
 | `button.destructive.hover` | may be translucent | `state.error` at alpha 0.12 | Fill of a destructive button under the pointer (its text and border are `state.error`). |
 | `button.destructive.pressed` | may be translucent | `state.error` at alpha 0.22 | Fill of a destructive button while it is pressed. |
+| `ui.scrollbar.thumb` | may be translucent | `ui.foreground` at alpha 0.28 | Thumb of a scrollbar at rest. |
+| `ui.scrollbar.thumb.active` | may be translucent | `ui.foreground` at alpha 0.5 | Thumb of a scrollbar under the pointer or while it is dragged. |
+| `ui.scrollbar.track` | may be translucent | `ui.foreground` at alpha 0.07 | Track behind the thumb: shown while the pointer is near the edge, and always with `appearance.scrollbars = always`; the markers of the editor's track lie on it. |
 | `syntax.comment` | opaque | `ui.text.muted` | Comments. |
 | `syntax.string` | opaque | `terminal.ansi.green` | Strings, character literals, raw text and dates. |
 | `syntax.string.escape` | opaque | `terminal.ansi.cyan` | Escape sequences inside strings. |

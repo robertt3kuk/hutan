@@ -1,0 +1,27 @@
+[package]
+name = "hutan-ui"
+description = "Hutan UI pieces shared by every GPUI crate: the scrollbar (overlay or always, fade, drag, track paging, markers)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+autotests = false
+
+[lib]
+name = "hutan_ui"
+
+[dependencies]
+gpui.workspace = true
+hutan-settings.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+[lints]
+workspace = true

@@ -28,6 +28,7 @@ hutan-storage = { path = "crates/storage" }
 hutan-syntax = { path = "crates/syntax" }
 hutan-terminal = { path = "crates/terminal" }
 hutan-terminal-view = { path = "crates/terminal_view" }
+hutan-ui = { path = "crates/ui" }
 hutan-vim = { path = "crates/vim" }
 
 anyhow = "1.0.104"
@@ -63,8 +64,9 @@ objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 # Menu bar status items (the desktop's, M6-C, and the daemon's, M6-D), Dock badge, activation and
 # the daemon's stop confirmation, the keyboard focus indicator color (`ui.focus`), the Open panel
 # that starts in the project (E-13a), Reduce Motion (`NSWorkspace`, UX-MOTION), the screen under
-# the pointer for the quick terminal (`NSScreen`): AppKit, macOS only.
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSAccessibility", "NSAlert", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSDockTile", "NSEvent", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "NSWorkspace", "libc", "objc2-core-foundation"] }
+# the pointer for the quick terminal (`NSScreen`), whether scroll bars stay or overlay
+# (`NSScroller.preferredScrollerStyle`): AppKit, macOS only.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSAccessibility", "NSAlert", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSDockTile", "NSEvent", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSScroller", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "NSWorkspace", "libc", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSDate", "NSError", "NSFileManager", "NSNotification", "NSObject", "NSObjCRuntime", "NSOperation", "NSRunLoop", "NSSet", "NSString", "NSTimer", "NSURL", "NSUserDefaults"] }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationAction", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 # `SMAppService`, the "keep running" launch agent registration (M6-C), macOS only.

@@ -108,6 +108,17 @@ const FIELDS: &[FieldText] = &[
         "Whether menus, sheets and toasts fade and slide. System follows macOS Accessibility. Reduced, nothing slides and fades stay under 150 ms.",
         &[("system", "System"), ("on", "On"), ("off", "Off")],
     ),
+    choice(
+        "appearance",
+        "scrollbars",
+        "Scroll bars",
+        "When scroll bars show. System follows macOS (Show scroll bars). Always keeps a bar on every scrolled area; When scrolling shows an overlay bar while you scroll or point at the edge and fades it after a second.",
+        &[
+            ("system", "System"),
+            ("always", "Always"),
+            ("scrolling", "When scrolling"),
+        ],
+    ),
     field(
         "appearance",
         "light_theme",

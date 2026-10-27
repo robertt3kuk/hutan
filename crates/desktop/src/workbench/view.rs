@@ -1011,6 +1011,8 @@ impl Workbench {
             theme,
             density: appearance_settings.density,
         });
+        hutan_ui::scrollbar::set_style(cx, theme.scrollbar_style());
+        hutan_ui::scrollbar::set_setting(cx, appearance_settings.scrollbars);
         cx.set_global(TerminalStyle(terminal_style.clone()));
 
         let sessions = cx.new(|cx| SessionsStore::new(options.connection, cx));
@@ -1885,6 +1887,7 @@ impl Workbench {
             theme: self.theme,
             density: self.density,
         });
+        hutan_ui::scrollbar::set_style(cx, self.theme.scrollbar_style());
         self.invalidate_cached_views(cx);
     }
 

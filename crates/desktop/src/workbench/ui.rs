@@ -26,10 +26,8 @@ use hutan_settings::themes::Fonts;
 use crate::theme::{Theme, Tokens, mascot_size, pill_radius};
 
 mod button;
-mod scrollbar;
 mod splitter;
 pub use button::{Button, ButtonKind, ButtonSize, IconButton, approval_button_kind, spinner};
-pub use scrollbar::{Axis as ScrollAxis, Scrollbar};
 pub use splitter::{HANDLE as SPLITTER_HANDLE, SplitAxis, Splitter};
 
 /// The font files macOS ships New York in. GPUI cannot select the system serif by name (CoreText

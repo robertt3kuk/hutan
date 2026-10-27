@@ -382,7 +382,7 @@ impl ChangesView {
                     .child(list)
                     .child(probe(&self.env.regions, Region::Changes("list"))),
             )
-            .child(self.files_bar.element(theme));
+            .child(self.files_bar.element());
         column = match width {
             Some(width) => column.w(px(width)).h_full(),
             // Unfolded under the strip: the whole width, at most eight rows tall.

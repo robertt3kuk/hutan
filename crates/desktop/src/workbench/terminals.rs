@@ -1669,6 +1669,7 @@ impl Workbench {
             self.chrome = appearance.appearance;
             self.density = appearance.density;
             super::ui::motion::set_setting(cx, appearance.reduce_motion);
+            hutan_ui::scrollbar::set_setting(cx, appearance.scrollbars);
             self.refresh_theme(cx);
             self.publish_style(cx);
         }

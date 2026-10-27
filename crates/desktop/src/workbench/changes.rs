@@ -228,10 +228,10 @@ pub struct ChangesView {
     /// Horizontal scroll of the diff, for lines wider than the pane.
     diff_x: ScrollHandle,
     /// The scrollbars of the diff (along its lines, and down the pane) and of the file list.
-    diff_bar_x: ui::Scrollbar,
-    diff_bar_y: ui::Scrollbar,
+    diff_bar_x: hutan_ui::Scrollbar,
+    diff_bar_y: hutan_ui::Scrollbar,
     files_scroll: ScrollHandle,
-    files_bar: ui::Scrollbar,
+    files_bar: hutan_ui::Scrollbar,
     /// The divider between the file list and the diff, and the list's width it holds; the same
     /// with the list over the diff (a narrow view), and the list's height.
     split: ui::Splitter,
@@ -287,9 +287,9 @@ impl ChangesView {
         let files_scroll = ScrollHandle::new();
         // A scrollbar that tells the regions where its thumb is (tests drag it).
         let all_regions = env.regions.clone();
-        let thumb = move |handle: ScrollHandle, axis: ui::ScrollAxis, name: &'static str| {
+        let thumb = move |bar: hutan_ui::Scrollbar, name: &'static str| {
             let regions = all_regions.clone();
-            ui::Scrollbar::new(handle, axis).on_paint(move |bounds, window| {
+            bar.on_paint(move |bounds, window| {
                 regions.record(window.current_view(), Region::Changes(name), bounds);
             })
         };
@@ -317,10 +317,22 @@ impl ChangesView {
             history: history::HistoryState::default(),
             staging: staging::StagingState::default(),
             files_open: true,
-            diff_bar_x: thumb(diff_x.clone(), ui::ScrollAxis::Horizontal, "diff-hbar")
-                .within(review_scroll.clone()),
-            diff_bar_y: thumb(review_scroll, ui::ScrollAxis::Vertical, "diff-vbar"),
-            files_bar: thumb(files_scroll.clone(), ui::ScrollAxis::Vertical, "files-vbar"),
+            diff_bar_x: thumb(
+                hutan_ui::Scrollbar::nested(
+                    diff_x.clone(),
+                    hutan_ui::Axis::Horizontal,
+                    review_scroll.clone(),
+                ),
+                "diff-hbar",
+            ),
+            diff_bar_y: thumb(
+                hutan_ui::Scrollbar::new(review_scroll, hutan_ui::Axis::Vertical),
+                "diff-vbar",
+            ),
+            files_bar: thumb(
+                hutan_ui::Scrollbar::new(files_scroll.clone(), hutan_ui::Axis::Vertical),
+                "files-vbar",
+            ),
             diff_x,
             files_scroll,
             split: ui::Splitter::new(ui::SplitAxis::Columns, 160.0),
@@ -1690,7 +1702,7 @@ impl ChangesView {
             .min_w_0()
             .min_h_0()
             .child(pane)
-            .child(self.diff_bar_y.element(theme))
+            .child(self.diff_bar_y.element())
             .child(probe(&self.env.regions, Region::Changes("diff-view")))
             .into_any_element()
     }
@@ -1864,7 +1876,7 @@ impl ChangesView {
                             .flex_none()
                             .w_full()
                             .child(block)
-                            .child(self.diff_bar_x.element(theme)),
+                            .child(self.diff_bar_x.element()),
                     );
                 }
                 for card in self.render_outdated(file, look, window, cx) {

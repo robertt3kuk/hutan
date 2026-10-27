@@ -39,6 +39,18 @@ pub enum ReduceMotionSetting {
     Off,
 }
 
+/// `appearance.scrollbars`: when the scrollbars show. `system` follows macOS (System Settings ▸
+/// Appearance ▸ Show scroll bars: "Automatically based on mouse or trackpad" and "When scrolling"
+/// are overlay bars, "Always" is bars that stay) live; `always` and `scrolling` override it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ScrollbarsSetting {
+    #[default]
+    System,
+    Always,
+    Scrolling,
+}
+
 /// The user's overrides of one color pack: `[appearance.theme_overrides."<id>".colors]`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -70,6 +82,11 @@ pub struct AppearanceSettings {
     /// `system` (follow macOS Reduce Motion live, default), `on` or `off`. Reduced, nothing
     /// slides or changes height and fades are at most 150 ms; see `docs/design.md` § Motion.
     pub reduce_motion: ReduceMotionSetting,
+    /// `system` (follow macOS "Show scroll bars" live, default), `always` (a thumb on a track
+    /// wherever there is more to scroll) or `scrolling` (an overlay thumb that appears while the
+    /// content scrolls and when the pointer is near the edge, and fades after about a second);
+    /// see `docs/design.md` § Scrolling.
+    pub scrollbars: ScrollbarsSetting,
     /// Color overrides per pack id, applied on top of the pack.
     pub theme_overrides: BTreeMap<String, ThemeOverrides>,
 }
@@ -83,6 +100,7 @@ impl Default for AppearanceSettings {
             dark_theme: DARK.to_owned(),
             icon_theme: "phosphor".to_owned(),
             reduce_motion: ReduceMotionSetting::default(),
+            scrollbars: ScrollbarsSetting::default(),
             theme_overrides: BTreeMap::new(),
         }
     }
@@ -124,6 +142,24 @@ mod tests {
             assert_eq!(a.reduce_motion, expected);
         }
         assert!(toml::from_str::<AppearanceSettings>("reduce_motion = \"maybe\"\n").is_err());
+    }
+
+    #[test]
+    fn scrollbars_read_system_always_scrolling_and_default_to_system() {
+        assert_eq!(
+            AppearanceSettings::default().scrollbars,
+            ScrollbarsSetting::System
+        );
+        for (text, expected) in [
+            ("system", ScrollbarsSetting::System),
+            ("always", ScrollbarsSetting::Always),
+            ("scrolling", ScrollbarsSetting::Scrolling),
+        ] {
+            let a: AppearanceSettings =
+                toml::from_str(&format!("scrollbars = \"{text}\"\n")).unwrap();
+            assert_eq!(a.scrollbars, expected);
+        }
+        assert!(toml::from_str::<AppearanceSettings>("scrollbars = \"never\"\n").is_err());
     }
 
     #[test]
