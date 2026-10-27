@@ -105,6 +105,7 @@ A forwarded socket is a way for *any process of your user* on this Mac to talk t
 - Latency is the SSH link's: a request costs one round trip (measured: +60–90 µs over loopback). Terminal output is ack-paced (one render per RTT), so a high-latency link shows fewer, larger updates; typing in a full-screen program feels the RTT.
 - **No resume inside one CLI command**, and `hutan attach` ends when the link does.
 - One byte of text on the host's standard output before `hutan proxy` starts ends the connection (below).
+- **Files from this Mac are not copied into a remote project yet** (EX-8, the desktop's Files panel): a file dragged in from Finder, or pasted from it, reaches the daemon as a path chosen on this Mac (`fs.copy` with `picked_from`), which the host would read on *its own* disk. The desktop refuses with that reason, shown in the notice area, whenever the window's connection is `Endpoint::Ssh`; uploading the bytes through `fs.write` is the later step.
 
 ## Troubleshooting
 

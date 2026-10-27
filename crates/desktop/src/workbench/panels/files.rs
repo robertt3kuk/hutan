@@ -23,6 +23,13 @@
 //! - **Per root.** The tree of a root is kept (listings, open folders, selection, scroll) when
 //!   the window works somewhere else, up to [`MAX_CACHED_ROOTS`] roots; the open folders of a root
 //!   are also remembered across restarts (`desktop-state.json`, [`FilesMemory`]).
+//! - **Roots** (EX-8). The scope chip is a root switcher: the project's checkouts (main first,
+//!   `worktree.list` plus the worktrees sessions work in), the workspace's other projects and
+//!   *Follow active container* ([`FilesPanel::pin_root`]); a pick shows that folder without the
+//!   window changing what it works in, with its kept tree, and ends when the window's own folder
+//!   changes. `panels.files.roots = workspace` makes the tree a workspace's: one collapsible row
+//!   per project ([`Tree::workspace`], `Row::root`), the git marks, diagnostics, filter, sections
+//!   and file operations working across them; a root's fold state is saved with its open folders.
 //! - **Keyboard.** ↑↓ move, Home / End / PgUp / PgDn jump, → opens a folder (or steps into it),
 //!   ← closes it (or steps to its parent), ⌘→ opens every folder in view (not beyond 2 000 rows
 //!   or ten folders still to list), ⌘← closes every folder, Return opens a file and moves the
@@ -36,8 +43,10 @@
 //!   an agent working there) and moves to the Trash; ⌘D duplicates (`name copy`); ⌘C / ⌘X / ⌘V
 //!   copy, cut and paste, with the tree's own clipboard and the files Finder copied; a row dragged
 //!   to a folder moves there (⌥ copies), the folder under the pointer opens after a moment and
-//!   the tree scrolls at its edges (`drag.rs`); ⌘Z / ⇧⌘Z undo and redo, a batch is one step
-//!   (`ops.rs`). Every change is a request to the daemon, which never overwrites; the workbench
+//!   the tree scrolls at its edges (`drag.rs`); files dragged in from Finder (or pasted from it)
+//!   are copied into the folder under them through `fs.copy` with `picked_from` — one undo step,
+//!   refused with the reason by a daemon on another Mac (`ops.rs::remote_refusal`); ⌘Z / ⇧⌘Z undo
+//!   and redo, a batch is one step (`ops.rs`). Every change is a request to the daemon, which never overwrites; the workbench
 //!   re-keys the tabs of what was renamed or moved and marks the tabs of what went to the Trash.
 
 mod drag;
@@ -2263,6 +2272,7 @@ impl Render for FilesPanel {
                 .cursor_pointer()
                 .when(pinned, move |s| s.bg(sidebar_accent))
                 .when(!pinned, move |s| s.hover(move |s| s.bg(sidebar_hover)))
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(|event: &ClickEvent, window, cx| {
                     window.dispatch_action(Box::new(ShowFilesRootMenu(event.position())), cx);
                 })
