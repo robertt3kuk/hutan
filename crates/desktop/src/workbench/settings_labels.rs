@@ -541,6 +541,24 @@ const FIELDS: &[FieldText] = &[
         "What typing in the Files panel's filter does: show only the files that match and the folders they are in, or keep the tree as it is and mark the matches.",
         &[("filter", "Filter"), ("highlight", "Highlight")],
     ),
+    choice(
+        "panels.files",
+        "show_diagnostics",
+        "Diagnostics in the tree",
+        "Marks files the language servers found errors or warnings in with a count and a red or amber name, and the folders that hold them. Off, the panel does not ask for them.",
+        &[
+            ("errors_warnings", "Errors and warnings"),
+            ("errors", "Errors only"),
+            ("off", "Off"),
+        ],
+    ),
+    choice(
+        "panels.files",
+        "open_editors",
+        "Open Editors section",
+        "Lists the files open in tabs above the tree: Auto shows it while two or more files of the folder are open.",
+        &[("auto", "Auto"), ("always", "Always"), ("never", "Never")],
+    ),
     // ---- problems ----
     choice(
         "panels.problems",

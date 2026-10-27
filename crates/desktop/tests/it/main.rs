@@ -31,6 +31,7 @@ mod files_explorer_gpui;
 mod files_filter_gpui;
 mod files_menu_gpui;
 mod files_ops_gpui;
+mod files_sections_gpui;
 mod first_run_gpui;
 mod fx1_gpui;
 mod fx_e2e2_gpui;

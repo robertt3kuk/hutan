@@ -43,6 +43,7 @@
 mod drag;
 mod edit;
 mod filter;
+mod marks;
 mod ops;
 
 use std::cell::{Cell, RefCell};
@@ -90,6 +91,7 @@ use edit::NameEdit;
 pub use edit::{EditKind, NameEditView};
 use filter::Filter;
 pub use filter::{DEBOUNCE as FILTER_DEBOUNCE, FilterStatus};
+pub use marks::{DIAGNOSTICS_READ_EVERY, DiagCounts, DiagMarks};
 pub use ops::FilesCommand;
 use ops::{PathClipboard, error_message};
 
@@ -240,6 +242,8 @@ pub struct FilesPanel {
     git_asked: Option<(PathBuf, hutan_client::ConnectionState)>,
     /// Reads of the git status answered so far (tests wait on it).
     git_reads: usize,
+    /// The language servers' diagnostics of the root's files and folders (`marks.rs`).
+    diag: marks::DiagState,
     /// The name field of a new file, a new folder or a rename, when one is open.
     editing: Option<NameEdit>,
     name_edit: FieldEdit,
@@ -286,6 +290,7 @@ impl FilesPanel {
             cx.observe(&env.sessions, |this, _, cx| {
                 this.follow_root(cx);
                 this.sync_git(cx);
+                this.sync_diagnostics(cx);
             }),
             // A command or an agent's turn ended in a checkout: its files may have changed.
             cx.subscribe(&env.sessions, |this, _, _: &CheckoutActivity, cx| {
@@ -327,6 +332,7 @@ impl FilesPanel {
             git_cooldown: None,
             git_asked: None,
             git_reads: 0,
+            diag: marks::DiagState::default(),
             editing: None,
             name_edit: FieldEdit::new(),
             name_focus: cx.focus_handle(),
@@ -347,6 +353,7 @@ impl FilesPanel {
         };
         panel.follow_root(cx);
         panel.sync_git(cx);
+        panel.sync_diagnostics(cx);
         panel
     }
 
@@ -1532,12 +1539,26 @@ impl FilesPanel {
                     .flatten();
                 let dotted =
                     !row.ignored && row.kind == RowKind::Dir && self.git.has_changes_in(&row.path);
+                // Diagnostics (EX-5): the worse severity under a file or a folder tints its name;
+                // a count says it in words too.
+                let diag = (!row.ignored
+                    && matches!(row.kind, RowKind::Dir | RowKind::File | RowKind::Link))
+                .then(|| self.diagnostics().of(&row.path))
+                .flatten()
+                .filter(|d| !d.is_empty());
+                let diag_color = diag.map(|d| {
+                    if d.has_errors() {
+                        theme.danger
+                    } else {
+                        theme.warning
+                    }
+                });
                 let color = match row.kind {
                     // The row after a truncated listing is a link: it filters that folder.
                     RowKind::More => theme.accent,
                     RowKind::Failed => theme.muted,
                     _ if row.ignored => theme.faint,
-                    _ => mark.map_or(theme.fg, |m| m.color(&theme)),
+                    _ => diag_color.unwrap_or_else(|| mark.map_or(theme.fg, |m| m.color(&theme))),
                 };
                 let chevron = match row.kind {
                     RowKind::Dir if row.expanded => Some(Icon::ActionExpand),
@@ -1791,6 +1812,18 @@ impl FilesPanel {
                                         .child("…"),
                                 )
                             })
+                            .children(diag.zip(diag_color).map(|(d, tint)| {
+                                let words: SharedString = d.words().into();
+                                div()
+                                    .id(("files-diag", index))
+                                    .flex_none()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(tint)
+                                    .child(SharedString::from(d.shown().to_string()))
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| TextTooltip(words.clone())).into()
+                                    })
+                            }))
                             .when(dotted, |s| {
                                 s.child(
                                     div()
@@ -1867,6 +1900,7 @@ impl Render for FilesPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.env.regions.rendered(cx.entity_id());
         self.sync_options(cx);
+        self.sync_diagnostics(cx);
         if let Some(path) = self.rename_when_listed.take() {
             self.begin_rename_of(path, window, cx);
         }

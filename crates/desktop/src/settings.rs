@@ -696,6 +696,33 @@ pub enum FilterMode {
     Highlight,
 }
 
+/// What the Files panel shows of the language servers' diagnostics beside a file (and, rolled
+/// up, beside the folders that hold it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesDiagnostics {
+    /// Errors and warnings.
+    #[default]
+    ErrorsWarnings,
+    /// Errors only.
+    Errors,
+    /// None; the panel never asks for them.
+    Off,
+}
+
+/// When the Files panel lists the files open in tabs (*Open Editors*).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenEditorsSection {
+    /// While two or more files of the root are open.
+    #[default]
+    Auto,
+    /// While one or more are.
+    Always,
+    /// Never.
+    Never,
+}
+
 /// The `panels.files` namespace: the Files panel's tree of the active project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -718,6 +745,12 @@ pub struct FilesPanelSettings {
     /// What typing in the tree's filter field does: `filter` shows only the matches, `highlight`
     /// keeps the tree and marks them.
     pub filter_mode: FilterMode,
+    /// Show the language servers' errors and warnings beside files (a count, a red or amber
+    /// name) and, rolled up, beside the folders that hold them: `errors_warnings`, `errors`,
+    /// `off`.
+    pub show_diagnostics: FilesDiagnostics,
+    /// List the files open in tabs above the tree: `auto` (two or more), `always`, `never`.
+    pub open_editors: OpenEditorsSection,
 }
 
 impl Default for FilesPanelSettings {
@@ -731,6 +764,8 @@ impl Default for FilesPanelSettings {
             confirm_delete: true,
             confirm_drag: true,
             filter_mode: FilterMode::Filter,
+            show_diagnostics: FilesDiagnostics::ErrorsWarnings,
+            open_editors: OpenEditorsSection::Auto,
         }
     }
 }
