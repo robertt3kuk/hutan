@@ -13,7 +13,7 @@ use hutan_core::SessionId;
 use hutan_protocol::messages::WorkspaceKind;
 
 use super::actions;
-use super::model::{AGENTS_PAGE, DockMode, DockPosition, ItemRef, PanelId};
+use super::model::{AGENTS_PAGE, DockPosition, ItemRef, PanelId};
 use super::panels::{AgentsPage, AgentsPanel, AgentsRequest};
 use super::view::{MenuEntry, Workbench};
 use crate::sessions::agents_text::{self, Avail, Caps};
@@ -52,7 +52,7 @@ impl Workbench {
     pub(crate) fn agents_page_visible(&self) -> bool {
         let id = PanelId::new(AGENTS_PAGE);
         let docked = DockPosition::ALL.into_iter().any(|pos| {
-            self.dock_mode(pos) == DockMode::Expanded
+            self.dock_body_shown(pos)
                 && self.state.docks.get(pos).active.as_ref() == Some(&id)
         });
         docked

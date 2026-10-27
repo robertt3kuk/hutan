@@ -6,7 +6,7 @@ use gpui::{Context, Window};
 use hutan_core::SessionId;
 
 use super::actions::ResourceMenuAt;
-use super::model::{DockMode, ItemSource, PanelId};
+use super::model::{ItemSource, PanelId};
 use super::panels::{ResourceCommand, ResourcesPanel};
 use super::view::{MenuEntry, Workbench};
 
@@ -24,7 +24,7 @@ impl Workbench {
         let id = PanelId::new(PANEL);
         match self.state.find_panel(&id) {
             Some(ItemSource::Dock { pos, .. })
-                if self.dock_mode(pos) == DockMode::Expanded
+                if self.dock_body_shown(pos)
                     && self.state.docks.get(pos).active.as_ref() == Some(&id) =>
             {
                 self.toggle_dock_cmd(pos, cx);

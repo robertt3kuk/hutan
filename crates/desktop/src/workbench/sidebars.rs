@@ -224,6 +224,12 @@ impl Workbench {
     /// already (a nav row toggles its page).
     pub(crate) fn toggle_left_page(&mut self, panel: &PanelId, cx: &mut Context<Self>) {
         let left = &self.state.docks.left;
+        // The icon of the page a peek shows closes the peek.
+        if self.peek_dock() == Some(DockPosition::Left) && left.active.as_ref() == Some(panel) {
+            self.release_peek();
+            cx.notify();
+            return;
+        }
         let showing = self.dock_mode(DockPosition::Left) == DockMode::Expanded
             && left.active.as_ref() == Some(panel);
         if showing {
@@ -491,12 +497,17 @@ impl Workbench {
         let theme = self.theme;
         let hover = theme.fg.opacity(0.08);
         let mut nav: Vec<AnyElement> = Vec::new();
+        let mut has_files = false;
         for entry in self.nav_entries(cx) {
+            has_files |= entry.key == "files";
             let target = entry.target.clone();
-            // A page the sidebar is not showing is not selected: only the Agents page and Mawas
-            // Home are somewhere the rail leaves visible.
-            let selected =
-                entry.selected && matches!(target, NavTarget::Agents | NavTarget::Assistant);
+            // A page the sidebar is not showing is not selected: only the Agents page, Mawas
+            // Home and the page a peek shows are somewhere the rail leaves visible.
+            let peeked = self.peek_dock() == Some(DockPosition::Left)
+                && matches!(&target, NavTarget::Page(p)
+                    if self.state.docks.left.active.as_ref() == Some(p));
+            let selected = peeked
+                || (entry.selected && matches!(target, NavTarget::Agents | NavTarget::Assistant));
             let color = if selected { theme.fg } else { theme.muted };
             let face = icon(entry.icon, NAV_ICON, color).into_any_element();
             let button = rail_button(
@@ -515,6 +526,39 @@ impl Workbench {
                 this.nav_click(&target, window, cx);
             }));
             nav.push(button.into_any_element());
+        }
+        // Files may live in this sidebar (the Explorer-left preset, or moved here): its nav row
+        // shows only while its page is open, so the rail keeps an icon of its own — in a narrow
+        // window the page opens as a peek over the center (EX-2), never out of reach.
+        let files = PanelId::new("files");
+        if !has_files && self.state.docks.left.contains(&files) {
+            let peeked = self.peek_dock() == Some(DockPosition::Left)
+                && self.state.docks.left.active.as_ref() == Some(&files);
+            let (glyph, title) = self.item_icon_and_title(
+                &ItemRef::Panel {
+                    panel: files.clone(),
+                },
+                cx,
+            );
+            nav.push(
+                rail_button(
+                    self,
+                    RailButton {
+                        id: SharedString::from("rail-files"),
+                        face: icon(glyph, NAV_ICON, if peeked { theme.fg } else { theme.muted })
+                            .into_any_element(),
+                        label: title,
+                        background: peeked.then_some(theme.sidebar_accent),
+                        badge: None,
+                        region: Region::Nav("files"),
+                    },
+                    hover,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.nav_click(&NavTarget::Page(files.clone()), window, cx);
+                }))
+                .into_any_element(),
+            );
         }
         nav.push(
             rail_button(
@@ -690,7 +734,7 @@ impl Workbench {
         let pos = DockPosition::Right;
         let accent = theme.accent;
         let status_h = self.density.ui().status_bar;
-        let open = self.dock_mode(pos) == DockMode::Expanded;
+        let open = self.dock_body_shown(pos);
         // What is left of the window's height for icons: under the inset, over the bottom
         // button and the status bar.
         let room = f32::from(window.viewport_size().height)
@@ -908,7 +952,12 @@ impl Workbench {
     ) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
-        let mode = self.dock_mode(pos);
+        // A peek is the body shown: the button says so and a click closes it.
+        let mode = if self.peek_dock() == Some(pos) {
+            DockMode::Expanded
+        } else {
+            self.dock_mode(pos)
+        };
         let (glyph, name, states): (Icon, &str, [(&str, DockMode); 3]) = match pos {
             DockPosition::Left => (
                 Icon::DockLeft,
@@ -1066,6 +1115,7 @@ fn nav_region_key(key: &str) -> &'static str {
         "tasks" => "tasks",
         "agents" => "agents",
         "assistant" => "assistant",
+        "files" => "files",
         super::model::MEMORY_PAGE => "memory",
         _ => "page",
     }

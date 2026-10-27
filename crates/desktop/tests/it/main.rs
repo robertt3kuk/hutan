@@ -59,6 +59,7 @@ mod memory_gpui;
 mod motion_gpui;
 mod notify_gpui;
 mod perf_gpui;
+mod peek_gpui;
 mod polish_gpui;
 mod projects_gpui;
 mod queue_gpui;

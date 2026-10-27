@@ -12,7 +12,10 @@
 //! - a collapsed dock comes back only [`AUTO_COLLAPSE_HYSTERESIS`] pt above its threshold *and*
 //!   when the center is wide enough with it open;
 //! - a dock the user expanded on purpose while the window is narrow stays open
-//!   ([`AutoState::Overridden`]) until the window has grown past the same restore width.
+//!   ([`AutoState::Overridden`]) until the window has grown past the same restore width;
+//! - a dock the user opens from its rail in a window too narrow for the center to keep
+//!   [`MIN_CENTER_WIDTH`] beside its body shows the body as a *peek* over the center instead
+//!   ([`Responsive::open_as`], `layout.rail_peek`, EX-2): nothing is pushed, nothing is saved.
 
 use super::{DockMode, DockPosition, Docks};
 
@@ -24,6 +27,24 @@ pub const AUTO_COLLAPSE_LEFT_BELOW: f32 = 900.0;
 pub const MIN_CENTER_WIDTH: f32 = 480.0;
 /// A collapsed dock is restored this much above its collapse width.
 pub const AUTO_COLLAPSE_HYSTERESIS: f32 = 80.0;
+/// A peek is at most this wide in a window narrower than [`AUTO_COLLAPSE_LEFT_BELOW`].
+pub const PEEK_NARROW_MAX: f32 = 300.0;
+/// The least a peek is wide: the smallest a side dock's body may be.
+pub const PEEK_MIN_WIDTH: f32 = 240.0;
+/// A peek leaves at least this much of the center uncovered, so there is something outside it
+/// to click.
+pub const PEEK_CENTER_VISIBLE: f32 = 120.0;
+
+/// How the body of a dock the user opens is shown (`docs/design.md` § Docks, *Rail peek*).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenAs {
+    /// Beside the center, which gives up the room (and the dock stays open until the window
+    /// has grown, [`AutoState::Overridden`]).
+    Push,
+    /// Floating over the center's edge at the dock's width, closing again on Esc, a click
+    /// outside, opening a file or the same icon.
+    Peek,
+}
 
 /// What the window did to one side dock whose user mode is expanded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -157,6 +178,50 @@ impl Responsive {
             (true, AutoState::Overridden) if grown => AutoState::Off,
             (true, other) => other,
         };
+    }
+
+    /// How the body of `pos` is shown when the user opens it from its rail (an icon, ⌘L, a
+    /// command that reveals a panel in it): [`OpenAs::Peek`] when `rail_peek` is on and the
+    /// center would be narrower than [`MIN_CENTER_WIDTH`] beside that body (the other dock as
+    /// it is shown now), else [`OpenAs::Push`] — in a window narrower than the dock's own
+    /// threshold but with room, the dock opens beside the center and stays open
+    /// ([`AutoState::Overridden`]). The bottom dock never peeks. Before the first
+    /// [`Self::evaluate`] there is no window width, so nothing peeks.
+    pub fn open_as(&self, docks: &Docks, pos: DockPosition, rail_peek: bool) -> OpenAs {
+        if !rail_peek || pos == DockPosition::Bottom || self.width <= 0.0 {
+            return OpenAs::Push;
+        }
+        let center = self.center_with(docks, self.width, |p| {
+            if p == pos {
+                DockMode::Expanded
+            } else {
+                self.effective(docks, p)
+            }
+        });
+        if center < MIN_CENTER_WIDTH {
+            OpenAs::Peek
+        } else {
+            OpenAs::Push
+        }
+    }
+
+    /// The width of the peek of `pos`: the dock's own width, at most [`PEEK_NARROW_MAX`] in a
+    /// window narrower than [`AUTO_COLLAPSE_LEFT_BELOW`], and never so wide that less than
+    /// [`PEEK_CENTER_VISIBLE`] of the center is left (nor narrower than the dock's minimum,
+    /// unless the window itself is).
+    pub fn peek_width(&self, docks: &Docks, pos: DockPosition) -> f32 {
+        let beside: f32 = [DockPosition::Left, DockPosition::Right]
+            .into_iter()
+            .map(|p| Self::extent(docks, p, self.effective(docks, p)))
+            .sum();
+        let room = (self.width - beside).max(0.0);
+        let mut width = docks.get(pos).size;
+        if self.width < AUTO_COLLAPSE_LEFT_BELOW {
+            width = width.min(PEEK_NARROW_MAX);
+        }
+        width
+            .min((room - PEEK_CENTER_VISIBLE).max(PEEK_MIN_WIDTH))
+            .min(room)
     }
 
     /// The user opened `pos` (expanded it, revealed a panel in it): a narrow window does not
@@ -332,6 +397,97 @@ mod tests {
         let mut fresh = Responsive::default();
         fresh.reveal(&d, DockPosition::Right);
         assert_eq!(fresh.auto_state(DockPosition::Right), AutoState::Off);
+    }
+
+    /// §3.7 of the explorer spike, row by row: what the right side shows at rest and what a
+    /// rail click opens as. Left 280 (compact 44 below 900), right body 350 + rail 40.
+    #[test]
+    fn the_window_width_decides_push_peek_or_rail() {
+        let d = docks();
+        // (window, right at rest, right opened from the rail, center beside the rails)
+        for (width, rest, open, center) in [
+            (1440.0, Expanded, OpenAs::Push, 770.0),
+            (1280.0, Expanded, OpenAs::Push, 610.0),
+            (1180.0, Expanded, OpenAs::Push, 510.0),
+            (1100.0, Compact, OpenAs::Peek, 780.0),
+            (900.0, Compact, OpenAs::Peek, 580.0),
+            (640.0, Compact, OpenAs::Peek, 556.0),
+        ] {
+            let mut r = Responsive::default();
+            r.evaluate(&d, 2000.0, true);
+            r.evaluate(&d, width, true);
+            assert_eq!(r.effective(&d, DockPosition::Right), rest, "{width} at rest");
+            assert_eq!(
+                r.open_as(&d, DockPosition::Right, true),
+                open,
+                "{width} opened"
+            );
+            assert_eq!(r.center_width(&d, width), center, "{width} center");
+            // With the setting off it is always pushed (the behaviour before EX-2).
+            assert_eq!(
+                r.open_as(&d, DockPosition::Right, false),
+                OpenAs::Push,
+                "{width} setting off"
+            );
+        }
+    }
+
+    #[test]
+    fn a_narrow_window_with_room_for_the_center_pushes() {
+        // The sidebar hidden: 1100 − 390 = 710 leaves the center its room, so the body is
+        // pushed (and, below 1180, stays open as an override) rather than peeking.
+        let mut d = docks();
+        d.left.set_mode(Hidden);
+        let mut r = Responsive::default();
+        r.evaluate(&d, 1100.0, true);
+        assert_eq!(r.effective(&d, DockPosition::Right), Compact);
+        assert_eq!(r.open_as(&d, DockPosition::Right, true), OpenAs::Push);
+        // The left sidebar compact by choice: 44 + 390 + 480 = 914 is the edge.
+        d.left.set_mode(Compact);
+        r.evaluate(&d, 700.0, true);
+        assert_eq!(r.open_as(&d, DockPosition::Right, true), OpenAs::Peek);
+        r.evaluate(&d, 914.0, true);
+        assert_eq!(r.open_as(&d, DockPosition::Right, true), OpenAs::Push);
+        r.evaluate(&d, 913.0, true);
+        assert_eq!(r.open_as(&d, DockPosition::Right, true), OpenAs::Peek);
+    }
+
+    #[test]
+    fn the_left_sidebar_peeks_when_its_body_would_squeeze_the_center() {
+        let d = docks();
+        let mut r = Responsive::default();
+        // 800: the left rail (44) + the right rail (40) leave 716; 280 more leaves 480: push.
+        r.evaluate(&d, 800.0, true);
+        assert_eq!(r.open_as(&d, DockPosition::Left, true), OpenAs::Push);
+        r.evaluate(&d, 799.0, true);
+        assert_eq!(r.open_as(&d, DockPosition::Left, true), OpenAs::Peek);
+        // The bottom dock never peeks, and before any window width nothing does.
+        assert_eq!(r.open_as(&d, DockPosition::Bottom, true), OpenAs::Push);
+        assert_eq!(
+            Responsive::default().open_as(&d, DockPosition::Right, true),
+            OpenAs::Push
+        );
+    }
+
+    #[test]
+    fn a_peek_is_the_docks_width_capped_by_the_window() {
+        let d = docks();
+        let mut r = Responsive::default();
+        r.evaluate(&d, 1100.0, true);
+        assert_eq!(r.peek_width(&d, DockPosition::Right), 350.0);
+        // Below 900 at most 300.
+        r.evaluate(&d, 640.0, true);
+        assert_eq!(r.peek_width(&d, DockPosition::Right), 300.0);
+        // Never so wide that under 120 of the center is left (nor under the dock's minimum).
+        r.evaluate(&d, 420.0, true);
+        let width = r.peek_width(&d, DockPosition::Right);
+        assert!(
+            r.center_width(&d, 420.0) - width >= PEEK_CENTER_VISIBLE || width <= PEEK_MIN_WIDTH,
+            "{width}"
+        );
+        // The left peek is the sidebar's own width.
+        r.evaluate(&d, 1100.0, true);
+        assert_eq!(r.peek_width(&d, DockPosition::Left), 280.0);
     }
 
     #[test]

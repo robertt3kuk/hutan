@@ -148,6 +148,7 @@ impl Render for Workbench {
         self.rendered_files.clear();
 
         self.sync_docks(window, cx);
+        let peek = self.render_peek(window, cx);
         let left = self.render_dock(DockPosition::Left, window, cx);
         let right = self.render_dock(DockPosition::Right, window, cx);
         let bottom = self.render_dock(DockPosition::Bottom, window, cx);
@@ -207,11 +208,17 @@ impl Render for Workbench {
         let resizing_docks = matches!(self.resizing, Some(Resizing::Dock { .. }));
         let root = div()
             .id("workbench")
-            .key_context(match (resizing_docks, self.layout_undo.is_some()) {
-                (true, true) => "Workbench DockResize LayoutToast",
-                (true, false) => "Workbench DockResize",
-                (false, true) => "Workbench LayoutToast",
-                (false, false) => "Workbench",
+            .key_context(match (
+                resizing_docks,
+                self.layout_undo.is_some(),
+                self.peek.is_some(),
+            ) {
+                (true, true, _) => "Workbench DockResize LayoutToast",
+                (true, false, _) => "Workbench DockResize",
+                (false, true, true) => "Workbench LayoutToast Peek",
+                (false, true, false) => "Workbench LayoutToast",
+                (false, false, true) => "Workbench Peek",
+                (false, false, false) => "Workbench",
             })
             .track_focus(&self.focus_handle)
             .relative()
@@ -234,6 +241,7 @@ impl Render for Workbench {
 
         root.child(
             div()
+                .relative()
                 .flex()
                 .flex_1()
                 .min_h_0()
@@ -264,7 +272,9 @@ impl Render for Workbench {
                 )
                 // The right side is a column of its own: the panel body (a 36 px header, the
                 // panel) and, outside it, the activity rail.
-                .children(right),
+                .children(right)
+                // The peek floats over the center, after everything of the row.
+                .children(peek),
         )
         .child(status)
         .child(super::ui::keyboard_focus_observer())
@@ -421,6 +431,9 @@ impl Workbench {
         }))
         .on_action(cx.listener(|this, _: &actions::CancelDockResize, _, cx| {
             this.cancel_resize(cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::ClosePeek, window, cx| {
+            this.close_peek(window, cx);
         }))
         .on_action(cx.listener(|this, _: &actions::ToggleOverview, _, cx| this.toggle_overview(cx)))
         .on_action(
@@ -1690,6 +1703,83 @@ impl Workbench {
             );
         }
         Some(dock_el)
+    }
+
+    /// The peek (EX-2): the panel of a side dock whose body would leave the center under 480 pt,
+    /// floating over the center's edge beside the dock's rail — a transparent layer that closes
+    /// it on a click outside (and keeps that click from reaching what is under it), then the
+    /// panel itself with its header, below the title bar so the titlebar buttons stay usable.
+    /// The center never moves.
+    fn render_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(pos) = self.peek_dock() else {
+            return Vec::new();
+        };
+        let dock = self.state.docks.get(pos).clone();
+        let Some(active) = dock.active.clone() else {
+            return Vec::new();
+        };
+        let theme = self.theme;
+        let body: AnyElement = match self.panel_view(&active, window, cx) {
+            Some(view) => cached_view(&self.regions, view),
+            None => div().size_full().into_any_element(),
+        };
+        let header = self.right_header(&dock, cx);
+        let rail = self.dock_extent(pos);
+        let beside_left = self.dock_extent(DockPosition::Left);
+        let beside_right = self.dock_extent(DockPosition::Right);
+        let backdrop = div()
+            .id("peek-backdrop")
+            .absolute()
+            .top(px(TITLEBAR_HEIGHT))
+            .bottom_0()
+            .left(px(beside_left))
+            .right(px(beside_right))
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.close_peek(window, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .into_any_element();
+        let mut layer = div()
+            .id("peek")
+            .track_focus(&self.dock_focus_handle(pos))
+            .absolute()
+            .top(px(TITLEBAR_HEIGHT))
+            .bottom_0()
+            .w(px(self.peek_width(pos)))
+            .flex()
+            .flex_col()
+            .bg(match pos {
+                DockPosition::Left => theme.sidebar,
+                _ => theme.right_sidebar,
+            })
+            .border_color(theme.border)
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.mutate(cx, |s| s.focus_dock(pos));
+                }),
+            )
+            .child(header)
+            .child(
+                div()
+                    .id("peek-body")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(body),
+            )
+            .child(probe(&self.regions, Region::Peek));
+        layer = match pos {
+            DockPosition::Left => layer.left(px(rail)).border_r_1(),
+            _ => layer.right(px(rail)).border_l_1(),
+        };
+        layer.style().box_shadow = Some(theme.shadow());
+        vec![backdrop, layer.into_any_element()]
     }
 
     /// The drag handle of a dock's inner edge. It is a child of the workbench root, painted after

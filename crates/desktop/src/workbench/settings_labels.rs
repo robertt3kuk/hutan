@@ -379,6 +379,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "layout",
+        "rail_peek",
+        "Open side panels over a narrow window",
+        "In a window too narrow for the center to keep 480 pt beside a side panel, clicking a rail icon (or ⌘L, ⌘⇧E, a panel command) shows the panel floating over the edge of the center instead of squeezing it. Esc, a click outside, opening a file or the same icon closes it. Off: the panel is pushed in beside the center.",
+    ),
+    field(
+        "layout",
         "offer_new_default",
         "Offer the new default layout",
         "Shows a one-line offer once when your saved layout predates the quieter default (Changes, Agents and History on the right rail, Requests and Resources under ⋯): “Use new default” or “Keep mine”. Your layout stays as it is unless you choose it. Off after you answered.",

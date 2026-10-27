@@ -454,6 +454,12 @@ pub struct LayoutSettings {
     /// 900 pt) to their rails when the window is narrow, and bring them back when it grows. The
     /// collapse is temporary and never changes what you chose.
     pub auto_collapse: bool,
+    /// In a window too narrow for the center to keep 480 pt beside a side panel (the right
+    /// one below about 1180 pt, the left one below 800 pt), a click on a rail icon opens the
+    /// panel as a *peek* floating over the center instead of squeezing it. It closes on Esc, a
+    /// click outside it, opening a file or the same icon. Off: the panel is pushed in beside
+    /// the center.
+    pub rail_peek: bool,
     /// Offer the quieter default layout (three icons on the right rail, the rest under `⋯`) once
     /// to a layout saved before it existed: one line under the title bar with *Use new default*
     /// and *Keep mine*. Off after you answered, so it is asked once; nothing changes unless you
@@ -467,6 +473,7 @@ impl Default for LayoutSettings {
             preset: LayoutPreset::DEFAULT.to_owned(),
             presets: BTreeMap::new(),
             auto_collapse: true,
+            rail_peek: true,
             offer_new_default: true,
         }
     }

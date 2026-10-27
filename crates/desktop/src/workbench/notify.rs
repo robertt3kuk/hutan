@@ -3,7 +3,7 @@
 
 use gpui::{Context, Window};
 
-use super::model::{DockMode, DockPosition, ItemRef, LayoutPreset, PanelId};
+use super::model::{DockPosition, ItemRef, LayoutPreset, PanelId};
 use super::panels::{AssistantPanel, ScopeKey};
 use super::view::Workbench;
 use crate::sessions::{MawasFocus, UiOpenRequested};
@@ -25,7 +25,7 @@ impl Workbench {
         ]
         .into_iter()
         .any(|pos| {
-            self.dock_mode(pos) == DockMode::Expanded
+            self.dock_body_shown(pos)
                 && self.state.docks.get(pos).active.as_ref() == Some(&id)
         });
         docked

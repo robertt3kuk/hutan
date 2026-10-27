@@ -232,6 +232,8 @@ pub enum Region {
     StripMore,
     /// The rail of a side dock (the left 44 pt icon rail, the right 40 pt activity rail).
     Rail(DockPosition),
+    /// The peek: a side dock's panel floating over the center (`layout.rail_peek`).
+    Peek,
     /// The titlebar button of a side dock (the sidebar toggle at the traffic lights, the right
     /// dock's).
     DockToggle(DockPosition),
@@ -797,6 +799,12 @@ pub struct Workbench {
     /// What the window itself does to the side docks: the transient auto-collapse
     /// (`layout.auto_collapse`), never saved.
     pub(crate) responsive: Responsive,
+    /// The side dock whose panel floats over the center as a peek (`layout.rail_peek`,
+    /// `docks.rs`): transient, never saved, never a dock mode.
+    pub(crate) peek: Option<DockPosition>,
+    /// A peek just opened that has not taken the keyboard yet: the next frame gives it to the
+    /// peek, unless a panel already took it (⌘⇧E puts it in the Files tree).
+    pub(crate) peek_focus_pending: bool,
     /// The mode every dock had after the last model change, to see which one the user opened.
     pub(crate) dock_modes_seen: [DockMode; 3],
     /// One handle per dock (left, right, bottom) around what it renders: tells whether the
@@ -1439,6 +1447,8 @@ impl Workbench {
             tab_revealed: std::collections::HashMap::new(),
             tab_marked: std::collections::HashMap::new(),
             responsive: Responsive::default(),
+            peek: None,
+            peek_focus_pending: false,
             dock_modes_seen,
             dock_focus,
             focus_dock_seen: None,
@@ -2035,6 +2045,11 @@ impl Workbench {
         // (one instance, shown where it is when it is open), not a dock's panel.
         if actions::is_mawas_page(id.as_str()) || id.as_str() == super::model::AGENTS_PAGE {
             self.mutate(cx, |s| s.open_panel_in_center(&id));
+            return;
+        }
+        // In a window too narrow for the center to keep its room beside the body, a panel that
+        // sits on a rail opens as a peek over the center (`layout.rail_peek`).
+        if self.peek_panel(&id, cx) {
             return;
         }
         let dock = self

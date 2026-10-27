@@ -22,7 +22,7 @@ pub use persist::{LayoutNote, LoadOutcome, STATE_VERSION};
 pub use preset::{CenterLayout, LayoutPreset};
 pub use responsive::{
     AUTO_COLLAPSE_HYSTERESIS, AUTO_COLLAPSE_LEFT_BELOW, AUTO_COLLAPSE_RIGHT_BELOW, AutoState,
-    MIN_CENTER_WIDTH, Responsive,
+    MIN_CENTER_WIDTH, OpenAs, PEEK_CENTER_VISIBLE, PEEK_MIN_WIDTH, PEEK_NARROW_MAX, Responsive,
 };
 pub use session_tabs::{MergedTabs, SessionTab};
 pub use term_split::{MIN_SPLIT_COLS, MIN_SPLIT_ROWS, TermSplit};

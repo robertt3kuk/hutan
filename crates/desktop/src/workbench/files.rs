@@ -264,6 +264,9 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let key = path.display().to_string();
+        // Opening a file closes a peek (its focus moves to the file's pane); a preview — Space or
+        // a click in the Files tree — leaves the keyboard in the tree, so the peek stays.
+        let peeked = self.peek_dock().filter(|_| place == FilePlace::Preview);
         super::persistence::note_recent_file(&mut self.recent_files, &key);
         self.ensure_buffer(&key, target.picked, Some(size), cx);
         let item = ItemRef::file(key.clone());
@@ -300,6 +303,10 @@ impl Workbench {
                 let code = view.read(cx).code().clone();
                 code.update(cx, |code, cx| code.reveal_line(line as usize, column, cx));
             }
+        }
+        if let Some(pos) = peeked {
+            self.peek = Some(pos);
+            self.state.focus = super::model::FocusTarget::Dock(pos);
         }
         if place != FilePlace::Preview {
             self.focus_root(window, cx);
