@@ -5,5 +5,6 @@ mod blame;
 mod editing;
 mod git_gutter;
 mod ime;
+mod scroll;
 mod view;
 mod wrap;

@@ -755,6 +755,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "editor",
+        "scroll_beyond_last_line",
+        "Scroll past the last line",
+        "How far a file scrolls past its last line, as a fraction of the window's height: 0 stops with the last line at the bottom, 0.5 leaves half a screen of room, 1 a whole one. A file is never scrolled to a blank view.",
+    ),
+    field(
+        "editor",
         "inline_blame",
         "Show git blame at the caret",
         "The caret's line shows who last changed it, when, and the commit message after the end of the line. Off by default; Toggle Blame in the command palette shows a column for every line.",

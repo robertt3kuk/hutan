@@ -320,6 +320,7 @@ impl FileView {
         };
         this.sync_vim(cx);
         this.sync_blame_setting(cx);
+        this.sync_scroll_setting(cx);
         this.sync_soft_wrap(cx);
         this
     }
@@ -579,6 +580,13 @@ impl FileView {
             self.command = None;
         }
         self.code.update(cx, |code, cx| code.set_vim(settings, cx));
+    }
+
+    /// Follows `editor.scroll_beyond_last_line` (live).
+    pub fn sync_scroll_setting(&mut self, cx: &mut Context<Self>) {
+        let beyond = self.settings.get::<EditorSettings>().scroll_beyond();
+        self.code
+            .update(cx, |code, cx| code.set_scroll_beyond_last_line(beyond, cx));
     }
 
     // ---- soft wrap (EDITOR-WRAP) -----------------------------------------------------------

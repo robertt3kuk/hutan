@@ -30,6 +30,8 @@ use crate::wrap::WrapState;
 /// Lines shaped above and below the ones that intersect the view. None: a frame shapes exactly
 /// what it shows (a partly visible line at each edge included).
 pub const OVERSCAN_LINES: usize = 0;
+/// `editor.scroll_beyond_last_line` by default: half a screen of room below the last line.
+pub const DEFAULT_SCROLL_BEYOND: f32 = 0.5;
 
 /// Most lines one column selection (⌥⇧-drag) spans.
 pub const MAX_COLUMN_LINES: usize = 10_000;
@@ -311,6 +313,9 @@ pub struct CodeView {
     pub(crate) vim: Option<crate::modal::VimState>,
     /// `:set number`: the gutter shows line numbers.
     pub(crate) show_numbers: bool,
+    /// `editor.scroll_beyond_last_line`: how far past the last line the view scrolls, as a
+    /// fraction of its height (see [`CodeView::set_scroll_beyond_last_line`]).
+    pub(crate) scroll_beyond: f32,
     /// GIT-HISTORY: the gutter has a column of blame (while the buffer holds one).
     pub(crate) blame_gutter: bool,
     /// The caret's line shows its blame after its end.
@@ -413,6 +418,7 @@ impl CodeView {
             widest: 0,
             vim: None,
             show_numbers: true,
+            scroll_beyond: DEFAULT_SCROLL_BEYOND,
             blame_gutter: false,
             inline_blame: false,
             blame_area: None,
@@ -646,15 +652,28 @@ impl CodeView {
         self.clamp_scroll(cx);
     }
 
-    /// Keeps the scroll inside the content: the last row can reach the top, the widest line
-    /// seen can reach the left edge (a wrapped view never scrolls sideways).
+    /// How far the view may scroll, in pixels: the last row ends at the bottom of the view plus
+    /// [`scroll_beyond_last_line`](Self::scroll_beyond_last_line) of the view's height (half a
+    /// screen by default), never a blank view (F-19). A file shorter than that does not scroll.
+    pub(crate) fn max_scroll_y(&self, cx: &App) -> f32 {
+        let Some(layout) = self.layout else {
+            return 0.0;
+        };
+        let line_h = f32::from(layout.line_height);
+        let view_h = f32::from(layout.bounds.size.height);
+        let content = self.display_rows(cx) as f32 * line_h;
+        (content + self.scroll_beyond * view_h - view_h).max(0.0)
+    }
+
+    /// Keeps the scroll inside the content: the last row can reach the bottom of the view plus
+    /// the room `editor.scroll_beyond_last_line` allows, the widest line seen can reach the left
+    /// edge (a wrapped view never scrolls sideways).
     pub(crate) fn clamp_scroll(&mut self, cx: &App) {
         let Some(layout) = self.layout else {
             return;
         };
-        let line_h = f32::from(layout.line_height);
-        let max_y = (self.display_rows(cx).saturating_sub(1)) as f32 * line_h;
-        self.scroll_y = self.scroll_y.clamp(-self.inset, max_y.max(0.0));
+        let max_y = self.max_scroll_y(cx);
+        self.scroll_y = self.scroll_y.clamp(-self.inset, max_y);
         self.inset = (-self.scroll_y).max(0.0);
         let visible_w = f32::from(layout.bounds.right() - layout.text_left).max(0.0);
         let max_x = if self.is_wrapping(cx) {
@@ -689,6 +708,26 @@ impl CodeView {
 
     pub fn scroll_y(&self) -> f32 {
         self.scroll_y
+    }
+
+    /// `editor.scroll_beyond_last_line`: how far past the last line the view scrolls, as a
+    /// fraction of its height (0: the last line stops at the bottom; 0.5, the default: half a
+    /// screen of room; 1: a whole screen). Kept in 0 to 1.
+    pub fn set_scroll_beyond_last_line(&mut self, fraction: f32, cx: &mut Context<Self>) {
+        let fraction = if fraction.is_finite() {
+            fraction.clamp(0.0, 1.0)
+        } else {
+            DEFAULT_SCROLL_BEYOND
+        };
+        if (self.scroll_beyond - fraction).abs() > f32::EPSILON {
+            self.scroll_beyond = fraction;
+            self.clamp_scroll(cx);
+            cx.notify();
+        }
+    }
+
+    pub fn scroll_beyond_last_line(&self) -> f32 {
+        self.scroll_beyond
     }
 
     /// Pixels of content left of the text area's edge (always 0 while wrapping).

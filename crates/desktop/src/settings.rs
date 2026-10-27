@@ -1183,6 +1183,10 @@ pub struct EditorSettings {
     /// wedge where lines were removed; a click opens the change with *Revert hunk* and *Stage
     /// hunk*. Off, the file is not compared with git.
     pub git_gutter: bool,
+    /// How far file tabs scroll past the last line, as a fraction of the view's height: 0 stops
+    /// with the last line at the bottom, 0.5 (the default) leaves half a screen of room, 1 a
+    /// whole one. Never a blank view.
+    pub scroll_beyond_last_line: f64,
     /// Show the git blame of the caret's line (author, date, message) after the end of the line.
     /// Off by default; the gutter's blame column is the *Toggle Blame* command.
     pub inline_blame: bool,
@@ -1224,6 +1228,7 @@ impl Default for EditorSettings {
             autosave_delay_ms: 1000,
             agent_highlight: true,
             git_gutter: true,
+            scroll_beyond_last_line: f64::from(hutan_code_view::DEFAULT_SCROLL_BEYOND),
             inline_blame: false,
             soft_wrap: SoftWrap::Auto,
             wrap_column: hutan_code_view::DEFAULT_WRAP_COLUMN as u64,
@@ -1239,6 +1244,15 @@ impl EditorSettings {
     /// Smallest and largest `editor.wrap_column`.
     pub const MIN_WRAP_COLUMN: u64 = 20;
     pub const MAX_WRAP_COLUMN: u64 = 1000;
+
+    /// `editor.scroll_beyond_last_line`, kept in range.
+    pub fn scroll_beyond(&self) -> f32 {
+        if self.scroll_beyond_last_line.is_finite() {
+            self.scroll_beyond_last_line.clamp(0.0, 1.0) as f32
+        } else {
+            hutan_code_view::DEFAULT_SCROLL_BEYOND
+        }
+    }
 
     /// How a file of `language` (`None`: plain text) wraps: `languages.<language>.soft_wrap`
     /// first, then `editor.soft_wrap`, and `auto` is on for Markdown and plain text.

@@ -257,6 +257,7 @@ pub fn number_range(namespace: &str, key: &str) -> Option<(f64, f64)> {
             crate::settings::EditorSettings::MIN_WRAP_COLUMN as f64,
             crate::settings::EditorSettings::MAX_WRAP_COLUMN as f64,
         )),
+        ("editor", "scroll_beyond_last_line") => Some((0.0, 1.0)),
         ("resources", "interval_ms") => Some((
             f64::from(hutan_protocol::resources::MIN_INTERVAL_MS),
             f64::from(crate::workbench::panels::MAX_INTERVAL_MS),

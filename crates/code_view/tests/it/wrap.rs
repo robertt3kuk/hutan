@@ -282,10 +282,13 @@ fn the_scroll_extent_is_in_rows(cx: &mut TestAppContext) {
     });
     view.update(cx, |v, cx| v.scroll_to(1.0e9, cx));
     draw(cx);
+    let view_h = view.read_with(cx, |v, _| {
+        f32::from(v.layout().expect("laid out").bounds.size.height)
+    });
     assert_eq!(
         view.read_with(cx, |v, _| v.scroll_y()),
-        (total - 1) as f32 * line_h,
-        "the last row can reach the top"
+        total as f32 * line_h - view_h * 0.5,
+        "the last row ends half a screen above the bottom of the view"
     );
     // The caret at the end of the text brings the end into view (the last rows are below).
     view.update(cx, |v, cx| v.scroll_to(0.0, cx));

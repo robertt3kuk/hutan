@@ -1698,6 +1698,7 @@ impl Workbench {
             for view in self.file_views.values() {
                 view.update(cx, |view, cx| view.sync_vim(cx));
                 view.update(cx, |view, cx| view.sync_blame_setting(cx));
+                view.update(cx, |view, cx| view.sync_scroll_setting(cx));
             }
             // `editor.agent_highlight` and `editor.git_gutter` too.
             let editor = self.settings.get::<crate::settings::EditorSettings>();
