@@ -31,6 +31,7 @@ use super::panels::HistoryResume;
 use super::terminals::session_of_item;
 use super::ui::StyledExt as _;
 use super::ui::motion::{self, PresentExt as _};
+use super::ui::scroll::ScrollExt as _;
 use super::view::{MenuEntry, Workbench};
 use super::vim_ui::OverlayField;
 use crate::settings::{SidebarOrganize, SidebarSettings, WorkspaceSort, WorkspacesSettings};
@@ -1418,6 +1419,7 @@ impl Workbench {
                 .id("picker-backdrop")
                 .absolute()
                 .inset_0()
+                .when(wanted, |s| s.shield_behind())
                 .flex()
                 .justify_center()
                 .items_start()

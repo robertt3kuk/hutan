@@ -13,6 +13,7 @@ use super::actions::daemon;
 use super::panels::StatusTone;
 use super::render::probe;
 use super::ui::motion::{self, PresentExt as _};
+use super::ui::scroll::ScrollExt as _;
 use super::ui::{Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::macos::LoginItemStatus;
@@ -206,7 +207,7 @@ impl Workbench {
                 .id("daemon-backdrop")
                 .absolute()
                 .inset_0()
-                .when(wanted, |s| s.occlude())
+                .when(wanted, |s| s.shield_behind())
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| this.close_daemon_popover(window, cx)),

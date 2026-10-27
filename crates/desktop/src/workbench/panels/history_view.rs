@@ -27,6 +27,7 @@ use crate::workbench::Region;
 use crate::workbench::actions::OpenSettingsFor;
 use crate::workbench::render::probe;
 use crate::workbench::style::UiStyle;
+use crate::workbench::ui::scroll::ScrollExt as _;
 use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot, StyledExt as _};
 use crate::workbench::vim_ui::{self, VimConfig};
 
@@ -1498,7 +1499,7 @@ impl HistoryPanel {
                     .child(
                         div()
                             .id("history-menu")
-                            .occlude()
+                            .shield_behind()
                             .min_w(px(190.0))
                             .flex()
                             .flex_col()

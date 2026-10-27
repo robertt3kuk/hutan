@@ -511,6 +511,8 @@ impl Workbench {
             palette
                 .matches
                 .retain(|&i| commands.get(i).is_some_and(|c| offered.offers(&*c.action)));
+            self.palette_scroll
+                .scroll_to_item(0, gpui::ScrollStrategy::Top);
         }
     }
 

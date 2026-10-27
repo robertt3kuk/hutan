@@ -9,6 +9,7 @@
 //! the test at the end of this file); state is a glyph and a word, never a tinted pill.
 
 pub mod motion;
+pub mod scroll;
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};

@@ -27,6 +27,7 @@ use super::render::probe;
 use super::settings_keys::SheetFocus;
 use super::settings_labels::namespace_title;
 use super::ui::motion::{self, PresentExt as _};
+use super::ui::scroll::ScrollExt as _;
 use super::ui::{Button, IconButton, StyledExt as _};
 use super::view::{MenuEntry, Region, Workbench, preset_label};
 use crate::icons::Icon;
@@ -898,7 +899,7 @@ impl Workbench {
                 self.overlay_vim_mode(super::vim_ui::OverlayField::SheetValue),
             ))
             .when(wanted, |s| s.track_focus(&self.sheet_focus))
-            .occlude()
+            .shield_behind()
             .relative()
             .w(px(420.0))
             .max_h(px(460.0))

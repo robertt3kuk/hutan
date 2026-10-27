@@ -15,6 +15,7 @@ use super::panels::field_box;
 use super::render::probe;
 use super::send_key::send_key_control;
 use super::ui::motion::{self, PresentExt as _};
+use super::ui::scroll::ScrollExt as _;
 use super::ui::{self, Button, FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::VimConfig;
@@ -1540,6 +1541,7 @@ impl Workbench {
                 .id("launcher-backdrop")
                 .absolute()
                 .inset_0()
+                .when(wanted, |s| s.shield_behind())
                 .flex()
                 .justify_center()
                 .items_start()

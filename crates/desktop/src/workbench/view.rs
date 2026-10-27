@@ -194,6 +194,10 @@ pub enum Region {
     PanelSettings(&'static str),
     /// A control of the daemon popover, by element id (`daemon-stop`, `keep_running`, …).
     Popover(&'static str),
+    /// The palette's list (`list`).
+    Palette(&'static str),
+    /// Row `index` of the palette's list, counting from the first match.
+    PaletteRow(usize),
     Center,
     Dock(DockPosition),
     Pane(PaneId),
@@ -768,6 +772,8 @@ pub struct Workbench {
     pub(crate) integrations: super::integrations::IntegrationControl,
     pub(crate) harness_install: super::harness_install::HarnessInstallControl,
     pub(crate) palette: Option<PaletteState>,
+    /// The scroll of the palette's list; the highlighted row follows the keyboard.
+    pub(crate) palette_scroll: gpui::UniformListScrollHandle,
     /// Vim state of the text fields of the overlays below (`editor.vim_mode`).
     pub(crate) edits: super::vim_ui::OverlayEdits,
     pub(crate) context_menu: Option<ContextMenu>,
@@ -1400,6 +1406,7 @@ impl Workbench {
                 options.package_runner,
             ),
             palette: None,
+            palette_scroll: gpui::UniformListScrollHandle::new(),
             edits: super::vim_ui::OverlayEdits::default(),
             context_menu: None,
             modal: None,
@@ -2099,8 +2106,15 @@ impl Workbench {
             } else {
                 palette.select_prev();
             }
+            self.palette_scroll
+                .scroll_to_item(palette.selected, gpui::ScrollStrategy::Nearest);
             cx.notify();
         }
+    }
+
+    /// How far the palette's list is scrolled, in pixels (tests).
+    pub fn palette_scrolled(&self) -> Pixels {
+        -self.palette_scroll.0.borrow().base_handle.offset().y
     }
 
     /// Close the palette and run the highlighted command (or the one at `index` in the filtered

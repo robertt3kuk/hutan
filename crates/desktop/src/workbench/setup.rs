@@ -27,6 +27,7 @@ use super::actions::{InstallHarness, setup as setup_actions};
 use super::harnesses::{Detection, HARNESSES, Harness, login_summary};
 use super::render::probe;
 use super::ui::motion::{self, PresentExt as _};
+use super::ui::scroll::ScrollExt as _;
 use super::ui::{self, Button, ButtonKind, Mascot, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::cli_link::{CliLink, Manual, Plan};
@@ -1045,7 +1046,7 @@ impl Workbench {
                 .id("setup-backdrop")
                 .absolute()
                 .inset_0()
-                .occlude()
+                .shield_behind()
                 .flex()
                 .items_center()
                 .justify_center()

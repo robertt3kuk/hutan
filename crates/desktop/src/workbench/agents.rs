@@ -28,6 +28,7 @@ use super::persistence;
 use super::render::probe;
 use super::terminals::session_of_item;
 use super::ui::motion::{self, PresentExt as _};
+use super::ui::scroll::ScrollExt as _;
 use super::ui::{self, Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
@@ -706,6 +707,7 @@ impl Workbench {
                 .id("agent-picker-backdrop")
                 .absolute()
                 .inset_0()
+                .when(wanted, |s| s.shield_behind())
                 .flex()
                 .justify_center()
                 .items_start()

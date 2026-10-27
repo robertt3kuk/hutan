@@ -9,6 +9,7 @@ use super::panels::AgentsRequest;
 use super::registry::{BarWidth, DockState, PerDock, StatusContext, StatusData, StatusSide};
 use super::terminals::session_of_item;
 use super::ui::motion::{self, PresentExt as _};
+use super::ui::scroll::ScrollExt as _;
 use super::ui::{self, Mascot, StyledExt as _};
 use super::view::{ContextMenu, DragPreview, DraggedItem, Region, Resizing, Workbench, steps};
 use super::vim_ui::OverlayField;
@@ -18,9 +19,10 @@ use gpui::{
     Action, AnyElement, AnyView, Bounds, ClickEvent, Context, ElementId, InteractiveElement,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, anchored, canvas,
-    deferred, div, point, prelude::*, px, relative,
+    deferred, div, point, prelude::*, px, relative, uniform_list,
 };
 use std::cell::Cell;
+use std::ops::Range;
 use std::rc::Rc;
 
 use super::regions::Regions;
@@ -39,6 +41,9 @@ const HANDLE_THICKNESS: f32 = 6.0;
 const TAB_TOP_INSET: f32 = 6.0;
 /// A tab's title is cut with an ellipsis beyond this width (the tooltip has it in full).
 const TAB_TITLE_MAX: f32 = 180.0;
+/// How far down the palette's panel starts, and the margin it keeps at the window's bottom.
+const PALETTE_TOP: f32 = 80.0;
+const PALETTE_BOTTOM_MARGIN: f32 = 24.0;
 /// A title this long is likely cut, so its tab gets the title as a tooltip when it has none.
 const TAB_TITLE_TOOLTIP_CHARS: usize = 20;
 
@@ -2676,40 +2681,17 @@ impl Workbench {
         let palette = self.palette.clone()?;
         let theme = self.theme;
         let tokens = self.density.ui();
-        const VISIBLE_ROWS: usize = 12;
-        let start = palette.selected.saturating_sub(VISIBLE_ROWS - 1);
-        let rows: Vec<AnyElement> = palette
-            .matches
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(VISIBLE_ROWS)
-            .filter_map(|(row, command_index)| {
-                let command = self.commands.get(*command_index)?;
-                let selected = row == palette.selected;
-                let hint = key_hint(window, &*command.hint).unwrap_or_default();
-                let hover = theme.surface_hover;
-                Some(
-                    div()
-                        .id(id(format!("palette-row-{row}")))
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .h(px(tokens.sidebar_row + 2.0))
-                        .px(px(tokens.spacing * 2.0))
-                        .rounded(px(tokens.radius))
-                        .cursor_pointer()
-                        .when(selected, |s| s.bg(theme.accent_soft))
-                        .when(!selected, |s| s.hover(move |s| s.bg(hover)))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.palette_confirm(Some(row), window, cx);
-                        }))
-                        .child(command.title.clone())
-                        .child(div().text_color(theme.muted).child(hint))
-                        .into_any_element(),
-                )
-            })
-            .collect();
+        // As many rows as the window holds: the panel sits 80 px down, has 6 px of padding and a
+        // header, and leaves a margin at the bottom; the rest scrolls.
+        let row_height = tokens.sidebar_row + 2.0;
+        let header_height = tokens.sidebar_row + 8.0 + 4.0;
+        let list_max = (window.viewport_size().height.as_f32()
+            - PALETTE_TOP
+            - 12.0
+            - header_height
+            - PALETTE_BOTTOM_MARGIN)
+            .max(row_height);
+        let count = palette.matches.len();
         let empty = palette.matches.is_empty();
 
         Some(
@@ -2720,7 +2702,8 @@ impl Workbench {
                 .flex()
                 .justify_center()
                 .items_start()
-                .pt(px(80.0))
+                .pt(px(PALETTE_TOP))
+                .when(wanted, |s| s.shield_behind())
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| this.close_palette(window, cx)),
@@ -2770,7 +2753,27 @@ impl Workbench {
                                     vec![div().child(palette.query.clone()).into_any_element()]
                                 }),
                         )
-                        .children(rows)
+                        .when(count > 0, |s| {
+                            s.child(
+                                div()
+                                    .relative()
+                                    .child(
+                                        uniform_list(
+                                            "palette-list",
+                                            count,
+                                            cx.processor(
+                                                |this, range: Range<usize>, window, cx| {
+                                                    this.palette_rows(range, window, cx)
+                                                },
+                                            ),
+                                        )
+                                        .track_scroll(&self.palette_scroll)
+                                        .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+                                        .max_h(px(list_max)),
+                                    )
+                                    .child(probe(&self.regions, Region::Palette("list"))),
+                            )
+                        })
                         .when(empty, |s| {
                             s.child(
                                 div()
@@ -2789,6 +2792,49 @@ impl Workbench {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// The rows `range` of the palette's list (a frame builds only the ones in view).
+    fn palette_rows(
+        &mut self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let Some(palette) = &self.palette else {
+            return Vec::new();
+        };
+        let selected_row = palette.selected;
+        range
+            .filter_map(|row| {
+                let command = self.commands.get(*palette.matches.get(row)?)?;
+                let selected = row == selected_row;
+                let hint = key_hint(window, &*command.hint).unwrap_or_default();
+                let hover = theme.surface_hover;
+                Some(
+                    div()
+                        .id(id(format!("palette-row-{row}")))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .h(px(tokens.sidebar_row + 2.0))
+                        .px(px(tokens.spacing * 2.0))
+                        .rounded(px(tokens.radius))
+                        .cursor_pointer()
+                        .when(selected, |s| s.bg(theme.accent_soft))
+                        .when(!selected, |s| s.hover(move |s| s.bg(hover)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.palette_confirm(Some(row), window, cx);
+                        }))
+                        .child(command.title.clone())
+                        .child(div().text_color(theme.muted).child(hint))
+                        .child(probe(&self.regions, Region::PaletteRow(row)))
+                        .into_any_element(),
+                )
+            })
+            .collect()
     }
 
     // ---- context menu ------------------------------------------------------------------------
@@ -2846,7 +2892,7 @@ impl Workbench {
                             .id("context-menu")
                             .key_context("ContextMenu")
                             .track_focus(&self.menu_focus)
-                            .occlude()
+                            .shield_behind()
                             .min_w(px(190.0))
                             .flex()
                             .flex_col()
