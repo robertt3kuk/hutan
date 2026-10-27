@@ -86,6 +86,25 @@ pub struct Checkout {
     pub dirty: bool,
 }
 
+/// One folder the Files panel's root switcher offers (EX-8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilesRootChoice {
+    pub root: PathBuf,
+    /// `Main checkout · master`, `Worktree · feature/x`, or a project's name.
+    pub label: String,
+    pub kind: ScopeKind,
+    /// An agent runs a turn there now.
+    pub working: bool,
+}
+
+/// What the root switcher lists: the checkouts of the project the window works in, then the other
+/// projects of its workspace.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilesRootChoices {
+    pub checkouts: Vec<FilesRootChoice>,
+    pub projects: Vec<FilesRootChoice>,
+}
+
 /// What kind of thing a scope is: the glyph of its chip and the sidebar's look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeKind {
@@ -323,6 +342,15 @@ fn agent_busy(info: &SessionInfo) -> bool {
 }
 
 /// The places a session works in, for [`CheckoutActivity`].
+/// The folder of a project: its root, else its first folder.
+fn project_folder(project: &WorkspaceInfo) -> Option<PathBuf> {
+    project
+        .project
+        .as_ref()
+        .map(|p| p.root.clone())
+        .or_else(|| project.roots.first().cloned())
+}
+
 fn session_places(info: &SessionInfo) -> Vec<PathBuf> {
     let mut places: Vec<PathBuf> = Vec::new();
     for place in [
@@ -1221,6 +1249,136 @@ impl SessionsStore {
             return Some(checkout);
         }
         self.root_in(self.active_workspace()?)
+    }
+
+    /// What the Files panel's root switcher offers (EX-8): every checkout of the project the
+    /// panel follows (main first; a folder outside git is one choice), and the other projects of
+    /// its workspace. Nothing at Home.
+    pub fn files_root_choices(&self) -> FilesRootChoices {
+        let mut out = FilesRootChoices::default();
+        let Some(container) = self.scope_container() else {
+            return out;
+        };
+        let project = match container.kind {
+            WorkspaceKind::Home => return out,
+            WorkspaceKind::Project => container,
+            WorkspaceKind::Workspace => match self
+                .active_project()
+                .filter(|p| p.parent_id == Some(container.id))
+                .or_else(|| self.state.projects_in(container.id).next())
+            {
+                Some(project) => project,
+                None => return out,
+            },
+        };
+        let checkouts = self.checkouts_of(project);
+        if checkouts.is_empty() {
+            if let Some(root) = project_folder(project) {
+                out.checkouts.push(FilesRootChoice {
+                    working: self.working_label(&root).is_some(),
+                    root,
+                    label: project.name.clone(),
+                    kind: ScopeKind::Folder,
+                });
+            }
+        }
+        for checkout in checkouts {
+            let branch = checkout.branch.clone();
+            let (label, kind) = if checkout.main {
+                (
+                    match &branch {
+                        Some(branch) => format!("Main checkout · {branch}"),
+                        None => "Main checkout".to_owned(),
+                    },
+                    ScopeKind::Repository,
+                )
+            } else {
+                let name = branch.unwrap_or_else(|| {
+                    checkout
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                });
+                (format!("Worktree · {name}"), ScopeKind::Worktree)
+            };
+            out.checkouts.push(FilesRootChoice {
+                working: self.working_label(&checkout.path).is_some(),
+                root: checkout.path,
+                label,
+                kind,
+            });
+        }
+        if container.kind == WorkspaceKind::Workspace {
+            for other in self
+                .state
+                .projects_in(container.id)
+                .filter(|p| p.id != project.id)
+            {
+                let Some(root) = project_folder(other) else {
+                    continue;
+                };
+                let repository = other
+                    .project
+                    .as_ref()
+                    .is_some_and(|p| p.common_dir.is_some());
+                out.projects.push(FilesRootChoice {
+                    working: self.working_label(&root).is_some(),
+                    root,
+                    label: other.name.clone(),
+                    kind: if repository {
+                        ScopeKind::Repository
+                    } else {
+                        ScopeKind::Folder
+                    },
+                });
+            }
+        }
+        out
+    }
+
+    /// What the chip says of the folder `root` the switcher picked: its project, with the
+    /// branch for a linked worktree. `None` when `root` is no checkout or project folder the
+    /// daemon knows (the pick is then dropped).
+    pub fn files_root_scope(&self, root: &std::path::Path) -> Option<ScopeLabel> {
+        self.state
+            .workspaces
+            .iter()
+            .filter(|w| w.kind == WorkspaceKind::Project)
+            .find_map(|project| {
+                if let Some(checkout) = self
+                    .checkouts_of(project)
+                    .into_iter()
+                    .find(|c| c.path == root)
+                {
+                    return Some(self.scope_of(project, (!checkout.main).then_some(checkout.path)));
+                }
+                (project_folder(project).as_deref() == Some(root))
+                    .then(|| self.scope_of(project, None))
+            })
+    }
+
+    /// The folders of the workspace the panel follows, one per project in the daemon's order (the
+    /// project the window works in at its picked worktree); `None` unless the container is a
+    /// workspace with projects.
+    pub fn files_workspace_roots(&self) -> Option<Vec<PathBuf>> {
+        let container = self.scope_container()?;
+        if container.kind != WorkspaceKind::Workspace {
+            return None;
+        }
+        let mut roots: Vec<PathBuf> = Vec::new();
+        for project in self.state.projects_in(container.id) {
+            let picked = (self.active_workspace == Some(container.id)
+                && self.active_project == Some(project.id))
+            .then(|| self.active_checkout())
+            .flatten();
+            if let Some(root) = picked.or_else(|| project_folder(project))
+                && !roots.contains(&root)
+            {
+                roots.push(root);
+            }
+        }
+        (!roots.is_empty()).then_some(roots)
     }
 
     /// The folder Mawas works in under `focus`, with the container it belongs to: the Home

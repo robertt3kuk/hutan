@@ -1190,6 +1190,11 @@ impl Workbench {
                 this.show_active_file_history(window, cx);
             }),
         )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowFilesRootMenu, window, cx| {
+                this.show_files_root_menu(a.0, window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, a: &actions::ShowFilesMenu, window, cx| {
             this.show_files_menu(&a.0, window, cx);
         }))

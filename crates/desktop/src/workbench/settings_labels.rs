@@ -559,6 +559,16 @@ const FIELDS: &[FieldText] = &[
         "Lists the files open in tabs above the tree: Auto shows it while two or more files of the folder are open.",
         &[("auto", "Auto"), ("always", "Always"), ("never", "Never")],
     ),
+    choice(
+        "panels.files",
+        "roots",
+        "Folders shown",
+        "Active project shows the folder of the project the window works in. Whole workspace stacks every project of the active workspace as a collapsible root row in one tree; the filter and the sections look across all of them. The scope chip's menu picks another checkout or project for a while.",
+        &[
+            ("active", "Active project"),
+            ("workspace", "Whole workspace"),
+        ],
+    ),
     // ---- problems ----
     choice(
         "panels.problems",

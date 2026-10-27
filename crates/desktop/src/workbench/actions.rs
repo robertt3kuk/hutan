@@ -486,6 +486,9 @@ data_actions! {
     /// Show the Files panel's ⋯ menu (hidden and ignored files, folding, indent guides, expand
     /// and collapse all, refresh) at a position.
     ShowFilesMoreMenu(gpui::Point<gpui::Pixels>);
+    /// Show the Files panel's root switcher (the scope chip's menu: the checkouts of the project,
+    /// the other projects of the workspace, *Follow active container*) at a position.
+    ShowFilesRootMenu(gpui::Point<gpui::Pixels>);
     /// Close the tabs that show this file (absolute path), in every pane: the Files panel's *Open
     /// Editors* close button; a file with unsaved changes asks first, as its tab's own × does.
     CloseFileTabs(String);

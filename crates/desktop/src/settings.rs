@@ -723,6 +723,18 @@ pub enum OpenEditorsSection {
     Never,
 }
 
+/// Which folders the Files panel's tree shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesRoots {
+    /// The folder of the project the window works in (its picked worktree), or the one the root
+    /// switcher chose.
+    #[default]
+    Active,
+    /// Every project of the active workspace, each a collapsible root row of one tree.
+    Workspace,
+}
+
 /// The `panels.files` namespace: the Files panel's tree of the active project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -751,6 +763,9 @@ pub struct FilesPanelSettings {
     pub show_diagnostics: FilesDiagnostics,
     /// List the files open in tabs above the tree: `auto` (two or more), `always`, `never`.
     pub open_editors: OpenEditorsSection,
+    /// Which folders the tree shows: `active` (the active project) or `workspace` (every project
+    /// of the active workspace, stacked).
+    pub roots: FilesRoots,
 }
 
 impl Default for FilesPanelSettings {
@@ -766,6 +781,7 @@ impl Default for FilesPanelSettings {
             filter_mode: FilterMode::Filter,
             show_diagnostics: FilesDiagnostics::ErrorsWarnings,
             open_editors: OpenEditorsSection::Auto,
+            roots: FilesRoots::Active,
         }
     }
 }

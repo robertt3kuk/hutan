@@ -30,10 +30,10 @@ pub use presentation::{
     AgentPresentation, AgentRecord, Counts, Group, Link, Reason, ReasonKind, Role, Scope, State,
 };
 pub use store::{
-    AccountsChanged, ActivityCause, Checkout, CheckoutActivity, CloseFailure, MawasFocus,
-    MawasFolder, MemoryChanged, REPLAY_WINDOW, RecoverySummaryDue, RequestCalled, ScopeKind,
-    ScopeLabel, SessionClosed, SessionsStore, StoreChanged, UI_OPEN_MAX_AGE_MS, UiOpenRequested,
-    UsageSummaryChanged,
+    AccountsChanged, ActivityCause, Checkout, CheckoutActivity, CloseFailure, FilesRootChoice,
+    FilesRootChoices, MawasFocus, MawasFolder, MemoryChanged, REPLAY_WINDOW, RecoverySummaryDue,
+    RequestCalled, ScopeKind, ScopeLabel, SessionClosed, SessionsStore, StoreChanged,
+    UI_OPEN_MAX_AGE_MS, UiOpenRequested, UsageSummaryChanged,
 };
 pub use terminal::TerminalSession;
 pub use untracked::Untracked;

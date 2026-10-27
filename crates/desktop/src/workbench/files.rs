@@ -977,6 +977,61 @@ impl Workbench {
         }
     }
 
+    /// The Files panel's root switcher (EX-8): the checkouts of the project it follows (the one
+    /// shown is checked), the other projects of the workspace, and *Follow active container*
+    /// (checked while the panel follows the window).
+    pub(crate) fn show_files_root_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<super::panels::FilesPanel>("files") else {
+            return;
+        };
+        let (choices, shown, pinned) = {
+            let panel = panel.read(cx);
+            (
+                panel.root_choices(cx),
+                panel.root().map(Path::to_owned),
+                panel.pinned_root().is_some(),
+            )
+        };
+        let entry = |choice: &crate::sessions::FilesRootChoice| {
+            let target = panel.clone();
+            let root = choice.root.clone();
+            let label = if choice.working {
+                format!("{} · working", choice.label)
+            } else {
+                choice.label.clone()
+            };
+            let mut entry = Self::entry(label, move |_, _, cx| {
+                let root = root.clone();
+                target.update(cx, |panel, cx| panel.pin_root(Some(root), cx));
+            });
+            entry.checked = pinned && shown.as_deref() == Some(choice.root.as_path());
+            entry
+        };
+        let mut entries: Vec<MenuEntry> = Vec::new();
+        entries.extend(choices.checkouts.iter().map(&entry));
+        let others: Vec<MenuEntry> = choices.projects.iter().map(&entry).collect();
+        if let Some(first) = others.first().cloned() {
+            entries.push(first.starting_group());
+            entries.extend(others.into_iter().skip(1));
+        }
+        let follow = panel.clone();
+        let mut follow_entry = Self::entry("Follow active container", move |_, _, cx| {
+            follow.update(cx, |panel, cx| panel.pin_root(None, cx));
+        });
+        follow_entry.checked = !pinned;
+        entries.push(if entries.is_empty() {
+            follow_entry
+        } else {
+            follow_entry.starting_group()
+        });
+        self.open_menu(position, entries, window, cx);
+    }
+
     /// The Files panel's ⋯ menu: what the tree lists (hidden files, ignored files), how it
     /// folds and draws, and the tree-wide actions.
     pub(crate) fn show_files_more_menu(

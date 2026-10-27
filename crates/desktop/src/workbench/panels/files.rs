@@ -71,12 +71,13 @@ use super::files_names::Journal;
 use super::files_tree::{ExpandRefusal, file_icon};
 pub use super::files_tree::{Row, RowKind, Tree, TreeOptions};
 use crate::icons::{Icon, icon};
-use crate::sessions::CheckoutActivity;
+use crate::sessions::{CheckoutActivity, FilesRootChoices, ScopeLabel};
 use crate::settings::{FilesPanelSettings, IndentGuides};
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
 use crate::workbench::actions::{
     ChosenFile, FilesMenuAt, FocusEditor, Notify, OpenChosenFile, ShowFilesMenu, ShowFilesMoreMenu,
+    ShowFilesRootMenu,
 };
 use crate::workbench::files::FilePlace;
 use crate::workbench::persistence::{self, FilesExpanded};
@@ -220,6 +221,11 @@ pub struct FilesPanel {
     stale_root: Option<PathBuf>,
     /// Trees of the roots the window left, most recent first, at most [`MAX_CACHED_ROOTS`].
     cache: Vec<CachedRoot>,
+    /// A root the root switcher picked (EX-8): the panel shows it instead of the folder the
+    /// window works in, until *Follow active container* or until the window's own root changes.
+    pin: Option<PathBuf>,
+    /// The folder the window works in, as last seen: a change of it ends a pick.
+    followed: Option<PathBuf>,
     selected: Option<PathBuf>,
     /// The anchor of a ⇧ range and of the rows ⌘-clicked: the row last picked without ⇧.
     anchor: Option<PathBuf>,
@@ -337,6 +343,8 @@ impl FilesPanel {
             tree: None,
             stale_root: None,
             cache: Vec::new(),
+            pin: None,
+            followed: None,
             selected: None,
             anchor: None,
             picked: HashSet::new(),
@@ -394,10 +402,35 @@ impl FilesPanel {
         self.tree.as_ref().map(Tree::root)
     }
 
-    /// What the panel is about: the worktree picked in the sidebar, else the project the window
-    /// works in (the chip of its header).
-    pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
-        self.env.sessions.read(cx).project_scope()
+    /// What the panel is about: the folder the root switcher picked, else the worktree picked
+    /// in the sidebar, else the project the window works in (the chip of its header).
+    pub fn scope(&self, cx: &gpui::App) -> Option<ScopeLabel> {
+        let store = self.env.sessions.read(cx);
+        if let Some(scope) = self.pin.as_deref().and_then(|p| store.files_root_scope(p)) {
+            return Some(scope);
+        }
+        store.project_scope()
+    }
+
+    /// The folder the root switcher picked; `None` while the panel follows the window.
+    pub fn pinned_root(&self) -> Option<&Path> {
+        self.pin.as_deref()
+    }
+
+    /// What the root switcher lists now.
+    pub fn root_choices(&self, cx: &gpui::App) -> FilesRootChoices {
+        self.env.sessions.read(cx).files_root_choices()
+    }
+
+    /// The root switcher's pick: the tree shows `root` (its kept tree comes back at once)
+    /// without the window changing what it works in; `None` is *Follow active container*.
+    pub fn pin_root(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
+        let followed = self.env.sessions.read(cx).files_root();
+        self.pin = root.filter(|root| Some(root) != followed.as_ref());
+        self.follow_root(cx);
+        self.sync_git(cx);
+        self.sync_diagnostics(cx);
+        cx.notify();
     }
 
     /// The tree itself.
@@ -589,10 +622,27 @@ impl FilesPanel {
         }
     }
 
+    /// What the panel follows: the folder the root switcher picked, else the project the window
+    /// works in.
+    fn wanted_root(&mut self, cx: &mut Context<Self>) -> Option<PathBuf> {
+        let store = self.env.sessions.read(cx);
+        let followed = store.files_root();
+        let pin_known = self
+            .pin
+            .as_deref()
+            .is_some_and(|pin| store.files_root_scope(pin).is_some());
+        // The window went elsewhere (or the pick is no checkout any more): the pick ends.
+        if followed != self.followed || !pin_known {
+            self.pin = None;
+        }
+        self.followed = followed.clone();
+        self.pin.clone().or(followed)
+    }
+
     /// Follows the project the window works in: a new root starts a tree (or brings its kept
     /// one back).
     fn follow_root(&mut self, cx: &mut Context<Self>) {
-        let root = self.env.sessions.read(cx).files_root();
+        let root = self.wanted_root(cx);
         if root.as_deref() == self.root() {
             return;
         }
@@ -2025,7 +2075,34 @@ impl Render for FilesPanel {
             })
             .into_any_element();
         let scope = self.scope(cx);
-        let chip = scope_chip(scope.as_ref(), "files", &self.env.regions, cx);
+        let pinned = self.pin.is_some();
+        let sidebar_accent = theme.sidebar_accent;
+        let sidebar_hover = theme.sidebar_hover;
+        let chip = scope_chip(scope.as_ref(), "files", &self.env.regions, cx).map(|chip| {
+            // The chip opens the root switcher (EX-8); a pick that is not the window's own
+            // folder keeps the chip lit.
+            div()
+                .id("files-root-chip")
+                .relative()
+                .flex()
+                .items_center()
+                .min_w_0()
+                .rounded(px(tokens.radius))
+                .cursor_pointer()
+                .when(pinned, move |s| s.bg(sidebar_accent))
+                .when(!pinned, move |s| s.hover(move |s| s.bg(sidebar_hover)))
+                .on_click(|event: &ClickEvent, window, cx| {
+                    window.dispatch_action(Box::new(ShowFilesRootMenu(event.position())), cx);
+                })
+                .child(chip)
+                .child(div().flex_none().pr(px(4.0)).child(icon(
+                    Icon::ActionExpand,
+                    10.0,
+                    theme.muted,
+                )))
+                .child(probe(&self.env.regions, Region::Files("root-chip")))
+                .into_any_element()
+        });
         // The chip names the project: the root's name is said under it only when there is no
         // chip (a folder that is not a project), never twice.
         let name_shown = chip.is_none();
