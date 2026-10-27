@@ -447,6 +447,31 @@ fn files_on_the_left(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
     );
 }
 
+/// The Explorer-left preset (EX-1) makes Files the left sidebar's active page: in a narrow window
+/// the compact rail's Files icon is still a peek.
+#[gpui::test]
+fn the_explorer_left_preset_keeps_files_reachable_in_a_narrow_window(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.apply_preset(&hutan_desktop::workbench::model::LayoutPreset::explorer_left_preset());
+        });
+    });
+    draw(cx);
+    resize(cx, 700.0);
+    assert_eq!(shown(&view, cx, Left), Compact);
+    assert_eq!(
+        state(&view, cx).docks.find(&PanelId::new("files")),
+        Some(Left)
+    );
+    click(&view, cx, Region::Nav("files"));
+    assert_eq!(peeking(&view, cx), Some(Left));
+    assert!(painted(&view, cx, Region::Peek));
+    assert_eq!(shown(&view, cx, Left), Compact);
+    click(&view, cx, Region::Nav("files"));
+    assert_eq!(peeking(&view, cx), None);
+}
+
 #[gpui::test]
 fn files_on_the_left_stays_reachable_from_the_compact_rail(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
