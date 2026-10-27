@@ -32,8 +32,8 @@ use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
 use crate::fs::{
     FsChange, FsCopy, FsCreate, FsFind, FsList, FsMove, FsRead, FsRename, FsRestore, FsSearch,
-    FsSearchCancel, FsStat, FsTrash, FsUnwatch, FsWatch, FsWriteAbort, FsWriteBegin,
-    FsWriteChunk, FsWriteCommit,
+    FsSearchCancel, FsStat, FsTrash, FsUnwatch, FsWatch, FsWriteAbort, FsWriteBegin, FsWriteChunk,
+    FsWriteCommit,
 };
 use crate::git::{GitBlame, GitFile, GitLog, GitShow};
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};

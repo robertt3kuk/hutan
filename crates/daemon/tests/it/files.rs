@@ -30,29 +30,32 @@ use tokio::time::{sleep, timeout};
 
 /// A daemon that tracks `root` as a workspace, a connection to it that listens to events, and
 /// a directory outside every root.
-struct Env {
-    t: TestDaemon,
-    client: Client,
-    events: broadcast::Receiver<(Seq, Event)>,
+pub(crate) struct Env {
+    pub(crate) t: TestDaemon,
+    pub(crate) client: Client,
+    pub(crate) events: broadcast::Receiver<(Seq, Event)>,
     /// Canonical, a project of the daemon.
-    root: PathBuf,
+    pub(crate) root: PathBuf,
     /// Canonical, tracked by nobody.
-    outside: PathBuf,
-    workspace: WorkspaceId,
+    pub(crate) outside: PathBuf,
+    pub(crate) workspace: WorkspaceId,
     _work: tempfile::TempDir,
 }
 
 impl Env {
-    async fn new() -> Self {
+    pub(crate) async fn new() -> Self {
         Self::with("", |_| {}).await
     }
 
-    async fn with(toml: &str, tweak: impl FnOnce(&mut hutan_daemon::DaemonConfig)) -> Self {
+    pub(crate) async fn with(
+        toml: &str,
+        tweak: impl FnOnce(&mut hutan_daemon::DaemonConfig),
+    ) -> Self {
         Self::start(|_| toml.to_owned(), tweak).await
     }
 
     /// `toml` is told the (canonical) root it will track.
-    async fn start(
+    pub(crate) async fn start(
         toml: impl FnOnce(&Path) -> String,
         tweak: impl FnOnce(&mut hutan_daemon::DaemonConfig),
     ) -> Self {
@@ -84,16 +87,16 @@ impl Env {
         }
     }
 
-    fn at(&self, relative: &str) -> PathBuf {
+    pub(crate) fn at(&self, relative: &str) -> PathBuf {
         self.root.join(relative)
     }
 
-    async fn stop(self) {
+    pub(crate) async fn stop(self) {
         self.t.stop().await;
     }
 }
 
-fn reason(error: &ClientError) -> String {
+pub(crate) fn reason(error: &ClientError) -> String {
     match error {
         ClientError::Remote(error) => error
             .data
@@ -105,7 +108,10 @@ fn reason(error: &ClientError) -> String {
     }
 }
 
-fn refused<T: std::fmt::Debug>(result: Result<T, ClientError>, code: ErrorCode) -> ClientError {
+pub(crate) fn refused<T: std::fmt::Debug>(
+    result: Result<T, ClientError>,
+    code: ErrorCode,
+) -> ClientError {
     match result {
         Err(ClientError::Remote(body)) => {
             assert_eq!(body.code, code, "{body:?}");
@@ -115,7 +121,7 @@ fn refused<T: std::fmt::Debug>(result: Result<T, ClientError>, code: ErrorCode) 
     }
 }
 
-fn code_of(error: &ClientError) -> ErrorCode {
+pub(crate) fn code_of(error: &ClientError) -> ErrorCode {
     match error {
         ClientError::Remote(body) => body.code,
         other => panic!("not a remote error: {other:?}"),
@@ -142,7 +148,7 @@ fn begin(path: &Path, expect: Option<FileVersion>, create: bool) -> FsWriteBegin
 }
 
 /// Polls `check` until it returns `Some`; fails after [`WAIT`].
-async fn eventually<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
+pub(crate) async fn eventually<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
     timeout(WAIT, async {
         loop {
             if let Some(found) = check() {
@@ -156,7 +162,7 @@ async fn eventually<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
 }
 
 /// The next `fs.changed` change of `path` that satisfies `pick`.
-async fn change_of(
+pub(crate) async fn change_of(
     events: &mut broadcast::Receiver<(Seq, Event)>,
     path: &Path,
     mut pick: impl FnMut(&FsChange) -> bool,
@@ -175,7 +181,7 @@ async fn change_of(
     .await
 }
 
-async fn watch_file(client: &Client, path: &Path) {
+pub(crate) async fn watch_file(client: &Client, path: &Path) {
     let watching = client
         .fs_watch(FsWatch {
             paths: vec![FsWatchPath {
@@ -877,7 +883,12 @@ async fn changes_come_in_bounded_events_and_overflow_says_when_some_were_dropped
     env.stop().await;
 }
 
-async fn report_working(t: &TestDaemon, session: SessionId, state: AgentState, seq: u64) {
+pub(crate) async fn report_working(
+    t: &TestDaemon,
+    session: SessionId,
+    state: AgentState,
+    seq: u64,
+) {
     let client = t.connect().await;
     let applied: AgentApplied = client
         .call(Request::AgentReport(AgentReportRequest {
@@ -897,7 +908,7 @@ async fn report_working(t: &TestDaemon, session: SessionId, state: AgentState, s
     assert!(applied.applied);
 }
 
-async fn shell_in(env: &Env) -> SessionInfo {
+pub(crate) async fn shell_in(env: &Env) -> SessionInfo {
     let mut spec = sh("sleep 60");
     spec.cwd = Some(env.root.clone());
     create_in(&env.client, Some(env.workspace), spec).await
@@ -1049,7 +1060,7 @@ async fn a_file_diff_in_a_chat_names_the_tool_call_of_the_change_that_follows() 
 
 // ---- an agent's write asks ---------------------------------------------------------------------
 
-async fn connect_from(t: &TestDaemon, session: SessionId) -> Client {
+pub(crate) async fn connect_from(t: &TestDaemon, session: SessionId) -> Client {
     let mut options = t.options();
     options.client.origin = Some(Origin {
         session_id: session,
@@ -1057,7 +1068,7 @@ async fn connect_from(t: &TestDaemon, session: SessionId) -> Client {
     Client::connect(options).await.unwrap()
 }
 
-async fn next_approval(user: &Client) -> ApprovalInfo {
+pub(crate) async fn next_approval(user: &Client) -> ApprovalInfo {
     timeout(WAIT, async {
         loop {
             let list: ApprovalList = user
@@ -1074,7 +1085,7 @@ async fn next_approval(user: &Client) -> ApprovalInfo {
     .expect("no approval appeared")
 }
 
-async fn answer(user: &Client, approval: ApprovalId, option: &str) {
+pub(crate) async fn answer(user: &Client, approval: ApprovalId, option: &str) {
     user.call::<Empty>(Request::ApprovalRespond(ApprovalRespond {
         approval_id: approval,
         option_id: option.to_owned(),

@@ -17,6 +17,7 @@ mod daemon_settings;
 mod direct;
 mod files;
 mod finish;
+mod fs_ops;
 mod git_history;
 mod git_init;
 mod harness;

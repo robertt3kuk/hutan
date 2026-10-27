@@ -680,6 +680,48 @@ impl Router {
                 ok(&written?)
             }
             Request::FsWriteAbort(req) => ok(&self.files.write_abort(conn.id(), &req)),
+            Request::FsCreate(req) => {
+                let agent = self.agent_origin(conn).await;
+                let what = req.path.display().to_string();
+                let made = self.files.create(conn.id(), agent, req).await;
+                audit(Actor::of(conn), "fs.create", &what, &made);
+                ok(&made?)
+            }
+            Request::FsRename(req) => {
+                let agent = self.agent_origin(conn).await;
+                let what = format!("{} to {}", req.from.display(), req.to.display());
+                let renamed = self.files.rename(conn.id(), agent, req).await;
+                audit(Actor::of(conn), "fs.rename", &what, &renamed);
+                ok(&renamed?)
+            }
+            Request::FsMove(req) => {
+                let agent = self.agent_origin(conn).await;
+                let what = format!("{} items", req.items.len());
+                let moved = self.files.move_items(conn.id(), agent, req).await;
+                audit(Actor::of(conn), "fs.move", &what, &moved);
+                ok(&moved?)
+            }
+            Request::FsCopy(req) => {
+                let agent = self.agent_origin(conn).await;
+                let what = format!("{} items", req.items.len());
+                let copied = self.files.copy(conn.id(), agent, req).await;
+                audit(Actor::of(conn), "fs.copy", &what, &copied);
+                ok(&copied?)
+            }
+            Request::FsTrash(req) => {
+                let agent = self.agent_origin(conn).await;
+                let what = format!("{} paths", req.paths.len());
+                let trashed = self.files.trash(conn.id(), agent, req).await;
+                audit(Actor::of(conn), "fs.trash", &what, &trashed);
+                ok(&trashed?)
+            }
+            Request::FsRestore(req) => {
+                let agent = self.agent_origin(conn).await;
+                let what = req.ticket.clone();
+                let restored = self.files.restore(conn.id(), agent, req).await;
+                audit(Actor::of(conn), "fs.restore", &what, &restored);
+                ok(&restored?)
+            }
             Request::FsWatch(req) => {
                 let agent = self.agent_origin(conn).await;
                 ok(&self.files.watch(conn, agent, req).await?)
@@ -1152,6 +1194,13 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::CheckpointRemove(_) => ("checkpoint.remove", Mutate),
         Request::CheckpointPreview(_) => ("checkpoint.preview", Read),
         Request::CheckpointRestore(_) => ("checkpoint.restore", UserOnly),
+        // File operations (protocol 0.54): all six change the disk; an agent asks.
+        Request::FsCreate(_) => ("fs.create", Mutate),
+        Request::FsRename(_) => ("fs.rename", Mutate),
+        Request::FsMove(_) => ("fs.move", Mutate),
+        Request::FsCopy(_) => ("fs.copy", Mutate),
+        Request::FsTrash(_) => ("fs.trash", Mutate),
+        Request::FsRestore(_) => ("fs.restore", Mutate),
         Request::FsWriteBegin(_) => ("fs.write.begin", Mutate),
         Request::FsWriteChunk(_) => ("fs.write.chunk", Mutate),
         Request::FsWriteCommit(_) => ("fs.write.commit", Mutate),

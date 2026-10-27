@@ -1194,6 +1194,35 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
             if r.create { "create" } else { "overwrite" },
             r.path.display()
         ),
+        Request::FsCreate(r) => format!(
+            "create the {} {}",
+            match r.kind {
+                hutan_protocol::fs::FsCreateKind::File => "file",
+                hutan_protocol::fs::FsCreateKind::Dir => "folder",
+            },
+            r.path.display()
+        ),
+        Request::FsRename(r) => format!("rename {} to {}", r.from.display(), r.to.display()),
+        Request::FsMove(r) => format!(
+            "move {}",
+            fs_items(r.items.iter().map(|i| (i.from.as_path(), i.to.as_path())))
+        ),
+        Request::FsCopy(r) => format!(
+            "copy {}",
+            fs_items(r.items.iter().map(|i| (i.from.as_path(), i.to.as_path())))
+        ),
+        Request::FsTrash(r) => format!(
+            "move {} to the Trash",
+            match r.paths.as_slice() {
+                [only] => only.display().to_string(),
+                paths => format!(
+                    "{} paths ({})",
+                    paths.len(),
+                    fs_names(paths.iter().map(|p| p.as_path()))
+                ),
+            }
+        ),
+        Request::FsRestore(r) => format!("put back what the Trash ticket {} holds", r.ticket),
         Request::UiRun(r) => format!("run the window action {}", r.action),
         Request::UiSetSetting(r) => format!(
             "change the setting {}.{} ({} layer)",
@@ -1216,6 +1245,42 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
         other => format!("make the request `{}`", request_method(other)),
     };
     Described { title, detail }
+}
+
+/// The names of some paths for an approval's text: the first few, then how many more.
+fn fs_names<'a>(paths: impl Iterator<Item = &'a std::path::Path>) -> String {
+    const SHOWN: usize = 3;
+    let names: Vec<String> = paths
+        .map(|path| {
+            path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    let mut text = names
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if names.len() > SHOWN {
+        text.push_str(&format!(" and {} more", names.len() - SHOWN));
+    }
+    text
+}
+
+/// A batch of `from → to` pairs for an approval's text.
+fn fs_items<'a>(pairs: impl Iterator<Item = (&'a std::path::Path, &'a std::path::Path)>) -> String {
+    let pairs: Vec<_> = pairs.collect();
+    match pairs.as_slice() {
+        [(from, to)] => format!("{} to {}", from.display(), to.display()),
+        _ => format!(
+            "{} items ({})",
+            pairs.len(),
+            fs_names(pairs.iter().map(|(from, _)| *from))
+        ),
+    }
 }
 
 #[cfg(test)]

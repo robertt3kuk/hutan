@@ -217,7 +217,7 @@ pub fn resolve_for_write(
     confine(path, directory.join(name), roots, picked)
 }
 
-fn require_absolute(path: &Path) -> Result<(), FsError> {
+pub(super) fn require_absolute(path: &Path) -> Result<(), FsError> {
     if path.is_absolute() {
         Ok(())
     } else {
@@ -228,7 +228,7 @@ fn require_absolute(path: &Path) -> Result<(), FsError> {
     }
 }
 
-fn confine(
+pub(super) fn confine(
     asked: &Path,
     canonical: PathBuf,
     roots: &[PathBuf],

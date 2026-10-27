@@ -369,6 +369,68 @@ impl Connection {
             .is_some_and(|client| client.supports_fs())
     }
 
+    /// True while connected to a daemon that advertised capability `fs.ops`
+    /// ([`Client::supports_fs_ops`], protocol 0.54); false when disconnected.
+    pub fn supports_fs_ops(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_fs_ops())
+    }
+
+    /// `fs.create` (see [`Client::fs_create`]): an empty file or a folder.
+    pub async fn fs_create(
+        &self,
+        req: hutan_protocol::fs::FsCreate,
+    ) -> Result<hutan_protocol::fs::FsEntry, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_create(req).await
+    }
+
+    /// `fs.rename` (see [`Client::fs_rename`]).
+    pub async fn fs_rename(
+        &self,
+        req: hutan_protocol::fs::FsRename,
+    ) -> Result<hutan_protocol::fs::FsEntry, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_rename(req).await
+    }
+
+    /// `fs.move` (see [`Client::fs_move`]): a batch of renames, each reported.
+    pub async fn fs_move(
+        &self,
+        req: hutan_protocol::fs::FsMove,
+    ) -> Result<hutan_protocol::fs::FsOpResults, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_move(req).await
+    }
+
+    /// `fs.copy` (see [`Client::fs_copy`]): a batch of copies, each reported.
+    pub async fn fs_copy(
+        &self,
+        req: hutan_protocol::fs::FsCopy,
+    ) -> Result<hutan_protocol::fs::FsOpResults, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_copy(req).await
+    }
+
+    /// `fs.trash` (see [`Client::fs_trash`]): to the system Trash, with an undo ticket.
+    pub async fn fs_trash(
+        &self,
+        req: hutan_protocol::fs::FsTrash,
+    ) -> Result<hutan_protocol::fs::FsTrashed, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_trash(req).await
+    }
+
+    /// `fs.restore` (see [`Client::fs_restore`]): puts back what a trash ticket holds.
+    pub async fn fs_restore(
+        &self,
+        req: hutan_protocol::fs::FsRestore,
+    ) -> Result<hutan_protocol::fs::FsOpResults, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_restore(req).await
+    }
+
     /// `fs.stat` (see [`Client::fs_stat`]): the canonical path, kind and size of `path`.
     pub async fn fs_stat(
         &self,

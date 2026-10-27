@@ -242,7 +242,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "accounts.multi",
             "chat.safety",
             "sandbox",
-            "worktree.stage"
+            "worktree.stage",
+            "fs.ops"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

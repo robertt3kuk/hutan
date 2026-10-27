@@ -7,13 +7,14 @@ use std::path::Path;
 
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::fs::{
-    CHUNK_MAX_BYTES, FileVersion, FsEntry, FsFile, FsFind, FsFound, FsList, FsListing, FsRead,
-    FsSearch, FsSearchCancel, FsSearchResult, FsStat, FsUnwatch, FsUpload, FsWatch, FsWatching,
+    CHUNK_MAX_BYTES, FileVersion, FsCopy, FsCreate, FsEntry, FsFile, FsFind, FsFound, FsList,
+    FsListing, FsMove, FsOpResults, FsRead, FsRename, FsRestore, FsSearch, FsSearchCancel,
+    FsSearchResult, FsStat, FsTrash, FsTrashed, FsUnwatch, FsUpload, FsWatch, FsWatching,
     FsWriteAbort, FsWriteBegin, FsWriteChunk, FsWriteCommit, FsWritten, LineEnding,
 };
 use hutan_protocol::messages::{Empty, Request};
 
-use crate::client::{Client, FS_CAPABILITY, FS_WATCH_CAPABILITY};
+use crate::client::{Client, FS_CAPABILITY, FS_OPS_CAPABILITY, FS_WATCH_CAPABILITY};
 use crate::error::ClientError;
 
 /// A whole file as [`Client::fs_read_all`] read it.
@@ -45,6 +46,12 @@ impl Client {
     /// and `fs.generation` events.
     pub fn supports_fs_watch(&self) -> bool {
         self.has_capability(FS_WATCH_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `fs.ops` (protocol 0.54): `fs.create`,
+    /// `fs.rename`, `fs.move`, `fs.copy`, `fs.trash` and `fs.restore`.
+    pub fn supports_fs_ops(&self) -> bool {
+        self.has_capability(FS_OPS_CAPABILITY)
     }
 
     /// `fs.read`: one chunk of a file.
@@ -158,6 +165,36 @@ impl Client {
             let _ = self.fs_write_abort(&upload.upload_id).await;
         }
         sent
+    }
+
+    /// `fs.create`: an empty file or a folder, never over something that exists.
+    pub async fn fs_create(&self, req: FsCreate) -> Result<FsEntry, ClientError> {
+        self.call(Request::FsCreate(req)).await
+    }
+
+    /// `fs.rename`: `from` gets the path `to` in the same root, never over something.
+    pub async fn fs_rename(&self, req: FsRename) -> Result<FsEntry, ClientError> {
+        self.call(Request::FsRename(req)).await
+    }
+
+    /// `fs.move`: a batch of renames; each item has its own entry or error.
+    pub async fn fs_move(&self, req: FsMove) -> Result<FsOpResults, ClientError> {
+        self.call(Request::FsMove(req)).await
+    }
+
+    /// `fs.copy`: a batch of copies; each item has its own entry or error.
+    pub async fn fs_copy(&self, req: FsCopy) -> Result<FsOpResults, ClientError> {
+        self.call(Request::FsCopy(req)).await
+    }
+
+    /// `fs.trash`: moves paths to the system Trash; the ticket in the answer puts them back.
+    pub async fn fs_trash(&self, req: FsTrash) -> Result<FsTrashed, ClientError> {
+        self.call(Request::FsTrash(req)).await
+    }
+
+    /// `fs.restore`: puts back the items of a trash ticket.
+    pub async fn fs_restore(&self, req: FsRestore) -> Result<FsOpResults, ClientError> {
+        self.call(Request::FsRestore(req)).await
     }
 
     /// `fs.stat`.

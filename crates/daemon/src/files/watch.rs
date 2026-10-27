@@ -49,7 +49,7 @@ use crate::registry::RegistryHandle;
 /// Batches the platform callback may leave unread before it starts counting them as lost.
 const RAW_QUEUE: usize = 1024;
 /// Own writes remembered, and for how long.
-const OWN_WRITES_MAX: usize = 256;
+const OWN_WRITES_MAX: usize = 1024;
 const OWN_WRITE_TTL: Duration = Duration::from_secs(10);
 /// Files agents reported changing, remembered, and how long before a change they still count.
 const NOTES_MAX: usize = 512;
@@ -128,6 +128,9 @@ struct State {
 #[derive(Debug, Clone)]
 struct OwnWrite {
     path: PathBuf,
+    /// Everything below `path` is the write's too (a folder an operation made, moved or
+    /// removed).
+    tree: bool,
     write_id: String,
     conn: ConnId,
     /// The session of the writing connection, when it is an agent's.
@@ -367,6 +370,7 @@ impl WatchHub {
     pub fn write_started(
         &self,
         path: &Path,
+        tree: bool,
         conn: ConnId,
         agent: Option<SessionId>,
         write_id: &str,
@@ -377,12 +381,27 @@ impl WatchHub {
         }
         writes.push_back(OwnWrite {
             path: path.to_owned(),
+            tree,
             write_id: write_id.to_owned(),
             conn,
             agent,
             version: None,
             at: StdInstant::now(),
         });
+    }
+
+    /// A file operation (`fs.create`, `fs.move`, …) is done: what it announced counts as its own
+    /// for the time a change takes to arrive. There is no version to compare.
+    pub fn write_finished(&self, write_id: &str) {
+        let now = StdInstant::now();
+        for write in self
+            .writes
+            .lock()
+            .iter_mut()
+            .filter(|w| w.write_id == write_id)
+        {
+            write.at = now;
+        }
     }
 
     /// The write is done and the file has `version`.
@@ -966,10 +985,10 @@ fn prepare(
                     (ChangeKind::Removed, None)
                 }
             };
-            let own = evidence
-                .writes
-                .iter()
-                .rfind(|w| w.path == path && w.at.elapsed() <= OWN_WRITE_TTL);
+            let own = evidence.writes.iter().rfind(|w| {
+                (w.path == path || (w.tree && path.starts_with(&w.path)))
+                    && w.at.elapsed() <= OWN_WRITE_TTL
+            });
             let restored = evidence
                 .restores
                 .iter()

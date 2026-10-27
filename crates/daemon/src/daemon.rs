@@ -119,6 +119,9 @@ pub struct DaemonConfig {
     /// The bounds of the file service (protocol 0.33): 500 changes per `fs.changed` event,
     /// 30 s without a chunk before an upload is discarded. Tests lower them.
     pub fs_limits: crate::files::Limits,
+    /// Where `fs.trash` puts files (protocol 0.54): `None` is the user's Trash
+    /// (`NSFileManager`). Tests inject a folder, so that none touches the real Trash.
+    pub fs_trash: Option<Arc<dyn crate::files::trash::Trash>>,
     /// The start budget of a turn's checkpoint (5 s) and the environment of its git calls.
     /// Tests lower the budget and put a slow fake git first on `PATH`.
     pub checkpoints: checkpoint_turns::Tuning,
@@ -149,6 +152,7 @@ impl DaemonConfig {
             socket_check_interval: SOCKET_CHECK_INTERVAL,
             assistant_idle_stop: None,
             fs_limits: crate::files::Limits::default(),
+            fs_trash: None,
             checkpoints: checkpoint_turns::Tuning::default(),
             lsp: LspTuning::default(),
             usage_probes: false,
@@ -504,6 +508,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         bus.clone(),
         shutdown.clone(),
         config.fs_limits,
+        config.fs_trash.clone(),
     );
     let ui = UiHub::with_timeout(bus.clone(), config.ui_command_timeout);
     let hooks = HooksService::new(HooksInputs {

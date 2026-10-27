@@ -6,6 +6,8 @@
 //! - [`confine`]: which paths a request may name, and how they are opened.
 //! - [`read`]: `fs.read`, `fs.stat`, `fs.list`.
 //! - [`write`]: `fs.write.*`: a temporary file, a flush, one rename.
+//! - [`ops`] and [`trash`]: `fs.create|rename|move|copy|trash|restore` (protocol 0.54) and the
+//!   undo tickets of the Trash.
 //! - [`find`] and [`search`]: `fs.find` over a bounded index, `fs.search`.
 //! - [`watch`]: `fs.watch`, `fs.changed`, `fs.generation` and who made a change.
 //!
@@ -15,8 +17,10 @@
 
 pub mod confine;
 pub mod find;
+pub mod ops;
 pub mod read;
 pub mod search;
+pub mod trash;
 pub mod watch;
 pub mod write;
 
@@ -29,10 +33,12 @@ use std::time::{Duration, Instant};
 use hutan_core::SessionId;
 use hutan_protocol::control::ErrorBody;
 use hutan_protocol::fs::{
-    CHANGES_MAX, CHUNK_MAX_BYTES, FIND_MAX, FsEntry, FsFile, FsFind, FsFound, FsList, FsListing,
-    FsRead, FsSearch, FsSearchCancel, FsSearchResult, FsStat, FsUnwatch, FsUpload, FsWatch,
+    CHANGES_MAX, CHUNK_MAX_BYTES, FIND_MAX, FsCopy, FsCreate, FsEntry, FsFile, FsFind, FsFound,
+    FsList, FsListing, FsMove, FsOpItem, FsOpResults, FsRead, FsRename, FsRestore, FsSearch,
+    FsSearchCancel, FsSearchResult, FsStat, FsTrash, FsTrashed, FsUnwatch, FsUpload, FsWatch,
     FsWatching, FsWriteAbort, FsWriteBegin, FsWriteChunk, FsWriteCommit, FsWritten, LIST_MAX,
-    SEARCH_MAX, SEARCHES_MAX, UPLOAD_IDLE_SECS, UPLOADS_MAX,
+    OPS_ITEMS_MAX, SEARCH_MAX, SEARCHES_MAX, TICKET_TTL_SECS, TICKETS_MAX, UPLOAD_IDLE_SECS,
+    UPLOADS_MAX,
 };
 use hutan_protocol::messages::{Empty, Event, Request, SessionListFilter};
 use parking_lot::Mutex;
@@ -43,6 +49,7 @@ use tracing::debug;
 
 use self::confine::{FsError, canonical_roots, fstat, kind_of, open, resolve};
 use self::find::Finder;
+use self::trash::{SystemTrash, Tickets, Trash};
 use self::watch::{RootKey, WatchHub};
 use self::write::Upload;
 use crate::bus::EventBus;
@@ -60,6 +67,10 @@ pub struct Limits {
     pub changes_max: usize,
     /// How long an upload may go without a chunk.
     pub upload_idle: Duration,
+    /// Trash tickets remembered (`fs.restore`).
+    pub tickets_max: usize,
+    /// How long a trash ticket lasts.
+    pub ticket_ttl: Duration,
 }
 
 impl Default for Limits {
@@ -67,6 +78,8 @@ impl Default for Limits {
         Self {
             changes_max: CHANGES_MAX,
             upload_idle: Duration::from_secs(UPLOAD_IDLE_SECS),
+            tickets_max: TICKETS_MAX,
+            ticket_ttl: Duration::from_secs(TICKET_TTL_SECS),
         }
     }
 }
@@ -91,16 +104,21 @@ pub struct FileService {
     uploads: Mutex<HashMap<String, Slot>>,
     searches: Mutex<HashMap<(ConnId, String), Arc<AtomicBool>>>,
     upload_idle: Duration,
+    trash: Arc<dyn Trash>,
+    tickets: Mutex<Tickets>,
+    ticket_ttl: Duration,
 }
 
 impl FileService {
     /// Starts the service: it listens to the bus for the files agents report, and discards
-    /// uploads that stop receiving chunks after `upload_idle`.
+    /// uploads that stop receiving chunks after `upload_idle`. `trash`: where `fs.trash` puts
+    /// files; `None` is the user's Trash.
     pub fn new(
         registry: RegistryHandle,
         bus: Arc<EventBus>,
         shutdown: CancellationToken,
         limits: Limits,
+        trash: Option<Arc<dyn Trash>>,
     ) -> Arc<Self> {
         let hub = WatchHub::new(
             registry.clone(),
@@ -116,6 +134,9 @@ impl FileService {
             uploads: Mutex::new(HashMap::new()),
             searches: Mutex::new(HashMap::new()),
             upload_idle,
+            trash: trash.unwrap_or_else(|| Arc::new(SystemTrash)),
+            tickets: Mutex::new(Tickets::new(limits.tickets_max, limits.ticket_ttl)),
+            ticket_ttl: limits.ticket_ttl,
         });
         let (observed, mut events) = mpsc::channel::<Event>(OBSERVER_QUEUE);
         bus.set_fs_observer(Some(observed));
@@ -433,7 +454,7 @@ impl FileService {
                 return Err(FsError::InvalidState("the upload is over".into()));
             };
             // Known before the rename, so that the change it causes is recognised as ours.
-            hub.write_started(upload.target(), writer, agent, &id);
+            hub.write_started(upload.target(), false, writer, agent, &id);
             let committed = upload.commit(total);
             hub.write_done(&id, committed.as_ref().ok().map(|(_, version)| *version));
             committed
@@ -474,6 +495,192 @@ impl FileService {
             }
             keep
         });
+    }
+
+    // Operations -------------------------------------------------------------------------------
+
+    /// Runs the blocking `job` of one operation request: it gets the canonical roots and a
+    /// function that tells the watcher which paths the operation is about to change, so that
+    /// the connection's own `fs.changed` events are `origin: self`.
+    async fn operate<T: Send + 'static>(
+        &self,
+        conn: ConnId,
+        agent: Option<SessionId>,
+        job: impl FnOnce(&[PathBuf], ops::Announce<'_>) -> Result<T, FsError> + Send + 'static,
+    ) -> Result<T, ErrorBody> {
+        let hub = self.hub.clone();
+        let write_id = ulid::Ulid::generate().to_string();
+        self.blocking(move |roots| {
+            let announce = |path: &std::path::Path, tree: bool| {
+                hub.write_started(path, tree, conn, agent, &write_id);
+            };
+            let outcome = job(&roots, &announce);
+            hub.write_finished(&write_id);
+            outcome
+        })
+        .await
+    }
+
+    fn require_batch(len: usize) -> Result<(), ErrorBody> {
+        if len > OPS_ITEMS_MAX {
+            return Err(FsError::bad(format!(
+                "{len} items are more than a request takes ({OPS_ITEMS_MAX})"
+            ))
+            .into());
+        }
+        Ok(())
+    }
+
+    /// `fs.create`.
+    pub async fn create(
+        &self,
+        conn: ConnId,
+        agent: Option<SessionId>,
+        req: FsCreate,
+    ) -> Result<FsEntry, ErrorBody> {
+        self.operate(conn, agent, move |roots, announce| {
+            ops::create(roots, &req, announce)
+        })
+        .await
+    }
+
+    /// `fs.rename`.
+    pub async fn rename(
+        &self,
+        conn: ConnId,
+        agent: Option<SessionId>,
+        req: FsRename,
+    ) -> Result<FsEntry, ErrorBody> {
+        self.operate(conn, agent, move |roots, announce| {
+            ops::rename(roots, &req.from, &req.to, announce)
+        })
+        .await
+    }
+
+    /// `fs.move`: one rename per item, each reported.
+    pub async fn move_items(
+        &self,
+        conn: ConnId,
+        agent: Option<SessionId>,
+        req: FsMove,
+    ) -> Result<FsOpResults, ErrorBody> {
+        Self::require_batch(req.items.len())?;
+        self.operate(conn, agent, move |roots, announce| {
+            let items = req
+                .items
+                .into_iter()
+                .map(|item| {
+                    let outcome = ops::rename(roots, &item.from, &item.to, announce);
+                    op_item(item.from, outcome)
+                })
+                .collect();
+            Ok(FsOpResults { items })
+        })
+        .await
+    }
+
+    /// `fs.copy`: one copy per item, each reported. `agent`: the request is an agent's, so
+    /// `picked_from` counts for nothing.
+    pub async fn copy(
+        &self,
+        conn: ConnId,
+        agent: Option<SessionId>,
+        req: FsCopy,
+    ) -> Result<FsOpResults, ErrorBody> {
+        Self::require_batch(req.items.len())?;
+        let trusted = agent.is_none();
+        self.operate(conn, agent, move |roots, announce| {
+            let items = req
+                .items
+                .into_iter()
+                .map(|item| {
+                    let outcome = ops::copy(roots, &item, trusted, announce);
+                    op_item(item.from, outcome)
+                })
+                .collect();
+            Ok(FsOpResults { items })
+        })
+        .await
+    }
+
+    /// `fs.trash`: moves each path to the Trash; what went is remembered under a ticket.
+    pub async fn trash(
+        &self,
+        conn: ConnId,
+        agent: Option<SessionId>,
+        req: FsTrash,
+    ) -> Result<FsTrashed, ErrorBody> {
+        Self::require_batch(req.paths.len())?;
+        let backend = self.trash.clone();
+        let (items, remembered) = self
+            .operate(conn, agent, move |roots, announce| {
+                let mut items = Vec::with_capacity(req.paths.len());
+                let mut remembered = Vec::new();
+                for path in req.paths {
+                    match ops::trash(roots, &path, backend.as_ref(), announce) {
+                        Ok(done) => {
+                            remembered.push(trash::TicketItem {
+                                original: done.original,
+                                trashed: done.trashed,
+                            });
+                            items.push(FsOpItem {
+                                path,
+                                entry: Some(done.entry),
+                                error: None,
+                            });
+                        }
+                        Err(error) => items.push(op_item(path, Err(error))),
+                    }
+                }
+                Ok((items, remembered))
+            })
+            .await?;
+        let ticket = (!remembered.is_empty()).then(|| self.tickets.lock().issue(remembered));
+        Ok(FsTrashed { ticket, items })
+    }
+
+    /// `fs.restore`: puts back what a ticket still holds; what came back leaves the ticket.
+    pub async fn restore(
+        &self,
+        conn: ConnId,
+        agent: Option<SessionId>,
+        req: FsRestore,
+    ) -> Result<FsOpResults, ErrorBody> {
+        let Some(held) = self.tickets.lock().items(&req.ticket) else {
+            let mut error = ErrorBody::new(
+                hutan_protocol::ErrorCode::NotFound,
+                format!(
+                    "no trash ticket {}: it was never issued, is used up, or expired after {} s",
+                    req.ticket,
+                    self.ticket_ttl.as_secs()
+                ),
+            );
+            error.data = Some(serde_json::json!({ "reason": "ticket" }));
+            return Err(error);
+        };
+        let results = self
+            .operate(conn, agent, move |roots, announce| {
+                Ok(held
+                    .into_iter()
+                    .map(|item| {
+                        let outcome = ops::restore(roots, &item.original, &item.trashed, announce);
+                        (item.original, outcome)
+                    })
+                    .collect::<Vec<_>>())
+            })
+            .await?;
+        let restored: Vec<PathBuf> = results
+            .iter()
+            .filter(|(_, outcome)| outcome.is_ok())
+            .map(|(original, _)| original.clone())
+            .collect();
+        self.tickets.lock().settle(&req.ticket, &restored);
+        Ok(FsOpResults {
+            items: results
+                .into_iter()
+                .map(|(original, outcome)| op_item(original, outcome))
+                .collect(),
+        })
     }
 
     // Watching ---------------------------------------------------------------------------------
@@ -555,6 +762,22 @@ impl FileService {
             Request::FsWriteAbort(r) => self.owns_upload(conn, &r.upload_id),
             _ => false,
         }
+    }
+}
+
+/// One item of a batch answer: the entry, or the error the request alone would have got.
+fn op_item(path: PathBuf, outcome: Result<FsEntry, FsError>) -> FsOpItem {
+    match outcome {
+        Ok(entry) => FsOpItem {
+            path,
+            entry: Some(entry),
+            error: None,
+        },
+        Err(error) => FsOpItem {
+            path,
+            entry: None,
+            error: Some(error.into()),
+        },
     }
 }
 

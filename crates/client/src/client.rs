@@ -228,6 +228,8 @@ pub(crate) const CHAT_SAFETY_CAPABILITY: &str = "chat.safety";
 pub(crate) const SANDBOX_CAPABILITY: &str = "sandbox";
 /// Capability for `worktree.hunks|stage|unstage|discard` and `staged_only` (protocol 0.53).
 pub(crate) const WORKTREE_STAGE_CAPABILITY: &str = "worktree.stage";
+/// Capability for `fs.create|rename|move|copy|trash|restore` (protocol 0.54).
+pub(crate) const FS_OPS_CAPABILITY: &str = "fs.ops";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -285,6 +287,7 @@ const CAPABILITIES: &[&str] = &[
     HOOKS_CAPABILITY,
     WORKTREE_SETUP_CAPABILITY,
     WORKTREE_STAGE_CAPABILITY,
+    FS_OPS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
