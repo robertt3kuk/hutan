@@ -84,6 +84,8 @@ A language server runs the project's code: rust-analyzer executes build scripts 
 - **Answering.** `hutan lsp trust FOLDER` (default: the current directory; `--deny`; `--forget` to ask again) sends `lsp.trust {folder, decision}`. Trusting starts the servers of the documents that wait; denying or forgetting stops the servers running there. Decisions are stored in the database (`lsp_trust`), survive a restart and are listed by `hutan lsp status`.
 - **User-only.** `lsp.trust` is `Access::UserOnly`: an agent-originated connection (a chat session, or a shell where an agent reported itself) gets `forbidden` under every `[control]` policy, and an agent's `lsp.restart` cannot start a server in an untrusted folder. The request to trust is raised by the daemon, not by the agent.
 - A request nobody waits on any more (the last document of an untrusted folder closed) disappears.
+- **Only for a server that can run.** The binary is looked for before the question: a document whose server is not found gets `not_installed` (with `install` and `setting`) in a folder that is still undecided, with no `trust_pending`, so nothing asks the user to trust a server that is not there; opening the document again after installing it asks. (A folder whose trust was just forgotten or denied reads `untrusted` without looking.)
+- **The bar.** The desktop shows one bar per window for a folder, naming each server that would start and what it may run (`docs/editor.md` § Language server bar); *Not now* is remembered for the window and the status item `untrusted` brings the choice back, also for a denied folder.
 
 ## Documents
 
