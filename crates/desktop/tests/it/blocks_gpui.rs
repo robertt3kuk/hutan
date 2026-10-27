@@ -178,19 +178,19 @@ fn shell_flow(cx: &mut TestAppContext, shell: Shell) {
         assert!(duration < 30_000, "{shell:?}: {duration} ms");
     }
 
-    // ⌘↑ / ⌘↓ move between prompts: the open prompt is the 4th block.
+    // ⌘⇧↑ / ⌘⇧↓ move between prompts: the open prompt is the 4th block.
     let highlighted = |cx: &VisualTestContext| read(&view, cx, id, TerminalView::highlighted_block);
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(highlighted(cx), Some(3), "{shell:?}");
     draw(cx);
     assert!(!report(&view, cx, id).highlighted.is_empty());
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(highlighted(cx), Some(2), "{shell:?}");
-    cx.simulate_keystrokes("cmd-down");
+    cx.simulate_keystrokes("cmd-shift-down");
     assert_eq!(highlighted(cx), Some(3), "{shell:?}");
-    cx.simulate_keystrokes("cmd-down");
+    cx.simulate_keystrokes("cmd-shift-down");
     assert_eq!(highlighted(cx), Some(4), "{shell:?}: the open prompt");
-    cx.simulate_keystrokes("cmd-down");
+    cx.simulate_keystrokes("cmd-shift-down");
     assert_eq!(highlighted(cx), None, "{shell:?}: back at the live screen");
 
     // Collapse folds the output into one row and expanding restores it, and the daemon never
@@ -279,7 +279,7 @@ fn shell_flow(cx: &mut TestAppContext, shell: Shell) {
         "{shell:?}"
     );
     assert_eq!(report(&view, cx, id), OverlayReport::default(), "{shell:?}");
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(
         highlighted(cx),
         None,
@@ -307,7 +307,7 @@ fn shell_flow(cx: &mut TestAppContext, shell: Shell) {
     draw(cx);
     assert_eq!(report(&view, cx, id), OverlayReport::default(), "{shell:?}");
     assert_eq!(text(&view, cx, id), with_overlay, "{shell:?}");
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(highlighted(cx), None, "{shell:?}");
     write_settings(&daemon, "[terminal]\nblocks = true\n");
     wait_until(cx, "blocks = true", |cx| {

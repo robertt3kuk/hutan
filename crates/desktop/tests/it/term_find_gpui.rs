@@ -311,9 +311,9 @@ fn the_block_option_limits_the_search_to_the_selected_blocks_output(cx: &mut Tes
     find.update(cx, |f, cx| f.toggle_block(cx));
     assert_eq!(find.read_with(cx, |f, _| f.block()), None);
 
-    // ⌘↑ selects the previous block (the second command's, `two`); the option limits to it.
+    // ⌘⇧↑ selects the previous block (the second command's, `two`); the option limits to it.
     cx.simulate_keystrokes("escape");
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     let selected = term(&view, cx, id)
         .read_with(cx, |v, _| v.highlighted_block())
         .expect("a block is selected");

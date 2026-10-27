@@ -45,6 +45,10 @@ actions!(
         Copy,
         /// Pastes the clipboard into the terminal.
         Paste,
+        /// Scrolls to the top of the scrollback.
+        ScrollToTop,
+        /// Scrolls to the bottom: the live screen.
+        ScrollToBottom,
         /// Scrolls to the previous prompt and highlights its block.
         JumpToPreviousPrompt,
         /// Scrolls to the next prompt and highlights its block.
@@ -68,14 +72,17 @@ actions!(
 /// Key context of the view's root element, for keymap bindings.
 pub const KEY_CONTEXT: &str = "HutanTerminal";
 
-/// Binds ⌘C and ⌘V to [`Copy`] and [`Paste`], and the block keys (⌘↑ ⌘↓ ⌘⇧A ⌘⇧C) in the view's
+/// Binds ⌘C and ⌘V to [`Copy`] and [`Paste`], ⌘↑ and ⌘↓ to the top and the bottom of the
+/// scrollback (as in Terminal.app and iTerm), and the block keys (⌘⇧↑ ⌘⇧↓ ⌘⇧A ⌘⇧C) in the view's
 /// key context. Optional: the view also handles these chords itself when no binding claims them.
 pub fn bind_default_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-c", Copy, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-v", Paste, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-up", JumpToPreviousPrompt, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-down", JumpToNextPrompt, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-up", ScrollToTop, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-down", ScrollToBottom, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-shift-up", JumpToPreviousPrompt, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-shift-down", JumpToNextPrompt, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-shift-a", SelectBlockOutput, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-shift-c", CopyBlockOutput, Some(KEY_CONTEXT)),
     ]);
@@ -1206,8 +1213,18 @@ impl TerminalView {
                             cx.stop_propagation();
                         }
                     }
-                    "up" | "down" if !m.shift => {
-                        if self.jump_to_prompt(ks.key == "up", cx) {
+                    "up" | "down" => {
+                        let up = ks.key == "up";
+                        if m.shift {
+                            if self.jump_to_prompt(up, cx) {
+                                cx.stop_propagation();
+                            }
+                        } else {
+                            if up {
+                                self.scroll_to_top(cx);
+                            } else {
+                                self.scroll_to_bottom(cx);
+                            }
                             cx.stop_propagation();
                         }
                     }
@@ -1446,6 +1463,11 @@ impl TerminalView {
             self.ensure_history();
             cx.notify();
         }
+    }
+
+    /// The oldest line of the scrollback at the top of the view (⌘↑).
+    pub fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
+        self.scroll_lines(i32::MAX, cx);
     }
 
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
@@ -1929,7 +1951,7 @@ impl TerminalView {
         true
     }
 
-    /// ⌘↑ / ⌘↓: moves the highlight to the previous / next prompt and scrolls to it. Without a
+    /// ⌘⇧↑ / ⌘⇧↓: moves the highlight to the previous / next prompt and scrolls to it. Without a
     /// highlight the previous prompt is the one before the live one (or, scrolled back, the one
     /// above the first visible line). Past the newest block, `next` returns to the live screen.
     /// Returns whether the key was used.
@@ -2720,6 +2742,12 @@ impl Render for TerminalView {
                 this.copy(cx);
             }))
             .on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste(cx)))
+            .on_action(cx.listener(|this, _: &ScrollToTop, _window, cx| {
+                this.scroll_to_top(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ScrollToBottom, _window, cx| {
+                this.scroll_to_bottom(cx);
+            }))
             .on_action(cx.listener(|this, _: &JumpToPreviousPrompt, _window, cx| {
                 if !this.jump_to_prompt(true, cx) {
                     cx.propagate();

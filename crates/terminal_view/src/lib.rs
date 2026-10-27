@@ -41,9 +41,9 @@ pub use shared::{SharedEvent, SharedTerminal};
 pub use theme::{DefaultColors, Rgb, TerminalPalette};
 pub use view::{
     BlockActions, Copy, CopyBlockCommand, CopyBlockOutput, IMAGE_PASTE_NOTICE, JumpToNextPrompt,
-    JumpToPreviousPrompt, KEY_CONTEXT, Paste, PasteChoice, RerunBlock, Segment, SelectBlockOutput,
-    SendBlockToAgent, TerminalView, TerminalViewEvent, ToggleBlockCollapse, ViewMode, ViewStatus,
-    bind_default_keys,
+    JumpToPreviousPrompt, KEY_CONTEXT, Paste, PasteChoice, RerunBlock, ScrollToBottom, ScrollToTop,
+    Segment, SelectBlockOutput, SendBlockToAgent, TerminalView, TerminalViewEvent,
+    ToggleBlockCollapse, ViewMode, ViewStatus, bind_default_keys,
 };
 
 /// What the owner of a [`TerminalView`] provides. Called on the UI thread; implementations hand

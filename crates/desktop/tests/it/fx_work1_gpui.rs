@@ -199,3 +199,58 @@ fn quick_open_matches_words_separated_by_spaces(cx: &mut TestAppContext) {
         })
     });
 }
+
+// ---- 6. F-16: ⌘↑ / ⌘↓ in a terminal --------------------------------------------------------------
+
+#[gpui::test]
+fn cmd_up_and_cmd_down_scroll_a_focused_terminal_to_the_ends_of_its_scrollback(
+    cx: &mut TestAppContext,
+) {
+    use gpui::Focusable as _;
+
+    let daemon = TestDaemon::start();
+    let session = daemon.sh("seq 1 300; echo END-MARK; exec cat");
+    let id = session.id;
+    let (view, cx) = open(cx, &daemon);
+    view.update_in(cx, |wb, window, cx| wb.open_session(id, window, cx));
+    let terminal = |view: &Entity<Workbench>, cx: &VisualTestContext| {
+        view.read_with(cx, |wb, _| wb.terminal_view_of(id))
+    };
+    wait_until(cx, "the output", |cx| {
+        terminal(&view, cx).is_some_and(|t| {
+            t.read_with(cx, |t, _| {
+                t.visible_text().iter().any(|l| l.contains("END-MARK"))
+            })
+        })
+    });
+    let terminal = terminal(&view, cx).expect("the session is open");
+    let offset = |cx: &VisualTestContext| terminal.read_with(cx, |t, _| t.scroll_offset());
+    let focused = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| terminal.focus_handle(cx).is_focused(window))
+    };
+    assert!(focused(cx), "the keyboard is in the terminal");
+    let item = view.read_with(cx, |wb, _| wb.state().active_item());
+    assert_eq!(offset(cx), 0);
+
+    cx.simulate_keystrokes("cmd-up");
+    wait_until(cx, "the top of the scrollback", |cx| offset(cx) >= 250);
+    assert!(focused(cx), "⌘↑ stays in the terminal");
+    assert_eq!(view.read_with(cx, |wb, _| wb.state().active_item()), item);
+
+    cx.simulate_keystrokes("cmd-down");
+    assert_eq!(offset(cx), 0, "⌘↓ is the live screen again");
+    assert!(focused(cx));
+
+    // The block jump is ⌘⇧↑ now: the palette still lists it, with its key.
+    let titles = view.update_in(cx, |wb, window, cx| {
+        wb.open_palette(window, cx);
+        wb.palette_titles()
+    });
+    for title in [
+        "Terminal: Scroll to Top",
+        "Terminal: Scroll to Bottom",
+        "Block: Previous Prompt",
+    ] {
+        assert!(titles.iter().any(|t| t.as_ref() == title), "{title}");
+    }
+}

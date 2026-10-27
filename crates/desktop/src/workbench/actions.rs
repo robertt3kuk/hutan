@@ -710,6 +710,11 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Terminal: Close Split", CloseSplit),
         command("Terminal: Close Tab (All Splits)", CloseTerminalTab),
         command("Terminal: Find…", FindInTerminal),
+        command("Terminal: Scroll to Top", hutan_terminal_view::ScrollToTop),
+        command(
+            "Terminal: Scroll to Bottom",
+            hutan_terminal_view::ScrollToBottom,
+        ),
         command("Terminal: Find Next", FindNextInTerminal),
         command("Terminal: Find Previous", FindPreviousInTerminal),
         command("Terminal: Move Split to New Tab", MoveSplitToNewTab),
@@ -1071,12 +1076,19 @@ fn context_bindings() -> Vec<BindingSpec> {
     vec![
         bind::<hutan_terminal_view::Copy>("cmd-c", Some(hutan_terminal_view::KEY_CONTEXT)),
         bind::<hutan_terminal_view::Paste>("cmd-v", Some(hutan_terminal_view::KEY_CONTEXT)),
+        // ⌘↑ / ⌘↓ scroll to the top / bottom of the scrollback, as in Terminal.app and iTerm; the
+        // prompt jumps of the blocks are ⌘⇧↑ / ⌘⇧↓.
+        bind::<hutan_terminal_view::ScrollToTop>("cmd-up", Some(hutan_terminal_view::KEY_CONTEXT)),
+        bind::<hutan_terminal_view::ScrollToBottom>(
+            "cmd-down",
+            Some(hutan_terminal_view::KEY_CONTEXT),
+        ),
         bind::<hutan_terminal_view::JumpToPreviousPrompt>(
-            "cmd-up",
+            "cmd-shift-up",
             Some(hutan_terminal_view::KEY_CONTEXT),
         ),
         bind::<hutan_terminal_view::JumpToNextPrompt>(
-            "cmd-down",
+            "cmd-shift-down",
             Some(hutan_terminal_view::KEY_CONTEXT),
         ),
         bind::<hutan_terminal_view::SelectBlockOutput>(
@@ -1596,8 +1608,10 @@ mod tests {
             "ctrl-alt-up | workbench::PreviousContainer | -",
             "cmd-c | hutan_terminal_view::Copy | HutanTerminal",
             "cmd-v | hutan_terminal_view::Paste | HutanTerminal",
-            "cmd-up | hutan_terminal_view::JumpToPreviousPrompt | HutanTerminal",
-            "cmd-down | hutan_terminal_view::JumpToNextPrompt | HutanTerminal",
+            "cmd-up | hutan_terminal_view::ScrollToTop | HutanTerminal",
+            "cmd-down | hutan_terminal_view::ScrollToBottom | HutanTerminal",
+            "shift-cmd-up | hutan_terminal_view::JumpToPreviousPrompt | HutanTerminal",
+            "shift-cmd-down | hutan_terminal_view::JumpToNextPrompt | HutanTerminal",
             "shift-cmd-a | hutan_terminal_view::SelectBlockOutput | HutanTerminal",
             "shift-cmd-c | hutan_terminal_view::CopyBlockOutput | HutanTerminal",
             "cmd-d | workbench::SplitTerminalRight | HutanTerminal",

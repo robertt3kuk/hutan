@@ -344,7 +344,7 @@ fn the_alternate_screen_hides_the_overlay_and_blocks_off_removes_it(cx: &mut Tes
         hutan_terminal_view::blocks::OverlayReport::default()
     );
     recorder.take();
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(view.read_with(cx, |v, _| v.highlighted_block()), None);
     assert!(recorder.take().is_empty(), "keys pass through unchanged");
 
@@ -369,7 +369,7 @@ fn the_alternate_screen_hides_the_overlay_and_blocks_off_removes_it(cx: &mut Tes
         view.read_with(cx, |v, _| v.painted_overlay().clone()),
         hutan_terminal_view::blocks::OverlayReport::default()
     );
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(view.read_with(cx, |v, _| v.highlighted_block()), None);
 }
 
@@ -485,8 +485,8 @@ fn prompt_jumps_move_the_highlight_and_scroll_to_the_block(cx: &mut TestAppConte
     focus(&view, cx);
     let highlighted = |cx: &VisualTestContext| view.read_with(cx, |v, _| v.highlighted_block());
 
-    // From the live screen, ⌘↑ goes to the command before the open prompt, then further up.
-    cx.simulate_keystrokes("cmd-up");
+    // From the live screen, ⌘⇧↑ goes to the command before the open prompt, then further up.
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(highlighted(cx), Some(2));
     assert_eq!(
         view.read_with(cx, |v, _| v.scroll_offset()),
@@ -497,20 +497,20 @@ fn prompt_jumps_move_the_highlight_and_scroll_to_the_block(cx: &mut TestAppConte
         view.read_with(cx, |v, _| v.painted_overlay().highlighted.clone()),
         vec![4, 5, 6]
     );
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(highlighted(cx), Some(1));
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(
         highlighted(cx),
         Some(1),
         "the first block has nothing above it"
     );
-    cx.simulate_keystrokes("cmd-down");
+    cx.simulate_keystrokes("cmd-shift-down");
     assert_eq!(highlighted(cx), Some(2));
-    cx.simulate_keystrokes("cmd-down");
+    cx.simulate_keystrokes("cmd-shift-down");
     assert_eq!(highlighted(cx), Some(3));
-    // Past the newest block ⌘↓ returns to the live screen.
-    cx.simulate_keystrokes("cmd-down");
+    // Past the newest block ⌘⇧↓ returns to the live screen.
+    cx.simulate_keystrokes("cmd-shift-down");
     assert_eq!(highlighted(cx), None);
     assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 0);
 }
@@ -533,7 +533,7 @@ fn a_jump_scrolls_a_block_in_the_scrollback_into_view(cx: &mut TestAppContext) {
     focus(&view, cx);
     recorder.take();
 
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(view.read_with(cx, |v, _| v.highlighted_block()), Some(1));
     // Line 8 at the top: 20 − 8 lines scrolled back, and the history it needs is requested.
     assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 12);
@@ -549,6 +549,42 @@ fn a_jump_scrolls_a_block_in_the_scrollback_into_view(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 0);
 }
 
+/// F-16: ⌘↑ and ⌘↓ in a terminal go to the top and the bottom of its scrollback (Terminal.app,
+/// iTerm); the prompt jumps of the blocks are ⌘⇧↑ and ⌘⇧↓. Nothing reaches the shell.
+#[gpui::test]
+fn cmd_up_and_cmd_down_scroll_to_the_ends_of_the_scrollback(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());
+    show(&view, cx, scenario(), Modes::default());
+    focus(&view, cx);
+    recorder.take();
+    let offset = |cx: &VisualTestContext| view.read_with(cx, |v, _| v.scroll_offset());
+    assert_eq!(offset(cx), 0);
+
+    cx.simulate_keystrokes("cmd-up");
+    assert_eq!(
+        offset(cx),
+        20,
+        "all 20 lines of scrollback above the screen"
+    );
+    assert_eq!(view.read_with(cx, |v, _| v.highlighted_block()), None);
+    cx.simulate_keystrokes("cmd-down");
+    assert_eq!(offset(cx), 0, "back on the live screen");
+    cx.simulate_keystrokes("cmd-down");
+    assert_eq!(offset(cx), 0);
+    assert!(
+        recorder
+            .take()
+            .iter()
+            .all(|call| !matches!(call, Call::Input(_))),
+        "the keys are the view's, the shell gets nothing"
+    );
+
+    // The block jump moved to ⌘⇧↑: it highlights a block and does not scroll to the top.
+    cx.simulate_keystrokes("cmd-shift-up");
+    assert_eq!(view.read_with(cx, |v, _| v.highlighted_block()), Some(2));
+    assert_eq!(offset(cx), 0);
+}
+
 #[gpui::test]
 fn scrolled_back_prompt_jumps_start_from_the_first_visible_line(cx: &mut TestAppContext) {
     let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
@@ -556,7 +592,7 @@ fn scrolled_back_prompt_jumps_start_from_the_first_visible_line(cx: &mut TestApp
     focus(&view, cx);
     // Scrolled 6 lines back the top row is line 14: above block 1's prompt.
     view.update(cx, |v, cx| v.scroll_lines(6, cx));
-    cx.simulate_keystrokes("cmd-down");
+    cx.simulate_keystrokes("cmd-shift-down");
     assert_eq!(
         view.read_with(cx, |v, _| v.highlighted_block()),
         Some(1),
@@ -596,7 +632,7 @@ fn select_and_copy_act_on_the_current_blocks_output(cx: &mut TestAppContext) {
         .texts
         .borrow_mut()
         .push((1, BlockPart::Output, "a1\na2\na3".to_owned()));
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     cx.simulate_keystrokes("cmd-shift-c");
     assert_eq!(
         cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
@@ -619,7 +655,7 @@ fn the_bound_actions_do_the_same_as_the_chords(cx: &mut TestAppContext) {
         .texts
         .borrow_mut()
         .push((2, BlockPart::Output, "b1\nb2".to_owned()));
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes("cmd-shift-up");
     assert_eq!(view.read_with(cx, |v, _| v.highlighted_block()), Some(2));
     cx.simulate_keystrokes("cmd-shift-c");
     assert_eq!(
