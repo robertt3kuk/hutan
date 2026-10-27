@@ -21,29 +21,60 @@ pub const SPRING_AFTER: Duration = Duration::from_millis(700);
 /// How often the tree scrolls while a drag is at its edge.
 pub const AUTOSCROLL_EVERY: Duration = Duration::from_millis(30);
 
-/// The rows being dragged.
+/// The rows being dragged: onto a folder they move (⌥ copies), onto the chat composer or a
+/// terminal they type their path relative to `root`.
 #[derive(Clone, Debug)]
 pub struct DraggedRows {
     pub paths: Vec<PathBuf>,
+    /// The folder the tree shows: what the paths are relative to where they are dropped as text.
+    pub root: PathBuf,
     /// What the floating chip says: the name, or how many.
     pub label: SharedString,
 }
 
+impl DraggedRows {
+    /// The paths as text for a prompt or a shell line: relative to the tree's root (the full
+    /// path for a row outside it), one after the other.
+    pub fn relative_paths(&self) -> Vec<String> {
+        self.paths
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&self.root)
+                    .unwrap_or(p)
+                    .display()
+                    .to_string()
+            })
+            .collect()
+    }
+}
+
 impl FilesPanel {
     /// The drag payload of the row at `index`: the row as the user sees it (a folded chain is its
-    /// last folder).
-    pub(super) fn dragged_by(&self, index: usize) -> Option<DraggedRows> {
+    /// last folder), or, when the row is one of several selected (`acted`, what the commands
+    /// act on), all of them.
+    pub(super) fn dragged_by(&self, index: usize, acted: &[PathBuf]) -> Option<DraggedRows> {
         let row = self.rows().get(index)?;
         if matches!(row.kind, RowKind::More | RowKind::Failed) {
             return None;
         }
+        let root = self.tree.as_ref()?.root().to_owned();
+        let name_of = |path: &Path| {
+            path.file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+        };
+        if self.picked.contains(&row.path) && acted.len() > 1 {
+            return Some(DraggedRows {
+                paths: acted.to_vec(),
+                root,
+                label: format!("{} items", acted.len()).into(),
+            });
+        }
         let path = row.folder().to_owned();
-        let name = path
-            .file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let label = name_of(&path).into();
         Some(DraggedRows {
             paths: vec![path],
-            label: name.into(),
+            root,
+            label,
         })
     }
 

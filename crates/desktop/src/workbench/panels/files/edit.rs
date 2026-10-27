@@ -143,8 +143,11 @@ impl FilesPanel {
     }
 
     /// F2 and *Rename*: the name of the selected row becomes the field, its stem selected.
-    /// `false` when nothing is selected.
+    /// `false` when nothing is selected or several rows are (a rename is of one name).
     pub fn begin_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.selection().len() > 1 {
+            return false;
+        }
         let Some(target) = self.acted_paths().into_iter().next() else {
             return false;
         };
@@ -171,7 +174,7 @@ impl FilesPanel {
             .is_some_and(|k| k == hutan_protocol::fs::FsKind::Dir);
         self.drop_edit();
         let selection = stem_range(&name, is_dir);
-        self.selected = Some(target.clone());
+        self.set_single(target.clone());
         if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(&target)) {
             self.scroll
                 .scroll_to_item(index, gpui::ScrollStrategy::Nearest);

@@ -195,20 +195,40 @@ impl FilesPanel {
         window.dispatch_action(Box::new(Notify(text.into())), cx);
     }
 
-    /// The paths the commands act on: the selected row, as the user sees it (a folded chain is
-    /// its last folder). Empty without a selection.
-    pub(super) fn acted_paths(&self) -> Vec<PathBuf> {
-        let (Some(tree), Some(selected)) = (&self.tree, &self.selected) else {
+    /// The paths the commands act on: the selected rows, as the user sees them (a folded chain
+    /// is its last folder), a folder standing for what is selected inside it too. Empty without
+    /// a selection.
+    pub fn acted_paths(&self) -> Vec<PathBuf> {
+        let Some(tree) = &self.tree else {
             return Vec::new();
         };
-        if selected == tree.root() {
-            return Vec::new();
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for selected in self.selection() {
+            if selected == tree.root() {
+                continue;
+            }
+            match tree.index_of(&selected).map(|i| &tree.rows()[i]) {
+                Some(row) if row.path == selected => paths.push(row.folder().to_owned()),
+                Some(_) => paths.push(selected),
+                None => {}
+            }
         }
-        match tree.index_of(selected).map(|i| &tree.rows()[i]) {
-            Some(row) if row.path == *selected => vec![row.folder().to_owned()],
-            Some(_) => vec![selected.clone()],
-            None => Vec::new(),
+        // Paths sort with what is below a folder right after it, so one pass finds those a
+        // selected folder already carries.
+        let mut sorted = paths.clone();
+        sorted.sort();
+        let mut kept: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let mut last: Option<PathBuf> = None;
+        for path in sorted {
+            if last.as_ref().is_some_and(|dir| path.starts_with(dir)) {
+                continue;
+            }
+            last = Some(path.clone());
+            kept.insert(path);
         }
+        paths.retain(|p| kept.contains(p));
+        paths.dedup();
+        paths
     }
 
     /// Opens `path` in the editor with the keyboard.
@@ -704,6 +724,18 @@ impl FilesPanel {
                     break;
                 }
             }
+        }
+        if !self.picked.is_empty() {
+            let moved = std::mem::take(&mut self.picked);
+            self.picked = moved
+                .into_iter()
+                .map(|p| {
+                    pairs
+                        .iter()
+                        .find_map(|(from, to)| remap(&p, from, to))
+                        .unwrap_or(p)
+                })
+                .collect();
         }
         reopen.sort_by_key(|d| d.components().count());
         for dir in reopen {

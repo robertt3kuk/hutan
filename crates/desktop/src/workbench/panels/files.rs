@@ -191,6 +191,11 @@ pub struct FilesPanel {
     /// Trees of the roots the window left, most recent first, at most [`MAX_CACHED_ROOTS`].
     cache: Vec<CachedRoot>,
     selected: Option<PathBuf>,
+    /// The anchor of a ⇧ range and of the rows ⌘-clicked: the row last picked without ⇧.
+    anchor: Option<PathBuf>,
+    /// The rows selected together (⇧ / ⌘ click, ⇧↑↓): two or more, else empty and `selected` is
+    /// the whole selection. Row paths, as [`Row::path`] says.
+    picked: HashSet<PathBuf>,
     /// The file of the focused tab, as last revealed.
     active_file: Option<PathBuf>,
     /// A file to select once the folders it is in are listed.
@@ -294,6 +299,8 @@ impl FilesPanel {
             stale_root: None,
             cache: Vec::new(),
             selected: None,
+            anchor: None,
+            picked: HashSet::new(),
             active_file: None,
             pending_reveal: None,
             scroll,
@@ -377,10 +384,49 @@ impl FilesPanel {
         self.selected.as_deref()
     }
 
+    /// The rows selected, as the tree names them: the ⇧ / ⌘ picked ones top to bottom, else the
+    /// row the cursor is on. Empty without a selection.
+    pub fn selection(&self) -> Vec<PathBuf> {
+        let Some(tree) = &self.tree else {
+            return Vec::new();
+        };
+        if self.picked.is_empty() {
+            return self
+                .selected
+                .iter()
+                .filter(|s| tree.index_of(s).is_some())
+                .cloned()
+                .collect();
+        }
+        tree.rows()
+            .iter()
+            .filter(|r| self.picked.contains(&r.path))
+            .map(|r| r.path.clone())
+            .collect()
+    }
+
+    /// Whether the row of `path` is part of the selection.
+    pub fn is_selected(&self, path: &Path) -> bool {
+        if self.picked.is_empty() {
+            self.selected.as_deref() == Some(path)
+        } else {
+            self.picked.contains(path)
+        }
+    }
+
     /// Selects the row of `path` when the tree shows it (without opening anything).
     pub fn select_path(&mut self, path: &Path, cx: &mut Context<Self>) {
         if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(path)) {
             self.select_index(index);
+            cx.notify();
+        }
+    }
+
+    /// *Collapse Folder*: closes the open folder `path` (the keyboard stays where it is).
+    pub fn collapse_folder(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if self.tree.as_ref().is_some_and(|t| t.is_expanded(path)) {
+            self.toggle(path, cx);
+            self.keep_selection();
             cx.notify();
         }
     }
@@ -503,6 +549,8 @@ impl FilesPanel {
         self.spring = None;
         self.stale_root = None;
         let offset = self.scroll.0.borrow().base_handle.offset();
+        self.picked.clear();
+        self.anchor = None;
         let selected = self.selected.take();
         if let Some(tree) = self.tree.take() {
             // The tree that leaves is drawn until the new root's first listing, when there is a
@@ -986,7 +1034,7 @@ impl FilesPanel {
         let Some(row) = self.rows().get(index).cloned() else {
             return;
         };
-        self.selected = Some(row.path.clone());
+        self.set_single(row.path.clone());
         match row.kind {
             RowKind::Dir => self.toggle(&row.path, cx),
             RowKind::File | RowKind::Link => {
@@ -1017,17 +1065,87 @@ impl FilesPanel {
 
     fn select_index(&mut self, index: usize) {
         if let Some(row) = self.rows().get(index) {
-            self.selected = Some(row.path.clone());
+            let path = row.path.clone();
             self.scroll.scroll_to_item(index, ScrollStrategy::Nearest);
+            self.set_single(path);
+        }
+    }
+
+    /// The selection is this one row, which is also where a ⇧ range starts.
+    fn set_single(&mut self, path: PathBuf) {
+        self.picked.clear();
+        self.anchor = Some(path.clone());
+        self.selected = Some(path);
+    }
+
+    /// ⇧-click and ⇧↑↓: the rows from the anchor to the row at `index` are selected, and the
+    /// cursor is on it.
+    fn extend_to(&mut self, index: usize) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        let Some(target) = tree.rows().get(index).map(|r| r.path.clone()) else {
+            return;
+        };
+        let anchor = self
+            .anchor
+            .clone()
+            .or_else(|| self.selected.clone())
+            .unwrap_or_else(|| target.clone());
+        let from = tree.index_of(&anchor).unwrap_or(index);
+        let (first, last) = (from.min(index), from.max(index));
+        let range: HashSet<PathBuf> = tree.rows()[first..=last]
+            .iter()
+            .filter(|r| !matches!(r.kind, RowKind::More | RowKind::Failed))
+            .map(|r| r.path.clone())
+            .collect();
+        self.anchor = Some(anchor);
+        self.selected = Some(target);
+        self.picked = if range.len() > 1 { range } else { HashSet::new() };
+        self.scroll.scroll_to_item(index, ScrollStrategy::Nearest);
+    }
+
+    /// ⌘-click: the row at `index` joins the selection, or leaves it when it is in.
+    fn toggle_pick(&mut self, index: usize) {
+        let Some(path) = self.rows().get(index).map(|r| r.path.clone()) else {
+            return;
+        };
+        let mut chosen: HashSet<PathBuf> = self.selection().into_iter().collect();
+        if !chosen.remove(&path) {
+            chosen.insert(path.clone());
+        }
+        self.anchor = Some(path.clone());
+        match chosen.len() {
+            0 => {
+                self.picked.clear();
+                self.selected = Some(path);
+            }
+            1 => {
+                self.picked.clear();
+                self.selected = chosen.into_iter().next();
+            }
+            _ => {
+                self.picked = chosen;
+                self.selected = Some(path);
+            }
         }
     }
 
     /// A selected row that went (its folder closed, the file was removed) hands the selection
-    /// to its nearest open folder.
+    /// to its nearest open folder; a selection of several keeps the rows that are left.
     fn keep_selection(&mut self) {
         let Some(tree) = &self.tree else {
             return;
         };
+        if !self.picked.is_empty() {
+            self.picked.retain(|p| tree.index_of(p).is_some());
+            if self.picked.len() < 2 {
+                if let Some(only) = self.picked.drain().next() {
+                    self.anchor = Some(only.clone());
+                    self.selected = Some(only);
+                }
+            }
+        }
         let Some(selected) = self.selected.clone() else {
             return;
         };
@@ -1039,6 +1157,48 @@ impl FilesPanel {
             .skip(1)
             .find(|a| tree.index_of(a).is_some())
             .map(Path::to_owned);
+    }
+
+    /// ⌥Return and ⌘Return: the file under the cursor opens in a split to the right.
+    fn open_to_side(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(row) = self
+            .selected_index()
+            .and_then(|i| self.rows().get(i).cloned())
+        else {
+            return;
+        };
+        if matches!(row.kind, RowKind::File | RowKind::Link) {
+            window.dispatch_action(
+                Box::new(OpenChosenFile(ChosenFile {
+                    path: row.path.display().to_string(),
+                    line: None,
+                    column: None,
+                    place: FilePlace::Split,
+                })),
+                cx,
+            );
+        }
+    }
+
+    /// Return with several rows selected: every file among them opens in a tab.
+    fn open_picked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let files: Vec<PathBuf> = self
+            .rows()
+            .iter()
+            .filter(|r| self.picked.contains(&r.path) && matches!(r.kind, RowKind::File | RowKind::Link))
+            .map(|r| r.path.clone())
+            .collect();
+        for path in files {
+            window.dispatch_action(
+                Box::new(OpenChosenFile(ChosenFile {
+                    path: path.display().to_string(),
+                    line: None,
+                    column: None,
+                    place: FilePlace::Focused,
+                })),
+                cx,
+            );
+        }
     }
 
     /// How many rows a page holds: what PgUp / PgDn move by.
@@ -1067,9 +1227,46 @@ impl FilesPanel {
             match keystroke.key.as_str() {
                 "left" => self.collapse_all(cx),
                 "right" => self.expand_all(window, cx),
+                "enter" => {
+                    self.open_to_side(window, cx);
+                    return true;
+                }
                 _ => return false,
             }
             self.keep_selection();
+            cx.notify();
+            return true;
+        }
+        if modifiers.alt
+            && !(modifiers.platform || modifiers.control || modifiers.shift)
+            && keystroke.key == "enter"
+        {
+            self.open_to_side(window, cx);
+            return true;
+        }
+        if modifiers.shift && !(modifiers.platform || modifiers.control || modifiers.alt) {
+            // ⇧ with a movement key extends the selection from its anchor.
+            let count = self.rows().len();
+            if count == 0 {
+                return false;
+            }
+            let current = self.selected_index();
+            let target = match keystroke.key.as_str() {
+                "down" => current.map_or(0, |i| (i + 1).min(count - 1)),
+                "up" => current.map_or(0, |i| i.saturating_sub(1)),
+                "home" => 0,
+                "end" => count - 1,
+                "pagedown" => {
+                    let page = self.page_rows(cx);
+                    current.map_or(page.min(count - 1), |i| (i + page).min(count - 1))
+                }
+                "pageup" => {
+                    let page = self.page_rows(cx);
+                    current.map_or(0, |i| i.saturating_sub(page))
+                }
+                _ => return false,
+            };
+            self.extend_to(target);
             cx.notify();
             return true;
         }
@@ -1141,12 +1338,16 @@ impl FilesPanel {
                 }
             }
             "enter" => {
-                if let Some(index) = current {
+                if self.picked.len() > 1 {
+                    self.open_picked(window, cx);
+                } else if let Some(index) = current {
                     self.activate(index, true, window, cx);
                 }
             }
             "space" => {
-                if let Some(index) = current {
+                if self.picked.len() < 2
+                    && let Some(index) = current
+                {
                     self.activate(index, false, window, cx);
                 }
             }
@@ -1182,7 +1383,7 @@ impl FilesPanel {
         } else {
             self.pending_reveal = None;
             if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(file)) {
-                self.selected = Some(file.to_owned());
+                self.set_single(file.to_owned());
                 self.scroll.scroll_to_item(index, ScrollStrategy::Center);
             }
         }
@@ -1217,6 +1418,7 @@ impl FilesPanel {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let hover = theme.sidebar_hover;
+        let picked = self.picked.clone();
         let focused_row = self.selected.clone();
         let active = self.active_file.clone();
         let guides = self.guides_shown();
@@ -1240,10 +1442,20 @@ impl FilesPanel {
             .set(self.rows_rendered.get() + rows.len());
         let drawn = Rc::clone(&self.guides_drawn);
         let accent = theme.accent;
+        // What several selected rows drag together (computed once for the frame).
+        let acted = if picked.len() > 1 {
+            self.acted_paths()
+        } else {
+            Vec::new()
+        };
         let mut elements: Vec<AnyElement> = rows
             .into_iter()
             .map(|(index, row)| {
-                let selected = focused_row.as_ref() == Some(&row.path);
+                let selected = if picked.is_empty() {
+                    focused_row.as_ref() == Some(&row.path)
+                } else {
+                    picked.contains(&row.path)
+                };
                 let is_active = active.as_ref() == Some(&row.path);
                 // Git: a changed file gets a letter and a tint, a folder with changes a dot (never
                 // for ignored rows, which git does not track).
@@ -1328,7 +1540,7 @@ impl FilesPanel {
                 let is_dir = row.kind == RowKind::Dir;
                 let can_drag = !matches!(row.kind, RowKind::More | RowKind::Failed);
                 let target = row.folder().to_owned();
-                let dragged = self.dragged_by(index);
+                let dragged = self.dragged_by(index, &acted);
                 let drop_target = target.clone();
                 let drop_listener = cx.listener(move |this, rows: &DraggedRows, window, cx| {
                     let copy = window.modifiers().alt;
@@ -1402,7 +1614,9 @@ impl FilesPanel {
                                         if matches!(row.kind, RowKind::More | RowKind::Failed) {
                                             return;
                                         }
-                                        this.selected = Some(row.path.clone());
+                                        if !this.is_selected(&row.path) {
+                                            this.set_single(row.path.clone());
+                                        }
                                         window.dispatch_action(
                                             Box::new(ShowFilesMenu(FilesMenuAt {
                                                 path: row.path.display().to_string(),
@@ -1420,6 +1634,17 @@ impl FilesPanel {
                             )
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                                 window.focus(&this.focus, cx);
+                                let modifiers = event.modifiers();
+                                if modifiers.shift {
+                                    this.extend_to(index);
+                                    cx.notify();
+                                    return;
+                                }
+                                if modifiers.platform {
+                                    this.toggle_pick(index);
+                                    cx.notify();
+                                    return;
+                                }
                                 let double = event.click_count() >= 2;
                                 let kind = this.rows().get(index).map(|r| r.kind);
                                 match kind {
