@@ -440,6 +440,10 @@ pub enum Region {
     Changes(&'static str),
     /// A part of the Files panel (`tree`: the rows' area).
     Files(&'static str),
+    /// A part of the Files panel's sections: row `index` of a list (`open-editors`,
+    /// `changed-by-agents`), the close button of Open Editors' row `index` (`open-close`), or a
+    /// header (`open-editors` / `changed-by-agents` with `usize::MAX`).
+    FilesSection(&'static str, usize),
     /// File `index` of the Changes view's list, top to bottom.
     ChangesFile(usize),
     /// The *Mawas's memory files* hint on file `index` of the Changes view's list.
@@ -738,6 +742,9 @@ pub struct Workbench {
     /// The open folders of the Files panel per root, saved with the layout (see
     /// [`persistence::FilesExpanded`]); shared with the panel.
     pub(crate) files_memory: super::panels::FilesMemory,
+    /// What the Files panel's sections list: the files of the tabs and of the agent ledger
+    /// (`files_feed.rs`); shared with the panel, which observes it.
+    pub(crate) files_feed: Entity<super::panels::ExplorerFeed>,
     /// ⌘P's `fs.find` in flight (dropping it cancels it) and its listener of `fs.generation`
     /// (`quick_open.rs`).
     pub(crate) quick_open: super::quick_open::QuickOpenTasks,
@@ -1077,6 +1084,7 @@ impl Workbench {
                 });
             }
         });
+        let files_feed = cx.new(|_| super::panels::ExplorerFeed::default());
         let env = PanelEnv {
             sessions: sessions.clone(),
             settings: settings.clone(),
@@ -1085,6 +1093,7 @@ impl Workbench {
             regions: regions.clone(),
             instruction_homes: instruction_homes.clone(),
             files_memory: files_memory.clone(),
+            files_feed: files_feed.clone(),
         };
 
         let commands = Rc::new(actions::commands(
@@ -1505,6 +1514,7 @@ impl Workbench {
             instructions_toast_exit: super::ui::motion::Ghost::default(),
             instruction_homes,
             files_memory,
+            files_feed,
             layout_toast: None,
             layout_undo: None,
             layout_toast_exit: super::ui::motion::Ghost::default(),

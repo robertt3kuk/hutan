@@ -565,7 +565,7 @@ impl Workbench {
     }
 
     /// Every `(pane, path)` that has a file tab in the center, in tree order.
-    fn open_file_items(&self) -> Vec<(PaneId, String)> {
+    pub(crate) fn open_file_items(&self) -> Vec<(PaneId, String)> {
         self.state
             .center
             .panes()
@@ -711,6 +711,7 @@ impl Workbench {
         }
         self.follow_active_file(cx);
         self.follow_active_changes(cx);
+        self.sync_explorer_open(cx);
     }
 
     /// How code looks now: the editor colors of the chrome's pack, its monospace family, and
@@ -889,7 +890,7 @@ impl Workbench {
     // ---- the Files panel (E-13a) -----------------------------------------------------------
 
     /// The file of the center's active tab, if it is one.
-    pub(crate) fn active_center_file(&self) -> Option<String> {
+    pub fn active_center_file(&self) -> Option<String> {
         self.state
             .active_center_item()
             .and_then(|item| item.as_file().map(str::to_owned))

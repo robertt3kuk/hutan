@@ -21,6 +21,8 @@ pub struct PanelEnv {
     pub instruction_homes: Rc<std::cell::RefCell<Option<crate::instructions::HarnessHomes>>>,
     /// The open folders the Files panel remembers per root (saved with the layout).
     pub files_memory: super::panels::FilesMemory,
+    /// The files of the window's tabs and of the agent ledger, for the Files panel's sections.
+    pub files_feed: gpui::Entity<super::panels::ExplorerFeed>,
 }
 
 impl std::fmt::Debug for PanelEnv {

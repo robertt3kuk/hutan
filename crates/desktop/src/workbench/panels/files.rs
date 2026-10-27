@@ -45,6 +45,7 @@ mod edit;
 mod filter;
 mod marks;
 mod ops;
+mod sections;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -94,6 +95,7 @@ pub use filter::{DEBOUNCE as FILTER_DEBOUNCE, FilterStatus};
 pub use marks::{DIAGNOSTICS_READ_EVERY, DiagCounts, DiagMarks};
 pub use ops::FilesCommand;
 use ops::{PathClipboard, error_message};
+pub use sections::{AgentFile, ExplorerFeed, MAX_AGENT_ROWS, OpenEditor, Section};
 
 /// Open folders watched at once; folders opened beyond it are listed again on the root's
 /// `fs.generation` instead (the connection may watch 256 paths, open files included).
@@ -244,6 +246,8 @@ pub struct FilesPanel {
     git_reads: usize,
     /// The language servers' diagnostics of the root's files and folders (`marks.rs`).
     diag: marks::DiagState,
+    /// Which sections above the tree are folded, and their scroll (`sections.rs`).
+    sections: sections::Sections,
     /// The name field of a new file, a new folder or a rename, when one is open.
     editing: Option<NameEdit>,
     name_edit: FieldEdit,
@@ -292,6 +296,8 @@ impl FilesPanel {
                 this.sync_git(cx);
                 this.sync_diagnostics(cx);
             }),
+            // The window's tabs or the agent ledger changed: the sections list them.
+            cx.observe(&env.files_feed, |_, _, cx| cx.notify()),
             // A command or an agent's turn ended in a checkout: its files may have changed.
             cx.subscribe(&env.sessions, |this, _, _: &CheckoutActivity, cx| {
                 this.refresh_git(cx);
@@ -333,6 +339,7 @@ impl FilesPanel {
             git_asked: None,
             git_reads: 0,
             diag: marks::DiagState::default(),
+            sections: sections::Sections::default(),
             editing: None,
             name_edit: FieldEdit::new(),
             name_focus: cx.focus_handle(),
@@ -1517,6 +1524,7 @@ impl FilesPanel {
             .set(self.rows_rendered.get() + rows.len());
         let drawn = Rc::clone(&self.guides_drawn);
         let accent = theme.accent;
+        let agent_marks = self.agent_marks(cx);
         // What several selected rows drag together (computed once for the frame).
         let acted = if picked.len() > 1 {
             self.acted_paths()
@@ -1546,6 +1554,13 @@ impl FilesPanel {
                 .then(|| self.diagnostics().of(&row.path))
                 .flatten()
                 .filter(|d| !d.is_empty());
+                // An agent changed this file (◆), or one below this folder (a dot).
+                let agent_file = (!row.ignored
+                    && matches!(row.kind, RowKind::File | RowKind::Link))
+                .then(|| agent_marks.file(&row.path).cloned())
+                .flatten();
+                let agent_dir =
+                    !row.ignored && row.kind == RowKind::Dir && agent_marks.holds(&row.path);
                 let diag_color = diag.map(|d| {
                     if d.has_errors() {
                         theme.danger
@@ -1824,6 +1839,34 @@ impl FilesPanel {
                                         cx.new(|_| TextTooltip(words.clone())).into()
                                     })
                             }))
+                            .children(agent_file.map(|file| {
+                                let words: SharedString = file.tooltip().into();
+                                div()
+                                    .id(("files-agent", index))
+                                    .flex_none()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(accent)
+                                    .child("◆")
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| TextTooltip(words.clone())).into()
+                                    })
+                            }))
+                            .when(agent_dir, |s| {
+                                s.child(
+                                    div()
+                                        .id(("files-agent-dir", index))
+                                        .flex_none()
+                                        .size(px(6.0))
+                                        .rounded_full()
+                                        .bg(accent)
+                                        .tooltip(|_, cx| {
+                                            cx.new(|_| {
+                                                TextTooltip("Holds files an agent changed".into())
+                                            })
+                                            .into()
+                                        }),
+                                )
+                            })
                             .when(dotted, |s| {
                                 s.child(
                                     div()
@@ -1974,6 +2017,7 @@ impl Render for FilesPanel {
             root.file_name()
                 .map(|n| SharedString::from(n.to_string_lossy().into_owned()))
         });
+        let sections = self.render_sections(window, cx);
         let count = self.shown_rows().len() + usize::from(self.new_row_slot().is_some());
         let body: AnyElement = match (&self.tree, count) {
             (None, _) => empty_state(
@@ -2059,6 +2103,7 @@ impl Render for FilesPanel {
                     .child(name)
             }))
             .children(self.tree.is_some().then(|| self.filter_row(window, cx)))
+            .children(sections)
             .child(body)
             .children(self.name_error_strip(cx))
     }

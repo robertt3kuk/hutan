@@ -15,11 +15,12 @@ use hutan_desktop::workbench::{Region, Workbench, actions};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
 /// The tree does not follow the focused tab here: a file previewed by a click would otherwise
-/// select itself in the tree when its tab opens, whenever the daemon answers.
+/// select itself in the tree when its tab opens, whenever the daemon answers. Open Editors stays
+/// off too: it would push the tree down as tabs open, and these tests click rows at fixed places.
 fn settings(daemon: &TestDaemon) -> SettingsStore {
     std::fs::write(
         daemon.home().join("settings.toml"),
-        "[app]\nsetup_done = true\n[panels.files]\nauto_reveal = false\n",
+        "[app]\nsetup_done = true\n[panels.files]\nauto_reveal = false\nopen_editors = \"never\"\n",
     )
     .unwrap();
     SettingsStore::new(SettingsPaths::in_dir(daemon.home()))

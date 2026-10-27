@@ -1198,6 +1198,9 @@ impl Workbench {
                 this.show_files_more_menu(a.0, window, cx);
             }),
         )
+        .on_action(cx.listener(|this, a: &actions::CloseFileTabs, window, cx| {
+            this.close_file_tabs(&a.0, window, cx);
+        }))
         .on_action(cx.listener(|this, _: &actions::FocusEditor, window, cx| {
             this.focus_editor(window, cx);
         }))

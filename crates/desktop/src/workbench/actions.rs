@@ -486,6 +486,9 @@ data_actions! {
     /// Show the Files panel's ⋯ menu (hidden and ignored files, folding, indent guides, expand
     /// and collapse all, refresh) at a position.
     ShowFilesMoreMenu(gpui::Point<gpui::Pixels>);
+    /// Close the tabs that show this file (absolute path), in every pane: the Files panel's *Open
+    /// Editors* close button; a file with unsaved changes asks first, as its tab's own × does.
+    CloseFileTabs(String);
     /// Ask before moving these files and folders (absolute paths) to the Trash: the sheet lists
     /// them, the tabs with unsaved changes and an agent working there; *Move to Trash* runs it.
     FilesAskTrash(Vec<String>);

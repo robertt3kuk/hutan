@@ -24,6 +24,7 @@ mod file_ops;
 mod file_sync;
 pub mod file_view;
 pub mod files;
+mod files_feed;
 mod files_menu;
 mod first_run;
 mod git_gutter;

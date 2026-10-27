@@ -166,6 +166,11 @@ impl Ledger {
         self.entries.keys()
     }
 
+    /// Every file in the ledger with its entry (path order).
+    pub fn entries(&self) -> impl Iterator<Item = (&String, &LedgerEntry)> {
+        self.entries.iter()
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -362,6 +367,9 @@ fn now_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
+/// The state of an entry a summary was computed for: its `updated_ms` and the bytes it has on disk.
+pub(crate) type SummaryKey = (u64, usize);
+
 /// The ledger of a window, with what it needs to stay saved and listening.
 #[derive(Default)]
 pub struct AgentLedger {
@@ -376,6 +384,10 @@ pub struct AgentLedger {
     reads: HashMap<String, Task<()>>,
     /// Agent writes taken into the ledger (tests wait on it).
     pub(crate) writes_seen: u64,
+    /// What the Files panel's section says of each file — places changed and the first one's
+    /// line — and the entry state it was computed for (`updated_ms`, bytes on disk), so a diff
+    /// runs only for an entry that changed (`files_feed.rs`).
+    pub(crate) summaries: HashMap<String, (SummaryKey, Option<(usize, u32)>)>,
 }
 
 impl std::fmt::Debug for AgentLedger {
@@ -443,6 +455,7 @@ impl Workbench {
         for path in paths {
             self.ledger_watch(&path, cx);
         }
+        self.sync_explorer_agents(cx);
     }
 
     fn on_agent_event(&mut self, event: &AgentEvent, cx: &mut Context<Self>) {
@@ -698,6 +711,7 @@ impl Workbench {
     }
 
     fn schedule_ledger_save(&mut self, cx: &mut Context<Self>) {
+        self.sync_explorer_agents(cx);
         if self.agent_ledger.path.is_none() {
             return;
         }

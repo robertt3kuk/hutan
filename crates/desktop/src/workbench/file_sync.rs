@@ -64,6 +64,7 @@ impl Workbench {
                 && stored.dirty != dirty
             {
                 stored.dirty = dirty;
+                this.sync_explorer_open(cx);
                 cx.notify();
             }
         });
@@ -116,6 +117,7 @@ impl Workbench {
     ) {
         if let Some(text) = text {
             self.agent_ledger.ledger.disk_is(path, text);
+            self.sync_explorer_agents(cx);
         }
         let changes = self.ledger_changes(path);
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
@@ -265,6 +267,7 @@ impl Workbench {
             && let Some(text) = &text
         {
             self.agent_ledger.ledger.disk_is(path, text);
+            self.sync_explorer_agents(cx);
         }
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
             self.replace_saved(
