@@ -18,6 +18,8 @@ Sequences from the scripts end with BEL. An empty Enter produces `A B` with no `
 
 The marks also decide how the daemon treats a width change: between `A` and `C` (the shell is at its prompt) the prompt is erased instead of reflowed so the shell's own repaint after SIGWINCH starts from clean rows (`Emulator::resize`, `docs/design.md` § Resize and reflow). A shell that sends no marks keeps the plain reflow. Two-line prompts and right prompts (starship, `RPROMPT`, `fish_right_prompt`) go through the same rule, and a block's rows follow the reflow (zsh and fish streams in the corpus check it; UX-TERM-RESIZE phase B).
 
+In the desktop the marks give the terminal its blocks (`docs/design.md` § Terminal blocks): **⌘⇧↑ / ⌘⇧↓** jump to the previous / next prompt and highlight its block (they were ⌘↑ / ⌘↓ before FX-WORK-1; those two now scroll to the top / bottom of the scrollback, as in Terminal.app and iTerm). A shell without marks has no blocks, so the jumps do nothing there; ⌘↑ / ⌘↓ work everywhere.
+
 ## Where it applies
 
 The environment the shell starts with (a fresh login environment by default) is described in `docs/architecture.md` § Session environment; the integration variables are set after it and win over the client's.
