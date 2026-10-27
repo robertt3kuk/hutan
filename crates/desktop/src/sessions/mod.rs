@@ -25,7 +25,7 @@ pub use attention::{
     Attention, AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread,
     classify, ended_text, present,
 };
-pub use placement::{PlacementBadge, placement_badge, row_placement_badge};
+pub use placement::{PlacementBadge, placement_badge, row_placement_badge, works_in_checkout};
 pub use presentation::{
     AgentPresentation, AgentRecord, Counts, Group, Link, Reason, ReasonKind, Role, Scope, State,
 };

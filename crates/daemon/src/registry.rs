@@ -4644,12 +4644,7 @@ impl SessionRegistry {
         let occupants: Vec<Occupant<'_>> = self
             .sessions
             .iter()
-            .map(|session| Occupant {
-                id: session.info.id,
-                live: session.info.state.is_live(),
-                agent: session.info.agent.is_some(),
-                root: session.info.placement.as_ref().map(|p| p.root.as_path()),
-            })
+            .map(|session| Occupant::of(&session.info))
             .collect();
         let shared = shared_with(&occupants);
         drop(occupants);

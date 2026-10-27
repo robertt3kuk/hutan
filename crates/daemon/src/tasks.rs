@@ -59,11 +59,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::bus::EventBus;
-use crate::chat::{AGENT_CODEX, is_gateway_agent};
+use crate::chat::AGENT_CODEX;
 use crate::checkpoints::turns::TurnCheckpoints;
 use crate::config::TasksSettings;
 use crate::harness::is_harness_agent;
-use crate::placement::PlacementCache;
+use crate::placement::{PlacementCache, works_in_checkout};
 use crate::projects;
 use crate::registry::{RegistryHandle, log_write, now_ms};
 use crate::worktrees::{RemovedWorktree, WorktreeService};
@@ -1019,13 +1019,7 @@ impl TaskService {
         let others: Vec<String> = list
             .sessions
             .iter()
-            .filter(|s| s.state.is_live())
-            .filter(|s| {
-                s.agent.is_some()
-                    || s.chat
-                        .as_ref()
-                        .is_some_and(|chat| !is_gateway_agent(&chat.agent))
-            })
+            .filter(|s| works_in_checkout(s))
             .filter(|s| s.placement.as_ref().is_some_and(|p| p.root == root))
             .map(|s| format!("{} ({})", s.title, s.id))
             .collect();

@@ -2,7 +2,7 @@
 //! the repository's main checkout, `wt <branch>` for a linked worktree, tinted as a warning
 //! while another live agent works in the same checkout.
 
-use hutan_protocol::messages::SessionInfo;
+use hutan_protocol::messages::{AgentState, SessionInfo};
 use hutan_protocol::worktree::PlacementKind;
 
 /// What a session's row and tab say about where it works.
@@ -54,6 +54,29 @@ pub fn placement_badge(session: &SessionInfo) -> Option<PlacementBadge> {
         shared: others > 0,
         tooltip: lines.join("\n"),
     })
+}
+
+/// Whether `session` has an agent that runs a turn or waits for the user: what "another live
+/// agent works in this checkout" counts (the Start sheet's warning). The same rule as the
+/// daemon's, which decides the badge above and the warning a task start returns
+/// (`hutan_daemon::placement::works_in_checkout`): an idle terminal, a chat between turns (an
+/// empty Mawas session included) and a session whose chat edits no files (Mawas, a direct model
+/// chat) do not count.
+pub fn works_in_checkout(session: &SessionInfo) -> bool {
+    if !session.state.is_live() {
+        return false;
+    }
+    let terminal_agent = session
+        .agent
+        .as_ref()
+        .is_some_and(|agent| matches!(agent.state, AgentState::Working | AgentState::Blocked));
+    let chat = session.chat.as_ref().is_some_and(|chat| {
+        !chat.is_assistant()
+            && chat.provider_id.is_none()
+            && chat.agent != "direct"
+            && (chat.turn_active || chat.pending_approvals > 0 || chat.pending_questions > 0)
+    });
+    terminal_agent || chat
 }
 
 /// What a quiet sidebar row says about where its session works, on a second line: the badge of
@@ -181,5 +204,80 @@ mod tests {
                 .contains("⚠ 2 other live agents work in this checkout")
         );
         assert_eq!(two.text, "shared checkout");
+    }
+
+    fn chat(agent: &str, turn_active: bool) -> hutan_protocol::chat::ChatInfo {
+        hutan_protocol::chat::ChatInfo {
+            agent: agent.to_owned(),
+            model: String::new(),
+            approval_policy: hutan_core::ApprovalPolicy::default(),
+            sandbox: hutan_core::SandboxMode::default(),
+            turn_active,
+            pending_approvals: 0,
+            pending_questions: 0,
+            provider_id: None,
+            agent_session_id: None,
+            assistant: false,
+            images: None,
+            mode: None,
+            checkpoints: None,
+            account: None,
+            safety: None,
+        }
+    }
+
+    fn report(state: AgentState) -> hutan_protocol::messages::AgentReport {
+        hutan_protocol::messages::AgentReport {
+            source: "test".into(),
+            agent: "omp".into(),
+            state,
+            message: None,
+            agent_session_id: None,
+            updated_at_ms: 0,
+            blocked_sub: None,
+        }
+    }
+
+    /// F-12: an idle terminal and an empty Mawas session are no "other live agent"; a running or
+    /// waiting turn is.
+    #[test]
+    fn only_a_running_or_waiting_agent_turn_works_in_a_checkout() {
+        assert!(!works_in_checkout(&session(None)), "an idle terminal");
+
+        let mut agent = session(None);
+        agent.agent = Some(report(AgentState::Idle));
+        assert!(!works_in_checkout(&agent), "a terminal agent between turns");
+        agent.agent = Some(report(AgentState::Working));
+        assert!(works_in_checkout(&agent));
+        agent.agent = Some(report(AgentState::Blocked));
+        assert!(works_in_checkout(&agent), "waiting for a decision counts");
+        agent.state = SessionState::Stopped;
+        assert!(!works_in_checkout(&agent), "a stopped session never does");
+
+        let mut empty = session(None);
+        empty.chat = Some(chat("omp", false));
+        assert!(!works_in_checkout(&empty), "a chat between turns");
+        empty.chat = Some(chat("omp", true));
+        assert!(works_in_checkout(&empty), "a chat that runs a turn");
+        let mut asking = session(None);
+        let mut waiting = chat("codex", false);
+        waiting.pending_approvals = 1;
+        asking.chat = Some(waiting);
+        assert!(
+            works_in_checkout(&asking),
+            "a chat that waits for an answer"
+        );
+
+        let mut mawas = session(None);
+        let mut assistant = chat("omp", true);
+        assistant.assistant = true;
+        mawas.chat = Some(assistant);
+        assert!(!works_in_checkout(&mawas), "Mawas edits no files");
+        let mut direct = session(None);
+        direct.chat = Some(chat("direct", true));
+        assert!(
+            !works_in_checkout(&direct),
+            "a direct model chat edits no files"
+        );
     }
 }

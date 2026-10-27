@@ -935,7 +935,7 @@ impl Workbench {
             .filter(|id| {
                 store
                     .session(**id)
-                    .is_some_and(|s| s.chat.is_some() || s.agent.is_some())
+                    .is_some_and(crate::sessions::works_in_checkout)
             })
             .count();
         (agents > 0).then(|| {

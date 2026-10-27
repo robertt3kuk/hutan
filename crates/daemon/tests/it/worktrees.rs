@@ -152,6 +152,11 @@ impl Env {
     }
 
     async fn report(&self, session: SessionId, source: &str, seq: u64) {
+        self.report_state(session, source, seq, AgentState::Working)
+            .await;
+    }
+
+    async fn report_state(&self, session: SessionId, source: &str, seq: u64, state: AgentState) {
         let applied: AgentApplied = self
             .client
             .call(Request::AgentReport(AgentReportRequest {
@@ -159,7 +164,7 @@ impl Env {
                 session_id: session,
                 source: source.into(),
                 agent: "fake".into(),
-                state: Some(AgentState::Working),
+                state: Some(state),
                 message: None,
                 seq,
                 agent_session_id: None,
@@ -727,6 +732,43 @@ async fn two_agents_in_one_checkout_share_it_until_one_stops() {
             .shared_with
             .is_empty()
     );
+    env.stop().await;
+}
+
+/// F-12: an agent that is only open (it reports itself idle) is not "another live agent working
+/// in this checkout"; it is once it works.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_that_waits_for_its_next_prompt_shares_nothing_until_it_works() {
+    let mut env = Env::start().await;
+    let a = env.session_in(&env.repo.root).await;
+    let b = env.session_in(&env.repo.root).await;
+    env.report(a.id, "x", 1).await;
+    env.report_state(b.id, "y", 1, AgentState::Idle).await;
+    assert!(
+        env.session_info(a.id)
+            .await
+            .placement
+            .unwrap()
+            .shared_with
+            .is_empty(),
+        "an idle agent next to a working one"
+    );
+
+    env.report(b.id, "y", 2).await;
+    env.placement_update(a.id, "shared once the other works", |s| {
+        s.placement
+            .as_ref()
+            .is_some_and(|p| p.shared_with == vec![b.id])
+    })
+    .await;
+
+    env.report_state(b.id, "y", 3, AgentState::Idle).await;
+    env.placement_update(a.id, "alone when the other waits again", |s| {
+        s.placement
+            .as_ref()
+            .is_some_and(|p| p.shared_with.is_empty())
+    })
+    .await;
     env.stop().await;
 }
 

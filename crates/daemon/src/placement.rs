@@ -14,8 +14,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use hutan_core::SessionId;
+use hutan_protocol::messages::{AgentState, SessionInfo};
 use hutan_protocol::worktree::{Placement, PlacementKind};
 
+use crate::chat::is_gateway_agent;
 use crate::projects;
 
 /// Directories remembered before the cache starts over.
@@ -183,32 +185,62 @@ impl PlacementCache {
     }
 }
 
+/// Whether `session` has an agent that runs a turn or waits for the user, in its checkout: the
+/// one definition of "another live agent works here" (the `shared_with` of a placement, the
+/// warning a task start returns, the Start sheet's). A session that merely exists does not count:
+/// not an idle terminal or a terminal agent that reports itself idle, not a chat between turns
+/// (an empty Mawas session included), and never a session whose chat edits no files (Mawas, a
+/// direct model chat).
+pub fn works_in_checkout(session: &SessionInfo) -> bool {
+    if !session.state.is_live() {
+        return false;
+    }
+    let terminal_agent = session
+        .agent
+        .as_ref()
+        .is_some_and(|agent| matches!(agent.state, AgentState::Working | AgentState::Blocked));
+    let chat = session.chat.as_ref().is_some_and(|chat| {
+        !chat.is_assistant()
+            && !is_gateway_agent(&chat.agent)
+            && (chat.turn_active || chat.pending_approvals > 0 || chat.pending_questions > 0)
+    });
+    terminal_agent || chat
+}
+
 /// What [`shared_with`] needs to know about one session.
 #[derive(Debug, Clone, Copy)]
 pub struct Occupant<'a> {
     pub id: SessionId,
-    /// The session's process (or chat agent) is running.
-    pub live: bool,
-    /// An agent is reported in the session (`SessionInfo.agent`).
-    pub agent: bool,
+    /// An agent runs a turn or waits for the user in it ([`works_in_checkout`]).
+    pub working: bool,
     /// The checkout root of the session's placement.
     pub root: Option<&'a Path>,
 }
 
-/// For every occupant the other live sessions with an agent in its checkout, while it has an
-/// agent too: two agents writing to one checkout. Order follows the input. A shell next to an
-/// agent shares nothing; only agents write on their own.
+impl<'a> Occupant<'a> {
+    pub fn of(session: &'a SessionInfo) -> Self {
+        Self {
+            id: session.id,
+            working: works_in_checkout(session),
+            root: session.placement.as_ref().map(|p| p.root.as_path()),
+        }
+    }
+}
+
+/// For every occupant the other sessions with a working agent in its checkout, while it has one
+/// too: two agents writing to one checkout. Order follows the input. A shell next to an agent
+/// shares nothing, and neither does an agent that waits for its next prompt; only agents at work
+/// write on their own.
 pub fn shared_with(occupants: &[Occupant<'_>]) -> Vec<Vec<SessionId>> {
-    let active = |o: &Occupant<'_>| o.live && o.agent;
     occupants
         .iter()
         .map(|me| {
-            let Some(root) = me.root.filter(|_| active(me)) else {
+            let Some(root) = me.root.filter(|_| me.working) else {
                 return Vec::new();
             };
             occupants
                 .iter()
-                .filter(|other| other.id != me.id && active(other) && other.root == Some(root))
+                .filter(|other| other.id != me.id && other.working && other.root == Some(root))
                 .map(|other| other.id)
                 .collect()
         })
@@ -352,45 +384,147 @@ mod tests {
     }
 
     #[test]
-    fn two_agents_in_one_checkout_share_it_and_a_stopped_one_clears_it() {
+    fn two_working_agents_in_one_checkout_share_it_and_one_that_stops_or_waits_clears_it() {
         let [a, b, c] = ids();
         let root = Path::new("/repo");
         let elsewhere = Path::new("/repo-wt/x");
-        let occupant = |id, live, agent, root| Occupant {
-            id,
-            live,
-            agent,
-            root,
-        };
+        let occupant = |id, working, root| Occupant { id, working, root };
         let both = [
-            occupant(a, true, true, Some(root)),
-            occupant(b, true, true, Some(root)),
-            occupant(c, true, true, Some(elsewhere)),
+            occupant(a, true, Some(root)),
+            occupant(b, true, Some(root)),
+            occupant(c, true, Some(elsewhere)),
         ];
         assert_eq!(shared_with(&both), [vec![b], vec![a], vec![]]);
 
-        // One stops: the other is alone.
-        let stopped = [
-            occupant(a, true, true, Some(root)),
-            occupant(b, false, false, Some(root)),
-            occupant(c, true, true, Some(elsewhere)),
+        // One stops, or waits for its next prompt: the other is alone.
+        let waiting = [
+            occupant(a, true, Some(root)),
+            occupant(b, false, Some(root)),
+            occupant(c, true, Some(elsewhere)),
         ];
-        assert_eq!(shared_with(&stopped), [vec![], vec![], vec![]]);
+        assert_eq!(shared_with(&waiting), [vec![], vec![], vec![]]);
 
-        // A shell without an agent neither shares nor is shared with; no placement shares none.
+        // A session without a working agent neither shares nor is shared with; no placement
+        // shares none.
         let shell = [
-            occupant(a, true, true, Some(root)),
-            occupant(b, true, false, Some(root)),
-            occupant(c, true, true, None),
+            occupant(a, true, Some(root)),
+            occupant(b, false, Some(root)),
+            occupant(c, true, None),
         ];
         assert_eq!(shared_with(&shell), [vec![], vec![], vec![]]);
 
         // Three agents: each lists the other two, in input order.
         let three = [
-            occupant(a, true, true, Some(root)),
-            occupant(b, true, true, Some(root)),
-            occupant(c, true, true, Some(root)),
+            occupant(a, true, Some(root)),
+            occupant(b, true, Some(root)),
+            occupant(c, true, Some(root)),
         ];
         assert_eq!(shared_with(&three), [vec![b, c], vec![a, c], vec![a, b]]);
+    }
+
+    fn session() -> SessionInfo {
+        SessionInfo {
+            containment: None,
+            id: SessionId::new(),
+            workspace_id: hutan_core::WorkspaceId::new(),
+            kind: hutan_core::SessionKind::Terminal,
+            title: "t".into(),
+            state: hutan_core::SessionState::Running,
+            command: vec![],
+            cwd: None,
+            terminal_id: None,
+            created_at_ms: 0,
+            agent: None,
+            restored: false,
+            chat: None,
+            placement: None,
+            folder: None,
+            recovery: None,
+            muted: false,
+        }
+    }
+
+    fn report(state: AgentState) -> hutan_protocol::messages::AgentReport {
+        hutan_protocol::messages::AgentReport {
+            source: "test".into(),
+            agent: "omp".into(),
+            state,
+            message: None,
+            agent_session_id: None,
+            updated_at_ms: 0,
+            blocked_sub: None,
+        }
+    }
+
+    fn chat(agent: &str, turn_active: bool) -> hutan_protocol::chat::ChatInfo {
+        hutan_protocol::chat::ChatInfo {
+            agent: agent.to_owned(),
+            model: String::new(),
+            approval_policy: hutan_core::ApprovalPolicy::default(),
+            sandbox: hutan_core::SandboxMode::default(),
+            turn_active,
+            pending_approvals: 0,
+            pending_questions: 0,
+            provider_id: None,
+            agent_session_id: None,
+            assistant: false,
+            images: None,
+            mode: None,
+            checkpoints: None,
+            account: None,
+            safety: None,
+        }
+    }
+
+    /// F-12: an idle terminal and an empty Mawas session are no "other live agent"; a running or
+    /// waiting turn is.
+    #[test]
+    fn only_a_running_or_waiting_agent_turn_works_in_a_checkout() {
+        let shell = session();
+        assert!(!works_in_checkout(&shell), "an idle terminal");
+
+        let mut idle_agent = session();
+        idle_agent.agent = Some(report(AgentState::Idle));
+        assert!(
+            !works_in_checkout(&idle_agent),
+            "a terminal agent between turns"
+        );
+        let mut working = session();
+        working.agent = Some(report(AgentState::Working));
+        assert!(works_in_checkout(&working));
+        let mut blocked = session();
+        blocked.agent = Some(report(AgentState::Blocked));
+        assert!(works_in_checkout(&blocked), "waiting for a decision counts");
+        working.state = hutan_core::SessionState::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        assert!(!works_in_checkout(&working), "a stopped session never does");
+
+        let mut empty_chat = session();
+        empty_chat.chat = Some(chat("omp", false));
+        assert!(!works_in_checkout(&empty_chat), "a chat between turns");
+        empty_chat.chat = Some(chat("omp", true));
+        assert!(works_in_checkout(&empty_chat), "a chat that runs a turn");
+        let mut asking = session();
+        let mut waiting = chat("codex", false);
+        waiting.pending_approvals = 1;
+        asking.chat = Some(waiting);
+        assert!(
+            works_in_checkout(&asking),
+            "a chat that waits for an answer"
+        );
+
+        let mut mawas = session();
+        let mut assistant = chat("omp", true);
+        assistant.assistant = true;
+        mawas.chat = Some(assistant);
+        assert!(!works_in_checkout(&mawas), "Mawas edits no files");
+        let mut direct = session();
+        direct.chat = Some(chat("direct", true));
+        assert!(
+            !works_in_checkout(&direct),
+            "a direct model chat edits no files"
+        );
     }
 }

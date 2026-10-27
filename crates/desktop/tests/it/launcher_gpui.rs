@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
+use common::agents::{Node, Reporter};
 use common::{TestDaemon, draw, open_options, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::{Contain, SafetyPreset, Task, TaskPlacementKind, TaskRun, TaskState, WorkspaceId};
@@ -27,7 +28,7 @@ use hutan_desktop::workbench::{
     LaunchAgent, LaunchWhere, LauncherField, LauncherPreset, LauncherStop, Models, Readiness,
     Region, Workbench, WorkbenchOptions, WorktreeList,
 };
-use hutan_protocol::messages::Request;
+use hutan_protocol::messages::{Request, SessionCreate, SessionResult, SessionSpec, TerminalSpec};
 use hutan_protocol::task::{TaskCreate, TaskList, TaskListRequest, TaskResult};
 use hutan_protocol::worktree::{WorktreeList as DaemonWorktrees, WorktreeListRequest};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -864,7 +865,18 @@ fn the_sheet_warns_when_another_live_agent_works_in_the_chosen_checkout(cx: &mut
             && active_item(&view, cx).is_some_and(|i| matches!(i, ItemRef::Chat { .. }))
     });
 
-    // The second sheet, on the same main checkout, says so; a new worktree does not.
+    // The first agent's chat sits idle once its turn is over: nothing works in the checkout, so
+    // the next sheet has nothing to warn about (F-12).
+    let first = env.task("First agent").unwrap().sessions[0];
+    wait_until(cx, "the first agent's turn to be over", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .session(first)
+                .and_then(|s| s.chat.as_ref())
+                .is_some_and(|chat| !chat.turn_active && chat.pending_approvals == 0)
+        })
+    });
     open_sheet(
         &view,
         cx,
@@ -874,6 +886,44 @@ fn the_sheet_warns_when_another_live_agent_works_in_the_chosen_checkout(cx: &mut
             ..LauncherPreset::default()
         },
     );
+    ready(&view, cx);
+    assert!(
+        view.read_with(cx, |wb, cx| wb.launcher_shared_warning(cx))
+            .is_none(),
+        "an idle chat does not work in the checkout"
+    );
+    view.update_in(cx, |wb, window, cx| wb.close_launcher(window, cx));
+
+    // An agent in a terminal of the same checkout that reports itself working does.
+    let terminal: SessionResult = env.daemon.call(Request::SessionCreate(SessionCreate {
+        workspace_id: Some(env.api_id),
+        spec: SessionSpec::Terminal(TerminalSpec {
+            command: vec!["sh".into(), "-c".into(), "sleep 300".into()],
+            cwd: Some(env.api.clone()),
+            ..TerminalSpec::default()
+        }),
+    }));
+    let reporter = Reporter::new(terminal.session.id, "test-hooks", "omp");
+    reporter.report(&env.daemon, Node::main("root").idle());
+
+    // The second sheet, on the same main checkout, says so once that agent works; a new
+    // worktree does not.
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            prompt: Some("Second agent".into()),
+            ..LauncherPreset::default()
+        },
+    );
+    ready(&view, cx);
+    assert!(
+        view.read_with(cx, |wb, cx| wb.launcher_shared_warning(cx))
+            .is_none(),
+        "a terminal agent that waits for its next prompt does not work there"
+    );
+    reporter.report(&env.daemon, Node::main("root").working());
     wait_until(cx, "the warning", |cx| {
         view.read_with(cx, |wb, cx| wb.launcher_shared_warning(cx).is_some())
     });
