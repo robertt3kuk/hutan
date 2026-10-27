@@ -143,16 +143,18 @@ pub fn rank(matches: Vec<FsFindMatch>, recent: &[String]) -> Vec<FsFindMatch> {
     ranked.into_iter().map(|(_, m)| m).collect()
 }
 
-/// Whether `query` is a subsequence of `path`, ignoring case (what keeps an old row while the
-/// answer to the new query is on its way).
+/// Whether every word of `query` is a subsequence of `path`, ignoring case (what keeps an old
+/// row while the answer to the new query is on its way; the daemon matches the same way).
 fn still_matches(query: &str, path: &str) -> bool {
-    let mut wanted = query.chars().flat_map(char::to_lowercase).peekable();
-    for c in path.chars().flat_map(char::to_lowercase) {
-        if wanted.peek() == Some(&c) {
-            wanted.next();
+    query.split_whitespace().all(|word| {
+        let mut wanted = word.chars().flat_map(char::to_lowercase).peekable();
+        for c in path.chars().flat_map(char::to_lowercase) {
+            if wanted.peek() == Some(&c) {
+                wanted.next();
+            }
         }
-    }
-    wanted.peek().is_none()
+        wanted.peek().is_none()
+    })
 }
 
 /// The row of file `relative` below `root`, `matched` being byte ranges of `relative`.
@@ -506,6 +508,10 @@ mod tests {
     fn rows_that_still_match_and_generations_that_concern_the_root() {
         assert!(still_matches("mainrs", "src/main.rs"));
         assert!(!still_matches("mainrx", "src/main.rs"));
+        // Words are each a subsequence, in any order.
+        assert!(still_matches("src main", "src/main.rs"));
+        assert!(still_matches("main src", "src/main.rs"));
+        assert!(!still_matches("src zzz", "src/main.rs"));
         assert!(concerns(Path::new("/repo"), Path::new("/repo")));
         assert!(concerns(Path::new("/"), Path::new("/repo")));
         assert!(!concerns(Path::new("/other"), Path::new("/repo")));

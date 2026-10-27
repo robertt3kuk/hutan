@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, Pixels, TestAppContext, VisualTestContext, point, px};
-use hutan_desktop::workbench::{FileOpen, Region, Workbench};
+use hutan_desktop::workbench::{FileOpen, Region, Workbench, actions};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
 fn settings(daemon: &TestDaemon) -> SettingsStore {
@@ -141,6 +141,61 @@ fn the_wheel_scrolls_the_palette_not_the_editor_under_it_and_the_palette_fills_t
     wait_until(cx, "the last row in view", |cx| {
         view.read_with(cx, |wb, _| {
             wb.region_bounds(Region::PaletteRow(last)).is_some()
+        })
+    });
+}
+
+// ---- 3. F-13: ⌘P takes words -------------------------------------------------------------------
+
+#[gpui::test]
+fn quick_open_matches_words_separated_by_spaces(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    write(&root, "crates/searcher/src/searcher/glue.rs", "// glue\n");
+    write(&root, "crates/searcher/src/lib.rs", "// lib\n");
+    write(&root, "crates/printer/src/glue.rs", "// printer glue\n");
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_project_path(root.clone(), window, cx);
+    });
+    wait_until(cx, "the project to be the active one", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).files_root().as_deref() == Some(root.as_path())
+        })
+    });
+
+    cx.dispatch_action(actions::QuickOpen);
+    cx.simulate_input("searcher glue");
+    wait_until(cx, "the answer to the query", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.picker()
+                .is_some_and(|p| !p.files.searching && p.files.answers > 0)
+        })
+    });
+    let titles: Vec<String> = view.read_with(cx, |wb, _| {
+        wb.picker_titles().iter().map(ToString::to_string).collect()
+    });
+    assert_eq!(
+        titles.first().map(String::as_str),
+        Some("glue.rs"),
+        "{titles:?}"
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.picker().map(|p| p.files.rows)),
+        Some(1),
+        "only the file with both words: {titles:?}"
+    );
+    cx.simulate_keystrokes("enter");
+    let wanted = root
+        .join("crates/searcher/src/searcher/glue.rs")
+        .display()
+        .to_string();
+    wait_until(cx, "the file opened", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.focused_file_view().is_some_and(|v| {
+                v.read(cx).buffer().read(cx).path().display().to_string() == wanted
+            })
         })
     });
 }

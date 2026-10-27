@@ -95,11 +95,17 @@ impl Index {
         }
     }
 
-    /// The best `limit` paths for `query`.
+    /// The best `limit` paths for `query`. Words separated by spaces must all match (each as a
+    /// subsequence of the path, in any order, like Zed and VS Code): `searcher glue` finds
+    /// `crates/searcher/src/searcher/glue.rs`. A path's score is the sum of its words'.
     pub fn find(&self, query: &str, limit: u32) -> Vec<FsFindMatch> {
         let limit = limit.clamp(1, FIND_MAX) as usize;
-        let query: Vec<char> = query.chars().take(QUERY_MAX_CHARS).collect();
-        if query.is_empty() {
+        let query: String = query.chars().take(QUERY_MAX_CHARS).collect();
+        let words: Vec<Vec<char>> = query
+            .split_whitespace()
+            .map(|word| word.chars().collect())
+            .collect();
+        if words.is_empty() {
             return self
                 .paths
                 .iter()
@@ -111,13 +117,21 @@ impl Index {
                 })
                 .collect();
         }
-        let case_sensitive = query.iter().any(|c| c.is_uppercase());
-        let mut scorer = Scorer::new(&query, case_sensitive);
+        // Smart case, per word: a word with an upper-case letter is exact about case.
+        let mut scorers: Vec<Scorer> = words
+            .iter()
+            .map(|word| Scorer::new(word, word.iter().any(|c| c.is_uppercase())))
+            .collect();
         let mut scored: Vec<(u32, usize)> = Vec::new();
-        for (index, path) in self.paths.iter().enumerate() {
-            if let Some(score) = scorer.score(path) {
-                scored.push((score, index));
+        'paths: for (index, path) in self.paths.iter().enumerate() {
+            let mut total = 0_u32;
+            for scorer in &mut scorers {
+                match scorer.score(path) {
+                    Some(score) => total = total.saturating_add(score),
+                    None => continue 'paths,
+                }
             }
+            scored.push((total, index));
         }
         // Best first; a shorter path, then the alphabet, break ties.
         scored.sort_by(|a, b| {
@@ -130,14 +144,31 @@ impl Index {
             .into_iter()
             .map(|(score, index)| {
                 let path = &self.paths[index];
+                let mut matched: Vec<[u32; 2]> = scorers
+                    .iter_mut()
+                    .flat_map(|scorer| scorer.ranges(path))
+                    .collect();
                 FsFindMatch {
                     path: path.clone(),
                     score,
-                    matched: scorer.ranges(path),
+                    matched: merge_ranges(&mut matched),
                 }
             })
             .collect()
     }
+}
+
+/// `ranges` sorted, with the ones that overlap or touch joined.
+fn merge_ranges(ranges: &mut [[u32; 2]]) -> Vec<[u32; 2]> {
+    ranges.sort_unstable();
+    let mut merged: Vec<[u32; 2]> = Vec::with_capacity(ranges.len());
+    for range in ranges.iter() {
+        match merged.last_mut() {
+            Some(last) if range[0] <= last[1] => last[1] = last[1].max(range[1]),
+            _ => merged.push(*range),
+        }
+    }
+    merged
 }
 
 /// Indexes of the roots, kept between requests.
@@ -424,6 +455,50 @@ mod tests {
         // Contiguous runs and word starts rank higher than scattered letters.
         let ranked = index.find("msg", 10);
         assert_eq!(first(&ranked), "crates/protocol/src/messages.rs");
+    }
+
+    /// F-13: words separated by spaces are AND-matched, in any order.
+    #[test]
+    fn words_separated_by_spaces_must_all_match() {
+        let index = index(&[
+            "crates/searcher/src/searcher/glue.rs",
+            "crates/searcher/src/lib.rs",
+            "crates/printer/src/glue.rs",
+            "docs/glue-notes.md",
+        ]);
+        let found = index.find("searcher glue", 10);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(first(&found), "crates/searcher/src/searcher/glue.rs");
+        // Order does not matter, extra spaces do not either.
+        assert_eq!(
+            first(&index.find("  glue   searcher ", 10)),
+            "crates/searcher/src/searcher/glue.rs"
+        );
+        // Each word alone is as before; one that matches nothing empties the result.
+        assert_eq!(index.find("glue", 10).len(), 3);
+        assert!(index.find("searcher zzz", 10).is_empty());
+        // Smart case is per word.
+        assert!(index.find("Searcher glue", 10).is_empty());
+        // The ranges of both words are marked, in order, without overlap (the word `searcher`
+        // may match either of the two segments of that name).
+        let path = first(&found);
+        let shown: Vec<&str> = found[0]
+            .matched
+            .iter()
+            .map(|[start, end]| &path[*start as usize..*end as usize])
+            .collect();
+        assert_eq!(shown.first(), Some(&"searcher"), "{shown:?}");
+        assert_eq!(shown.last(), Some(&"glue"), "{shown:?}");
+        assert!(
+            found[0]
+                .matched
+                .windows(2)
+                .all(|pair| pair[0][1] <= pair[1][0]),
+            "sorted and apart: {:?}",
+            found[0].matched
+        );
+        // Only spaces: the empty query.
+        assert_eq!(index.find("   ", 2).len(), 2);
     }
 
     #[test]
