@@ -357,6 +357,7 @@ fn the_row_menu_is_grouped_shows_the_keys_and_its_read_only_entries_take_every_s
             "Compare with HEAD",
             "Open in Terminal",
             "Attach to Chat",
+            "Filter in this Folder",
             "Find in Folder",
             "Show File History",
             "Copy Path",
@@ -407,6 +408,7 @@ fn the_row_menu_is_grouped_shows_the_keys_and_its_read_only_entries_take_every_s
         [
             "Reveal in Finder",
             "Open in Terminal",
+            "Filter in this Folder",
             "Find in Folder",
             "Copy Path",
             "Copy Relative Path",
@@ -427,10 +429,11 @@ fn the_row_menu_is_grouped_shows_the_keys_and_its_read_only_entries_take_every_s
     right_click(cx, rows.at(0));
     let labels = menu_labels(&view, cx);
     assert_eq!(
-        labels[..4],
+        labels[..5],
         [
             "Reveal in Finder",
             "Open in Terminal",
+            "Filter in this Folder",
             "Find in Folder",
             "Collapse Folder"
         ]
@@ -597,6 +600,19 @@ fn open_to_the_side_open_in_terminal_and_find_in_folder_start_from_the_row(
                 .any(|s| s.cwd.as_deref() == Some(root.as_path()))
         })
     });
+
+    // Filter in this Folder: the filter field looks in that folder only, and has the keyboard.
+    draw(cx);
+    right_click(cx, rows.at(0));
+    run_entry(&view, cx, "Filter in this Folder");
+    draw(cx);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.filter_scope().map(Path::to_owned)),
+        Some(root.join("src"))
+    );
+    assert!(cx.update(|window, app| panel.read(app).filter_focused(window)));
+    cx.simulate_keystrokes("escape");
+    draw(cx);
 
     // Find in Folder: the Search panel's include glob names the folder.
     draw(cx);

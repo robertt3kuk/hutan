@@ -33,6 +33,7 @@ pub enum FilesRowAction {
     CopyRelativePath,
     OpenInTerminal,
     AttachToChat,
+    FilterInFolder,
     FindInFolder,
     ShowHistory,
     CollapseFolder,
@@ -240,6 +241,11 @@ impl Workbench {
             hooks.push(item("Attach to Chat", FilesRowAction::AttachToChat, None));
         }
         if single {
+            hooks.push(item(
+                "Filter in this Folder",
+                FilesRowAction::FilterInFolder,
+                None,
+            ));
             hooks.push(item("Find in Folder", FilesRowAction::FindInFolder, None));
             if !first_is_dir {
                 hooks.push(item("Show File History", FilesRowAction::ShowHistory, None));
@@ -400,6 +406,14 @@ impl Workbench {
                     return;
                 }
                 self.attach_files_to_chat(&files, root, cx);
+            }
+            FilesRowAction::FilterInFolder => {
+                let Some(dir) = folder_of(&first, first_is_dir) else {
+                    return;
+                };
+                if let Some(panel) = self.files_panel_entity() {
+                    panel.update(cx, |panel, cx| panel.filter_in_folder(&dir, window, cx));
+                }
             }
             FilesRowAction::FindInFolder => {
                 let Some(dir) = folder_of(&first, first_is_dir) else {

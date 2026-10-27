@@ -359,6 +359,9 @@ struct Answer {
 /// What the tree comes back to when the filter ends.
 struct Restore {
     selected: Option<PathBuf>,
+    /// The rows of a selection of several, and where its range started.
+    picked: HashSet<PathBuf>,
+    anchor: Option<PathBuf>,
     offset: Point<Pixels>,
     /// A file was revealed meanwhile (the tab changed): the tree scrolls to it.
     revealed: bool,
@@ -677,6 +680,8 @@ impl FilesPanel {
     pub(super) fn filter_revealed(&mut self, file: &Path) -> bool {
         if let Some(restore) = &mut self.filter.restore {
             restore.selected = Some(file.to_owned());
+            restore.picked.clear();
+            restore.anchor = Some(file.to_owned());
             restore.revealed = true;
         }
         self.filter.projection.is_some()
@@ -699,6 +704,8 @@ impl FilesPanel {
         if self.filter.restore.is_none() {
             self.filter.restore = Some(Restore {
                 selected: self.selected.clone(),
+                picked: self.picked.clone(),
+                anchor: self.anchor.clone(),
                 offset: self.scroll.0.borrow().base_handle.offset(),
                 revealed: false,
             });
@@ -733,6 +740,8 @@ impl FilesPanel {
             return;
         };
         self.selected = restore.selected;
+        self.picked = restore.picked;
+        self.anchor = restore.anchor;
         self.keep_selection();
         self.scroll
             .0
@@ -767,11 +776,8 @@ impl FilesPanel {
     /// A selection that is not among the rows shown is dropped (a key must never act on a row that
     /// is not on screen); the tree's own comes back with the tree.
     fn forget_hidden_selection(&mut self) {
-        if let Some(selected) = &self.selected
-            && self.filter.query.is_some()
-            && self.index_of(selected).is_none()
-        {
-            self.selected = None;
+        if self.filter.query.is_some() {
+            self.keep_selection();
         }
     }
 

@@ -449,6 +449,43 @@ fn return_opens_the_first_file_and_a_folder_row_shows_that_folder_in_the_tree(
 }
 
 #[gpui::test]
+fn a_selection_of_several_rows_waits_out_the_filter_and_commands_act_on_the_results(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    small_project(&root);
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["deep", "docs", "src", "main.rs", "notes.md"]);
+    panel.update(cx, |p, cx| p.select_path(&root.join("main.rs"), cx));
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("shift-down");
+    let both = vec![root.join("main.rs"), root.join("notes.md")];
+    assert_eq!(panel.read_with(cx, |p, _| p.selection()), both);
+
+    // While the filter shows other rows, nothing is selected that is not shown: a command
+    // must never act on a row nobody sees.
+    type_text(cx, "guide");
+    wait_found(&panel, cx);
+    wait_names(&panel, cx, &["docs", "  guide.md"]);
+    assert!(panel.read_with(cx, |p, _| p.selection().is_empty()
+        && p.acted_paths().is_empty()));
+    // A result row is what the commands act on: the file, not a row of the tree behind.
+    cx.simulate_keystrokes("down down");
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.acted_paths()),
+        vec![root.join("docs/guide.md")]
+    );
+
+    // The selection of two comes back with the tree.
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.selection()), both);
+}
+
+#[gpui::test]
 fn a_folded_folder_row_opens_every_folder_above_it_and_is_selected_once_listed(
     cx: &mut TestAppContext,
 ) {
