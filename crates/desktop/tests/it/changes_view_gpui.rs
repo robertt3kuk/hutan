@@ -680,6 +680,146 @@ fn the_changes_panel_in_the_right_dock_scrolls_to_its_last_row_at_every_size(
     }
 }
 
+#[gpui::test]
+fn in_a_narrow_pane_the_list_takes_the_height_there_is_scrolls_and_drags_and_the_header_does_not_clip(
+    cx: &mut TestAppContext,
+) {
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx);
+    let changes = open_changes(&view, cx, &fx.root);
+    // 1280 × 800 with both docks: the center is narrow, the list is a strip over the diff.
+    resize(&view, cx, &changes, 1280.0, 800.0);
+    let root = at(&view, cx, Region::Changes("root"));
+    assert!(root.size.width < px(720.0), "a narrow view: {root:?}");
+    wait_until(cx, "the list under the strip", |cx| {
+        region(&view, cx, Region::Changes("split-rows")).is_some()
+    });
+    let list = at(&view, cx, Region::Changes("list"));
+    let row = 26.0;
+    assert!(
+        list.size.height > px(row * 8.0 + 20.0),
+        "the list is not 8 rows tall any more: {list:?}"
+    );
+    assert!(
+        list.size.height < root.size.height * 0.6,
+        "the diff keeps room: {list:?} in {root:?}"
+    );
+    // A scrollbar says there is more, and the keys, the wheel and the thumb reach the last row.
+    wait_until(cx, "the scrollbar", |cx| {
+        region(&view, cx, Region::Changes("files-vbar")).is_some()
+    });
+    wheel_to_end(cx, list.center());
+    let (down, most) = changes.read_with(cx, |c, _| c.list_scroll_y());
+    assert!(most > 0.0 && (most - down).abs() < 1.0, "{down}/{most}");
+    let last = at(&view, cx, Region::ChangesFile(FILES - 1));
+    let list = at(&view, cx, Region::Changes("list"));
+    assert!(last.bottom() <= list.bottom() + px(1.0) && last.top() >= list.top());
+    // The divider under the list drags: taller (the diff gives room back) and shorter again.
+    let before = list.size.height;
+    let handle = at(&view, cx, Region::Changes("split-rows"));
+    cx.simulate_mouse_down(handle.center(), MouseButton::Left, Modifiers::none());
+    draw(cx);
+    let to = point(handle.center().x, handle.center().y - px(60.0));
+    cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    let after = at(&view, cx, Region::Changes("list")).size.height;
+    assert!(
+        (before - after - px(60.0)).abs() < px(2.0),
+        "the list is 60 px shorter: {before:?} → {after:?}"
+    );
+    let diff = at(&view, cx, Region::Changes("diff-view"));
+    assert!(diff.bottom() <= root.bottom() + px(1.0));
+
+    // A pane of 340 px (both docks away): every control of the header is inside the view, the
+    // scope control wrapping onto a second line instead of running off the left edge.
+    cx.dispatch_action(actions::ToggleLeftDock);
+    cx.dispatch_action(actions::ToggleRightDock);
+    resize(&view, cx, &changes, 340.0, 700.0);
+    let root = at(&view, cx, Region::Changes("root"));
+    for name in [
+        "finish",
+        "refresh",
+        "changes-scope-committed",
+        "changes-index-all",
+        "changes-scope-history",
+    ] {
+        wait_until(cx, name, |cx| {
+            region(&view, cx, Region::Changes(name)).is_some()
+        });
+        let control = at(&view, cx, Region::Changes(name));
+        assert!(
+            control.left() >= root.left() - px(0.5) && control.right() <= root.right() + px(0.5),
+            "{name} is inside the view at 340 px: {control:?} in {root:?}"
+        );
+    }
+}
+
+#[gpui::test]
+fn a_changeset_of_twelve_hundred_files_reaches_its_last_row_by_key_and_by_thumb(
+    cx: &mut TestAppContext,
+) {
+    let fx = Fx::new();
+    // 1 200 more files in one folder.
+    let dir = fx.root.join("zdocs/big");
+    fs::create_dir_all(&dir).unwrap();
+    for n in 0..1200 {
+        fs::write(dir.join(format!("file-{n:04}.md")), format!("line {n}\n")).unwrap();
+    }
+    let (view, cx) = open(cx, &fx);
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_changes(fx.root.clone(), window, cx)
+    });
+    draw(cx);
+    let changes = view
+        .read_with(cx, |wb, _| wb.changes(&fx.root.display().to_string()))
+        .expect("the Changes view was opened");
+    wait_until(cx, "all the files", |cx| {
+        changes.read_with(cx, |c, _| {
+            c.files().len() == FILES + 1200 && c.selected_diff().is_some()
+        })
+    });
+    resize(&view, cx, &changes, 1440.0, 900.0);
+    // The list: a click on a row gives it the keys; End goes to the last row.
+    let first = at(&view, cx, Region::ChangesFile(0));
+    cx.simulate_click(first.center(), Modifiers::none());
+    draw(cx);
+    cx.simulate_keystrokes("end");
+    draw(cx);
+    let (down, most) = changes.read_with(cx, |c, _| c.list_scroll_y());
+    assert!(
+        most > 1200.0 * 20.0 && (most - down).abs() < 1.0,
+        "End: {down}/{most}"
+    );
+    let list = at(&view, cx, Region::Changes("list"));
+    let last = changes.read_with(cx, |c, _| c.files().len() - 1);
+    let row = at(&view, cx, Region::ChangesFile(last));
+    assert!(
+        row.bottom() <= list.bottom() + px(1.0) && row.top() >= list.top(),
+        "{row:?} in {list:?}"
+    );
+    // The thumb back to the top and down to the end.
+    cx.simulate_keystrokes("home");
+    draw(cx);
+    assert_eq!(changes.read_with(cx, |c, _| c.list_scroll_y().0), 0.0);
+    let thumb = at(&view, cx, Region::Changes("files-vbar"));
+    assert!(
+        thumb.size.height < list.size.height / 4.0,
+        "a short thumb for a long list: {thumb:?}"
+    );
+    cx.simulate_mouse_down(thumb.center(), MouseButton::Left, Modifiers::none());
+    draw(cx);
+    let far = point(thumb.center().x, thumb.center().y + px(5000.0));
+    cx.simulate_mouse_move(far, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(far, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    let (down, most) = changes.read_with(cx, |c, _| c.list_scroll_y());
+    assert!(
+        (most - down).abs() < 1.0,
+        "the thumb reached the end: {down}/{most}"
+    );
+}
+
 // Show in Files -------------------------------------------------------------------------------
 
 /// A repository with a worktree `feature/x` that changed `notes/a.md`; the main checkout changed

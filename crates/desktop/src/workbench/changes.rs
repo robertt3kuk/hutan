@@ -232,8 +232,10 @@ pub struct ChangesView {
     diff_bar_y: ui::Scrollbar,
     files_scroll: ScrollHandle,
     files_bar: ui::Scrollbar,
-    /// The divider between the file list and the diff, and the list's width it holds.
+    /// The divider between the file list and the diff, and the list's width it holds; the same
+    /// with the list over the diff (a narrow view), and the list's height.
     split: ui::Splitter,
+    split_rows: ui::Splitter,
     /// *Wrap lines* of the diff header, for this view; `None` follows `changes.wrap_lines`.
     wrap_override: Option<bool>,
     /// The list's own toggle (flat or tree), for this view; `None` follows `changes.list`.
@@ -256,6 +258,8 @@ pub struct ChangesView {
     /// The width the view was last painted at (the workbench clears the shared regions before it
     /// draws, so the view keeps its own).
     width: std::rc::Rc<std::cell::Cell<Option<gpui::Pixels>>>,
+    /// The same for the height.
+    height: std::rc::Rc<std::cell::Cell<Option<gpui::Pixels>>>,
 }
 
 impl EventEmitter<ChangesEvent> for ChangesView {}
@@ -319,12 +323,14 @@ impl ChangesView {
             files_bar: thumb(files_scroll.clone(), ui::ScrollAxis::Vertical, "files-vbar"),
             diff_x,
             files_scroll,
-            split: ui::Splitter::new(160.0),
+            split: ui::Splitter::new(ui::SplitAxis::Columns, 160.0),
+            split_rows: ui::Splitter::new(ui::SplitAxis::Rows, 72.0),
             wrap_override: None,
             list_override: None,
             folded_dirs: HashSet::new(),
             keys_on_list: false,
             width: std::rc::Rc::default(),
+            height: std::rc::Rc::default(),
             refreshed_ms: None,
             refresh_error: None,
             loading: false,
@@ -1107,7 +1113,10 @@ impl ChangesView {
                 }))
                 .child(probe(&self.env.regions, Region::Changes(id)))
         };
+        // Wraps onto a second line rather than run out of a narrow pane.
         let mut strip = ui::segmented(theme, tokens)
+            .flex_wrap()
+            .max_w_full()
             .child(segment(
                 "changes-scope-committed",
                 "Committed",
@@ -1218,7 +1227,10 @@ impl ChangesView {
                     .flex_wrap()
                     .max_w_full()
                     .items_center()
-                    .justify_end()
+                    // Right-aligned beside the title; in a narrow pane they own the line, start
+                    // at its left edge and wrap among themselves, so none is cut off.
+                    .when(self.narrow(), |s| s.w_full().justify_start())
+                    .when(!self.narrow(), |s| s.justify_end())
                     .gap(px(tokens.spacing * 2.0))
                     .children(self.render_review_controls(theme, tokens, cx))
                     .children(self.render_staging_controls(theme, tokens, cx))
@@ -1361,13 +1373,16 @@ impl ChangesView {
     fn size_probe(&self, narrow: bool) -> impl IntoElement {
         let regions = self.env.regions.clone();
         let width = std::rc::Rc::clone(&self.width);
+        let height = std::rc::Rc::clone(&self.height);
         canvas(
             |bounds, _, _| bounds,
             move |_, bounds, window, cx| {
                 regions.record(window.current_view(), Region::Changes("root"), bounds);
                 let built_for = width.replace(Some(bounds.size.width));
+                let built_tall = height.replace(Some(bounds.size.height));
                 if (bounds.size.width < px(NARROW_BELOW)) != narrow
                     || built_for.is_none_or(|was| (was - bounds.size.width).abs() > px(0.5))
+                    || built_tall.is_none_or(|was| (was - bounds.size.height).abs() > px(0.5))
                 {
                     // The layout was built for another width (the stacked or the side-by-side
                     // one, or the file list's share of it): build it again.
@@ -1482,6 +1497,17 @@ impl ChangesView {
         );
         if self.files_open {
             strip = strip.child(self.render_files(theme, tokens, false, cx));
+            let rows = self.list_rows().len();
+            let height = self.list_height(rows, tokens);
+            let regions = self.env.regions.clone();
+            strip = strip.child(self.split_rows.element(
+                "changes-split-rows",
+                height,
+                theme,
+                move |bounds, window| {
+                    regions.record(window.current_view(), Region::Changes("split-rows"), bounds);
+                },
+            ));
         }
         strip.into_any_element()
     }

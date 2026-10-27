@@ -29,7 +29,7 @@ mod scrollbar;
 mod splitter;
 pub use button::{Button, ButtonKind, ButtonSize, IconButton, approval_button_kind, spinner};
 pub use scrollbar::{Axis as ScrollAxis, Scrollbar};
-pub use splitter::{HANDLE as SPLITTER_HANDLE, Splitter};
+pub use splitter::{HANDLE as SPLITTER_HANDLE, SplitAxis, Splitter};
 
 /// The font files macOS ships New York in. GPUI cannot select the system serif by name (CoreText
 /// lists it as `.New York`, hidden from family lookups), so the files are registered with the

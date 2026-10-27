@@ -378,11 +378,7 @@ impl ChangesView {
                     .relative()
                     .min_h_0()
                     .when(wide, |s| s.flex_1())
-                    .when(!wide, |s| {
-                        s.h(px(
-                            tokens.sidebar_row * rows.len().min(8) as f32 + tokens.spacing * 2.0
-                        ))
-                    })
+                    .when(!wide, |s| s.h(px(self.list_height(rows.len(), tokens))))
                     .child(list)
                     .child(probe(&self.env.regions, Region::Changes("list"))),
             )
@@ -403,6 +399,16 @@ impl ChangesView {
             (tokens.font_size * 34.0).min(view * 0.4),
             view - 260.0 - ui::SPLITTER_HANDLE,
         )
+    }
+
+    /// The height of the list under the strip of a narrow view: all its rows while they fit in
+    /// 45 % of the view (never fewer than eight rows' room), else that, scrolled; the divider
+    /// under it drags, within what leaves the diff room.
+    pub(super) fn list_height(&self, rows: usize, tokens: &Tokens) -> f32 {
+        let view = self.height.get().map_or(800.0, f32::from);
+        let content = tokens.sidebar_row * rows as f32 + tokens.spacing * 2.0;
+        let default = content.min((view * 0.45).max(tokens.sidebar_row * 8.0));
+        self.split_rows.width(default, (view - 420.0).max(120.0))
     }
 
     fn render_list_toolbar(
