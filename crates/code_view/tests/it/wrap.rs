@@ -374,3 +374,174 @@ fn selecting_and_editing_work_on_wide_text_in_rows(cx: &mut TestAppContext) {
     run(cx, a::SelectLeft);
     assert_eq!(ranges(&view, cx)[0].len(), "ト".len());
 }
+
+fn head(view: &gpui::Entity<CodeView>, cx: &VisualTestContext) -> usize {
+    view.read_with(cx, |v, _| v.selections().primary().head)
+}
+
+#[gpui::test]
+fn up_and_down_move_by_display_row_and_keep_the_goal_column(cx: &mut TestAppContext) {
+    let text = format!("{}\nshort\n{}\n", words(60), words(60));
+    let (view, _buffer, cx) = open(cx, "a.md", &text, false);
+    wrap(&view, cx, WrapMode::Viewport);
+    let texts = row_texts(&view, cx);
+    let (r0, r1, r2) = (texts[0].len(), texts[1].len(), texts[2].len());
+    place(&view, cx, &[12]);
+    run(cx, a::MoveDown);
+    assert_eq!(head(&view, cx), r0 + 12, "the same column on the next row");
+    let rows = rows_of(&view, cx);
+    assert_eq!((rows[1].line, rows[1].sub, rows[1].carets), (0, 1, 1));
+    run(cx, a::MoveDown);
+    assert_eq!(head(&view, cx), r0 + r1 + 12);
+    run(cx, a::MoveUp);
+    assert_eq!(head(&view, cx), r0 + 12);
+    run(cx, a::MoveUp);
+    assert_eq!(head(&view, cx), 12);
+    // The first row: up goes to the start of the text.
+    run(cx, a::MoveUp);
+    assert_eq!(head(&view, cx), 0);
+
+    // Down from the last row of the first line: the short line (clamped), and the column wanted
+    // comes back on the line after it.
+    place(&view, cx, &[12]);
+    let last_row_of_line = texts.iter().take_while(|t| t.as_str() != "short").count() - 1;
+    for _ in 0..last_row_of_line {
+        run(cx, a::MoveDown);
+    }
+    run(cx, a::MoveDown);
+    let short_start = words(60).len() + 1;
+    assert_eq!(
+        head(&view, cx),
+        short_start + "short".len(),
+        "clamped to the short line"
+    );
+    run(cx, a::MoveDown);
+    let third = short_start + "short".len() + 1;
+    assert_eq!(
+        head(&view, cx),
+        third + 12,
+        "the goal column of the first row"
+    );
+    let _ = r2;
+    // Shift extends the selection by rows.
+    place(&view, cx, &[12]);
+    run(cx, a::SelectDown);
+    assert_eq!(ranges(&view, cx), vec![12..r0 + 12]);
+}
+
+#[gpui::test]
+fn home_and_end_go_to_the_row_first_then_the_line(cx: &mut TestAppContext) {
+    let text = format!("  {}\nend\n", words(60));
+    let (view, buffer, cx) = open(cx, "a.md", &text, false);
+    wrap(&view, cx, WrapMode::Viewport);
+    let texts = row_texts(&view, cx);
+    let (r0, r1) = (texts[0].len(), texts[1].len());
+    let line_end = text.find('\n').expect("line break");
+
+    // Home on the second row: its start, then the line's first character that is not a space,
+    // then the line's start.
+    place(&view, cx, &[r0 + 10]);
+    run(cx, a::MoveLineStart);
+    assert_eq!(head(&view, cx), r0);
+    run(cx, a::MoveLineStart);
+    assert_eq!(head(&view, cx), 2);
+    run(cx, a::MoveLineStart);
+    assert_eq!(head(&view, cx), 0);
+
+    // End on the first row: the end of the row, drawn there; then the end of the line.
+    place(&view, cx, &[5]);
+    run(cx, a::MoveLineEnd);
+    assert_eq!(head(&view, cx), r0);
+    let rows = rows_of(&view, cx);
+    assert_eq!((rows[0].carets, rows[1].carets), (1, 0), "{rows:?}");
+    run(cx, a::MoveLineEnd);
+    assert_eq!(head(&view, cx), line_end);
+    // On the last row End goes straight to the end of the line.
+    place(&view, cx, &[line_end - 3]);
+    run(cx, a::MoveLineEnd);
+    assert_eq!(head(&view, cx), line_end);
+    // Shift+End selects to the end of the row, then to the end of the line.
+    place(&view, cx, &[5]);
+    run(cx, a::SelectLineEnd);
+    assert_eq!(ranges(&view, cx), vec![5..r0]);
+    run(cx, a::SelectLineEnd);
+    assert_eq!(ranges(&view, cx), vec![5..line_end]);
+    // Typing at the end of a row inserts there.
+    place(&view, cx, &[5]);
+    run(cx, a::MoveLineEnd);
+    cx.simulate_input("X");
+    assert_eq!(&text_of(&buffer, cx)[r0..r0 + 1], "X");
+    let _ = r1;
+}
+
+#[gpui::test]
+fn page_up_and_down_move_by_display_rows(cx: &mut TestAppContext) {
+    let text: String = (0..40).map(|i| format!("{} {i}\n", words(30))).collect();
+    let (view, _buffer, cx) = open(cx, "a.md", &text, false);
+    wrap(&view, cx, WrapMode::Viewport);
+    let page = view.read_with(cx, |v, _| v.layout().expect("laid out").rows - 2);
+    place(&view, cx, &[0]);
+    run(cx, a::PageDown);
+    let row = view.read_with(cx, |v, cx| v.row_of_offset(head_of(v), cx));
+    assert_eq!(row, page, "one page of rows down");
+    let scrolled = view.read_with(cx, |v, _| v.scroll_y());
+    assert!(scrolled > 0.0);
+    run(cx, a::PageUp);
+    assert_eq!(head(&view, cx), 0);
+}
+
+fn head_of(v: &CodeView) -> usize {
+    v.selections().primary().head
+}
+
+#[gpui::test]
+fn vim_j_k_stay_on_lines_and_gj_gk_g0_g_dollar_move_by_rows(cx: &mut TestAppContext) {
+    use hutan_code_view::{VimKey, VimSettings};
+    let text = format!("{}\nshort\n", words(60));
+    let (view, _buffer, cx) = open(cx, "a.md", &text, false);
+    wrap(&view, cx, WrapMode::Viewport);
+    let texts = row_texts(&view, cx);
+    let (r0, r1) = (texts[0].len(), texts[1].len());
+    view.update(cx, |v, cx| v.set_vim(Some(VimSettings::default()), cx));
+    let keys = |cx: &mut VisualTestContext, keys: &str| {
+        for c in keys.chars() {
+            view.update(cx, |v, cx| {
+                v.vim_key(VimKey::Char(c), cx);
+            });
+        }
+        draw(cx);
+    };
+    // `gj` / `gk`: a display row, the same column.
+    place(&view, cx, &[12]);
+    keys(cx, "gj");
+    assert_eq!(head(&view, cx), r0 + 12);
+    keys(cx, "gj");
+    assert_eq!(head(&view, cx), r0 + r1 + 12);
+    keys(cx, "gk");
+    assert_eq!(head(&view, cx), r0 + 12);
+    keys(cx, "gkgk");
+    assert_eq!(head(&view, cx), 12, "nothing above the first row");
+    // `j` goes to the next line, whatever the rows.
+    keys(cx, "j");
+    assert_eq!(
+        head(&view, cx),
+        words(60).len() + 1 + 5 - 1,
+        "the short line's last character"
+    );
+    keys(cx, "k");
+    assert_eq!(
+        head(&view, cx),
+        12,
+        "the column Vim wanted before the short line, on the first row of the line above"
+    );
+    // `g0` `g$`: the edges of the row the caret is in.
+    place(&view, cx, &[r0 + 12]);
+    keys(cx, "g0");
+    assert_eq!(head(&view, cx), r0);
+    keys(cx, "g$");
+    assert_eq!(head(&view, cx), r0 + r1 - 1);
+    keys(cx, "0");
+    assert_eq!(head(&view, cx), 0, "`0` is the line's start");
+    keys(cx, "$");
+    assert_eq!(head(&view, cx), words(60).len() - 1);
+}

@@ -24,6 +24,8 @@ pub struct StringHost {
     pub sliced: std::cell::Cell<usize>,
     /// The first line in view of a window as tall as the recorder's Vim (`vim -es`: 23 lines).
     pub top: usize,
+    /// Soft wrap: rows of this many characters (`None`: lines are not wrapped).
+    pub wrap: Option<usize>,
 }
 
 impl StringHost {
@@ -216,6 +218,19 @@ impl VimHost for StringHost {
         true
     }
 
+    fn display_row(&self, at: usize) -> Option<Range<usize>> {
+        let width = self.wrap?;
+        let (start, end) = (self.line_start_of(at), self.line_end_of(at));
+        let chars = self.text[start..end].chars().count();
+        let col = self.text[start..at].chars().count();
+        let row = if chars == 0 {
+            0
+        } else {
+            (col / width).min((chars - 1) / width)
+        };
+        Some(self.at_column(start, end, row * width)..self.at_column(start, end, (row + 1) * width))
+    }
+
     fn view(&self) -> Option<(usize, usize)> {
         Some((self.top, 23))
     }
@@ -367,6 +382,13 @@ impl Rig {
             opts: Options::default(),
             clip: Board::default(),
         }
+    }
+
+    /// Like [`new`](Self::new), on a host that wraps its lines every `width` characters.
+    pub fn wrapped(text: &str, width: usize) -> Self {
+        let mut rig = Self::new(text);
+        rig.host.wrap = Some(width);
+        rig
     }
 
     pub fn single(text: &str) -> Self {

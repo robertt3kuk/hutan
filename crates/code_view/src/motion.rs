@@ -7,6 +7,7 @@ use hutan_buffer::{MAX_SELECTIONS, SearchQuery, Selection, Selections, Text};
 use crate::layout;
 use crate::rules::is_word;
 use crate::view::{CodeView, CodeViewEvent, line_window, word_at};
+use crate::wrap::WrapMap;
 
 /// Where a motion takes each caret.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,24 +111,45 @@ pub(crate) fn first_non_blank(text: &Text, line: usize) -> usize {
 impl CodeView {
     /// Runs `motion` for every caret.
     pub(crate) fn motion(&mut self, motion: Motion, cx: &mut Context<Self>) {
+        self.sync_wrap(cx);
         let text = self.buffer().read(cx).text().clone();
         let vertical = matches!(
             motion.target,
             Target::Up(_) | Target::Down(_) | Target::PageUp | Target::PageDown
         );
         let page = self.page();
-        let goals: Vec<usize> = match &self.goal {
-            Some(goals) if vertical && goals.len() == self.selections.len() => goals.clone(),
-            _ => self
-                .selections
-                .iter()
-                .map(|s| column_of(&text, s.head))
-                .collect(),
+        let (moved, goals, primary_upstream) = {
+            let wrap = self.wrap.borrow();
+            let map = wrap.map.as_ref();
+            let goals: Vec<usize> = match &self.goal {
+                Some(goals) if vertical && goals.len() == self.selections.len() => goals.clone(),
+                _ => self
+                    .selections
+                    .iter()
+                    .map(|s| match map {
+                        // The cell the caret is drawn in, counted from the left of the text.
+                        Some(map) => map
+                            .x_of_byte(&text, s.head, wrap.upstream == Some(s.head))
+                            .1
+                            .round() as usize,
+                        None => column_of(&text, s.head),
+                    })
+                    .collect(),
+            };
+            let primary = self.selections.primary_index();
+            let mut moved = Vec::with_capacity(self.selections.len());
+            let mut primary_upstream = false;
+            for (index, (selection, goal)) in self.selections.iter().zip(&goals).enumerate() {
+                let upstream = index == primary && wrap.upstream == Some(selection.head);
+                let (to, ends_row) =
+                    self.move_one(&text, map, *selection, upstream, motion, *goal, page);
+                if index == primary {
+                    primary_upstream = ends_row;
+                }
+                moved.push(to);
+            }
+            (moved, goals, primary_upstream)
         };
-        let mut moved = Vec::with_capacity(self.selections.len());
-        for (selection, goal) in self.selections.iter().zip(&goals) {
-            moved.push(self.move_one(&text, *selection, motion, *goal, page));
-        }
         let primary = self.selections.primary_index();
         let selections = match motion.target {
             // To the start or end of the file: one caret.
@@ -145,7 +167,9 @@ impl CodeView {
             };
             self.clamp_scroll(cx);
         }
+        let head = selections.primary().head;
         self.selections = selections;
+        self.set_upstream(primary_upstream.then_some(head));
         self.goal = vertical.then_some(goals);
         self.marked.clear();
         self.buffer().update(cx, |b, _| b.break_group());
@@ -154,60 +178,120 @@ impl CodeView {
         cx.notify();
     }
 
+    /// Where `motion` takes one caret, and whether the caret then stands at the end of a wrapped
+    /// row (drawn there, not at the start of the next one). `map`: the view's rows while it
+    /// wraps; `upstream`: the caret is drawn at the end of its row now.
+    #[allow(clippy::too_many_arguments)]
     fn move_one(
         &self,
         text: &Text,
+        map: Option<&WrapMap>,
         selection: Selection,
+        upstream: bool,
         motion: Motion,
         goal: usize,
         page: usize,
-    ) -> Selection {
+    ) -> (Selection, bool) {
         let collapsing = !motion.select && !selection.is_empty();
         let head = selection.head;
         let last_line = text.line_count().saturating_sub(1);
-        let vertical = |from: usize, up: bool, lines: usize| -> usize {
+        // Up and down: a line, or a row of a wrapped view.
+        let vertical = |from: usize, up: bool, steps: usize| -> (usize, bool) {
+            if let Some(map) = map {
+                let row = map.row_of_byte(text, from, upstream && from == head);
+                let target = if up {
+                    if row == 0 {
+                        return (0, false);
+                    }
+                    row.saturating_sub(steps)
+                } else {
+                    if row + 1 >= map.total_rows() {
+                        return (text.len(), false);
+                    }
+                    (row + steps).min(map.total_rows() - 1)
+                };
+                return map.byte_at_goal(text, target, goal);
+            }
             let line = text.line_of_byte(from).unwrap_or(0);
-            if up {
+            let to = if up {
                 if line == 0 {
                     0
                 } else {
-                    offset_at_column(text, line.saturating_sub(lines), goal)
+                    offset_at_column(text, line.saturating_sub(steps), goal)
                 }
             } else if line >= last_line {
                 text.len()
             } else {
-                offset_at_column(text, (line + lines).min(last_line), goal)
-            }
+                offset_at_column(text, (line + steps).min(last_line), goal)
+            };
+            (to, false)
         };
+        // The row the caret is drawn in, while wrapping.
+        let row = map.map(|map| {
+            let (line, sub) = map.locate_byte(text, head, upstream);
+            map.row(text, line, sub)
+        });
+        let mut ends_row = false;
         let to = match motion.target {
             Target::Left if collapsing => selection.start(),
             Target::Right if collapsing => selection.end(),
             Target::Left => prev_boundary(text, head),
             Target::Right => next_boundary(text, head),
-            Target::Up(n) => vertical(if collapsing { selection.start() } else { head }, true, n),
-            Target::Down(n) => vertical(if collapsing { selection.end() } else { head }, false, n),
-            Target::PageUp => vertical(head, true, page),
-            Target::PageDown => vertical(head, false, page),
+            Target::Up(n) => {
+                let (to, end) =
+                    vertical(if collapsing { selection.start() } else { head }, true, n);
+                ends_row = end;
+                to
+            }
+            Target::Down(n) => {
+                let (to, end) = vertical(if collapsing { selection.end() } else { head }, false, n);
+                ends_row = end;
+                to
+            }
+            Target::PageUp => {
+                let (to, end) = vertical(head, true, page);
+                ends_row = end;
+                to
+            }
+            Target::PageDown => {
+                let (to, end) = vertical(head, false, page);
+                ends_row = end;
+                to
+            }
             Target::WordLeft => word_start(text, head),
             Target::WordRight => word_end(text, head),
             Target::LineStart => {
                 let line = text.line_of_byte(head).unwrap_or(0);
                 let first = first_non_blank(text, line);
                 let start = text.line_start(line).unwrap_or(0);
-                if head == first { start } else { first }
+                match &row {
+                    // A row after the first: its own start, then the line's.
+                    Some(row) if !row.first && head != row.bytes.start => row.bytes.start,
+                    _ if head == first => start,
+                    _ => first,
+                }
             }
             Target::LineEnd => {
                 let line = text.line_of_byte(head).unwrap_or(0);
-                text.line_content_range(line).map_or(head, |r| r.end)
+                let line_end = text.line_content_range(line).map_or(head, |r| r.end);
+                match &row {
+                    // A row before the last: its own end (drawn there), then the line's.
+                    Some(row) if !row.last && head != row.bytes.end => {
+                        ends_row = true;
+                        row.bytes.end
+                    }
+                    _ => line_end,
+                }
             }
             Target::Start => 0,
             Target::End => text.len(),
         };
-        if motion.select {
+        let moved = if motion.select {
             Selection::new(selection.anchor, to)
         } else {
             Selection::cursor(to)
-        }
+        };
+        (moved, ends_row)
     }
 
     pub(crate) fn select_all(&mut self, cx: &mut Context<Self>) {

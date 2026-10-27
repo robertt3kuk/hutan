@@ -145,6 +145,16 @@ pub trait VimHost {
     /// ↓: one line down at the same column. `false` when the caret did not move.
     fn move_down(&mut self) -> bool;
 
+    // ---- soft wrap ---------------------------------------------------------------------------
+
+    /// The display row that holds byte `at` when the host wraps long lines: its bytes, a window
+    /// of one line. A row ends where the next starts; the last row of a line ends at the line's
+    /// end, and `at` at the end of a line is in its last row. `None` (the default) for a host
+    /// that does not wrap: `gj` `gk` are `j` `k`, and `g0` `g$` `g^` are `0` `$` `^`.
+    fn display_row(&self, _at: usize) -> Option<Range<usize>> {
+        None
+    }
+
     // ---- the window --------------------------------------------------------------------------
 
     /// The lines in view: the first (0-based) and how many fit. `None` (the default) for a host

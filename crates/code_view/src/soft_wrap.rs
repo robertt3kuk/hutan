@@ -74,7 +74,7 @@ impl CodeView {
     }
 
     /// The display row byte `at` is drawn in: its line when the view does not wrap.
-    pub(crate) fn row_of_offset(&self, at: usize, cx: &App) -> usize {
+    pub fn row_of_offset(&self, at: usize, cx: &App) -> usize {
         let upstream = self.upstream_at(at);
         self.with_wrap(cx, |map, text| map.row_of_byte(text, at, upstream))
             .unwrap_or_else(|| {

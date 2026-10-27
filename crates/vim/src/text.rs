@@ -212,6 +212,52 @@ impl<'a, H: VimHost + ?Sized> Text<'a, H> {
         if le > ls { self.prev(le) } else { ls }
     }
 
+    // ---- display rows ------------------------------------------------------------------------
+
+    /// The display row holding `i` when the host wraps long lines (`None`: it does not).
+    pub fn screen_row(&self, i: usize) -> Option<std::ops::Range<usize>> {
+        self.host.display_row(i.min(self.len()))
+    }
+
+    /// The display row after (`down`) or before the one given; `None` at the end or the start
+    /// of the text.
+    pub fn adjacent_row(
+        &self,
+        row: &std::ops::Range<usize>,
+        down: bool,
+    ) -> Option<std::ops::Range<usize>> {
+        if down {
+            let line_end = self.line_end(row.start);
+            if row.end < line_end {
+                return self.screen_row(row.end);
+            }
+            if self.line_of(row.start) + 1 >= self.line_count() {
+                return None;
+            }
+            self.screen_row(line_end + 1)
+        } else {
+            let line_start = self.line_start(row.start);
+            if row.start > line_start {
+                self.screen_row(self.prev(row.start))
+            } else if line_start == 0 {
+                None
+            } else {
+                // The line break before: the end of the line above, in its last row.
+                self.screen_row(line_start - 1)
+            }
+        }
+    }
+
+    /// The last character of display row `row`: the line's last when it is the line's last row.
+    pub fn last_in_row(&self, row: &std::ops::Range<usize>) -> usize {
+        if row.end >= self.line_end(row.start) {
+            self.last_in_line(row.start)
+        } else {
+            self.prev(row.end)
+        }
+        .max(row.start)
+    }
+
     /// The first character of the line starting at `ls` that is not a space or tab, or its last
     /// character when it is all blank.
     pub fn first_nonblank(&self, ls: usize) -> usize {

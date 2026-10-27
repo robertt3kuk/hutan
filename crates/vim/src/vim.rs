@@ -209,8 +209,11 @@ pub(crate) struct Core {
     pub cmdline: Option<CmdLine>,
     /// Where Visual started (byte offset).
     pub anchor: usize,
-    /// The column `j`/`k` aim for, in characters (`usize::MAX` after `$`).
+    /// The column `j`/`k` aim for, in characters (`usize::MAX` after `$`); after `gj`/`gk`/`g$`
+    /// ([`want_screen`](Self::want_screen)) the column inside a wrapped row.
     pub want_col: Option<usize>,
+    /// `want_col` is a column of a display row (set by `gj` `gk` `g$`), not of the line.
+    pub want_screen: bool,
     pub regs: Registers,
     pub marks: Marks,
     pub settings: Settings,

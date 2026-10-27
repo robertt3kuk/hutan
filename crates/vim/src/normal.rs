@@ -62,7 +62,16 @@ impl Core {
         opts: Options,
     ) {
         let from = host.cursor();
-        if !matches!(motion, Motion::Up | Motion::Down) {
+        let plain = if host.display_row(from).is_none() {
+            motion.without_wrap()
+        } else {
+            None
+        };
+        let motion = plain.as_ref().unwrap_or(motion);
+        if !matches!(
+            motion,
+            Motion::Up | Motion::Down | Motion::ScreenUp | Motion::ScreenDown
+        ) {
             self.want_col = None;
         }
         let Some(target) = self.target(host, motion, count, false, opts) else {
@@ -74,6 +83,11 @@ impl Core {
         }
         if *motion == Motion::LineEnd {
             self.want_col = Some(usize::MAX);
+            self.want_screen = false;
+        }
+        if *motion == Motion::ScreenLineEnd {
+            self.want_col = Some(usize::MAX);
+            self.want_screen = true;
         }
         let buf = Text::new(&*host);
         let to = buf.normal_clamp(target.to);
@@ -90,6 +104,13 @@ impl Core {
         op: bool,
         opts: Options,
     ) -> Option<Target> {
+        // A screen motion on a host that does not wrap is the plain one.
+        let plain = if host.display_row(host.cursor()).is_none() {
+            motion.without_wrap()
+        } else {
+            None
+        };
+        let motion = plain.as_ref().unwrap_or(motion);
         let buf = self.text(host);
         let from = host.cursor();
         let n = count.unwrap_or(1).max(1);
@@ -148,8 +169,59 @@ impl Core {
                     }
                     (current + n).min(last_line)
                 };
+                if self.want_screen {
+                    self.want_col = None;
+                    self.want_screen = false;
+                }
                 let col = *self.want_col.get_or_insert_with(|| buf.column(from));
                 linewise(buf.at_column(buf.line_start_of(line), col))
+            }
+            Motion::ScreenDown | Motion::ScreenUp => {
+                if opts.single_line {
+                    return None;
+                }
+                let down = *motion == Motion::ScreenDown;
+                let mut row = buf.screen_row(from)?;
+                if !self.want_screen {
+                    self.want_col = None;
+                    self.want_screen = true;
+                }
+                // The column inside the row the caret keeps while it moves by rows.
+                let start_col = buf.column(row.start);
+                let col = *self
+                    .want_col
+                    .get_or_insert_with(|| buf.column(from).saturating_sub(start_col));
+                let mut moved = 0;
+                while moved < n {
+                    let Some(next) = buf.adjacent_row(&row, down) else {
+                        break;
+                    };
+                    row = next;
+                    moved += 1;
+                }
+                if moved == 0 {
+                    return None;
+                }
+                let vcol = buf.column(row.start).saturating_add(col);
+                let at = buf.at_vcol(buf.line_start(row.start), vcol);
+                exclusive(at.clamp(row.start, buf.last_in_row(&row)))
+            }
+            Motion::ScreenLineStart => exclusive(buf.screen_row(from)?.start),
+            Motion::ScreenFirstNonBlank => {
+                let row = buf.screen_row(from)?;
+                let mut at = row.start;
+                while at < row.end && matches!(buf.at(at), Some(' ' | '\t')) {
+                    at += 1;
+                }
+                exclusive(at.min(buf.last_in_row(&row)))
+            }
+            Motion::ScreenLineEnd => {
+                // With a count, the end of the row n - 1 rows down.
+                let mut row = buf.screen_row(from)?;
+                for _ in 1..n {
+                    row = buf.adjacent_row(&row, true)?;
+                }
+                inclusive(buf.last_in_row(&row))
             }
             Motion::LineDown | Motion::LineUp | Motion::LineHere => {
                 let line = match motion {

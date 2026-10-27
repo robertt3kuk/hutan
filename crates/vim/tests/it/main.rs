@@ -10,3 +10,4 @@ mod fixtures;
 mod fuzz;
 mod host;
 mod keys;
+mod screen;

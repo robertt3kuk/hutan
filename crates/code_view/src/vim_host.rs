@@ -17,6 +17,7 @@ use hutan_buffer::{Applied, Buffer, Edit, Selections, Text, Transaction};
 use hutan_vim::VimHost;
 
 use crate::buffer::EditKind;
+use crate::wrap::{WrapParams, wrap_line};
 
 /// One change a key made to the text, in order: the text before it and what was applied.
 #[derive(Debug, Clone)]
@@ -41,6 +42,8 @@ pub struct BufferHost {
     view: Option<(usize, usize)>,
     /// Where a scroll command asked the window's top to go.
     scrolled: Option<usize>,
+    /// The row width the view wraps its lines to (`None`: it does not wrap).
+    wrap: Option<WrapParams>,
 }
 
 impl BufferHost {
@@ -58,6 +61,7 @@ impl BufferHost {
             steps: Vec::new(),
             view: None,
             scrolled: None,
+            wrap: None,
         }
     }
 
@@ -73,6 +77,11 @@ impl BufferHost {
     /// The lines the view shows (first, how many): Vim's window for `⌃D` and the like.
     pub fn set_view(&mut self, top: usize, height: usize) {
         self.view = Some((top, height));
+    }
+
+    /// Wraps lines the way the view does, for `gj` `gk` `g0` `g^` `g$`.
+    pub fn set_wrap(&mut self, params: WrapParams) {
+        self.wrap = Some(params);
     }
 
     /// The top line a scroll command asked for.
@@ -277,6 +286,20 @@ impl VimHost for BufferHost {
 
     fn move_down(&mut self) -> bool {
         self.move_lines(false)
+    }
+
+    fn display_row(&self, at: usize) -> Option<Range<usize>> {
+        let params = self.wrap?;
+        let text = self.text();
+        let at = text.floor_char_boundary(at.min(text.len()));
+        let content = text.line_content_range(text.line_of_byte(at).ok()?).ok()?;
+        let line = text.slice(content.clone()).ok()?;
+        let breaks = wrap_line(&line, params);
+        let rel = at.saturating_sub(content.start);
+        let row = breaks.partition_point(|b| b.byte <= rel);
+        let start = row.checked_sub(1).map_or(0, |i| breaks[i].byte);
+        let end = breaks.get(row).map_or(line.len(), |b| b.byte);
+        Some(content.start + start..content.start + end)
     }
 
     fn view(&self) -> Option<(usize, usize)> {

@@ -12,6 +12,13 @@ pub(crate) enum Motion {
     Right,
     Up,
     Down,
+    /// `gj` `gk`: a display row of a soft-wrapped line down / up (`j` `k` for a host that does
+    /// not wrap); `g0` `g^` `g$`: the start, first non-blank and end of the display row.
+    ScreenDown,
+    ScreenUp,
+    ScreenLineStart,
+    ScreenFirstNonBlank,
+    ScreenLineEnd,
     /// `+` (down), `-` (up), `_` (`count - 1` down): to the first non-blank, linewise.
     LineDown,
     LineUp,
@@ -73,6 +80,18 @@ pub(crate) enum Motion {
 }
 
 impl Motion {
+    /// What a screen motion (`gj` `gk` `g0` `g^` `g$`) is on a host that does not wrap lines.
+    pub fn without_wrap(&self) -> Option<Motion> {
+        Some(match self {
+            Motion::ScreenDown => Motion::Down,
+            Motion::ScreenUp => Motion::Up,
+            Motion::ScreenLineStart => Motion::LineStart,
+            Motion::ScreenFirstNonBlank => Motion::FirstNonBlank,
+            Motion::ScreenLineEnd => Motion::LineEnd,
+            _ => return None,
+        })
+    }
+
     /// Whether the motion is a jump (`:help jump-motions`): it sets `''` and the jumplist.
     pub fn is_jump(&self) -> bool {
         matches!(
@@ -415,8 +434,11 @@ fn motion(keys: &[Key], i: usize, cx: Context<'_>) -> Step<Motion> {
                 'g' => Step::Yes(Motion::FileStart, i + 2),
                 'e' | 'E' => Step::Yes(Motion::BackEnd { big: *n == 'E' }, i + 2),
                 '_' => Step::Yes(Motion::LastNonBlank, i + 2),
-                'j' => Step::Yes(Motion::Down, i + 2),
-                'k' => Step::Yes(Motion::Up, i + 2),
+                'j' => Step::Yes(Motion::ScreenDown, i + 2),
+                'k' => Step::Yes(Motion::ScreenUp, i + 2),
+                '0' => Step::Yes(Motion::ScreenLineStart, i + 2),
+                '^' => Step::Yes(Motion::ScreenFirstNonBlank, i + 2),
+                '$' => Step::Yes(Motion::ScreenLineEnd, i + 2),
                 '*' | '#' => Step::Yes(
                     Motion::Star {
                         forward: *n == '*',

@@ -151,7 +151,10 @@ impl Core {
                 span
             }
             OpTarget::Motion(motion) => {
-                if !matches!(motion, Motion::Up | Motion::Down) {
+                if !matches!(
+                    motion,
+                    Motion::Up | Motion::Down | Motion::ScreenUp | Motion::ScreenDown
+                ) {
                     self.want_col = None;
                 }
                 let buf = Text::new(&*host);

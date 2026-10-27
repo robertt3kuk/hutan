@@ -652,6 +652,7 @@ impl CodeView {
             let height = (f32::from(layout.bounds.size.height) / line_h).floor() as usize;
             (top, height.max(1))
         });
+        let wrap = self.wrap.get_mut().map.as_ref().map(|m| m.params());
         let model = self.buffer().update(cx, |b, _| b.lend());
         let state = self.vim.as_mut()?;
         if state.indent_from_file {
@@ -671,6 +672,9 @@ impl CodeView {
         let mut host = BufferHost::new(model, head, editable, state.group_open);
         if let Some((top, height)) = view {
             host.set_view(top, height);
+        }
+        if let Some(params) = wrap {
+            host.set_wrap(params);
         }
         let result = {
             let mut clip = AppClipboard(cx);
