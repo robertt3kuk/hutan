@@ -615,6 +615,18 @@ What E-8 changed: shaped lines are found again by line, displayed text and the t
 
 **Still a miss, not relaxed**, measured under a machine load twice that of the first number. What remains is the workbench shell (layout of its uncached chrome, its `render`) and the parser-publish frame drawn inside a key's dispatch. Next steps (E-14 or a fix slice): make the status bar and title bar cached views of fixed height, and measure again on an idle machine.
 
+## Editor: soft wrap (EDITOR-WRAP, B12w)
+
+Soft wrap (`docs/editor.md` § Soft wrap) must not cost a keystroke anything: an edit re-wraps only the lines it touched and shapes only the rows whose text changed. **B12w** is B12a on a Markdown file that wraps: 300 letters typed into the middle of a generated 10 000-line document (headings, one-line paragraphs of ≈ 160 characters that wrap to two or three rows in the docked editor, bullets; `just bench --only B12w`, scenario `editor-type` with `ten_k_lines.md`), key handled → frame submitted, p95, budget ≤ 2 ms like B12a. `HUTAN_BENCH_SETTINGS` (extra `settings.toml` text for a run) gives the A/B on the same binary: `HUTAN_BENCH_SETTINGS=$'[editor]\nsoft_wrap = "off"' just bench --only B12w`.
+
+| # | Measure (3 runs each, one release build, 2026-10-27, **load average 30**: other agents building and testing) | Wrap on | Wrap off | Budget |
+|---|---|---|---|---|
+| B12w | 10 000-line Markdown, key → frame submitted, p95 (median of runs) | **2.28 ms** (1.89, 2.32, 2.28) | 2.52 ms (2.52, 4.11, 2.06) | ≤ 2 ms: **✗ miss by 0.3 ms**, as B12a's miss, not worse than wrap off |
+| B12a | 1 MB Rust, no wrap, p95 | 2.97 ms (3.06, 2.97, 2.81) | — | ≤ 2 ms ✗, E-8's number was 2.80 ms |
+| B4a / B4b | the terminal's key echo (no file tab is shown in this scenario), p95, median of runs | 2.44 ms (6.96, 1.81, 2.44) / 10.15 ms (13.18, 10.08, 10.15) | — | 2 ms / 10.3 ms: **B4a ✗ under this load** (1.3 ms recorded on a quiet machine above) |
+
+Reading: with wrap on, typing in a wrapped file is no more expensive than with wrap off (the three runs of each spread wider than the difference of their medians at this load). No "before" build of B4 was made: the terminal path does not touch the editor, and the only change in a window without a file tab is one more status item that draws nothing. B4a's 6.96 ms first run and 2.44 ms median are the machine's load, not a measurement of this slice: re-run on an idle machine before reading them as a regression. The deterministic half is a test (`code_view` GPUI `a_keystroke_in_a_big_wrapped_file_wraps_and_shapes_only_the_line_it_changed`: 10 000 lines, at most one line wrapped and three rows shaped per keystroke; before the buffer's edit log it rebuilt the whole map at every key, 600 ms in a debug build).
+
 ## Editor: Vim in file tabs (slice E-8, B15)
 
 B15 is a non-search Vim Normal command on a 1 MB buffer, key → applied, budget ≤ 2 ms. Run `cargo bench -p hutan-code-view --bench vim` (`crates/code_view/benches/vim.rs`). Each of 200 samples lends a 1 MB rope (`hutan_buffer::Buffer`) to the code view's `BufferHost` with the caret in the middle of the file, runs the command's keys through `hutan_vim::Vim`, and takes the model back, as `CodeView::vim_key` does for each key. Release build, plain `Instant`, 2026-10-21, load average 14–19 (other agents building). The frame that shows the result is B12's.
