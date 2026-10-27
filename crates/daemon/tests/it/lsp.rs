@@ -836,6 +836,34 @@ async fn a_missing_server_is_not_installed_with_the_command_and_the_setting() {
     env.stop().await;
 }
 
+/// A server that is not on the machine is not a trust question (EDITOR-POLISH, workability
+/// F-10): in a folder nobody decided about yet the document's server is `not_installed` with its
+/// install hint, and no trust is pending, so no client asks the user to trust something that
+/// cannot run.
+#[tokio::test]
+async fn a_missing_server_in_an_undecided_folder_is_not_installed_and_asks_nothing() {
+    let extra = "[lsp.servers.gone]\ncommand = \"/nonexistent/gone-lsp\"\nlanguages = [\"gone\"]\n\
+                 install = \"brew install gone-lsp\"\n";
+    let env = Env::with(json!({}), extra, fast()).await;
+    let opened = env
+        .client
+        .doc_open(DocOpen {
+            path: env.file("a.gone"),
+            language: Some("gone".into()),
+            version: 1,
+            text: String::new(),
+        })
+        .await
+        .unwrap();
+    let server = &opened.servers[0];
+    assert_eq!(server.state, LspServerState::NotInstalled);
+    assert!(!server.trust_pending, "nothing to trust yet");
+    assert_eq!(server.install.as_deref(), Some("brew install gone-lsp"));
+    let listed = status(&env.client).await;
+    assert!(listed.servers.iter().all(|s| !s.trust_pending));
+    env.stop().await;
+}
+
 /// The `rust-analyzer` on the user's login `PATH` is rustup's proxy and the toolchain lacks the
 /// component (the second e2e pass, finding 2): the server is `not_installed` with rustup's
 /// command, and the proxy never runs as a server (no crash loop).

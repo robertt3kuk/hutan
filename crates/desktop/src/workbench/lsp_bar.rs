@@ -1,12 +1,16 @@
 //! The language server's bar over a file tab (slice E-12a): quiet, one line, like the agent
 //! and conflict bars, in a module of its own.
 //!
-//! - **Trust.** The file's server waits for the user to trust its folder (`untrusted` with
-//!   `trust_pending`). Trust is per folder and lets every server below it start, so the bar
-//!   names every server known to wait there: "Language servers for Rust and Plain Text run code
-//!   from this folder (build scripts, tools). Trust ~/src/app?" with **Trust** (`lsp.trust`,
-//!   user-only; the daemon starts them) and **Not now** (nothing is decided; no bar asks about
-//!   the folder again in this window, whatever the language of the next file).
+//! - **Trust.** The file's server is installed and waits for the user to trust its folder
+//!   (`untrusted` with `trust_pending`; the daemon says `not_installed` instead while there is
+//!   no binary to run). Trust is per folder and lets every server below it start, so the bar
+//!   names every server known to wait there and says what each may run: "rust-analyzer starts
+//!   in ~/src/app for Rust and can run build scripts and procedural macros there. Trust this
+//!   folder?" or "taplo starts in ~/src/app for TOML and only reads the files. …", with
+//!   **Trust** (`lsp.trust`, user-only; the daemon starts them) and **Not now** (nothing is
+//!   decided; no bar asks about the folder again in this window, whatever the language of the
+//!   next file; the status bar's `untrusted` brings it back). One bar per window for a folder:
+//!   the first pane that needs it shows it (`Workbench::sync_lsp_bars`).
 //! - **Install.** The server is not installed: its install command, copyable, never run; the
 //!   bar closes for good in this window once dismissed.
 
@@ -17,7 +21,7 @@ use gpui::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::lsp::{LspBar, LspStore};
+use super::lsp::{LspBar, LspStore, TrustServer};
 use super::regions::Regions;
 use super::render::probe;
 use super::style::TextTooltip;
@@ -28,26 +32,70 @@ use crate::theme::{Theme, Tokens};
 /// What the bar says (tests read it too).
 pub fn bar_text(bar: &LspBar) -> String {
     match bar {
-        LspBar::Trust {
-            folder,
-            languages,
-            servers,
-        } => {
-            let (who, run) = if *servers > 1 {
-                ("Language servers", "run")
-            } else {
-                ("Language server", "runs")
-            };
-            format!(
-                "{who} for {} {run} code from this folder (build scripts, tools). Trust {}?",
-                super::lsp::spoken_list(languages),
-                display_folder(folder)
-            )
-        }
+        LspBar::Trust { folder, servers } => trust_text(servers, &display_folder(folder)),
         LspBar::Install { name, command, .. } => {
             format!("{name} is not installed. Install it with: {command}")
         }
     }
+}
+
+/// What a server may run from the folder it is started in, by its name in `daemon.toml`; `None`
+/// for a server of the user's own, which can be anything.
+fn runs(name: &str) -> Option<Runs> {
+    Some(match name {
+        "rust-analyzer" => Runs::Code("build scripts and procedural macros"),
+        "typescript-language-server" => Runs::Code("the project's TypeScript plugins"),
+        "pyright" | "basedpyright" => Runs::Code("the project's Python interpreter"),
+        "gopls" => Runs::Code("the go command on the project"),
+        "bash-language-server" => Runs::Code("shellcheck on the scripts"),
+        "clangd" | "taplo" | "marksman" | "vscode-json-languageserver" => Runs::Reads,
+        _ => return None,
+    })
+}
+
+#[derive(Clone, Copy)]
+enum Runs {
+    /// Starts programs of the project or its tools.
+    Code(&'static str),
+    /// Only reads the files.
+    Reads,
+}
+
+/// The trust bar's line: which servers start where, and what each may run.
+fn trust_text(servers: &[TrustServer], folder: &str) -> String {
+    let languages = |s: &TrustServer| -> String { super::lsp::spoken_list(&s.languages) };
+    if let [one] = servers {
+        let does = match runs(&one.name) {
+            Some(Runs::Code(what)) => format!("can run {what} there"),
+            Some(Runs::Reads) => "only reads the files".to_owned(),
+            None => "runs the program you set for it in daemon.toml".to_owned(),
+        };
+        return format!(
+            "{} starts in {folder} for {} and {does}. Trust this folder?",
+            one.name,
+            languages(one)
+        );
+    }
+    let names = super::lsp::spoken_list(
+        &servers
+            .iter()
+            .map(|s| format!("{} ({})", s.name, languages(s)))
+            .collect::<Vec<_>>(),
+    );
+    let mut may: Vec<String> = Vec::new();
+    for server in servers {
+        match runs(&server.name) {
+            Some(Runs::Code(what)) => may.push(format!("{} can run {what}.", server.name)),
+            Some(Runs::Reads) => {}
+            None => may.push(format!("{} runs a program you configured.", server.name)),
+        }
+    }
+    let tail = if may.is_empty() {
+        "They only read the files.".to_owned()
+    } else {
+        may.join(" ")
+    };
+    format!("{names} start in {folder}. {tail} Trust this folder?")
 }
 
 /// `folder` with the home folder as `~`.
@@ -182,23 +230,57 @@ mod tests {
 
     #[test]
     fn the_bar_names_every_server_of_the_folder_and_what_it_runs() {
+        let server = |name: &str, languages: &[&str]| TrustServer {
+            name: name.into(),
+            languages: languages.iter().map(|l| (*l).to_owned()).collect(),
+        };
         let one = LspBar::Trust {
             folder: "/w/app".into(),
-            languages: vec!["Rust".into()],
-            servers: 1,
+            servers: vec![server("rust-analyzer", &["Rust"])],
         };
         assert_eq!(
             bar_text(&one),
-            "Language server for Rust runs code from this folder (build scripts, tools). Trust /w/app?"
+            "rust-analyzer starts in /w/app for Rust and can run build scripts and procedural macros there. Trust this folder?"
+        );
+        // A server that only reads files says so; it is not a build-script warning (F-10).
+        let plain = LspBar::Trust {
+            folder: "/w/app".into(),
+            servers: vec![server("taplo", &["TOML"])],
+        };
+        assert_eq!(
+            bar_text(&plain),
+            "taplo starts in /w/app for TOML and only reads the files. Trust this folder?"
         );
         let two = LspBar::Trust {
             folder: "/w/app".into(),
-            languages: vec!["Rust".into(), "Plain Text".into()],
-            servers: 2,
+            servers: vec![
+                server("rust-analyzer", &["Rust"]),
+                server("taplo", &["TOML"]),
+            ],
         };
         assert_eq!(
             bar_text(&two),
-            "Language servers for Rust and Plain Text run code from this folder (build scripts, tools). Trust /w/app?"
+            "rust-analyzer (Rust) and taplo (TOML) start in /w/app. rust-analyzer can run build scripts and procedural macros. Trust this folder?"
+        );
+        let reading = LspBar::Trust {
+            folder: "/w/app".into(),
+            servers: vec![
+                server("taplo", &["TOML"]),
+                server("marksman", &["Markdown"]),
+            ],
+        };
+        assert_eq!(
+            bar_text(&reading),
+            "taplo (TOML) and marksman (Markdown) start in /w/app. They only read the files. Trust this folder?"
+        );
+        // A server of your own can be anything.
+        let own = LspBar::Trust {
+            folder: "/w/app".into(),
+            servers: vec![server("fake", &["Plain Text"])],
+        };
+        assert_eq!(
+            bar_text(&own),
+            "fake starts in /w/app for Plain Text and runs the program you set for it in daemon.toml. Trust this folder?"
         );
         let install = LspBar::Install {
             server_id: "gopls:/w".into(),

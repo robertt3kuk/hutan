@@ -164,6 +164,9 @@ pub struct FileView {
     had_command_bar: bool,
     /// The window's language servers, for the bar over the code (E-12a, `lsp_bar.rs`).
     lsp: Option<Entity<super::lsp::LspStore>>,
+    /// This tab shows the language server's bar: a window shows one bar for a folder or a
+    /// server, in the first pane that needs it (`Workbench::sync_lsp_bars`).
+    lsp_bar_shown: bool,
     /// *Toggle Blame*: the gutter's column of git blame (GIT-HISTORY).
     blame: bool,
     /// *Toggle Soft Wrap*: what the tab does instead of what settings say.
@@ -310,6 +313,7 @@ impl FileView {
             had_bar: false,
             had_command_bar: false,
             lsp: None,
+            lsp_bar_shown: false,
             blame: false,
             wrap_override: None,
             _subscriptions: subscriptions,
@@ -328,7 +332,21 @@ impl FileView {
         self.lsp = Some(lsp);
     }
 
-    /// What the language server's bar says, if it shows (tests).
+    /// Whether this tab is the one that shows the language server's bar (the window's one for
+    /// that folder or server).
+    pub fn set_lsp_bar_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if self.lsp_bar_shown != shown {
+            self.lsp_bar_shown = shown;
+            cx.notify();
+        }
+    }
+
+    /// Whether the bar shows in this tab (tests).
+    pub fn lsp_bar_shown(&self) -> bool {
+        self.lsp_bar_shown
+    }
+
+    /// What the language server's bar says for this file, whichever tab shows it (tests).
     pub fn lsp_bar_text(&self, cx: &App) -> Option<String> {
         let lsp = self.lsp.as_ref()?;
         let path = self.buffer.read(cx).path().display().to_string();
@@ -1708,10 +1726,14 @@ impl Render for FileView {
         let agent_bar = ready
             .then(|| self.render_agent_bar(&theme, &tokens, cx))
             .flatten();
-        let lsp_bar = self.lsp.as_ref().filter(|_| ready).and_then(|lsp| {
-            let path = self.buffer.read(cx).path().display().to_string();
-            super::lsp_bar::render(lsp, &path, &self.regions, &theme, &tokens, cx)
-        });
+        let lsp_bar = self
+            .lsp
+            .as_ref()
+            .filter(|_| ready && self.lsp_bar_shown)
+            .and_then(|lsp| {
+                let path = self.buffer.read(cx).path().display().to_string();
+                super::lsp_bar::render(lsp, &path, &self.regions, &theme, &tokens, cx)
+            });
         let has_bar = conflict_bar.is_some() || agent_bar.is_some() || lsp_bar.is_some();
         if self.had_bar && !has_bar {
             self.code.update(cx, |code, _| code.keep_text_in_place());

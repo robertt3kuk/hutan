@@ -519,7 +519,7 @@ fn the_trust_bar_names_every_server_of_the_folder_and_not_now_covers_the_folder(
     wait_until(cx, "the bar of the one server known", |cx| {
         bar_of(&fake, cx).is_some_and(|text| {
             text == format!(
-                "Language server for Plain Text runs code from this folder (build scripts, tools). Trust {folder}?"
+                "fake starts in {folder} for Plain Text and runs the program you set for it in daemon.toml. Trust this folder?"
             )
         })
     });
@@ -530,7 +530,7 @@ fn the_trust_bar_names_every_server_of_the_folder_and_not_now_covers_the_folder(
     wait_until(cx, "the bar naming both", |cx| {
         bar_of(&rust, cx).is_some_and(|text| {
             text == format!(
-                "Language servers for Rust and Plain Text run code from this folder (build scripts, tools). Trust {folder}?"
+                "rust-analyzer (Rust) and fake (Plain Text) start in {folder}. rust-analyzer can run build scripts and procedural macros. fake runs a program you configured. Trust this folder?"
             )
         })
     });
@@ -538,7 +538,7 @@ fn the_trust_bar_names_every_server_of_the_folder_and_not_now_covers_the_folder(
         bar_of(&fake, cx).as_deref(),
         Some(
             format!(
-                "Language servers for Plain Text and Rust run code from this folder (build scripts, tools). Trust {folder}?"
+                "fake (Plain Text) and rust-analyzer (Rust) start in {folder}. fake runs a program you configured. rust-analyzer can run build scripts and procedural macros. Trust this folder?"
             )
             .as_str()
         )
@@ -574,6 +574,127 @@ fn the_trust_bar_names_every_server_of_the_folder_and_not_now_covers_the_folder(
             .all(|s| s.state == LspServerState::Untrusted && s.trust_pending),
         "{:?}",
         status.servers
+    );
+}
+
+/// How many tabs of the window show the language server's bar now.
+fn bars_shown(
+    view: &Entity<Workbench>,
+    panes: &[(hutan_desktop::workbench::model::PaneId, &str)],
+    cx: &mut VisualTestContext,
+) -> usize {
+    view.read_with(cx, |wb, cx| {
+        panes
+            .iter()
+            .filter(|(pane, path)| {
+                wb.file_view_of(*pane, path)
+                    .is_some_and(|v| v.read(cx).lsp_bar_shown())
+            })
+            .count()
+    })
+}
+
+#[gpui::test]
+fn a_split_shows_one_trust_bar_and_the_status_bar_brings_it_back_after_not_now(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::model::Edge;
+    let env = Env::new("ask", |_| json!({}));
+    let (view, cx) = env.open(cx, "");
+    let tab = open_file(&view, cx, &env.file("a.fake"), "x\n");
+    wait_until(cx, "the trust bar", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::FileLsp("trust")).is_some()
+        })
+    });
+    // The same file in a split, and another file of the folder in a third pane: one bar.
+    let first = view.read_with(cx, |wb, _| wb.state().active_pane_id());
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_file_in_split(first, &tab.path, Edge::Right, window, cx);
+    });
+    draw(cx);
+    let second = view.read_with(cx, |wb, _| wb.state().active_pane_id());
+    assert_ne!(first, second);
+    let other = env.file("b.fake");
+    std::fs::write(&other, "y\n").unwrap();
+    let other_path = other.display().to_string();
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_file_in_split(second, &other_path, Edge::Bottom, window, cx);
+    });
+    let third = view.read_with(cx, |wb, _| wb.state().active_pane_id());
+    wait_until(cx, "the third pane's document", |cx| {
+        view.read_with(cx, |wb, cx| wb.lsp().read(cx).is_open(&other_path))
+    });
+    draw(cx);
+    let panes = [
+        (first, tab.path.as_str()),
+        (second, tab.path.as_str()),
+        (third, other_path.as_str()),
+    ];
+    assert_eq!(
+        bars_shown(&view, &panes, cx),
+        1,
+        "one bar for the folder, not one per pane"
+    );
+    assert!(
+        view.read_with(cx, |wb, cx| wb
+            .file_view_of(first, &tab.path)
+            .unwrap()
+            .read(cx)
+            .lsp_bar_shown()),
+        "the first pane in layout order shows it"
+    );
+
+    // Not now: no bar anywhere.
+    let not_now = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::FileLsp("not-now")))
+        .expect("the Not now button");
+    cx.simulate_click(not_now.center(), Modifiers::none());
+    wait_until(cx, "no bar", |cx| bars_shown(&view, &panes, cx) == 0);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::FileLsp("trust")))
+            .is_none()
+    );
+
+    // The status bar's `untrusted` brings the same choice back (its action), still one bar.
+    cx.dispatch_action(actions::ReviewLspTrust);
+    wait_until(cx, "the bar again", |cx| bars_shown(&view, &panes, cx) == 1);
+    let trust = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::FileLsp("trust")))
+        .expect("the Trust button is back");
+    cx.simulate_click(trust.center(), Modifiers::none());
+    wait_until(cx, "the server to run", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.lsp().read(cx).server_of(&tab.path).is_some_and(|s| {
+                matches!(
+                    s.state,
+                    LspServerState::Starting | LspServerState::Indexing | LspServerState::Ready
+                )
+            })
+        })
+    });
+    assert_eq!(bars_shown(&view, &panes, cx), 0);
+}
+
+#[gpui::test]
+fn a_server_that_is_not_installed_asks_for_no_trust(cx: &mut TestAppContext) {
+    // The folder is undecided (`ask`) and the Rust server's program is not there: the bar is the
+    // install hint, never a request to trust something that cannot run (F-10).
+    let env = Env::with_extra(
+        "ask",
+        |_| json!({}),
+        "[lsp.servers.rust-analyzer]\ncommand = \"/nonexistent/rust-analyzer\"\n",
+    );
+    let (view, cx) = env.open(cx, "");
+    let rust = open_file(&view, cx, &env.file("main.rs"), "fn main() {}\n");
+    wait_until(cx, "the install bar", |cx| {
+        bar_of(&rust, cx).is_some_and(|text| text.starts_with("rust-analyzer is not installed"))
+    });
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::FileLsp("trust")))
+            .is_none(),
+        "no Trust button"
     );
 }
 

@@ -941,10 +941,18 @@ impl LspHub {
     }
 
     /// Says why a slot without a server has none: the folder is not trusted, the binary is
-    /// missing, or nothing stands in the way (`stopped`, about to start).
+    /// missing, or nothing stands in the way (`stopped`, about to start). A binary that is not
+    /// there is said first, also in a folder that is still to be asked about: there is nothing
+    /// to trust yet, and the user is told what to install, not asked to trust a server that
+    /// cannot run (EDITOR-POLISH, workability F-10).
     fn settle(slot: &mut Slot, standing: Standing, program: &Result<PathBuf, String>) {
         let root = slot.root.display();
         slot.down = Some(match (standing, program) {
+            (Standing::Ask, Err(reason)) => Down {
+                state: LspServerState::NotInstalled,
+                reason: reason.clone(),
+                pending_trust: false,
+            },
             (Standing::Denied, _) => Down {
                 state: LspServerState::Untrusted,
                 reason: format!(

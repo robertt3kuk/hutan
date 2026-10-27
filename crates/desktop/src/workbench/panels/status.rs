@@ -619,6 +619,9 @@ pub struct DiagnosticsItem {
     /// `indexing`, `starting`, `failed`, … (nothing while ready).
     pub state: Option<String>,
     pub tooltip: String,
+    /// The server waits for its folder's trust: a click brings the trust bar back (*Trust* /
+    /// *Not now*) instead of opening Problems.
+    pub untrusted: bool,
 }
 
 /// `None` when the focused file has no language server.
@@ -664,7 +667,12 @@ pub fn diagnostics_item(
     if let Some(reason) = &server.reason {
         tooltip.push_str(&format!(" · {reason}"));
     }
-    tooltip.push_str(" · click for Problems");
+    let untrusted = server.state == LspServerState::Untrusted;
+    tooltip.push_str(if untrusted {
+        " · click to choose whether to trust this folder"
+    } else {
+        " · click for Problems"
+    });
     Some(DiagnosticsItem {
         counts: shown
             .into_iter()
@@ -672,6 +680,7 @@ pub fn diagnostics_item(
             .collect(),
         state,
         tooltip,
+        untrusted,
     })
 }
 
@@ -689,8 +698,12 @@ fn render_diagnostics_item(item: DiagnosticsItem, ctx: &StatusContext<'_>) -> An
         .gap(px(8.0))
         .text_color(ctx.theme.muted)
         .tooltip(tooltip(item.tooltip))
-        .on_click(|_, window, cx| {
-            window.dispatch_action(Box::new(crate::workbench::actions::ShowProblems), cx);
+        .on_click(move |_, window, cx| {
+            if item.untrusted {
+                window.dispatch_action(Box::new(crate::workbench::actions::ReviewLspTrust), cx);
+            } else {
+                window.dispatch_action(Box::new(crate::workbench::actions::ShowProblems), cx);
+            }
         });
     for (glyph, n, severity) in item.counts {
         row = row.child(
@@ -711,6 +724,37 @@ fn render_diagnostics_item(item: DiagnosticsItem, ctx: &StatusContext<'_>) -> An
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_untrusted_servers_item_brings_the_trust_choice_back() {
+        use crate::workbench::registry::{EditorDiagnostics, EditorServer, EditorStatus};
+        use hutan_protocol::lsp::LspServerState;
+        let status = |state| EditorStatus {
+            language: "Rust".to_owned(),
+            vim: false,
+            wrap: false,
+            diagnostics: EditorDiagnostics {
+                counts: None,
+                server: Some(EditorServer {
+                    name: "rust-analyzer".to_owned(),
+                    state,
+                    reason: None,
+                }),
+            },
+        };
+        let item = diagnostics_item(&status(LspServerState::Untrusted)).unwrap();
+        assert!(item.untrusted);
+        assert_eq!(item.state.as_deref(), Some("untrusted"));
+        assert!(
+            item.tooltip
+                .ends_with("click to choose whether to trust this folder"),
+            "{}",
+            item.tooltip
+        );
+        let ready = diagnostics_item(&status(LspServerState::Ready)).unwrap();
+        assert!(!ready.untrusted);
+        assert!(ready.tooltip.ends_with("click for Problems"));
+    }
 
     #[test]
     fn the_default_status_bar_is_connection_workspace_attention_then_working_and_the_palette_key() {

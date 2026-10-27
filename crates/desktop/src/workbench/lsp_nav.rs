@@ -30,9 +30,51 @@ impl Workbench {
             // bring their completion triggers.
             LspStoreEvent::Changed => {
                 self.refresh_completion_triggers(cx);
+                self.sync_lsp_bars(cx);
                 cx.notify();
             }
             LspStoreEvent::Notice(text) => self.set_notice(text.clone(), cx),
+        }
+    }
+
+    /// Decides which tab shows the language server's bar. A window asks once for a folder's
+    /// trust (and once for each server to install), not once per pane or split: the first
+    /// pane, in layout order, whose shown file needs a bar claims it, and the others of the
+    /// same folder or server show none.
+    pub(crate) fn sync_lsp_bars(&mut self, cx: &mut Context<Self>) {
+        let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut shown: std::collections::HashSet<(super::model::PaneId, String)> =
+            std::collections::HashSet::new();
+        for pane in self.state.center.panes() {
+            let Some(path) = pane.active_item().and_then(super::model::ItemRef::as_file) else {
+                continue;
+            };
+            let Some(bar) = self.lsp.read(cx).bar(path) else {
+                continue;
+            };
+            if claimed.insert(bar.key()) {
+                shown.insert((pane.id, path.to_owned()));
+            }
+        }
+        for (key, view) in &self.file_views {
+            view.update(cx, |view, cx| {
+                view.set_lsp_bar_shown(shown.contains(key), cx)
+            });
+        }
+    }
+
+    /// The status bar's `untrusted` was clicked: the trust bar of the focused file's folder
+    /// shows again, with the same *Trust* / *Not now* choice.
+    pub(crate) fn review_lsp_trust(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.active_center_file() else {
+            return;
+        };
+        let asked = self.lsp.update(cx, |lsp, cx| lsp.reopen_trust(&path, cx));
+        if !asked {
+            self.set_notice(
+                "This file's language server is not waiting for a folder to be trusted.",
+                cx,
+            );
         }
     }
 

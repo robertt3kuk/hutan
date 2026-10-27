@@ -124,11 +124,9 @@ pub enum LspBar {
     /// waiting below it starts once it is trusted, so the bar names them all.
     Trust {
         folder: PathBuf,
-        /// The languages of the servers that wait for the folder, each once, the file's own
-        /// first ([`language_label_of`]).
-        languages: Vec<String>,
-        /// How many servers wait for it.
-        servers: usize,
+        /// The servers that wait for the folder, the file's own first: what trusting it
+        /// starts.
+        servers: Vec<TrustServer>,
     },
     /// The server is not installed: the command that installs it (never run by Hutan).
     Install {
@@ -137,6 +135,26 @@ pub enum LspBar {
         command: String,
         setting: Option<String>,
     },
+}
+
+/// A server that waits for its folder's trust, as the trust bar names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustServer {
+    /// Its id in `daemon.toml` (`rust-analyzer`).
+    pub name: String,
+    /// The languages it serves, by name, each once (`Rust`, `C, C++`).
+    pub languages: Vec<String>,
+}
+
+impl LspBar {
+    /// What makes two bars one: a window shows one bar for each folder to trust and each server
+    /// to install, not one per pane or split.
+    pub fn key(&self) -> String {
+        match self {
+            Self::Trust { folder, .. } => format!("trust:{}", folder.display()),
+            Self::Install { server_id, .. } => format!("install:{server_id}"),
+        }
+    }
 }
 
 /// What the store tells the workbench.
@@ -167,6 +185,9 @@ pub struct LspStore {
     /// Folders whose trust bar the user closed (*Not now*): no bar asks again for a server
     /// below them in this window.
     not_now: HashSet<PathBuf>,
+    /// Folders the user asked about again (the status bar's `untrusted`): their trust bar shows
+    /// even when the folder was denied before.
+    reopened: HashSet<PathBuf>,
     /// Folders whose `lsp.trust` is on its way.
     trusting: HashSet<PathBuf>,
     jumps: Vec<Jump>,
@@ -391,6 +412,7 @@ impl LspStore {
             no_server: HashSet::new(),
             dismissed: HashSet::new(),
             not_now: HashSet::new(),
+            reopened: HashSet::new(),
             trusting: HashSet::new(),
             jumps: Vec::new(),
             listener: None,
@@ -934,7 +956,7 @@ impl LspStore {
         self.servers_of(path)
             .into_iter()
             .find_map(|s| match s.state {
-                LspServerState::Untrusted if s.trust_pending => {
+                LspServerState::Untrusted if s.trust_pending || self.asked_again(&s.root) => {
                     let folder = s.root?;
                     if self.not_now.iter().any(|closed| folder.starts_with(closed)) {
                         return None;
@@ -953,6 +975,12 @@ impl LspStore {
             })
     }
 
+    /// Whether the user asked about the folder of a server again (it may have been denied).
+    fn asked_again(&self, root: &Option<PathBuf>) -> bool {
+        root.as_ref()
+            .is_some_and(|root| self.reopened.iter().any(|f| root.starts_with(f)))
+    }
+
     /// The trust bar of `folder`: every server known to wait for it (its root at or below the
     /// folder), `first` (the file's own) leading.
     fn trust_bar(&self, folder: PathBuf, first: &str) -> LspBar {
@@ -961,7 +989,7 @@ impl LspStore {
             .values()
             .filter(|s| {
                 s.state == LspServerState::Untrusted
-                    && s.trust_pending
+                    && (s.trust_pending || self.asked_again(&Some(s.root.clone())))
                     && s.root.starts_with(&folder)
             })
             .collect();
@@ -972,19 +1000,36 @@ impl LspStore {
                 &b.server_id,
             ))
         });
-        let mut languages: Vec<String> = Vec::new();
-        for server in &waiting {
-            for label in languages_of(&server.languages) {
-                if !languages.iter().any(|l| l == label) {
-                    languages.push(label.to_owned());
-                }
-            }
-        }
-        LspBar::Trust {
-            folder,
-            languages,
-            servers: waiting.len().max(1),
-        }
+        let servers = waiting
+            .iter()
+            .map(|server| TrustServer {
+                name: server.name.clone(),
+                languages: languages_of(&server.languages)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+            })
+            .collect();
+        LspBar::Trust { folder, servers }
+    }
+
+    /// The status bar's `untrusted` was clicked: the trust bar of the folder of `path`'s server
+    /// shows again (also after *Not now*, or a denial), with the same choice. Returns whether
+    /// that file's server waits for a folder's trust.
+    pub fn reopen_trust(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
+        let Some(root) = self
+            .servers_of(path)
+            .into_iter()
+            .find(|s| s.state == LspServerState::Untrusted)
+            .and_then(|s| s.root)
+        else {
+            return false;
+        };
+        self.not_now.retain(|closed| !root.starts_with(closed));
+        self.reopened.insert(root);
+        cx.emit(LspStoreEvent::Changed);
+        cx.notify();
+        true
     }
 
     /// Whether the trust of `folder` is on its way.
@@ -1014,6 +1059,7 @@ impl LspStore {
             let result = call.await;
             this.update(cx, |this, cx| {
                 this.trusting.remove(&folder);
+                this.reopened.retain(|asked| !asked.starts_with(&folder));
                 match result {
                     Ok(answer) => {
                         for server in answer.servers {
@@ -1045,6 +1091,7 @@ impl LspStore {
     /// *Not now* on a trust bar: nothing is decided, and no bar asks about `folder` (or a
     /// folder below it) again in this window, whatever language the next file has.
     pub fn not_now(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        self.reopened.retain(|asked| !asked.starts_with(&folder));
         self.not_now.insert(folder);
         cx.emit(LspStoreEvent::Changed);
         cx.notify();

@@ -167,6 +167,9 @@ actions!(
         UndoLastRestore,
         /// Show the Problems panel (the language servers' diagnostics) with the keyboard in it.
         ShowProblems,
+        /// Show the language server's trust bar of the focused file's folder again (the status
+        /// bar's `untrusted`).
+        ReviewLspTrust,
         /// Show the Search panel (find in the active project's files) with the keyboard in its
         /// query; the focused file tab's selection becomes the query.
         ShowSearch,
@@ -783,6 +786,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
             hutan_code_view::PreviousDiagnostic,
         ),
         command("Problems: Show Problems Panel", ShowProblems),
+        command("Editor: Review Language Server Trust", ReviewLspTrust),
         command("App: Command Palette", TogglePalette),
         command("App: Settings…", OpenSettings),
         command("App: About Hutan", About),

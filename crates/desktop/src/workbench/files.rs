@@ -540,6 +540,7 @@ impl Workbench {
             self.refresh_blame(path, cx);
         }
         self.sync_git_stage_availability(path, cx);
+        self.sync_lsp_bars(cx);
         view
     }
 
@@ -653,6 +654,7 @@ impl Workbench {
             }
             buffer.update(cx, |b, cx| b.set_syntax_active(visible, cx));
         }
+        self.sync_lsp_bars(cx);
         // The index or `HEAD` may have moved while the tab was behind another.
         for path in shown_again {
             self.refresh_git_base(&path, cx);

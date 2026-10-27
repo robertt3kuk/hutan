@@ -1142,6 +1142,9 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::ShowProblems, window, cx| {
             this.show_problems(window, cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::ReviewLspTrust, _, cx| {
+            this.review_lsp_trust(cx);
+        }))
         .on_action(cx.listener(|this, _: &actions::ShowSearch, window, cx| {
             this.show_search(false, window, cx);
         }))
