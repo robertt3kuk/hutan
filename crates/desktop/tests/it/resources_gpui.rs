@@ -269,7 +269,7 @@ fn the_panel_is_a_tab_of_the_right_sidebar_and_has_commands_and_a_key(cx: &mut T
     assert!(state.docks.right.contains(&"resources".into()));
     assert_eq!(
         state.docks.right.active,
-        Some("changes".into()),
+        Some("files".into()),
         "a tab of the strip until asked for"
     );
     assert!(state.docks.bottom.panels.is_empty() && !state.docks.bottom.visible);
@@ -800,7 +800,7 @@ fn show_in_resources_reveals_the_session_from_its_context_menu(cx: &mut TestAppC
     });
     assert_eq!(
         view.read_with(cx, |wb, _| wb.state().docks.right.active.clone()),
-        Some("changes".into())
+        Some("files".into())
     );
 
     cx.dispatch_action(actions::ShowSessionMenu(actions::SessionMenuAt {

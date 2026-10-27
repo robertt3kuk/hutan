@@ -287,26 +287,27 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     }
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("changes"))
+        Some(PanelId::new("files")),
+        "the body of a fresh layout opens on Files"
     );
 
     // The active icon collapses the body; the rail stays and remembers the panel and width.
-    click(&view, cx, Region::DockTab(Right, 1));
+    click(&view, cx, Region::DockTab(Right, 0));
     assert_eq!(chosen(&view, cx, Right), Compact);
     assert!(!painted(&view, cx, Region::Dock(Right)));
     assert_size(bounds(&view, cx, Region::Rail(Right)).size.width, 40.0);
     assert!(painted(&view, cx, Region::DockTab(Right, 3)));
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("changes"))
+        Some(PanelId::new("files"))
     );
     assert_eq!(state(&view, cx).docks.right.size, 350.0);
 
     // Any icon expands that panel while collapsed, the remembered one included.
-    click(&view, cx, Region::DockTab(Right, 1));
+    click(&view, cx, Region::DockTab(Right, 0));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_size(bounds(&view, cx, Region::Dock(Right)).size.width, 350.0);
-    click(&view, cx, Region::DockTab(Right, 1));
+    click(&view, cx, Region::DockTab(Right, 0));
     assert_eq!(chosen(&view, cx, Right), Compact);
     click(&view, cx, Region::DockTab(Right, 2));
     assert_eq!(chosen(&view, cx, Right), Expanded);
@@ -316,11 +317,11 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     );
 
     // Another icon while open switches the panel and stays open.
-    click(&view, cx, Region::DockTab(Right, 1));
+    click(&view, cx, Region::DockTab(Right, 0));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("changes"))
+        Some(PanelId::new("files"))
     );
 }
 
@@ -877,7 +878,7 @@ fn a_new_approval_does_not_expand_a_collapsed_right_panel(cx: &mut TestAppContex
     // The panel the rail remembers does not change; the Requests icon opens it.
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("changes"))
+        Some(PanelId::new("files"))
     );
     click(&view, cx, Region::DockTab(Right, 4));
     assert_eq!(chosen(&view, cx, Right), Expanded);

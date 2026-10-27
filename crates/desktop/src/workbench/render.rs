@@ -485,8 +485,11 @@ impl Workbench {
             }),
         )
         .on_action(cx.listener(|this, _: &actions::ClosePaneItem, window, cx| {
+            // With the keyboard in the Files tree ⌘W closes the focused tab, never the panel.
+            if this.files_tree_has_focus(window, cx) {
+                this.close_center_tab(window, cx);
             // With splits ⌘W closes the focused split; the tab closes with its last one.
-            if !this.close_focused_split(window, cx) {
+            } else if !this.close_focused_split(window, cx) {
                 this.close_active_checked(window, cx);
             }
         }))
@@ -1171,6 +1174,20 @@ impl Workbench {
         )
         .on_action(cx.listener(|this, a: &actions::ShowFilesMenu, window, cx| {
             this.show_files_menu(&a.0, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, a: &actions::ShowFilesMoreMenu, window, cx| {
+                this.show_files_more_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::FocusEditor, window, cx| {
+            this.focus_editor(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::FilesCollapseAll, _, cx| {
+            this.files_collapse_all(cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::FilesRefresh, _, cx| {
+            this.files_refresh(cx);
         }))
         .on_action(
             cx.listener(|this, a: &actions::OpenChosenFile, window, cx| {

@@ -71,6 +71,18 @@ fn run_entry(view: &Entity<Workbench>, cx: &mut VisualTestContext, label: &str) 
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(index, window, cx));
 }
 
+/// The right body opens on Files; the tests of a panel menu that need Changes pick it.
+fn show_changes(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel(
+        "changes".into(),
+    ));
+    common::draw(cx);
+    assert_eq!(
+        state(view, cx).docks.right.active,
+        Some(PanelId::new("changes"))
+    );
+}
+
 fn layout(settings: &SettingsStore) -> std::sync::Arc<LayoutSettings> {
     settings.get::<LayoutSettings>()
 }
@@ -84,7 +96,9 @@ fn a_move_from_the_panel_menu_goes_into_a_custom_preset_and_the_built_in_one_sta
     let (view, settings, cx) = open(cx);
     assert!(layout(&settings).presets.is_empty());
 
-    // The ⋯ in the right panel's header: Changes has no options of its own, so only placement.
+    // The ⋯ in the right panel's header: Changes has no options of its own, so only placement
+    // (the body opens on Files, which has; Changes is picked first).
+    show_changes(&view, cx);
     click(&view, cx, Region::PanelMenu("right"));
     assert_eq!(labels(&view, cx), ["Move to", "Hide"]);
     run_entry(&view, cx, "Move to");
@@ -270,6 +284,7 @@ fn each_kind_of_widget_moves_between_docks_and_the_center_and_back(cx: &mut Test
 #[gpui::test]
 fn hide_closes_the_panel_and_the_preset_keeps_it_hidden(cx: &mut TestAppContext) {
     let (view, settings, cx) = open(cx);
+    show_changes(&view, cx);
     click(&view, cx, Region::PanelMenu("right"));
     run_entry(&view, cx, "Hide");
     let s = state(&view, cx);
@@ -357,7 +372,8 @@ fn the_panel_settings_popover_edits_the_panels_keys_live(cx: &mut TestAppContext
 #[gpui::test]
 fn a_panel_without_options_has_no_settings_entry(cx: &mut TestAppContext) {
     let (view, _settings, cx) = open(cx);
-    // Changes: placement only.
+    // Changes: placement only (the body opens on Files; Changes is picked first).
+    show_changes(&view, cx);
     click(&view, cx, Region::PanelMenu("right"));
     assert!(!labels(&view, cx).iter().any(|l| l == "Panel settings…"));
     cx.simulate_keystrokes("escape");

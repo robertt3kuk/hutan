@@ -368,6 +368,7 @@ const FIELDS: &[FieldText] = &[
             ("default", "Default"),
             ("focus", "Focus"),
             ("overview", "Agents overview"),
+            ("explorer-left", "Explorer left"),
         ],
     ),
     field(
@@ -478,6 +479,25 @@ const FIELDS: &[FieldText] = &[
         "show_ignored",
         "Show ignored files",
         "Lists the files and folders that .gitignore or .ignore rules leave out, dimmed. Off, the tree hides them.",
+    ),
+    field(
+        "panels.files",
+        "show_hidden",
+        "Show hidden files",
+        "Lists files and folders whose names start with a dot (.github, .env). Off, the tree hides them.",
+    ),
+    field(
+        "panels.files",
+        "compact_folders",
+        "Fold single-folder chains",
+        "Shows a folder that holds only one folder on the same row as it (src/utils/helpers), opened and closed as one.",
+    ),
+    choice(
+        "panels.files",
+        "indent_guides",
+        "Indent guides",
+        "The vertical lines along open folders: only while the pointer is over the tree, always, or never.",
+        &[("hover", "On hover"), ("always", "Always"), ("off", "Off")],
     ),
     field(
         "panels.files",

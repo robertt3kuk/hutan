@@ -190,12 +190,16 @@ fn a_file_made_while_the_palette_is_open_comes_in_with_the_roots_generation(
         view.read_with(cx, |wb, _| wb.picker().unwrap().files.refreshes) >= 1,
         "the root's fs.generation asked again"
     );
-    // Closing stops watching the root.
+    // Closing stops watching the root (the Files panel, the right body of a fresh layout,
+    // watches its own).
     cx.simulate_keystrokes("escape");
     assert!(view.read_with(cx, |wb, _| wb.picker().is_none()));
+    let panel_watches = view
+        .read_with(cx, |wb, _| wb.panel::<FilesPanel>("files"))
+        .map_or(0, |panel| panel.read_with(cx, |p, _| p.watched_dirs()));
     assert_eq!(
         view.read_with(cx, |wb, cx| wb.sessions().read(cx).watched_dirs()),
-        0
+        panel_watches
     );
 }
 
@@ -336,13 +340,23 @@ fn the_panel_reveals_the_focused_tabs_file_and_follows_changes_on_disk(cx: &mut 
     wait_until(cx, "the new file's row", |cx| {
         panel.read_with(cx, |p, _| p.rows().iter().any(|r| r.path == fresh))
     });
-    // Revealing opened exactly the folders the file is in: src, a, b.
+    // Revealing opened exactly the folders the file is in: src, a, b (and the root), which
+    // share one row because each holds only the next.
     assert!(panel.read_with(cx, |p, _| {
-        p.rows()
-            .iter()
-            .filter(|r| r.kind == FileRowKind::Dir && r.expanded)
-            .count()
-            == 3
+        let tree = p.tree().expect("a tree");
+        tree.expanded_dirs()
+            == [
+                root.clone(),
+                root.join("src"),
+                root.join("src/a"),
+                root.join("src/a/b"),
+            ]
+            && p.rows()
+                .iter()
+                .filter(|r| r.kind == FileRowKind::Dir && r.expanded)
+                .map(|r| r.name.to_string())
+                .collect::<Vec<_>>()
+                == ["src/a/b"]
     }));
 }
 

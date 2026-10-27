@@ -442,7 +442,13 @@ fn mawas_more_menu_has_where_mawas_works_for_both_scopes(cx: &mut TestAppContext
     });
 
     // Show Folder in Files: the Files panel comes up, on the Home folder.
-    assert!(view.read_with(cx, |wb, _| wb.panel::<FilesPanel>("files").is_none()));
+    // The right body opens on Files; another panel is shown so the menu has to bring it up.
+    cx.dispatch_action(actions::OpenPanel("changes".into()));
+    draw(cx);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.state().docks.right.active.clone()),
+        Some("changes".into())
+    );
     view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
     draw(cx);
     more_menu(&view, cx);
@@ -450,8 +456,10 @@ fn mawas_more_menu_has_where_mawas_works_for_both_scopes(cx: &mut TestAppContext
     wait_until(cx, "the Files panel", |cx| {
         draw(cx);
         view.read_with(cx, |wb, cx| {
-            wb.panel::<FilesPanel>("files")
-                .is_some_and(|p| p.read(cx).root() == Some(home_dir.as_path()))
+            wb.state().docks.right.active == Some("files".into())
+                && wb
+                    .panel::<FilesPanel>("files")
+                    .is_some_and(|p| p.read(cx).root() == Some(home_dir.as_path()))
         })
     });
 

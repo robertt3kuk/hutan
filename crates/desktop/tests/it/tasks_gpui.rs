@@ -630,6 +630,10 @@ fn the_sheet_creates_a_task_with_dependencies_and_a_worktree_placement(cx: &mut 
     );
     // "+ New task" opened the sheet on Queue as task.
     assert!(view.read_with(cx, |wb, _| wb.launcher().unwrap().queue()));
+    // The base follows the main checkout's branch once the sheet's own worktree list is in.
+    wait_until(cx, "the base to follow the main branch", |cx| {
+        view.read_with(cx, |wb, _| wb.launcher().unwrap().base() == "main")
+    });
     click(&view, cx, Region::Launcher("start"));
 
     wait_until(cx, "the task to exist", |_| {

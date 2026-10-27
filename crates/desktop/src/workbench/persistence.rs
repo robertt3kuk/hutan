@@ -164,6 +164,57 @@ pub fn load_recent_files(path: &Path) -> RecentFiles {
     recent
 }
 
+/// The folders the Files panel had open, per root (`files_expanded` in the state file), most
+/// recently used root first: a root comes back with its folders open after a restart, and a
+/// root you come back to in the same window with its listings and scroll as well. View state
+/// like the layout; never sent to the daemon. At most [`MAX_FILES_ROOTS`] roots of at most
+/// [`MAX_FILES_DIRS`] folders each.
+pub type FilesExpanded = Vec<FilesRoot>;
+
+/// The open folders of one root of the Files panel.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FilesRoot {
+    /// The root, absolute.
+    pub root: String,
+    /// Its open folders (the root itself not listed), shallowest first, absolute.
+    pub dirs: Vec<String>,
+}
+
+/// Most roots [`FilesExpanded`] keeps.
+pub const MAX_FILES_ROOTS: usize = 8;
+/// Most open folders [`FilesExpanded`] keeps per root.
+pub const MAX_FILES_DIRS: usize = 500;
+
+/// The open folders saved in `path`; none when the file is missing or has none.
+pub fn load_files_expanded(path: &Path) -> FilesExpanded {
+    let mut files: FilesExpanded = load_key(path, "files_expanded");
+    files.truncate(MAX_FILES_ROOTS);
+    for root in &mut files {
+        root.dirs.truncate(MAX_FILES_DIRS);
+    }
+    files.retain(|root| !root.dirs.is_empty());
+    files
+}
+
+/// Remembers `dirs` as the open folders of `root` (made the most recent root); an empty list
+/// forgets the root. True when that changed anything.
+pub fn note_files_expanded(files: &mut FilesExpanded, root: &str, dirs: Vec<String>) -> bool {
+    let dirs: Vec<String> = dirs.into_iter().take(MAX_FILES_DIRS).collect();
+    let before = files.clone();
+    files.retain(|r| r.root != root);
+    if !dirs.is_empty() {
+        files.insert(
+            0,
+            FilesRoot {
+                root: root.to_owned(),
+                dirs,
+            },
+        );
+    }
+    files.truncate(MAX_FILES_ROOTS);
+    *files != before
+}
+
 /// The install the desktop last acknowledged (`install` in the state file); `None` when the file
 /// is missing or has none.
 pub fn load_install(path: &Path) -> Option<InstallRecord> {
@@ -190,7 +241,7 @@ fn load_key<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) ->
 /// The state file's JSON: the layout plus, when there are any, the folded blocks, the review
 /// comments, the launcher memory, the chat drafts, what the user did to the attention queue
 /// (`attention`: marked unread, snoozed), the recent files and the install the desktop last
-/// acknowledged (`install`).
+/// acknowledged (`install`), the folders the Files panel keeps open (`files_expanded`).
 #[allow(clippy::too_many_arguments)] // the one writer of one file; a struct would only rename them
 pub fn state_json(
     state: &WorkbenchState,
@@ -200,6 +251,7 @@ pub fn state_json(
     drafts: &ChatDrafts,
     marks: &Marks,
     recent: &RecentFiles,
+    files: &FilesExpanded,
     install: Option<&InstallRecord>,
 ) -> Result<String, ModelError> {
     let json = state.to_json()?;
@@ -209,6 +261,7 @@ pub fn state_json(
         && drafts.is_empty()
         && marks.is_empty()
         && recent.is_empty()
+        && files.is_empty()
         && install.is_none()
     {
         return Ok(json);
@@ -250,6 +303,12 @@ pub fn state_json(
             map.insert(
                 "recent_files".to_owned(),
                 serde_json::to_value(recent).map_err(invalid)?,
+            );
+        }
+        if !files.is_empty() {
+            map.insert(
+                "files_expanded".to_owned(),
+                serde_json::to_value(files).map_err(invalid)?,
             );
         }
         if let Some(install) = install {
@@ -314,6 +373,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &RecentFiles::new(),
+                &FilesExpanded::new(),
                 None,
             )
             .unwrap(),
@@ -331,6 +391,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &RecentFiles::new(),
+                &FilesExpanded::new(),
                 None,
             )
             .unwrap(),
@@ -367,6 +428,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &RecentFiles::new(),
+                &FilesExpanded::new(),
                 None,
             )
             .unwrap(),
@@ -401,6 +463,7 @@ mod tests {
                 &drafts,
                 &Marks::default(),
                 &RecentFiles::new(),
+                &FilesExpanded::new(),
                 None,
             )
             .unwrap(),
@@ -451,6 +514,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &recent,
+                &FilesExpanded::new(),
                 None,
             )
             .unwrap(),
@@ -463,6 +527,68 @@ mod tests {
         }
         assert_eq!(recent.len(), MAX_RECENT_FILES);
         assert_eq!(recent[0], format!("/repo/{}.rs", MAX_RECENT_FILES + 4));
+    }
+
+    #[test]
+    fn the_open_folders_of_the_files_panel_travel_beside_the_layout_bounded_per_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STATE_FILE);
+        let state = WorkbenchState::default();
+        let mut files = FilesExpanded::new();
+        assert!(note_files_expanded(
+            &mut files,
+            "/repo",
+            vec!["/repo/src".into(), "/repo/src/a".into()]
+        ));
+        assert!(
+            !note_files_expanded(
+                &mut files,
+                "/repo",
+                vec!["/repo/src".into(), "/repo/src/a".into()]
+            ),
+            "the same folders again change nothing"
+        );
+        for n in 0..MAX_FILES_ROOTS + 2 {
+            note_files_expanded(
+                &mut files,
+                &format!("/other{n}"),
+                vec![format!("/other{n}/d")],
+            );
+        }
+        assert_eq!(files.len(), MAX_FILES_ROOTS, "the least recent roots go");
+        assert_eq!(files[0].root, format!("/other{}", MAX_FILES_ROOTS + 1));
+        assert!(files.iter().all(|r| r.root != "/repo"));
+        note_files_expanded(&mut files, "/repo", vec!["/repo/src".into()]);
+        assert_eq!(files[0].root, "/repo", "the root in use is the most recent");
+        let many: Vec<String> = (0..MAX_FILES_DIRS + 10)
+            .map(|n| format!("/big/d{n}"))
+            .collect();
+        note_files_expanded(&mut files, "/big", many);
+        assert_eq!(files[0].dirs.len(), MAX_FILES_DIRS);
+        assert!(note_files_expanded(&mut files, "/big", Vec::new()));
+        assert!(
+            files.iter().all(|r| r.root != "/big"),
+            "no folders, no root"
+        );
+
+        save_json(
+            &path,
+            &state_json(
+                &state,
+                &CollapsedBlocks::new(),
+                &ReviewComments::new(),
+                &LauncherMemory::default(),
+                &ChatDrafts::new(),
+                &Marks::default(),
+                &RecentFiles::new(),
+                &files,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load_files_expanded(&path), files);
+        assert_eq!(load_state(&path), state);
     }
 
     #[test]
@@ -486,6 +612,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &RecentFiles::new(),
+                &FilesExpanded::new(),
                 Some(&record),
             )
             .unwrap(),

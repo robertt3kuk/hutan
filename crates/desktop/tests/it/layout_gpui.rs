@@ -126,7 +126,11 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
         ])
     );
     assert_eq!(s.docks.right.more, ids(&["inspector", "resources"]));
-    assert_eq!(s.docks.right.active, Some(PanelId::new("changes")));
+    assert_eq!(
+        s.docks.right.active,
+        Some(PanelId::new("files")),
+        "the body opens on Files"
+    );
     assert!(s.docks.bottom.panels.is_empty() && !s.docks.bottom.visible);
     assert!(s.docks.left.visible && s.docks.right.visible);
     assert_eq!((s.docks.left.size, s.docks.right.size), (280.0, 350.0));
@@ -451,8 +455,8 @@ fn turning_mawas_off_closes_its_tab_and_its_nav_row(cx: &mut TestAppContext) {
 fn the_right_strip_switches_tabs(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     let active = |cx: &VisualTestContext| state(&view, cx).docks.right.active.unwrap();
-    assert_eq!(active(cx).as_str(), "changes", "Changes is the default tab");
-    for (index, panel) in [(2, "agents"), (3, "history"), (0, "files"), (1, "changes")] {
+    assert_eq!(active(cx).as_str(), "files", "Files is the default tab");
+    for (index, panel) in [(2, "agents"), (3, "history"), (1, "changes"), (0, "files")] {
         click(&view, cx, Region::DockTab(DockPosition::Right, index));
         assert_eq!(active(cx).as_str(), panel);
         assert_eq!(
@@ -798,7 +802,7 @@ fn the_very_first_launch_opens_with_the_right_sidebar_on_its_rail(cx: &mut TestA
         docks.right.mode(),
         hutan_desktop::workbench::model::DockMode::Compact
     );
-    assert_eq!(docks.right.active, Some(PanelId::new("changes")));
+    assert_eq!(docks.right.active, Some(PanelId::new("files")));
     assert!(
         docks.left.is_expanded(),
         "the left sidebar is as it always was"
@@ -808,7 +812,7 @@ fn the_very_first_launch_opens_with_the_right_sidebar_on_its_rail(cx: &mut TestA
     assert!(state(&view, cx).docks.right.is_expanded());
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("changes"))
+        Some(PanelId::new("files"))
     );
 }
 

@@ -169,7 +169,11 @@ fn default_state_is_valid() {
         ])
     );
     assert_eq!(state.docks.right.more, ids(&["inspector", "resources"]));
-    assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
+    assert_eq!(
+        state.docks.right.active,
+        Some(PanelId::new("files")),
+        "a fresh layout's right body opens on Files"
+    );
     assert_eq!(
         (state.docks.left.size, state.docks.right.size),
         (280.0, 350.0)
@@ -543,7 +547,7 @@ fn panel_moves_between_docks_and_reveals_target() {
         state.docks.right.panels,
         ids(&["files", "changes", "agents", "history", "resources"])
     );
-    assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
+    assert_eq!(state.docks.right.active, Some(PanelId::new("files")));
     // A panel that leaves the dock leaves its ⋯ list too.
     assert_eq!(state.docks.right.more, ids(&["resources"]));
     assert_eq!(state.docks.bottom.panels, ids(&["inspector"]));
@@ -1048,7 +1052,7 @@ fn cycling_tabs_wraps_in_the_pane_and_follows_a_focused_dock() {
 fn builtin_presets_match_design_table() {
     let presets = default_presets();
     let names: Vec<&str> = presets.iter().map(|p| p.name.as_str()).collect();
-    assert_eq!(names, vec!["default", "focus", "overview"]);
+    assert_eq!(names, vec!["default", "focus", "overview", "explorer-left"]);
     let focus = &presets[1];
     assert!(!focus.docks.left.visible && !focus.docks.right.visible && !focus.docks.bottom.visible);
     assert!(focus.zoom_active);
@@ -1058,6 +1062,44 @@ fn builtin_presets_match_design_table() {
         CenterLayout::Items(vec![ItemRef::panel(AGENTS_PAGE)])
     );
     assert!(overview.docks.left.visible && overview.docks.right.visible);
+}
+
+#[test]
+fn the_explorer_left_preset_moves_files_to_the_left_sidebar_and_back() {
+    let presets = default_presets();
+    let explorer = presets
+        .iter()
+        .find(|p| p.name == LayoutPreset::EXPLORER_LEFT)
+        .unwrap();
+    assert_eq!(
+        explorer.docks.left.panels,
+        ids(&["sessions", "tasks", "files"])
+    );
+    assert_eq!(explorer.docks.left.active, Some(PanelId::new("files")));
+    assert!(explorer.docks.left.visible && explorer.docks.right.visible);
+    assert_eq!(
+        explorer.docks.right.panels,
+        ids(&["changes", "agents", "history", "inspector", "resources"]),
+        "the right rail has no Files"
+    );
+    assert_eq!(explorer.docks.right.active, Some(PanelId::new("changes")));
+    assert_eq!(explorer.docks.right.more, ids(&["inspector", "resources"]));
+
+    let mut state = WorkbenchState::default();
+    state
+        .switch_preset(LayoutPreset::EXPLORER_LEFT, &presets)
+        .unwrap();
+    check(&state);
+    assert_eq!(state.preset, LayoutPreset::EXPLORER_LEFT);
+    assert!(state.docks.left.panels.contains(&PanelId::new("files")));
+    assert!(!state.docks.right.panels.contains(&PanelId::new("files")));
+    assert_eq!(state.docks.left.active, Some(PanelId::new("files")));
+    state
+        .switch_preset(LayoutPreset::DEFAULT, &presets)
+        .unwrap();
+    check(&state);
+    assert!(state.docks.right.panels.contains(&PanelId::new("files")));
+    assert!(!state.docks.left.panels.contains(&PanelId::new("files")));
 }
 
 #[test]
@@ -2278,7 +2320,7 @@ fn a_dock_that_collapses_gives_the_keyboard_back_to_the_center() {
 
 #[test]
 fn the_active_icon_of_an_open_right_panel_collapses_it_and_any_icon_of_a_collapsed_one_opens_it() {
-    let first = PanelId::new("changes");
+    let first = PanelId::new("files");
     let other = PanelId::new("history");
     let mut state = WorkbenchState::default();
     state.focus_dock(DockPosition::Right);

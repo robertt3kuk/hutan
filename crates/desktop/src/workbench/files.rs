@@ -833,10 +833,140 @@ impl Workbench {
         view.downcast::<super::panels::FilesPanel>().ok()
     }
 
-    /// ⌘⇧E: the Files panel with the keyboard in it, the focused tab's file selected.
+    /// ⌘⇧E: the Files panel with the keyboard in it, the focused tab's file selected; with the
+    /// keyboard in the tree already, back to what the focused tab shows (the panel stays open).
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.files_tree_has_focus(window, cx) {
+            self.focus_editor(window, cx);
+            return;
+        }
         let file = self.active_center_file();
         self.show_files_at(file, window, cx);
+    }
+
+    /// Whether the keyboard is in the Files tree.
+    pub(crate) fn files_tree_has_focus(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.panel::<super::panels::FilesPanel>("files")
+            .is_some_and(|panel| panel.read(cx).has_focus(window, cx))
+    }
+
+    /// Gives the keyboard back to what the focused pane shows, from a dock.
+    pub(crate) fn focus_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.state.active_pane_id();
+        self.focus_pane(pane, window, cx);
+    }
+
+    /// ⌘W with the keyboard in the Files tree: closes the active tab of the center (asking about
+    /// unsaved changes as it always does) and leaves the keyboard and the panel where they are.
+    pub(crate) fn close_center_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.state.active_pane_id();
+        let active = self
+            .state
+            .pane(pane)
+            .filter(|p| p.active < p.items.len())
+            .map(|p| p.active);
+        if let Some(index) = active {
+            self.close_item_checked(pane, index, window, cx);
+        }
+    }
+
+    /// *Files: Collapse All*.
+    pub(crate) fn files_collapse_all(&mut self, cx: &mut Context<Self>) {
+        if let Some(panel) = self.panel::<super::panels::FilesPanel>("files") {
+            panel.update(cx, |panel, cx| panel.collapse_all(cx));
+        }
+    }
+
+    /// *Files: Refresh*.
+    pub(crate) fn files_refresh(&mut self, cx: &mut Context<Self>) {
+        if let Some(panel) = self.panel::<super::panels::FilesPanel>("files") {
+            panel.update(cx, |panel, cx| panel.refresh(cx));
+        }
+    }
+
+    /// The Files panel's ⋯ menu: what the tree lists (hidden files, ignored files), how it
+    /// folds and draws, and the tree-wide actions.
+    pub(crate) fn show_files_more_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::settings::IndentGuides;
+        let Some(panel) = self.panel::<super::panels::FilesPanel>("files") else {
+            return;
+        };
+        let now = self.settings.get::<FilesPanelSettings>();
+        let toggle = |label: &'static str,
+                      key: &'static str,
+                      on: bool,
+                      panel: &Entity<super::panels::FilesPanel>| {
+            let panel = panel.clone();
+            let mut entry = Self::entry(label, move |_, _, cx| {
+                panel.update(cx, |panel, cx| {
+                    panel.set_option(key, toml::Value::Boolean(!on), cx);
+                });
+            });
+            entry.checked = on;
+            entry
+        };
+        let guides = |label: &'static str,
+                      value: &'static str,
+                      on: bool,
+                      panel: &Entity<super::panels::FilesPanel>| {
+            let panel = panel.clone();
+            let mut entry = Self::entry(label, move |_, _, cx| {
+                panel.update(cx, |panel, cx| {
+                    panel.set_option("indent_guides", toml::Value::String(value.to_owned()), cx);
+                });
+            });
+            entry.checked = on;
+            entry
+        };
+        let (expand, collapse, refresh) = (panel.clone(), panel.clone(), panel.clone());
+        let entries = vec![
+            toggle("Show Hidden Files", "show_hidden", now.show_hidden, &panel),
+            toggle(
+                "Show Ignored Files",
+                "show_ignored",
+                now.show_ignored,
+                &panel,
+            ),
+            toggle(
+                "Fold Single-Folder Chains",
+                "compact_folders",
+                now.compact_folders,
+                &panel,
+            ),
+            guides(
+                "Indent Guides on Hover",
+                "hover",
+                now.indent_guides == IndentGuides::Hover,
+                &panel,
+            ),
+            guides(
+                "Indent Guides Always",
+                "always",
+                now.indent_guides == IndentGuides::Always,
+                &panel,
+            ),
+            guides(
+                "No Indent Guides",
+                "off",
+                now.indent_guides == IndentGuides::Off,
+                &panel,
+            ),
+            Self::entry("Expand All", move |_, window, cx| {
+                expand.update(cx, |panel, cx| panel.expand_all(window, cx));
+            }),
+            Self::entry("Collapse All", move |_, _, cx| {
+                collapse.update(cx, |panel, cx| panel.collapse_all(cx));
+            }),
+            Self::entry("Refresh", move |_, _, cx| {
+                refresh.update(cx, |panel, cx| panel.refresh(cx));
+            }),
+        ];
+        self.open_menu(position, entries, window, cx);
     }
 
     /// The Files panel with the keyboard in it and `file` (when there is one) selected.
@@ -949,10 +1079,11 @@ impl Workbench {
 
     /// *Files: Reveal Active File*: the focused tab's file selected in the Files panel.
     pub(crate) fn reveal_active_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_center_file().is_none() {
+        let Some(file) = self.active_center_file() else {
             self.set_notice("The focused tab is not a file", cx);
             return;
-        }
-        self.show_files(window, cx);
+        };
+        // Not `show_files`: from the tree it would hand the keyboard back instead.
+        self.show_files_at(Some(file), window, cx);
     }
 }

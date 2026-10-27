@@ -436,6 +436,8 @@ pub enum Region {
     /// `request-send`, `request-cancel`, `commit-all`, `commit-message`, `commit-confirm`,
     /// `commit-cancel`).
     Changes(&'static str),
+    /// A part of the Files panel (`tree`: the rows' area).
+    Files(&'static str),
     /// File `index` of the Changes view's list, top to bottom.
     ChangesFile(usize),
     /// The *Mawas's memory files* hint on file `index` of the Changes view's list.
@@ -711,6 +713,9 @@ pub struct Workbench {
     pub(crate) attention_marks: crate::sessions::Marks,
     /// The files opened last, saved with the layout (see [`persistence::RecentFiles`]).
     pub(crate) recent_files: persistence::RecentFiles,
+    /// The open folders of the Files panel per root, saved with the layout (see
+    /// [`persistence::FilesExpanded`]); shared with the panel.
+    pub(crate) files_memory: super::panels::FilesMemory,
     /// ⌘P's `fs.find` in flight (dropping it cancels it) and its listener of `fs.generation`
     /// (`quick_open.rs`).
     pub(crate) quick_open: super::quick_open::QuickOpenTasks,
@@ -1020,6 +1025,22 @@ impl Workbench {
             crate::instructions::HarnessHomes::from_env(),
         ));
         let usage = cx.new(|cx| super::usage::UsageDirectory::new(sessions.clone(), cx));
+        let files_expanded = options
+            .state_path
+            .as_deref()
+            .map(persistence::load_files_expanded)
+            .unwrap_or_default();
+        let files_memory = super::panels::FilesMemory::new(files_expanded, {
+            let this = cx.weak_entity();
+            // The panel changes it while it is updated, maybe from inside the workbench's own
+            // update: the save is asked for once that is over.
+            move |cx: &mut App| {
+                let this = this.clone();
+                cx.defer(move |cx| {
+                    this.update(cx, |wb, cx| wb.schedule_save(cx)).ok();
+                });
+            }
+        });
         let env = PanelEnv {
             sessions: sessions.clone(),
             settings: settings.clone(),
@@ -1027,6 +1048,7 @@ impl Workbench {
             usage: usage.clone(),
             regions: regions.clone(),
             instruction_homes: instruction_homes.clone(),
+            files_memory: files_memory.clone(),
         };
 
         let commands = Rc::new(actions::commands(
@@ -1440,6 +1462,7 @@ impl Workbench {
             instructions: super::instructions::InstructionsState::default(),
             instructions_toast_exit: super::ui::motion::Ghost::default(),
             instruction_homes,
+            files_memory,
             layout_toast: None,
             layout_undo: None,
             layout_toast_exit: super::ui::motion::Ghost::default(),
@@ -1817,6 +1840,7 @@ impl Workbench {
             &self.chat_drafts,
             &self.attention_marks,
             &self.recent_files,
+            &self.files_memory.snapshot(),
             self.install.record.as_ref(),
         ) {
             Ok(json) => json,
@@ -2406,8 +2430,11 @@ impl Workbench {
     }
 }
 
-/// `default` → "Default".
+/// `default` → "Default", `explorer-left` → "Explorer left".
 pub fn preset_label(name: &str) -> String {
+    if name == LayoutPreset::EXPLORER_LEFT {
+        return "Explorer left".to_owned();
+    }
     let mut chars = name.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),

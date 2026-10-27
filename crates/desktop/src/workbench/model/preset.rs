@@ -31,6 +31,9 @@ impl LayoutPreset {
     pub const DEFAULT: &'static str = "default";
     pub const FOCUS: &'static str = "focus";
     pub const OVERVIEW: &'static str = "overview";
+    /// The explorer in the left sidebar (EX-1): Files a page of the left dock, the right rail
+    /// without it.
+    pub const EXPLORER_LEFT: &'static str = "explorer-left";
 
     /// Default width of the left sidebar and of the right sidebar (Orca's 280 / 350).
     pub const LEFT_SIZE: f32 = 280.0;
@@ -43,11 +46,13 @@ impl LayoutPreset {
     }
 
     /// The right side's activity rail (CL-CHROME, the clean default; SB-ATTACH): Files first
-    /// (Orca puts the explorer on the right), then Changes (the default tab), Agents, History as
-    /// icons; Requests (the inspector) and Resources listed in its `⋯` menu, Requests coming
-    /// onto the rail with its count while a request waits.
+    /// (Orca puts the explorer on the right), then Changes, Agents, History as icons; Requests
+    /// (the inspector) and Resources listed in its `⋯` menu, Requests coming onto the rail with
+    /// its count while a request waits. A fresh layout's body opens on Files (EX-1: Changes is
+    /// empty on a new project and keeps its count badge on the rail); a saved layout keeps the
+    /// panel it left open.
     fn right(visible: bool) -> Dock {
-        let mut dock = Dock::new(
+        Dock::new(
             &[
                 "files",
                 "changes",
@@ -59,9 +64,18 @@ impl LayoutPreset {
             Self::RIGHT_SIZE,
             visible,
         )
-        .with_more(&["inspector", "resources"]);
-        dock.active = Some(PanelId::new("changes"));
-        dock
+        .with_more(&["inspector", "resources"])
+    }
+
+    /// The right rail of the Explorer-left preset: [`Self::right`] without Files, which lives in
+    /// the left sidebar there; the body opens on Changes.
+    fn right_without_files(visible: bool) -> Dock {
+        Dock::new(
+            &["changes", "agents", "history", "inspector", "resources"],
+            Self::RIGHT_SIZE,
+            visible,
+        )
+        .with_more(&["inspector", "resources"])
     }
 
     fn docks(left: Dock, right: Dock) -> Docks {
@@ -108,11 +122,27 @@ impl LayoutPreset {
         }
     }
 
+    /// The explorer on the left (EX-1, for those who expect it there, as in VS Code, Zed and
+    /// JetBrains): Files is a page of the left sidebar, shown, next to Projects and Tasks; the
+    /// right rail is the default's without Files. A saved layout of this preset keeps what the
+    /// user arranged.
+    pub fn explorer_left_preset() -> Self {
+        let mut left = Self::left(true, &["sessions", "tasks", "files"]);
+        left.active = Some(PanelId::new("files"));
+        Self {
+            name: Self::EXPLORER_LEFT.to_owned(),
+            docks: Self::docks(left, Self::right_without_files(true)),
+            center: CenterLayout::Keep,
+            zoom_active: false,
+        }
+    }
+
     pub fn builtin() -> Vec<LayoutPreset> {
         vec![
             Self::default_preset(),
             Self::focus_preset(),
             Self::overview_preset(),
+            Self::explorer_left_preset(),
         ]
     }
 

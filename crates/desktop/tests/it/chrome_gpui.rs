@@ -112,7 +112,11 @@ fn a_new_home_gets_the_clean_default_and_saves_it_as_the_golden(cx: &mut TestApp
         ])
     );
     assert_eq!(s.docks.right.more, ids(&["inspector", "resources"]));
-    assert_eq!(s.docks.right.active, Some(PanelId::new("changes")));
+    assert_eq!(
+        s.docks.right.active,
+        Some(PanelId::new("files")),
+        "a new home's right body opens on Files"
+    );
     assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(s.docks.right.mode(), DockMode::Compact, "the rail only");
     assert!(!offered(&view, cx), "a new home is not offered what it has");

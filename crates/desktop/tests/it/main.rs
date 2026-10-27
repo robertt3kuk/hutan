@@ -27,6 +27,7 @@ mod direct_gpui;
 mod dock_gpui;
 mod editor_gpui;
 mod experimental_gpui;
+mod files_explorer_gpui;
 mod first_run_gpui;
 mod fx1_gpui;
 mod fx_e2e2_gpui;

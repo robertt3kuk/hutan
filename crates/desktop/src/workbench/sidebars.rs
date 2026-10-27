@@ -174,9 +174,9 @@ impl Workbench {
                 selected: selected("tasks"),
             });
         }
-        // Whatever else the user keeps in the left dock stays reachable. Files (E-13a) and
-        // Search (E-13b) have their keys and commands (⌘⇧E, ⌘P; ⌘⇧F), so their rows show only
-        // while their page is the one shown.
+        // Whatever else the user keeps in the left dock stays reachable. Search (E-13b) has its
+        // key and command (⌘⇧F), so its row shows only while its page is the one shown; Files
+        // (EX-1: the Explorer-left preset keeps it here) has its row whenever it is in this dock.
         for panel in &dock.panels {
             let named = matches!(
                 panel.as_str(),
@@ -185,8 +185,7 @@ impl Workbench {
                     | "assistant"
                     | super::model::AGENTS_PAGE
                     | super::model::MEMORY_PAGE
-            ) || (matches!(panel.as_str(), "files" | "search")
-                && !selected(panel.as_str()));
+            ) || (panel.as_str() == "search" && !selected(panel.as_str()));
             if named {
                 continue;
             }

@@ -13,7 +13,7 @@ use common::{TestDaemon, draw, offline_connection, open_options, open_with, wait
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_desktop::macos::{FakeOpenPanel, MacServices};
 use hutan_desktop::workbench::model::ItemRef;
-use hutan_desktop::workbench::panels::{FileGitMark, FilesPanel};
+use hutan_desktop::workbench::panels::{FILES_GIT_READ_EVERY, FileGitMark, FilesPanel};
 use hutan_desktop::workbench::{Region, SheetFocus, Workbench, WorkbenchOptions, actions};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
@@ -206,13 +206,16 @@ fn the_files_panel_marks_changed_files_and_their_folders_and_follows_fs_changes(
 
     // An edit of a clean file arrives as an fs.changed: the file gets its mark without a click.
     // The daemon's watcher (FSEvents) may not be live yet when the first edit happens, so the
-    // edit is made again until the mark shows (the stimulus is retried, nothing is slept).
+    // edit is made again until the mark shows (the stimulus is retried, nothing is slept). The
+    // panel reads the git marks at most once in `FILES_GIT_READ_EVERY`; the test clock runs that
+    // out each time round.
     let mut edits = 0;
     wait_until(cx, "the mark of the edited file", |cx| {
         if edits % 25 == 0 {
             fs::write(root.join("notes.txt"), format!("one\nedited {edits}\n")).unwrap();
         }
         edits += 1;
+        cx.executor().advance_clock(FILES_GIT_READ_EVERY);
         panel.read_with(cx, |p, _| {
             p.git().mark(&root.join("notes.txt")) == Some(FileGitMark::Modified)
         })

@@ -154,6 +154,13 @@ actions!(
         /// explains what happens first.
         TrackHomeChanges,
         RevealActiveFile,
+        /// Give the keyboard back to what the focused tab shows (Esc in the Files tree); the
+        /// panel stays open.
+        FocusEditor,
+        /// Close every folder of the Files tree but the root.
+        FilesCollapseAll,
+        /// List the Files tree's open folders again and read the git marks now.
+        FilesRefresh,
         /// Show the history of the focused file tab's file in a tab.
         ShowFileHistory,
         RewindFocusedChat,
@@ -429,6 +436,9 @@ data_actions! {
     /// Show the context menu of a row of the Files panel (a file or a folder, by its path) at a
     /// position: *Show File History* for a file.
     ShowFilesMenu(FilesMenuAt);
+    /// Show the Files panel's ⋯ menu (hidden and ignored files, folding, indent guides, expand
+    /// and collapse all, refresh) at a position.
+    ShowFilesMoreMenu(gpui::Point<gpui::Pixels>);
     /// Open the Changes view of the checkout at this path (a worktree or a main checkout).
     ReviewChangesAt(String);
     /// Open the Changes view of the checkout of a changed file with that file selected (a file
@@ -799,6 +809,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
             TrackHomeChanges,
         ),
         command("Files: Reveal Active File", RevealActiveFile),
+        command("Files: Collapse All", FilesCollapseAll),
+        command("Files: Refresh", FilesRefresh),
         command("Git: Show File History", ShowFileHistory),
         command("Search: Find in Files", ShowSearch),
         command("Search: Replace in Files", ShowSearchReplace),

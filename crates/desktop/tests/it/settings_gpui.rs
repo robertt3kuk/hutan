@@ -466,7 +466,7 @@ fn presets_are_saved_renamed_and_deleted_from_the_layout_page(cx: &mut TestAppCo
 
     // Rename keeps the table and follows the preset in use.
     draw(cx);
-    assert!(drawn(&view, cx, Region::SettingsItem("preset-rename", 3)));
+    assert!(drawn(&view, cx, Region::SettingsItem("preset-rename", 4)));
     view.update_in(cx, |wb, window, cx| {
         wb.ask_rename_layout_preset("Mine-", window, cx)
     });

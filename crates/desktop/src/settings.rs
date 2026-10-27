@@ -665,21 +665,41 @@ impl Setting for InspectorPanelSettings {
     const NAMESPACE: &'static str = "panels.inspector";
 }
 
+/// When the Files panel draws the vertical guides along open folders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentGuides {
+    /// While the pointer is over the tree.
+    #[default]
+    Hover,
+    Always,
+    Off,
+}
+
 /// The `panels.files` namespace: the Files panel's tree of the active project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct FilesPanelSettings {
     /// List what `.gitignore` and `.ignore` rules match (dimmed) too.
     pub show_ignored: bool,
+    /// List dotfiles (names that start with a dot); off, the tree hides them.
+    pub show_hidden: bool,
     /// Select the file of the focused tab in the tree (its folders open) when the tab changes.
     pub auto_reveal: bool,
+    /// Show a folder that holds only one folder on the same row as it (`src/utils/helpers`).
+    pub compact_folders: bool,
+    /// When the vertical guides along open folders are drawn.
+    pub indent_guides: IndentGuides,
 }
 
 impl Default for FilesPanelSettings {
     fn default() -> Self {
         Self {
             show_ignored: false,
+            show_hidden: true,
             auto_reveal: true,
+            compact_folders: true,
+            indent_guides: IndentGuides::Hover,
         }
     }
 }
@@ -2027,7 +2047,7 @@ mod tests {
             .into_iter()
             .map(|d| d.layout.name)
             .collect();
-        assert_eq!(names, ["default", "focus", "overview"]);
+        assert_eq!(names, ["default", "focus", "overview", "explorer-left"]);
 
         layout.presets.insert(
             "wide".into(),
@@ -2056,7 +2076,7 @@ mod tests {
             },
         );
         let defs = layout.preset_defs();
-        assert_eq!(defs.len(), 4);
+        assert_eq!(defs.len(), 5, "the four built-ins and `wide`");
         let overview = defs.iter().find(|d| d.layout.name == "overview").unwrap();
         assert!(
             matches!(&overview.layout.center, CenterLayout::Items(_)),

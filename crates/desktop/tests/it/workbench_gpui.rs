@@ -53,7 +53,7 @@ fn opens_with_default_layout_and_title(cx: &mut TestAppContext) {
         state.docks.left.panels,
         vec![PanelId::new("sessions"), PanelId::new("tasks")]
     );
-    assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
+    assert_eq!(state.docks.right.active, Some(PanelId::new("files")));
     assert_eq!(state.panes().len(), 1);
     // No project: the window is only named for the app (never the tab's "Welcome").
     assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
@@ -924,7 +924,8 @@ fn the_view_menu_checks_the_current_preset(cx: &mut TestAppContext) {
         [
             ("Default".to_owned(), true),
             ("Focus".to_owned(), false),
-            ("Overview".to_owned(), false)
+            ("Overview".to_owned(), false),
+            ("Explorer left".to_owned(), false)
         ]
     );
     cx.dispatch_action(actions::ApplyPreset("focus".into()));
@@ -934,7 +935,8 @@ fn the_view_menu_checks_the_current_preset(cx: &mut TestAppContext) {
         [
             ("Default".to_owned(), false),
             ("Focus".to_owned(), true),
-            ("Overview".to_owned(), false)
+            ("Overview".to_owned(), false),
+            ("Explorer left".to_owned(), false)
         ]
     );
     assert!(

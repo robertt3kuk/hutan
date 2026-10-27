@@ -19,6 +19,8 @@ pub struct PanelEnv {
     /// The folders of Codex, Claude Code and OMP whose instruction files the `instructions`
     /// panel lists; `None` lists none (the workbench sets them, tests replace them).
     pub instruction_homes: Rc<std::cell::RefCell<Option<crate::instructions::HarnessHomes>>>,
+    /// The open folders the Files panel remembers per root (saved with the layout).
+    pub files_memory: super::panels::FilesMemory,
 }
 
 impl std::fmt::Debug for PanelEnv {

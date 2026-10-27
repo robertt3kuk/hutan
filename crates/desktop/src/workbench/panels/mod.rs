@@ -9,6 +9,7 @@ mod changes;
 pub(crate) mod common;
 mod files;
 mod files_git;
+mod files_tree;
 mod history;
 mod history_catalog;
 mod history_model;
@@ -52,10 +53,16 @@ pub use common::{
 };
 pub(crate) use common::{edit_text, field_box};
 pub use files::{
-    FilesPanel, MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS, Row as FileRow, RowKind as FileRowKind,
-    Tree as FileTree,
+    FilesMemory, FilesPanel, GIT_READ_EVERY as FILES_GIT_READ_EVERY,
+    MAX_CACHED_ROOTS as FILES_MAX_CACHED_ROOTS, MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS,
+    RELIST_EVERY as FILES_RELIST_EVERY,
 };
 pub use files_git::{GitMark as FileGitMark, GitStatus as FileGitStatus};
+pub use files_tree::{
+    ExpandRefusal as FileExpandRefusal, MORE_ROW as FILES_MORE_ROW, Row as FileRow,
+    RowKind as FileRowKind, Tree as FileTree, TreeOptions as FileTreeOptions, file_icon,
+    natural_cmp,
+};
 pub(crate) use history::chip;
 pub use history::{Confirm as HistoryConfirm, HistoryPanel, Mode as HistoryMode};
 pub use history_catalog::{
