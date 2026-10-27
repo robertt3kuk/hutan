@@ -233,3 +233,40 @@ fn the_column_is_capped_at_32_cells_and_30_percent_of_the_view(cx: &mut TestAppC
         "no column in a tiny view"
     );
 }
+
+#[gpui::test]
+fn a_run_that_began_above_the_view_still_says_who_in_the_first_row_in_view(
+    cx: &mut TestAppContext,
+) {
+    // One commit made all 100 lines.
+    let text: String = (1..=100).map(|n| format!("line {n}\n")).collect();
+    let (view, buffer, cx) = open(cx, "a.txt", &text, false);
+    view.update(cx, |v, cx| v.set_blame_gutter(true, cx));
+    buffer.update(cx, |b, cx| {
+        b.set_blame(
+            Some(BlameData {
+                commits: vec![commit("a", "Ada", "everything")],
+                lines: vec![0; 100],
+                text: Arc::from(text.as_str()),
+            }),
+            cx,
+        );
+    });
+    draw(cx);
+    let labelled = |cx: &gpui::VisualTestContext| -> Vec<usize> {
+        view.read_with(cx, |v, _| {
+            v.stats()
+                .last_rows
+                .iter()
+                .filter(|r| r.blame)
+                .map(|r| r.line)
+                .collect()
+        })
+    };
+    assert_eq!(labelled(cx), [0], "the run's first line");
+    // Scrolled down: the run began above the view; its label is on the first line in view.
+    let line_h = view.read_with(cx, |v, _| f32::from(v.layout().unwrap().line_height));
+    view.update(cx, |v, cx| v.scroll_to(30.0 * line_h, cx));
+    draw(cx);
+    assert_eq!(labelled(cx), [30]);
+}

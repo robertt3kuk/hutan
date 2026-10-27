@@ -20,10 +20,10 @@ pub enum GitBaseKind {
 }
 
 impl GitBaseKind {
-    /// `index` or `HEAD`.
+    /// `the index` or `HEAD`, as the peek says "against …".
     pub fn name(self) -> &'static str {
         match self {
-            Self::Index => "index",
+            Self::Index => "the index",
             Self::Head => "HEAD",
         }
     }

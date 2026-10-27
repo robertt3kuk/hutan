@@ -274,6 +274,12 @@ impl CodeView {
         };
         let y = layout.bounds.top() + layout.line_height * (row as f32 + 1.0) - px(self.scroll_y);
         let x = layout.text_left - layout.cell_width * 0.5;
+        // As wide as its text, but inside the view: a narrow pane's peek never reaches into its
+        // neighbour.
+        let cell = f32::from(layout.cell_width);
+        let room = f32::from(layout.bounds.right() - x);
+        let max_w = room.clamp(cell * 24.0, cell * 80.0);
+        let min_w = (cell * 36.0).min(max_w);
         let mut border = muted;
         border.a *= 0.35;
         let stage = self.git_stage;
@@ -299,8 +305,8 @@ impl CodeView {
                 .gap(px(6.0))
                 .px(px(10.0))
                 .py(px(8.0))
-                .min_w(px(f32::from(layout.cell_width) * 36.0))
-                .max_w(px(f32::from(layout.cell_width) * 80.0))
+                .min_w(px(min_w))
+                .max_w(px(max_w))
                 .shadow_md()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -310,12 +316,14 @@ impl CodeView {
                         .items_center()
                         .gap(px(8.0))
                         .child(div().flex_none().w(px(3.0)).h(layout.line_height).bg(color))
-                        .child(div().flex_1().min_w_0().child(div().child(title)).child(
-                            div().text_color(muted).child(format!(
-                                "against the {kind_name} · {} of {count}",
-                                index + 1
-                            )),
-                        ))
+                        .child(
+                            div().flex_1().min_w_0().child(div().child(title)).child(
+                                div().text_color(muted).child(format!(
+                                    "against {kind_name} · {} of {count}",
+                                    index + 1
+                                )),
+                            ),
+                        )
                         .when(stage, |row| {
                             row.child(button("git-peek-stage", "Stage hunk").on_click(
                                 cx.listener(move |this, _, _, cx| this.stage_git_hunk(index, cx)),

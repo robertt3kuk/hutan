@@ -750,7 +750,10 @@ fn prepare(
             let Some(this) = buffer.blame_line(line) else {
                 return (None, None);
             };
+            // The first line in view says its run too when the run began above the view, so a
+            // long run never leaves the column blank (F-09: text on two rows only).
             let starts_run = line == 0
+                || line == lines.start
                 || buffer
                     .blame_line(line - 1)
                     .is_none_or(|before| !before.same_run(this));
@@ -808,6 +811,7 @@ fn prepare(
             number: number.is_some(),
             carets: carets.len(),
             selected_cells,
+            blame: blame.is_some(),
             git_bar: git.bar.is_some(),
             git_removed_above: git.removed_above.is_some(),
         });

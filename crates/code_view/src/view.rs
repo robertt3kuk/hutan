@@ -179,6 +179,8 @@ pub struct DrawnRow {
     pub carets: usize,
     /// Cells of selection fill on this row (the line break counts one).
     pub selected_cells: usize,
+    /// The gutter's blame column has text on this row.
+    pub blame: bool,
     /// The gutter draws a git change bar on this row (a wrapped line has one on every row).
     pub git_bar: bool,
     /// The gutter draws the mark of removed lines on this row's top edge.
