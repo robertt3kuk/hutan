@@ -132,8 +132,11 @@ fn a_new_file_is_an_inline_row_that_checks_the_name_and_opens_the_file(cx: &mut 
     let edit = panel.read_with(cx, |p, _| p.editing().unwrap());
     assert_eq!(edit.kind, FilesEditKind::NewFile);
     assert_eq!(edit.parent, root.join("src"));
-    wait_until(cx, "src open", |cx| {
-        panel.read_with(cx, |p, _| p.tree().unwrap().is_expanded(&root.join("src")))
+    wait_until(cx, "src open and listed", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.tree().unwrap().is_expanded(&root.join("src"))
+                && p.tree().unwrap().is_listed(&root.join("src"))
+        })
     });
 
     // What is typed shows in the field; "/" and a taken name are refused, in words.
@@ -293,6 +296,324 @@ fn tab_paths(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String> {
             })
             .collect()
     })
+}
+
+/// Renames `path` through the Files tree's own field, as the user does.
+fn rename(panel: &Entity<FilesPanel>, cx: &mut VisualTestContext, path: &Path, to: &str) {
+    let path = path.to_owned();
+    panel.update_in(cx, |p, window, cx| {
+        assert!(p.begin_rename_of(path, window, cx), "the row exists");
+    });
+    draw(cx);
+    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_input(to);
+    cx.simulate_keystrokes("enter");
+}
+
+fn buffer_of(
+    view: &Entity<Workbench>,
+    cx: &VisualTestContext,
+    path: &Path,
+) -> Option<Entity<hutan_code_view::FileBuffer>> {
+    let key = path.display().to_string();
+    view.read_with(cx, |wb, _| wb.buffers().get(&key).cloned())
+}
+
+fn text_of(buffer: &Entity<hutan_code_view::FileBuffer>, cx: &VisualTestContext) -> String {
+    buffer.read_with(cx, |b, _| b.text().to_string())
+}
+
+fn has_tab(view: &Entity<Workbench>, cx: &VisualTestContext, path: &Path) -> bool {
+    tab_paths(view, cx).contains(&path.display().to_string())
+}
+
+#[gpui::test]
+fn a_rename_moves_the_tabs_with_their_unsaved_text_and_a_folder_takes_its_files_along(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    let a = write(&root, "src/a.txt", "alpha\n");
+    let b = write(&root, "src/b.txt", "beta\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["src"]);
+    panel.update(cx, |p, cx| p.toggle(&root.join("src"), cx));
+    wait_names(&panel, cx, &["src", "  a.txt", "  b.txt"]);
+
+    // Two tabs; the one in front has text the disk does not.
+    open_tab(&view, cx, &b, "beta\n");
+    open_tab(&view, cx, &a, "alpha\n");
+    cx.simulate_input("zero ");
+    let buffer = buffer_of(&view, cx, &a).expect("a.txt's buffer");
+    assert!(buffer.read_with(cx, |b, _| b.is_dirty()));
+    assert_eq!(text_of(&buffer, cx), "zero alpha\n");
+
+    rename(&panel, cx, &a, "first.txt");
+    let first = root.join("src/first.txt");
+    wait_until(cx, "the file renamed on disk", |_| {
+        first.exists() && !a.exists()
+    });
+    wait_until(cx, "the tab following", |cx| {
+        has_tab(&view, cx, &first) && !has_tab(&view, cx, &a)
+    });
+    // The same buffer, under the new path: text and unsaved state kept, nothing under the old.
+    let moved = buffer_of(&view, cx, &first).expect("a buffer under the new path");
+    assert_eq!(moved.entity_id(), buffer.entity_id());
+    assert!(buffer_of(&view, cx, &a).is_none());
+    assert_eq!(text_of(&moved, cx), "zero alpha\n");
+    assert!(moved.read_with(cx, |b, _| b.is_dirty() && b.path() == first));
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "alpha\n");
+
+    // Saving writes the new file, not a file at the old path.
+    cx.dispatch_action(actions::FocusEditor);
+    draw(cx);
+    cx.simulate_keystrokes("cmd-s");
+    wait_until(cx, "the save", |cx| {
+        moved.read_with(cx, |b, _| !b.is_dirty() && !b.is_saving())
+    });
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "zero alpha\n");
+    assert!(!a.exists(), "the old path is not written again");
+
+    // A folder: every tab below it follows, and the open folder stays open under its new name.
+    rename(&panel, cx, &root.join("src"), "lib");
+    let (lib_first, lib_b) = (root.join("lib/first.txt"), root.join("lib/b.txt"));
+    wait_until(cx, "the folder renamed", |_| {
+        lib_first.exists() && lib_b.exists() && !root.join("src").exists()
+    });
+    wait_until(cx, "both tabs under lib", |cx| {
+        has_tab(&view, cx, &lib_first) && has_tab(&view, cx, &lib_b)
+    });
+    assert_eq!(
+        buffer_of(&view, cx, &lib_first).map(|b| b.entity_id()),
+        Some(buffer.entity_id())
+    );
+    idle(&panel, cx);
+    wait_names(&panel, cx, &["lib", "  b.txt", "  first.txt"]);
+}
+
+#[gpui::test]
+fn a_write_that_races_a_rename_is_found_at_the_new_path(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    let clean = write(&root, "clean.txt", "one\n");
+    let dirty = write(&root, "dirty.txt", "two\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["clean.txt", "dirty.txt"]);
+    open_tab(&view, cx, &clean, "one\n");
+    open_tab(&view, cx, &dirty, "two\n");
+    cx.simulate_input("mine ");
+    let dirty_buffer = buffer_of(&view, cx, &dirty).unwrap();
+    let clean_buffer = buffer_of(&view, cx, &clean).unwrap();
+
+    // Somebody (an agent) writes both files, and the rename follows at once: whichever of the
+    // daemon's notice and the rename comes first, the new path ends up with what is on disk.
+    std::fs::write(&clean, "agent wrote this\n").unwrap();
+    std::fs::write(&dirty, "agent wrote that\n").unwrap();
+    rename(&panel, cx, &clean, "clean2.txt");
+    wait_until(cx, "the first rename", |_| root.join("clean2.txt").exists());
+    idle(&panel, cx);
+    rename(&panel, cx, &dirty, "dirty2.txt");
+    wait_until(cx, "the second rename", |_| {
+        root.join("dirty2.txt").exists()
+    });
+
+    wait_until(
+        cx,
+        "the clean buffer to reload what the agent wrote",
+        |cx| text_of(&clean_buffer, cx) == "agent wrote this\n",
+    );
+    assert!(!clean_buffer.read_with(cx, |b, _| b.is_dirty()));
+    wait_until(cx, "the bar on the buffer with unsaved text", |cx| {
+        dirty_buffer.read_with(cx, |b, _| {
+            matches!(
+                b.conflict(),
+                Some(hutan_code_view::Conflict::Changed { .. })
+            )
+        })
+    });
+    assert_eq!(
+        text_of(&dirty_buffer, cx),
+        "mine two\n",
+        "the user's text is never replaced"
+    );
+    assert!(dirty_buffer.read_with(cx, |b, _| b.path() == root.join("dirty2.txt")));
+}
+
+#[gpui::test]
+fn the_language_servers_document_is_opened_again_under_the_new_path(cx: &mut TestAppContext) {
+    use crate::lsp_gpui::{Env, open_file};
+    let env = Env::new(
+        "always",
+        |_| serde_json::json!({"diagnostics": true, "warnings": true}),
+    );
+    let (view, cx) = env.open(cx, "");
+    let tab = open_file(&view, cx, &env.file("a.fake"), "let x = error;\n");
+    wait_until(cx, "the server's diagnostic", |cx| {
+        tab.buffer.read_with(cx, |b, _| b.diagnostics().len() == 1)
+    });
+    // Unsaved text: the server must get this, not what is on disk.
+    cx.simulate_input("// top ");
+    let opens = view.read_with(cx, |wb, cx| wb.lsp().read(cx).opens_sent());
+
+    let panel = files_panel(&view, cx);
+    wait_until(cx, "the tree", |cx| {
+        panel.read_with(cx, |p, _| p.rows().iter().any(|r| r.name == "a.fake"))
+    });
+    rename(&panel, cx, &env.file("a.fake"), "b.fake");
+    let new_path = env.file("b.fake").display().to_string();
+    let old_path = env.file("a.fake").display().to_string();
+    wait_until(cx, "the document under the new path", |cx| {
+        view.read_with(cx, |wb, cx| {
+            let lsp = wb.lsp().read(cx);
+            lsp.is_open(&new_path) && !lsp.has_doc(&old_path)
+        })
+    });
+    assert_eq!(
+        view.read_with(cx, |wb, cx| wb.lsp().read(cx).opens_sent()),
+        opens + 1,
+        "one document opened again"
+    );
+    // The server answers for the new document (the old diagnostics went with the old path).
+    wait_until(cx, "the diagnostic again", |cx| {
+        tab.buffer.read_with(cx, |b, _| {
+            b.path() == env.file("b.fake") && b.diagnostics().len() == 1
+        })
+    });
+    assert!(
+        tab.buffer.read_with(cx, |b, _| b.is_dirty()
+            && b.text().to_string() == "// top let x = error;\n"),
+        "the unsaved text is what the server has"
+    );
+}
+
+/// Whether `name` is anywhere in the folder the daemon's Trash is.
+fn in_trash(daemon: &TestDaemon, name: &str) -> bool {
+    fn walk(dir: &Path, name: &str) -> bool {
+        std::fs::read_dir(dir).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|e| e.file_name() == name || (e.path().is_dir() && walk(&e.path(), name)))
+        })
+    }
+    walk(&daemon.dir.path().join("trash"), name)
+}
+
+fn sheet(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<(String, String, bool)> {
+    view.read_with(cx, |wb, _| {
+        wb.modal()
+            .map(|m| (m.title.to_string(), m.message.to_string(), m.destructive))
+    })
+}
+
+#[gpui::test]
+fn the_trash_sheet_warns_of_unsaved_text_and_a_working_agent_and_undo_brings_it_back(
+    cx: &mut TestAppContext,
+) {
+    use hutan_protocol::messages::{AgentApplied, AgentReportRequest, AgentState, Request};
+    let daemon = TestDaemon::start();
+    let (_dir, root) = scratch();
+    let a = write(&root, "a.txt", "alpha\n");
+    write(&root, "b.txt", "beta\n");
+    // Codex works in this checkout.
+    let workspace = daemon.create_workspace("proj", &[&root]);
+    let session = daemon.create_session(&["sleep", "600"], Some(workspace.id));
+    let applied: AgentApplied = daemon.call(Request::AgentReport(AgentReportRequest {
+        pid: None,
+        session_id: session.id,
+        source: "test".into(),
+        agent: "codex".into(),
+        state: Some(AgentState::Working),
+        message: None,
+        seq: 1,
+        agent_session_id: None,
+        resume_argv: None,
+        node: None,
+    }));
+    assert!(applied.applied);
+    let (view, cx) = open(cx, &daemon);
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["a.txt", "b.txt"]);
+    open_tab(&view, cx, &a, "alpha\n");
+    cx.simulate_input("zero ");
+    let buffer = buffer_of(&view, cx, &a).unwrap();
+    wait_until(cx, "the agent to be working", |cx| {
+        view.read_with(cx, |wb, cx| {
+            !wb.sessions()
+                .read(cx)
+                .agents_working_near(&[root.clone()])
+                .is_empty()
+        })
+    });
+
+    // ⌘⌫ always asks: the name, the unsaved tab, the agent. Cancelling deletes nothing.
+    focus_tree(&panel, cx);
+    select(&panel, cx, &a);
+    cx.simulate_keystrokes("cmd-backspace");
+    let (title, message, destructive) = sheet(&view, cx).expect("the sheet");
+    assert_eq!(title, "Move “a.txt” to the Trash?");
+    assert!(destructive, "Return cancels, never confirms");
+    assert!(
+        message.contains("Unsaved changes in 1 tab (a.txt)"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Codex is working in this checkout"),
+        "{message}"
+    );
+    view.update_in(cx, |wb, window, cx| wb.close_modal(window, cx));
+    draw(cx);
+    assert!(a.exists() && !in_trash(&daemon, "a.txt"));
+
+    // Confirmed: the Trash takes it; the tab says so and keeps the text.
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("cmd-backspace");
+    assert!(sheet(&view, cx).is_some());
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "the file in the Trash", |_| {
+        !a.exists() && in_trash(&daemon, "a.txt")
+    });
+    wait_until(cx, "the tab's deleted bar", |cx| {
+        buffer.read_with(cx, |b, _| {
+            matches!(b.conflict(), Some(hutan_code_view::Conflict::Deleted))
+        })
+    });
+    assert_eq!(
+        text_of(&buffer, cx),
+        "zero alpha\n",
+        "the text stays in the tab"
+    );
+    idle(&panel, cx);
+    wait_names(&panel, cx, &["b.txt"]);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.selected().map(Path::to_owned)),
+        Some(root.join("b.txt")),
+        "the selection takes the place of the row that went"
+    );
+
+    // ⌘Z puts it back (the Trash's ticket) and the tab finds its file; ⇧⌘Z sends it away again.
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("cmd-z");
+    wait_until(cx, "the file back", |_| a.exists());
+    wait_until(cx, "the bar gone", |cx| {
+        buffer.read_with(cx, |b, _| b.conflict().is_none())
+    });
+    assert_eq!(text_of(&buffer, cx), "zero alpha\n");
+    assert!(buffer.read_with(cx, |b, _| b.is_dirty()));
+    idle(&panel, cx);
+    wait_names(&panel, cx, &["a.txt", "b.txt"]);
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("cmd-shift-z");
+    wait_until(cx, "the file in the Trash again", |_| !a.exists());
+    wait_until(cx, "the bar again", |cx| {
+        buffer.read_with(cx, |b, _| {
+            matches!(b.conflict(), Some(hutan_code_view::Conflict::Deleted))
+        })
+    });
 }
 
 fn _unused(_: ClipboardEntry, _: ClipboardItem, _: ExternalPaths, _: Modifiers) {}

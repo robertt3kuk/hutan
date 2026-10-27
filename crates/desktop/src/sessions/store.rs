@@ -1664,14 +1664,23 @@ impl SessionsStore {
 
     /// The live sessions whose agent works in a place that holds one of `paths`, or that one of
     /// them holds (a folder about to go to the Trash that a session runs in): the session's title
-    /// and the agent's id (`codex`, `claude`, `omp`, a chat's harness) when it has one.
+    /// and the agent's id (`codex`, `claude`, `omp`, a chat's harness) when it has one. A place
+    /// is where the session runs (its checkout, its folder, its directory) and, while those are
+    /// not known yet, the folders of the project it belongs to (never Home's: that is everything).
     pub fn agents_working_near(&self, paths: &[PathBuf]) -> Vec<(String, Option<String>)> {
         self.state
             .sessions
             .iter()
             .filter(|s| self.is_working(s))
             .filter(|s| {
-                session_places(s).iter().any(|place| {
+                let mut places = session_places(s);
+                if places.is_empty()
+                    && let Some(workspace) = self.workspace(s.workspace_id)
+                    && workspace.kind != WorkspaceKind::Home
+                {
+                    places.extend(workspace.roots.iter().cloned());
+                }
+                places.iter().any(|place| {
                     paths
                         .iter()
                         .any(|p| p.starts_with(place) || place.starts_with(p))

@@ -216,9 +216,11 @@ impl Workbench {
                 }
             }
             // The buffers and views are under their new keys: now the layout may point at them.
-            self.mutate(cx, |state| {
-                state.retarget_files(from, to);
-            });
+            // (A change of layout clears the notice line, so nothing is touched when no tab of
+            // the live layout moved: a word about a failed item of the batch stays.)
+            if !self.state.retarget_files(from, to).is_empty() {
+                self.after_change(cx);
+            }
             // A write that raced the move (an agent's) is found now: a clean buffer reloads, a
             // changed one gets the bar.
             for (_, new) in &keys {
