@@ -1192,7 +1192,12 @@ impl FilesPanel {
         let Some(selected) = self.selected.clone() else {
             return;
         };
-        if self.index_of(&selected).is_some() {
+        if let Some(index) = self.index_of(&selected) {
+            // A folder that a chain folded into one row is selected as that row.
+            let head = self.rows()[index].path.clone();
+            if head != selected {
+                self.selected = Some(head);
+            }
             return;
         }
         // A row the filter does not show is nobody's selection (a key must not act on it).
@@ -1528,7 +1533,9 @@ impl FilesPanel {
                 let dotted =
                     !row.ignored && row.kind == RowKind::Dir && self.git.has_changes_in(&row.path);
                 let color = match row.kind {
-                    RowKind::More | RowKind::Failed => theme.muted,
+                    // The row after a truncated listing is a link: it filters that folder.
+                    RowKind::More => theme.accent,
+                    RowKind::Failed => theme.muted,
                     _ if row.ignored => theme.faint,
                     _ => mark.map_or(theme.fg, |m| m.color(&theme)),
                 };

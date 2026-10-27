@@ -658,8 +658,13 @@ impl FilesPanel {
             }
         }
         self.open_dir(folder, cx);
-        if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(folder)) {
-            self.selected = Some(folder.to_owned());
+        // Its row may not exist yet (the folders above are being listed): it is selected when
+        // it does.
+        self.follow = Some((folder.to_owned(), false));
+        self.apply_follow();
+        if self.follow.is_none()
+            && let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(folder))
+        {
             self.scroll
                 .scroll_to_item(index, gpui::ScrollStrategy::Center);
         }
@@ -1073,10 +1078,12 @@ impl FilesPanel {
                 },
                 _,
             ) => "This project has more files than are searched".to_owned(),
-            (FilterStatus::Found { shown: 0, .. }, _) => "No file matches".to_owned(),
+            (FilterStatus::Found { shown: 0, .. }, _) => String::new(),
             (FilterStatus::Found { shown, .. }, _) => {
                 format!("{shown} {}", if *shown == 1 { "file" } else { "files" })
             }
+            // The empty list says it: no line under the field for a search that found nothing.
+            (FilterStatus::Searching, Some(p)) if p.files() == 0 => String::new(),
             (FilterStatus::Searching, Some(p)) => {
                 format!("{} found so far… searching", p.files())
             }
@@ -1086,7 +1093,8 @@ impl FilesPanel {
             }
             (FilterStatus::Idle, _) => String::new(),
         };
-        if self.env.settings.get::<FilesPanelSettings>().show_ignored
+        if !line.is_empty()
+            && self.env.settings.get::<FilesPanelSettings>().show_ignored
             && self.filter_mode() == FilterMode::Filter
         {
             line.push_str(" · Ignored files are not searched; use Search");

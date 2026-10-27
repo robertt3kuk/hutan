@@ -446,6 +446,52 @@ fn return_opens_the_first_file_and_a_folder_row_shows_that_folder_in_the_tree(
 }
 
 #[gpui::test]
+fn a_folded_folder_row_opens_every_folder_above_it_and_is_selected_once_listed(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    small_project(&root);
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["deep", "docs", "src", "main.rs", "notes.md"]);
+    focus_tree(&panel, cx);
+    type_text(cx, "main_deep");
+    wait_found(&panel, cx);
+    // The folders of the results are made up: `deep/a/b` is one folded row and nothing of it
+    // is listed.
+    wait_names(&panel, cx, &["deep/a/b", "  main_deep.rs"]);
+    assert!(!panel.read_with(cx, |p, _| p.tree().unwrap().knows(&root.join("deep"))));
+    cx.simulate_keystrokes("down enter");
+    wait_until(cx, "the filter to end", |cx| {
+        !panel.read_with(cx, |p, _| p.filtering())
+    });
+    wait_until(cx, "the folders to be listed", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.tree().unwrap().is_listed(&root.join("deep/a/b"))
+        })
+    });
+    // The chain is one row and the folder is selected as that row (the first folder's path).
+    wait_until(cx, "the folder to be selected", |cx| {
+        panel.read_with(cx, |p, _| p.selected() == Some(root.join("deep").as_path()))
+    });
+    // The tree shows the chain folded and its file.
+    wait_names(
+        &panel,
+        cx,
+        &[
+            "deep/a/b",
+            "  main_deep.rs",
+            "docs",
+            "src",
+            "main.rs",
+            "notes.md",
+        ],
+    );
+}
+
+#[gpui::test]
 fn command_f_and_the_command_put_the_keyboard_in_the_field(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
