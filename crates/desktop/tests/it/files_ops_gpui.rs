@@ -460,6 +460,8 @@ fn the_language_servers_document_is_opened_again_under_the_new_path(cx: &mut Tes
     let opens = view.read_with(cx, |wb, cx| wb.lsp().read(cx).opens_sent());
 
     let panel = files_panel(&view, cx);
+    // The tree listed the folder before the test made a.fake: list it again.
+    panel.update(cx, |p, cx| p.refresh(cx));
     wait_until(cx, "the tree", |cx| {
         panel.read_with(cx, |p, _| p.rows().iter().any(|r| r.name == "a.fake"))
     });
@@ -614,6 +616,387 @@ fn the_trash_sheet_warns_of_unsaved_text_and_a_working_agent_and_undo_brings_it_
             matches!(b.conflict(), Some(hutan_code_view::Conflict::Deleted))
         })
     });
+}
+
+#[gpui::test]
+fn duplicate_names_the_copy_and_opens_its_field_and_paste_takes_the_next_free_name(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    write(&root, "a.txt", "alpha\n");
+    write(&root, "b.txt", "beta\n");
+    write(&root, "docs/readme.md", "# docs\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["docs", "a.txt", "b.txt"]);
+    focus_tree(&panel, cx);
+
+    // ⌘D: `a copy.txt` next to it, and its name field open with the stem selected.
+    select(&panel, cx, &root.join("a.txt"));
+    cx.simulate_keystrokes("cmd-d");
+    wait_until(cx, "the copy", |_| root.join("a copy.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(root.join("a copy.txt")).unwrap(),
+        "alpha\n"
+    );
+    wait_until(cx, "the name field on the copy", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.editing()
+                .is_some_and(|e| e.target == Some(root.join("a copy.txt")))
+        })
+    });
+    let edit = panel.read_with(cx, |p, _| p.editing().unwrap());
+    assert_eq!(edit.text, "a copy.txt");
+    assert_eq!(edit.selection, Some(0..6), "the stem");
+    cx.simulate_keystrokes("escape");
+    idle(&panel, cx);
+
+    // Again: the next free name.
+    select(&panel, cx, &root.join("a.txt"));
+    cx.simulate_keystrokes("cmd-d");
+    wait_until(cx, "the second copy", |_| {
+        root.join("a copy 2.txt").exists()
+    });
+    cx.simulate_keystrokes("escape");
+    idle(&panel, cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.journal_depth()), (2, 0));
+
+    // ⌘C, then ⌘V on a folder: the copy goes inside, the original stays; pasted again, the name
+    // is taken, so it becomes `a copy.txt` (nothing is overwritten).
+    select(&panel, cx, &root.join("a.txt"));
+    cx.simulate_keystrokes("cmd-c");
+    select(&panel, cx, &root.join("docs"));
+    cx.simulate_keystrokes("cmd-v");
+    wait_until(cx, "docs/a.txt", |_| root.join("docs/a.txt").exists());
+    idle(&panel, cx);
+    select(&panel, cx, &root.join("docs"));
+    cx.simulate_keystrokes("cmd-v");
+    wait_until(cx, "docs/a copy.txt", |_| {
+        root.join("docs/a copy.txt").exists()
+    });
+    assert!(root.join("a.txt").exists());
+    idle(&panel, cx);
+
+    // ⌘X then ⌘V moves; the row is dimmed meanwhile, and ⌘Z puts it back.
+    select(&panel, cx, &root.join("b.txt"));
+    cx.simulate_keystrokes("cmd-x");
+    assert!(panel.read_with(cx, |p, _| p.is_cut(&root.join("b.txt"))));
+    select(&panel, cx, &root.join("docs"));
+    cx.simulate_keystrokes("cmd-v");
+    wait_until(cx, "b.txt moved into docs", |_| {
+        root.join("docs/b.txt").exists() && !root.join("b.txt").exists()
+    });
+    idle(&panel, cx);
+    assert!(panel.read_with(cx, |p, _| p.clipboard_paths().is_empty()));
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("cmd-z");
+    wait_until(cx, "b.txt back", |_| {
+        root.join("b.txt").exists() && !root.join("docs/b.txt").exists()
+    });
+}
+
+#[gpui::test]
+fn finder_files_on_the_pasteboard_are_copied_in_as_one_undoable_step(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    write(&root, "a.txt", "mine\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["a.txt"]);
+
+    // What Finder copied lives outside the project: two files (one's name is taken here) and a
+    // folder with something inside.
+    let (_other, outside) = scratch();
+    let theirs = write(&outside, "a.txt", "theirs\n");
+    let second = write(&outside, "report.pdf", "%PDF\n");
+    write(&outside, "pics/one.png", "png\n");
+    let finder = ClipboardItem {
+        entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
+            [theirs, second, outside.join("pics")].into_iter().collect(),
+        ))],
+    };
+    cx.write_to_clipboard(finder);
+
+    focus_tree(&panel, cx);
+    select(&panel, cx, &root.join("a.txt"));
+    cx.simulate_keystrokes("cmd-v");
+    wait_until(cx, "the three copies", |_| {
+        root.join("a copy.txt").exists()
+            && root.join("report.pdf").exists()
+            && root.join("pics/one.png").exists()
+    });
+    assert_eq!(
+        std::fs::read_to_string(root.join("a.txt")).unwrap(),
+        "mine\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("a copy.txt")).unwrap(),
+        "theirs\n",
+        "the taken name is not overwritten"
+    );
+    assert!(
+        outside.join("a.txt").exists(),
+        "Finder's files are copied, not moved"
+    );
+    idle(&panel, cx);
+    wait_names(&panel, cx, &["pics", "a copy.txt", "a.txt", "report.pdf"]);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.journal_depth()),
+        (1, 0),
+        "one paste, one step"
+    );
+
+    // One ⌘Z takes all three away (to the Trash); ⇧⌘Z brings them back.
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("cmd-z");
+    wait_until(cx, "all three gone", |_| {
+        !root.join("a copy.txt").exists()
+            && !root.join("report.pdf").exists()
+            && !root.join("pics").exists()
+    });
+    assert!(in_trash(&daemon, "report.pdf") && in_trash(&daemon, "pics"));
+    idle(&panel, cx);
+    wait_names(&panel, cx, &["a.txt"]);
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("cmd-shift-z");
+    wait_until(cx, "all three back", |_| {
+        root.join("a copy.txt").exists()
+            && root.join("report.pdf").exists()
+            && root.join("pics/one.png").exists()
+    });
+    assert_eq!(panel.read_with(cx, |p, _| p.journal_depth()), (1, 0));
+
+    // With nothing but its own text on the pasteboard, ⌘V says so and changes nothing.
+    cx.write_to_clipboard(ClipboardItem::new_string("not a file".into()));
+    focus_tree(&panel, cx);
+    cx.simulate_keystrokes("cmd-v");
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string))
+            .is_some_and(|n| n.contains("Nothing to paste"))
+    );
+}
+
+#[gpui::test]
+fn a_move_onto_a_taken_name_is_refused_and_a_partial_batch_is_one_step(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    write(&root, "a.txt", "root a\n");
+    write(&root, "b.txt", "root b\n");
+    write(&root, "dir/a.txt", "dir a\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["dir", "a.txt", "b.txt"]);
+
+    // Two rows go to `dir`: b.txt moves, a.txt finds its name taken and stays, untouched.
+    panel.update_in(cx, |p, window, cx| {
+        p.move_into(
+            vec![root.join("a.txt"), root.join("b.txt")],
+            root.join("dir"),
+            window,
+            cx,
+        );
+    });
+    wait_until(cx, "b.txt in dir", |_| root.join("dir/b.txt").exists());
+    idle(&panel, cx);
+    assert_eq!(
+        std::fs::read_to_string(root.join("a.txt")).unwrap(),
+        "root a\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("dir/a.txt")).unwrap(),
+        "dir a\n"
+    );
+    let notice = view
+        .read_with(cx, |wb, _| wb.notice().map(ToString::to_string))
+        .expect("a word about a.txt");
+    assert!(
+        notice.contains("a.txt") && notice.contains("already exists"),
+        "{notice}"
+    );
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.journal_depth()),
+        (1, 0),
+        "only what moved is a step"
+    );
+    // Rows moved into their own folder, or into themselves, are nobody's business.
+    panel.update_in(cx, |p, window, cx| {
+        p.move_into(vec![root.join("dir/b.txt")], root.join("dir"), window, cx);
+        p.move_into(vec![root.join("dir")], root.join("dir"), window, cx);
+    });
+    idle(&panel, cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.journal_depth()), (1, 0));
+}
+
+/// The middle of the row at `index` (of the rows drawn), in window coordinates.
+fn row_center(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    index: usize,
+) -> gpui::Point<gpui::Pixels> {
+    use hutan_desktop::theme::DensityExt as _;
+    use hutan_desktop::workbench::Region;
+    use hutan_desktop::workbench::style::UiStyle;
+    let tree = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Files("tree")))
+        .expect("the tree was drawn");
+    let row = cx.update(|_, app| UiStyle::get(app).density.ui().sidebar_row - 4.0);
+    gpui::point(
+        tree.origin.x + gpui::px(80.0),
+        tree.origin.y + gpui::px(row * (index as f32 + 0.5)),
+    )
+}
+
+/// Presses on `from` and drags to `to` (the button stays down).
+fn drag_to(
+    cx: &mut VisualTestContext,
+    from: gpui::Point<gpui::Pixels>,
+    to: gpui::Point<gpui::Pixels>,
+    modifiers: Modifiers,
+) {
+    use gpui::MouseButton::Left;
+    cx.simulate_mouse_move(from, None, Modifiers::none());
+    cx.simulate_mouse_down(from, Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        from + gpui::point(gpui::px(4.0), gpui::px(4.0)),
+        Left,
+        modifiers,
+    );
+    draw(cx);
+    cx.simulate_mouse_move(to, Left, modifiers);
+    draw(cx);
+}
+
+#[gpui::test]
+fn dragging_a_row_to_a_folder_moves_it_after_one_sheet_and_alt_copies(cx: &mut TestAppContext) {
+    use gpui::MouseButton::Left;
+    use hutan_desktop::workbench::panels::FILES_SPRING_AFTER;
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    write(&root, "docs/readme.md", "# docs\n");
+    write(&root, "src/lib.rs", "// lib\n");
+    write(&root, "a.txt", "alpha\n");
+    write(&root, "b.txt", "beta\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["docs", "src", "a.txt", "b.txt"]);
+    draw(cx);
+
+    // Rows: docs 0, src 1, a.txt 2, b.txt 3. Drag a.txt over the closed `docs`: it opens after a
+    // moment under the pointer (spring-loaded), then the drop is asked about, once.
+    let (a_row, docs_row) = (row_center(&view, cx, 2), row_center(&view, cx, 0));
+    drag_to(cx, a_row, docs_row, Modifiers::none());
+    assert!(!panel.read_with(cx, |p, _| p.tree().unwrap().is_expanded(&root.join("docs"))));
+    cx.executor()
+        .advance_clock(FILES_SPRING_AFTER + std::time::Duration::from_millis(50));
+    wait_until(cx, "the folder to open under the pointer", |cx| {
+        panel.read_with(cx, |p, _| p.tree().unwrap().is_expanded(&root.join("docs")))
+    });
+    // The rows moved down with the folder's listing; the pointer is still on its row.
+    cx.simulate_mouse_up(docs_row, Left, Modifiers::none());
+    draw(cx);
+    let (title, _, destructive) = sheet(&view, cx).expect("the first drop asks");
+    assert_eq!(title, "Move “a.txt” into “docs”?");
+    assert!(!destructive);
+    assert!(
+        root.join("a.txt").exists(),
+        "nothing moved before the answer"
+    );
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "a.txt moved into docs", |_| {
+        root.join("docs/a.txt").exists() && !root.join("a.txt").exists()
+    });
+    idle(&panel, cx);
+    wait_names(
+        &panel,
+        cx,
+        &["docs", "  a.txt", "  readme.md", "src", "b.txt"],
+    );
+    assert_eq!(panel.read_with(cx, |p, _| p.journal_depth()), (1, 0));
+
+    // Not asked again this session: with ⌥ held at the drop the row is copied.
+    draw(cx);
+    let (b_row, src_row) = (row_center(&view, cx, 4), row_center(&view, cx, 3));
+    drag_to(cx, b_row, src_row, Modifiers::alt());
+    cx.simulate_mouse_up(src_row, Left, Modifiers::alt());
+    draw(cx);
+    assert!(sheet(&view, cx).is_none(), "the sheet is asked once");
+    wait_until(cx, "the copy in src", |_| root.join("src/b.txt").exists());
+    assert!(root.join("b.txt").exists(), "⌥ copies: the original stays");
+    idle(&panel, cx);
+
+    // Dropped on the empty part of the tree, a row goes to the root.
+    draw(cx);
+    let rows = panel.read_with(cx, |p, _| p.rows().len());
+    let (from, empty) = (row_center(&view, cx, 1), row_center(&view, cx, rows + 6));
+    drag_to(cx, from, empty, Modifiers::none());
+    cx.simulate_mouse_up(empty, Left, Modifiers::none());
+    draw(cx);
+    wait_until(cx, "a.txt back in the root", |_| {
+        root.join("a.txt").exists()
+    });
+    assert!(!root.join("docs/a.txt").exists());
+    assert_eq!(panel.read_with(cx, |p, _| p.journal_depth()), (3, 0));
+}
+
+#[gpui::test]
+fn the_tree_scrolls_by_itself_while_a_row_is_dragged_near_its_edge(cx: &mut TestAppContext) {
+    use gpui::MouseButton::Left;
+    use hutan_desktop::workbench::Region;
+    use hutan_desktop::workbench::panels::FILES_AUTOSCROLL_EVERY;
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    for n in 0..120 {
+        write(&root, &format!("f{n:03}.txt"), "");
+    }
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_until(cx, "120 rows", |cx| {
+        panel.read_with(cx, |p, _| p.rows().len() == 120 && p.settled())
+    });
+    draw(cx);
+    let tree = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Files("tree")))
+        .unwrap();
+    let start = row_center(&view, cx, 3);
+    let bottom = gpui::point(
+        tree.origin.x + gpui::px(80.0),
+        tree.origin.y + tree.size.height - gpui::px(4.0),
+    );
+    drag_to(cx, start, bottom, Modifiers::none());
+    for _ in 0..10 {
+        cx.executor().advance_clock(FILES_AUTOSCROLL_EVERY);
+        draw(cx);
+    }
+    let scrolled = panel.read_with(cx, |p, _| p.scrolled());
+    assert!(
+        scrolled > 20.0,
+        "the pointer at the bottom edge scrolled the tree: {scrolled}"
+    );
+
+    // Back in the middle it stops; the drop (on the tree, a pointless move) changes nothing.
+    let middle = gpui::point(
+        tree.origin.x + gpui::px(80.0),
+        tree.origin.y + tree.size.height / 2.0,
+    );
+    cx.simulate_mouse_move(middle, Left, Modifiers::none());
+    draw(cx);
+    cx.executor().advance_clock(FILES_AUTOSCROLL_EVERY);
+    draw(cx);
+    let stopped = panel.read_with(cx, |p, _| p.scrolled());
+    for _ in 0..5 {
+        cx.executor().advance_clock(FILES_AUTOSCROLL_EVERY);
+        draw(cx);
+    }
+    assert_eq!(panel.read_with(cx, |p, _| p.scrolled()), stopped);
+    cx.simulate_mouse_up(middle, Left, Modifiers::none());
+    draw(cx);
 }
 
 fn _unused(_: ClipboardEntry, _: ClipboardItem, _: ExternalPaths, _: Modifiers) {}

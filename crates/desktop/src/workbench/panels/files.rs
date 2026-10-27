@@ -461,6 +461,11 @@ impl FilesPanel {
         self.thumb.get()
     }
 
+    /// How far the tree is scrolled down, in pixels (0 at the top).
+    pub fn scrolled(&self) -> f32 {
+        -f32::from(self.scroll.0.borrow().base_handle.offset().y)
+    }
+
     /// Whether the indent guides are drawn at this moment.
     pub fn guides_shown(&self) -> bool {
         match self.env.settings.get::<FilesPanelSettings>().indent_guides {
@@ -1351,129 +1356,147 @@ impl FilesPanel {
                         }
                     },
                 );
+                // The row fills the tree's width (a drop anywhere on it counts), inset by the
+                // wrapper's padding.
                 div()
-                    .id(("files-row", index))
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    .h(px(tokens.sidebar_row - 4.0))
-                    .pl(px(lead + indent_px(row.depth)))
-                    .pr(px(tokens.spacing * 2.0))
-                    .mx(px(tokens.spacing))
-                    .rounded(px(tokens.radius))
-                    .cursor_pointer()
-                    .text_size(px(tokens.font_size))
-                    .text_color(color)
-                    .when(is_active, |s| s.font_weight(gpui::FontWeight::MEDIUM))
-                    .when(cut, |s| s.opacity(0.5))
-                    .when(selected, |s| s.bg(theme.sidebar_accent))
-                    .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
-                    .when(guides, |row_el| {
-                        // One line per open ancestor, under the middle of its chevron.
-                        let mut row_el = row_el;
-                        for level in 0..row.depth {
-                            drawn.set(drawn.get() + 1);
-                            row_el = row_el.child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .bottom_0()
-                                    .left(px(lead + indent_px(level) + 6.0))
-                                    .w(px(1.0))
-                                    .bg(guide_color),
-                            );
-                        }
-                        row_el
-                    })
-                    .when_some(tip, |s, tip| {
-                        s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-                    })
-                    .on_mouse_down(
-                        gpui::MouseButton::Right,
-                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                            let Some(row) = this.rows().get(index).cloned() else {
-                                return;
-                            };
-                            if matches!(row.kind, RowKind::More | RowKind::Failed) {
-                                return;
-                            }
-                            this.selected = Some(row.path.clone());
-                            window.dispatch_action(
-                                Box::new(ShowFilesMenu(FilesMenuAt {
-                                    path: row.path.display().to_string(),
-                                    file: matches!(row.kind, RowKind::File | RowKind::Link),
-                                    position: event.position,
-                                })),
-                                cx,
-                            );
-                            cx.notify();
-                        }),
-                    )
-                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                        window.focus(&this.focus, cx);
-                        let double = event.click_count() >= 2;
-                        let kind = this.rows().get(index).map(|r| r.kind);
-                        match kind {
-                            Some(RowKind::Dir) if double => {}
-                            Some(_) => this.activate(index, double, window, cx),
-                            None => {}
-                        }
-                    }))
-                    .when_some(dragged, |s, payload| {
-                        s.on_drag(payload, |dragged: &DraggedRows, _, _, cx| {
-                            let style = UiStyle::get(cx);
-                            let label = dragged.label.clone();
-                            cx.new(|_| crate::workbench::view::DragPreview { label, style })
-                        })
-                    })
-                    .when(is_dir, |s| {
-                        s.drag_over::<DraggedRows>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
-                    })
-                    .when(can_drag, |s| {
-                        s.on_drop(drop_listener)
-                            .on_drag_move::<DraggedRows>(drag_listener)
-                    })
+                    .w_full()
+                    .px(px(tokens.spacing))
                     .child(
                         div()
-                            .flex_none()
-                            .w(px(12.0))
-                            .children(chevron.map(|c| icon(c, 12.0, theme.muted))),
+                            .id(("files-row", index))
+                            .relative()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .h(px(tokens.sidebar_row - 4.0))
+                            .pl(px(lead + indent_px(row.depth)))
+                            .pr(px(tokens.spacing * 2.0))
+                            .w_full()
+                            .rounded(px(tokens.radius))
+                            .cursor_pointer()
+                            .text_size(px(tokens.font_size))
+                            .text_color(color)
+                            .when(is_active, |s| s.font_weight(gpui::FontWeight::MEDIUM))
+                            .when(cut, |s| s.opacity(0.5))
+                            .when(selected, |s| s.bg(theme.sidebar_accent))
+                            .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
+                            .when(guides, |row_el| {
+                                // One line per open ancestor, under the middle of its chevron.
+                                let mut row_el = row_el;
+                                for level in 0..row.depth {
+                                    drawn.set(drawn.get() + 1);
+                                    row_el = row_el.child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .bottom_0()
+                                            .left(px(lead + indent_px(level) + 6.0))
+                                            .w(px(1.0))
+                                            .bg(guide_color),
+                                    );
+                                }
+                                row_el
+                            })
+                            .when_some(tip, |s, tip| {
+                                s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                            })
+                            .on_mouse_down(
+                                gpui::MouseButton::Right,
+                                cx.listener(
+                                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        let Some(row) = this.rows().get(index).cloned() else {
+                                            return;
+                                        };
+                                        if matches!(row.kind, RowKind::More | RowKind::Failed) {
+                                            return;
+                                        }
+                                        this.selected = Some(row.path.clone());
+                                        window.dispatch_action(
+                                            Box::new(ShowFilesMenu(FilesMenuAt {
+                                                path: row.path.display().to_string(),
+                                                file: matches!(
+                                                    row.kind,
+                                                    RowKind::File | RowKind::Link
+                                                ),
+                                                position: event.position,
+                                            })),
+                                            cx,
+                                        );
+                                        cx.notify();
+                                    },
+                                ),
+                            )
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                window.focus(&this.focus, cx);
+                                let double = event.click_count() >= 2;
+                                let kind = this.rows().get(index).map(|r| r.kind);
+                                match kind {
+                                    Some(RowKind::Dir) if double => {}
+                                    Some(_) => this.activate(index, double, window, cx),
+                                    None => {}
+                                }
+                            }))
+                            .when_some(dragged, |s, payload| {
+                                s.on_drag(payload, |dragged: &DraggedRows, _, _, cx| {
+                                    let style = UiStyle::get(cx);
+                                    let label = dragged.label.clone();
+                                    cx.new(|_| crate::workbench::view::DragPreview { label, style })
+                                })
+                            })
+                            .when(is_dir, |s| {
+                                s.drag_over::<DraggedRows>(move |s, _, _, _| {
+                                    s.bg(accent.opacity(0.18))
+                                })
+                            })
+                            .when(can_drag, |s| {
+                                s.on_drop(drop_listener)
+                                    .on_drag_move::<DraggedRows>(drag_listener)
+                            })
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(12.0))
+                                    .children(chevron.map(|c| icon(c, 12.0, theme.muted))),
+                            )
+                            .children(glyph.map(|g| div().flex_none().child(icon(g, 14.0, color))))
+                            .child(name)
+                            .when(row.loading, |s| {
+                                s.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(tokens.secondary_font_size))
+                                        .text_color(theme.faint)
+                                        .child("…"),
+                                )
+                            })
+                            .when(dotted, |s| {
+                                s.child(
+                                    div()
+                                        .id(("files-git-dot", index))
+                                        .flex_none()
+                                        .size(px(6.0))
+                                        .rounded_full()
+                                        .bg(theme.diff_modified)
+                                        .tooltip(|_, cx| {
+                                            cx.new(|_| TextTooltip("Contains changes".into()))
+                                                .into()
+                                        }),
+                                )
+                            })
+                            .children(mark.map(|m| {
+                                div()
+                                    .id(("files-git-mark", index))
+                                    .flex_none()
+                                    .w(px(12.0))
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(m.color(&theme))
+                                    .child(m.letter())
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| TextTooltip(m.words().into())).into()
+                                    })
+                            }))
+                            .into_any_element(),
                     )
-                    .children(glyph.map(|g| div().flex_none().child(icon(g, 14.0, color))))
-                    .child(name)
-                    .when(row.loading, |s| {
-                        s.child(
-                            div()
-                                .flex_none()
-                                .text_size(px(tokens.secondary_font_size))
-                                .text_color(theme.faint)
-                                .child("…"),
-                        )
-                    })
-                    .when(dotted, |s| {
-                        s.child(
-                            div()
-                                .id(("files-git-dot", index))
-                                .flex_none()
-                                .size(px(6.0))
-                                .rounded_full()
-                                .bg(theme.diff_modified)
-                                .tooltip(|_, cx| {
-                                    cx.new(|_| TextTooltip("Contains changes".into())).into()
-                                }),
-                        )
-                    })
-                    .children(mark.map(|m| {
-                        div()
-                            .id(("files-git-mark", index))
-                            .flex_none()
-                            .w(px(12.0))
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(m.color(&theme))
-                            .child(m.letter())
-                            .tooltip(move |_, cx| cx.new(|_| TextTooltip(m.words().into())).into())
-                    }))
                     .into_any_element()
             })
             .collect();
@@ -1489,17 +1512,22 @@ impl FilesPanel {
             };
             let lead = tokens.spacing * 2.0;
             let row = div()
-                .id("files-new-row")
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .h(px(tokens.sidebar_row - 4.0))
-                .pl(px(lead + indent_px(depth)))
-                .pr(px(tokens.spacing * 2.0))
-                .mx(px(tokens.spacing))
-                .child(div().flex_none().w(px(12.0)))
-                .child(div().flex_none().child(icon(glyph, 14.0, theme.muted)))
-                .child(self.name_editor(cx))
+                .w_full()
+                .px(px(tokens.spacing))
+                .child(
+                    div()
+                        .id("files-new-row")
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .h(px(tokens.sidebar_row - 4.0))
+                        .pl(px(lead + indent_px(depth)))
+                        .pr(px(tokens.spacing * 2.0))
+                        .w_full()
+                        .child(div().flex_none().w(px(12.0)))
+                        .child(div().flex_none().child(icon(glyph, 14.0, theme.muted)))
+                        .child(self.name_editor(cx)),
+                )
                 .into_any_element();
             elements.insert(position, row);
         }
