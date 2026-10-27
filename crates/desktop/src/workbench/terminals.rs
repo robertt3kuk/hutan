@@ -1250,12 +1250,12 @@ impl Workbench {
                     .justify_center()
                     .rounded(px(10.0))
                     .border_2()
-                    .border_color(accent)
                     .bg(accent.opacity(0.14))
                     .text_color(accent)
                     .opacity(0.0)
-                    .group_drag_over::<super::panels::FilesDragged>(ROWS_DROP_GROUP, |style| {
-                        style.opacity(1.0)
+                    // A drop target: the one place an accent edge is drawn.
+                    .group_drag_over::<super::panels::FilesDragged>(ROWS_DROP_GROUP, move |style| {
+                        style.opacity(1.0).border_color(accent)
                     })
                     .child("Drop to insert the path"),
             );

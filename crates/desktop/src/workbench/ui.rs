@@ -845,12 +845,13 @@ mod tests {
     /// The only places the accent may color a border: drag-over targets, per file (relative to
     /// `crates/desktop/src`), with how many there are. A new drop target is added here on
     /// purpose; anything else is a fill, the keyboard focus ring, or nothing.
-    const DRAG_TARGETS: [(&str, usize); 5] = [
-        ("workbench/chat/rich_view.rs", 1),
+    const DRAG_TARGETS: [(&str, usize); 6] = [
+        ("workbench/chat/rich_view.rs", 2),
         ("workbench/panels/sessions.rs", 2),
         ("workbench/render.rs", 3),
         ("workbench/sidebars.rs", 1),
         ("workbench/term_splits.rs", 1),
+        ("workbench/terminals.rs", 1),
     ];
 
     fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
