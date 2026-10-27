@@ -112,9 +112,13 @@ fn the_gutter_column_makes_room_draws_and_answers_the_mouse(cx: &mut TestAppCont
     buffer.update(cx, |b, cx| b.set_blame(Some(data(TEXT)), cx));
     draw(cx);
     let layout = view.read_with(cx, |v, _| v.layout().expect("laid out"));
+    // The column is as wide as `Ada · 3y · first` needs, not the 40 to 72 cells it was.
+    let used = (layout.text_left - before) / layout.cell_width;
     assert!(
-        layout.text_left > before + layout.cell_width * 30.0,
-        "the text moved right for the column"
+        (hutan_code_view::blame::COLUMN_MIN_CELLS as f32 - 0.5
+            ..=hutan_code_view::blame::COLUMN_MAX_CELLS as f32 + 0.5)
+            .contains(&used),
+        "the text moved right by {used} cells for the column"
     );
 
     // Hovering the column of a line shows that line's commit; leaving it hides it.
@@ -166,4 +170,66 @@ fn inline_blame_is_off_until_asked_and_needs_a_blame(cx: &mut TestAppContext) {
     let layout = view.read_with(cx, |v, _| v.layout().unwrap());
     assert!(!view.read_with(cx, |v, _| v.blame_gutter()));
     assert!(layout.text_left < layout.bounds.left() + layout.cell_width * 12.0);
+}
+
+fn long_data(text: &str) -> BlameData {
+    BlameData {
+        commits: vec![commit(
+            "a",
+            "Robert Tkachenko",
+            "a subject that goes on and on and on and on and on and on and on",
+        )],
+        lines: vec![0, 0, 0, 0],
+        text: Arc::from(text),
+    }
+}
+
+/// How many cells the column took (the text's shift from a gutter without one).
+fn column_cells(
+    view: &gpui::Entity<hutan_code_view::CodeView>,
+    before: gpui::Pixels,
+    cx: &gpui::VisualTestContext,
+) -> f32 {
+    let layout = view.read_with(cx, |v, _| v.layout().expect("laid out"));
+    (layout.text_left - before) / layout.cell_width
+}
+
+#[gpui::test]
+fn the_column_is_capped_at_32_cells_and_30_percent_of_the_view(cx: &mut TestAppContext) {
+    let (view, buffer, cx) = open(cx, "a.txt", TEXT, false);
+    let before = view.read_with(cx, |v, _| v.layout().expect("laid out").text_left);
+    view.update(cx, |v, cx| v.set_blame_gutter(true, cx));
+    buffer.update(cx, |b, cx| b.set_blame(Some(long_data(TEXT)), cx));
+    draw(cx);
+    // A long author and a long subject: the cap, not the 72 cells the text would take.
+    let wide = column_cells(&view, before, cx);
+    assert!(
+        (wide - hutan_code_view::blame::COLUMN_MAX_CELLS as f32).abs() < 0.5,
+        "{wide}"
+    );
+    // The same commits in a narrower window: never more than 30 % of it.
+    cx.simulate_resize(gpui::size(gpui::px(420.0), gpui::px(600.0)));
+    draw(cx);
+    let layout = view.read_with(cx, |v, _| v.layout().expect("laid out"));
+    let before = {
+        // The gutter without the column, in this window.
+        view.update(cx, |v, cx| v.set_blame_gutter(false, cx));
+        draw(cx);
+        view.read_with(cx, |v, _| v.layout().unwrap().text_left)
+    };
+    view.update(cx, |v, cx| v.set_blame_gutter(true, cx));
+    draw(cx);
+    let narrow = column_cells(&view, before, cx);
+    let view_cells = layout.bounds.size.width / layout.cell_width;
+    assert!(
+        narrow <= view_cells * 0.3 + 0.5 && narrow > 0.0,
+        "{narrow} cells in a view {view_cells} cells wide"
+    );
+    // A window too narrow for a useful column draws none.
+    cx.simulate_resize(gpui::size(gpui::px(200.0), gpui::px(600.0)));
+    draw(cx);
+    assert!(
+        column_cells(&view, before, cx) <= 0.5,
+        "no column in a tiny view"
+    );
 }

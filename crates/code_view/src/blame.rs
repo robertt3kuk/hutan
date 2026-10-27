@@ -10,8 +10,10 @@
 //! because the match is made against the text, not accumulated from the edits.
 //!
 //! The view draws the result in a column of the gutter (the first line of each run of one
-//! commit says *author · date · subject*, the rest are blank), and for the caret's line after
-//! its end (`inline`).
+//! commit says *author · date · subject* in short form, the rest are blank), and for the caret's
+//! line after its end (`inline`, in full). The column is as wide as that text needs but never
+//! more than [`COLUMN_MAX_CELLS`] cells or 30 % of the view (EDITOR-POLISH, F-09); the hover
+//! has the whole commit.
 
 use std::sync::Arc;
 
@@ -135,32 +137,94 @@ impl BlameState {
 }
 
 /// The narrowest and widest the blame column of the gutter gets, in cells.
-pub const COLUMN_MIN_CELLS: usize = 40;
-pub const COLUMN_MAX_CELLS: usize = 72;
-/// The longest relative date (`12 months ago`) and the most of a subject the column makes room for.
-const DATE_CHARS: usize = 13;
-const SUBJECT_CHARS: usize = 48;
+pub const COLUMN_MIN_CELLS: usize = 14;
+pub const COLUMN_MAX_CELLS: usize = 32;
+/// The most of the view's width the column takes.
+pub const COLUMN_MAX_SHARE: f32 = 0.30;
+/// Below this many cells the column would show nothing useful: it is left out.
+pub const COLUMN_USEFUL_CELLS: usize = 10;
+/// The most of a subject the column makes room for.
+const SUBJECT_CHARS: usize = 40;
+/// A name longer than this is cut to initials (or an ellipsis, for a single word).
+const AUTHOR_CHARS: usize = 12;
 /// Cells the column keeps for the marks beside the text (the agent's bar and the glyph, the gap).
-const COLUMN_PAD: usize = 3;
+pub const COLUMN_PAD: usize = 3;
 
-/// The width of the gutter's blame column for `commits`: the longest `author · date · subject`
-/// (the subject up to [`SUBJECT_CHARS`]) and the padding, between [`COLUMN_MIN_CELLS`] and
-/// [`COLUMN_MAX_CELLS`]. The message gets what the author and the date leave; a long author name
-/// widens the column instead of eating the message.
+/// The width of the gutter's blame column for `commits`, in cells: the longest compact
+/// `author · date · subject` ([`column_label`], the subject up to [`SUBJECT_CHARS`]) and the
+/// padding, between [`COLUMN_MIN_CELLS`] and [`COLUMN_MAX_CELLS`]. The view narrows it further
+/// to [`COLUMN_MAX_SHARE`] of its width.
 pub fn column_cells(commits: &[BlameCommit]) -> usize {
     let longest = commits
         .iter()
         .filter(|c| !c.uncommitted)
         .map(|c| {
-            c.author.chars().count()
+            short_author(&c.author).chars().count()
                 + 3
-                + DATE_CHARS
+                + SHORT_DATE_CHARS
                 + 3
                 + c.subject.chars().count().min(SUBJECT_CHARS)
         })
         .max()
         .unwrap_or(0);
     (longest + COLUMN_PAD).clamp(COLUMN_MIN_CELLS, COLUMN_MAX_CELLS)
+}
+
+/// The cells the column gets in a view `view_cells` wide: what the commits need, at most
+/// [`COLUMN_MAX_SHARE`] of the view, and none when that leaves [`COLUMN_USEFUL_CELLS`] or fewer.
+pub fn column_cells_in(needed: usize, view_cells: usize) -> Option<usize> {
+    let cap = (view_cells as f32 * COLUMN_MAX_SHARE).floor() as usize;
+    let cells = needed.min(cap);
+    (cells > COLUMN_USEFUL_CELLS).then_some(cells)
+}
+
+/// The longest [`short_date`].
+const SHORT_DATE_CHARS: usize = 4;
+
+/// An author's name as the column shows it: kept up to [`AUTHOR_CHARS`] characters, else the
+/// initials of its words (`Robert Tkachenko` → `RT`), else the start of its one long word.
+pub fn short_author(name: &str) -> String {
+    let name = name.trim();
+    if name.chars().count() <= AUTHOR_CHARS {
+        return name.to_owned();
+    }
+    let words: Vec<&str> = name.split_whitespace().collect();
+    if words.len() > 1 {
+        return words
+            .iter()
+            .filter_map(|w| w.chars().next())
+            .flat_map(char::to_uppercase)
+            .take(3)
+            .collect();
+    }
+    fit(name, AUTHOR_CHARS)
+}
+
+/// `now`, `5m`, `3h`, `2d`, `3w`, `4mo`, `2y`: [`relative_date`] in as few characters as read.
+pub fn short_date(time: i64, now: i64) -> String {
+    let age = now.saturating_sub(time).max(0);
+    match age {
+        0..=59 => "now".to_owned(),
+        60..=3_599 => format!("{}m", age / 60),
+        3_600..=86_399 => format!("{}h", age / 3_600),
+        86_400..=604_799 => format!("{}d", age / 86_400),
+        604_800..=2_629_799 => format!("{}w", age / 604_800),
+        2_629_800..=31_557_599 => format!("{}mo", age / 2_629_800),
+        _ => format!("{}y", age / 31_557_600),
+    }
+}
+
+/// The compact line of the gutter's column for `line`: `AD · 3d · subject`, or `Uncommitted`.
+pub fn column_label(line: BlameLine<'_>, now: i64) -> String {
+    match line {
+        BlameLine::Uncommitted => "Uncommitted".to_owned(),
+        BlameLine::Commit(commit) => format!(
+            "{} · {} · {}",
+            short_author(&commit.author),
+            short_date(commit.time, now),
+            commit.subject
+        ),
+    }
 }
 
 /// `3 days ago`, `now`, `2 years ago`: how long ago `time` is at `now` (both Unix seconds).
@@ -250,30 +314,38 @@ mod tests {
     #[test]
     fn the_column_is_as_wide_as_its_commits_need_between_the_bounds() {
         let short = [commit("a", "Ada", "first")];
-        assert_eq!(column_cells(&short), COLUMN_MIN_CELLS);
+        // `Ada · 3mo · first` and the padding.
+        assert_eq!(column_cells(&short), 3 + 3 + 4 + 3 + 5 + COLUMN_PAD);
         assert_eq!(column_cells(&[]), COLUMN_MIN_CELLS);
-        // A long author and a long subject widen it; the cap holds.
+        // A longer subject widens it up to the cap and no further.
+        let medium = [commit("b", "Ada", "fix the parser")];
+        let cells = column_cells(&medium);
+        assert!(
+            cells > column_cells(&short) && cells < COLUMN_MAX_CELLS,
+            "{cells}"
+        );
         let long = [commit(
             "b",
             "Robert Tkachenko",
             "a subject that goes on and on and on and on and on and on",
         )];
-        let cells = column_cells(&long);
-        assert!(
-            cells > COLUMN_MIN_CELLS && cells <= COLUMN_MAX_CELLS,
-            "{cells}"
-        );
-        // At least 24 characters of the message stay readable beside author and date.
-        let line = label(
+        assert_eq!(column_cells(&long), COLUMN_MAX_CELLS);
+        // A long name is initials: most of the column is the message.
+        let line = column_label(
             BlameLine::Commit(&BlameCommit {
                 time: 0,
                 ..long[0].clone()
             }),
             86_400 * 400,
         );
-        let shown = fit(&line, cells - 3);
+        assert_eq!(
+            line,
+            "RT · 1y · a subject that goes on and on and on and on and on and on"
+        );
+        let shown = fit(&line, COLUMN_MAX_CELLS - COLUMN_PAD);
+        assert!(shown.chars().count() <= 29);
         let subject_shown = shown.split(" · ").last().unwrap().chars().count();
-        assert!(subject_shown >= 24, "{shown:?}");
+        assert!(subject_shown >= 18, "{shown:?}");
         // Uncommitted lines say `Uncommitted` and widen nothing.
         let mut pending = commit("0000000", "Not Committed Yet", "x".repeat(80).as_str());
         pending.uncommitted = true;
@@ -304,6 +376,33 @@ mod tests {
         // Back to the blamed text: the commits are back.
         state.remap("one\ntwo\nthree\n");
         assert_eq!(who(&state, 1), "Grace");
+    }
+
+    #[test]
+    fn the_column_never_takes_more_than_30_percent_of_the_view() {
+        // A wide view: what the commits need.
+        assert_eq!(column_cells_in(32, 200), Some(32));
+        // A view of 80 cells: 24 at most.
+        assert_eq!(column_cells_in(32, 80), Some(24));
+        // So narrow that the column would show nothing: left out.
+        assert_eq!(column_cells_in(32, 30), None);
+        assert_eq!(column_cells_in(14, 120), Some(14));
+    }
+
+    #[test]
+    fn names_and_dates_are_short() {
+        assert_eq!(short_author("Ada"), "Ada");
+        assert_eq!(short_author("Robert Tkachenko"), "RT");
+        assert_eq!(short_author("Maria de la Cruz Hernandez"), "MDL");
+        assert_eq!(short_author("Wolfeschlegelsteinhausen"), "Wolfeschleg…");
+        assert_eq!(short_date(100, 130), "now");
+        assert_eq!(short_date(0, 5 * 60 + 1), "5m");
+        assert_eq!(short_date(0, 3 * 3_600), "3h");
+        assert_eq!(short_date(0, 3 * 86_400 + 5), "3d");
+        assert_eq!(short_date(0, 2 * 604_800), "2w");
+        assert_eq!(short_date(0, 4 * 2_629_800), "4mo");
+        assert_eq!(short_date(0, 12 * 2_629_800 + 1), "1y");
+        assert_eq!(short_date(500, 100), "now");
     }
 
     #[test]

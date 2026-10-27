@@ -262,7 +262,12 @@ fn prepare(
             buffer.version(),
         )
     };
-    let blame_column = view.blame_gutter && has_blame;
+    // The column is as wide as its text needs, at most 30 % of the view (F-09); in a view too
+    // narrow for that it is left out.
+    let view_cells = (f32::from(bounds.size.width) / f32::from(cell)).floor() as usize;
+    let blame_cells = crate::blame::column_cells_in(blame_cells, view_cells);
+    let blame_column = view.blame_gutter && has_blame && blame_cells.is_some();
+    let blame_cells = blame_cells.unwrap_or(0);
     let blame_inline = view.inline_blame && has_blame;
     let now = now_secs();
     let line_count = if ready { text.line_count() } else { 0 };
@@ -738,23 +743,27 @@ fn prepare(
 
         // Blame: the first line of a run of one commit says who, when and what; the caret line
         // may also say it after its end (unless it has a diagnostic's message there).
-        let blame_text =
-            |view: &CodeView, cx: &gpui::Context<CodeView>| -> (Option<String>, Option<String>) {
-                let buffer = view.buffer().read(cx);
-                let Some(this) = buffer.blame_line(line) else {
-                    return (None, None);
-                };
-                let starts_run = line == 0
-                    || buffer
-                        .blame_line(line - 1)
-                        .is_none_or(|before| !before.same_run(this));
-                let label = crate::blame::label(this, now);
-                let column = (blame_column && starts_run && geom.first)
-                    .then(|| crate::blame::fit(&label, blame_cells - 3));
-                let inline = (blame_inline && head_line == Some(line) && geom.last)
-                    .then(|| crate::blame::fit(&label, INLINE_BLAME_CHARS));
-                (column, inline)
+        let blame_text = |view: &CodeView,
+                          cx: &gpui::Context<CodeView>|
+         -> (Option<String>, Option<String>) {
+            let buffer = view.buffer().read(cx);
+            let Some(this) = buffer.blame_line(line) else {
+                return (None, None);
             };
+            let starts_run = line == 0
+                || buffer
+                    .blame_line(line - 1)
+                    .is_none_or(|before| !before.same_run(this));
+            let column = (blame_column && starts_run && geom.first).then(|| {
+                crate::blame::fit(
+                    &crate::blame::column_label(this, now),
+                    blame_cells.saturating_sub(crate::blame::COLUMN_PAD),
+                )
+            });
+            let inline = (blame_inline && head_line == Some(line) && geom.last)
+                .then(|| crate::blame::fit(&crate::blame::label(this, now), INLINE_BLAME_CHARS));
+            (column, inline)
+        };
         let (column_label, inline_label) = if blame_column || blame_inline {
             blame_text(view, cx)
         } else {
