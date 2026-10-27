@@ -283,7 +283,7 @@ fn shell_flow(cx: &mut TestAppContext, shell: Shell) {
     assert_eq!(
         highlighted(cx),
         None,
-        "{shell:?}: ⌘↑ does nothing on the alternate screen"
+        "{shell:?}: ⌘⇧↑ does nothing on the alternate screen"
     );
     wait_until(cx, "the primary screen", |cx| {
         !read(&view, cx, id, |v| v.model().modes().alt_screen)

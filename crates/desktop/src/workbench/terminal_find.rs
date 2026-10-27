@@ -6,7 +6,7 @@
 //! closes the bar, drops the highlights and gives the keyboard back to the terminal. New output
 //! keeps the matches and their count current (searched again at most four times a second);
 //! without a bar the terminal costs nothing extra. *Block* limits the search to the output of
-//! the block that is selected (⌘↑ ⌘↓).
+//! the block that is selected (⌘⇧↑ ⌘⇧↓).
 
 use std::time::Duration;
 
