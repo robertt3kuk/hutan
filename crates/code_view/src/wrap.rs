@@ -38,6 +38,9 @@ pub const MAX_WRAP_BYTES: usize = 4 * 1024 * 1024;
 /// `editor.wrap_column` by default.
 pub const DEFAULT_WRAP_COLUMN: usize = 100;
 
+/// Leading bytes of a line read to find its indentation.
+const LEADING_BYTES: usize = 512;
+
 /// Breaks of this many lines are kept between frames.
 const CACHE_LINES: usize = 256;
 
@@ -419,9 +422,12 @@ impl WrapMap {
         let indent = if sub == 0 {
             0
         } else {
-            let line_text = text.slice(content.clone()).unwrap_or_default();
+            // Only the leading whitespace counts: never read a megabyte line for it. More than
+            // `LEADING_BYTES` of it is more than half of any row, so the indent is dropped.
+            let lead_end = text.floor_char_boundary(content.end.min(content.start + LEADING_BYTES));
+            let lead = text.slice(content.start..lead_end).unwrap_or_default();
             continuation_indent(
-                &line_text,
+                &lead,
                 self.params.cols.max(MIN_WRAP_COLS),
                 self.params.extra_indent,
             )
