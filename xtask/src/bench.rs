@@ -259,6 +259,38 @@ pub const BUDGETS: &[Budget] = &[
         limit: 0.0,
         frame_margin_ms: Some(2.0),
     },
+    Budget {
+        id: "BEXa",
+        name: "Files tree, 101 100 rows open: a listing for one open folder (spliced into the rows), p95",
+        metric: "bex_splice_p95_ms",
+        unit: "ms",
+        limit: 2.0,
+        frame_margin_ms: None,
+    },
+    Budget {
+        id: "BEXb",
+        name: "Files tree, 101 100 rows open: every row built again (root relisted, a filter toggled), p95",
+        metric: "bex_full_p95_ms",
+        unit: "ms",
+        limit: 16.0,
+        frame_margin_ms: None,
+    },
+    Budget {
+        id: "BEXc",
+        name: "Files tree, 101 100 rows open: a 1 000-entry folder opened (rows in)",
+        metric: "bex_expand_1000_ms",
+        unit: "ms",
+        limit: 16.0,
+        frame_margin_ms: None,
+    },
+    Budget {
+        id: "BEXd",
+        name: "Files tree: memory held by 101 100 open rows and their listings",
+        metric: "bex_rows_mb",
+        unit: "MB",
+        limit: 40.0,
+        frame_margin_ms: None,
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,10 +323,12 @@ enum Scenario {
     EditorType,
     /// B12w: typing into a 10 000-line Markdown file that wraps.
     EditorTypeWrap,
+    /// BEXa-d: the Files panel's tree model at 101 100 open rows (no window, no daemon).
+    FilesTree,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 14] = [
+    const ALL: [Scenario; 15] = [
         Scenario::Idle,
         Scenario::IdleWide,
         Scenario::Typing,
@@ -309,6 +343,7 @@ impl Scenario {
         Scenario::EditorScroll,
         Scenario::EditorType,
         Scenario::EditorTypeWrap,
+        Scenario::FilesTree,
     ];
 
     fn name(self) -> &'static str {
@@ -327,6 +362,7 @@ impl Scenario {
             Scenario::EditorScroll => "editor scroll (B13)",
             Scenario::EditorType => "editor typing (B12a)",
             Scenario::EditorTypeWrap => "editor typing, soft wrap (B12w)",
+            Scenario::FilesTree => "files tree (BEX)",
         }
     }
 
@@ -346,6 +382,7 @@ impl Scenario {
             Scenario::EditorScroll => &["B13"],
             Scenario::EditorType => &["B12a"],
             Scenario::EditorTypeWrap => &["B12w"],
+            Scenario::FilesTree => &["BEXa", "BEXb", "BEXc", "BEXd"],
         }
     }
 }
@@ -384,7 +421,7 @@ pub async fn run(options: Options) -> Result<()> {
     for id in &wanted {
         if !BUDGETS.iter().any(|b| selects(id, b.id)) {
             bail!(
-                "unknown budget {id}; known: B1, B2, B2w, B3, B3p, B4a, B4b, B5, B6, B7a, B7b, B7c, B8a, B8b, B8c, B9a, B9b, B10, B11a, B11b, B11c, B11d, B12a, B12w, B13"
+                "unknown budget {id}; known: B1, B2, B2w, B3, B3p, B4a, B4b, B5, B6, B7a, B7b, B7c, B8a, B8b, B8c, B9a, B9b, B10, B11a, B11b, B11c, B11d, B12a, B12w, B13, BEXa, BEXb, BEXc, BEXd"
             );
         }
     }
@@ -1003,11 +1040,56 @@ pub(crate) fn now_us() -> u64 {
 
 // ---- scenarios -----------------------------------------------------------------------------
 
+/// BEXa-d: the Files tree model at 101 100 open rows, measured by the desktop's
+/// `files_tree_bench` example (no window, no daemon: it times what the UI thread does with the
+/// listings). Its last stdout line is one JSON object of milliseconds.
+async fn files_tree() -> Result<Metrics> {
+    let root = workspace_root();
+    let output =
+        tokio::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()))
+            .args([
+                "run",
+                "--release",
+                "--locked",
+                "-q",
+                "-p",
+                "hutan-desktop",
+                "--example",
+                "files_tree_bench",
+            ])
+            .current_dir(&root)
+            .output()
+            .await
+            .context("running the files_tree_bench example")?;
+    if !output.status.success() {
+        bail!(
+            "files_tree_bench failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text
+        .lines()
+        .last()
+        .context("files_tree_bench printed nothing")?;
+    let report: Value = serde_json::from_str(line).context("files_tree_bench's report")?;
+    let mut metrics = Metrics::new();
+    for (key, value) in report.as_object().context("a JSON object")? {
+        if let Some(v) = value.as_f64() {
+            metrics.insert(format!("bex_{key}"), v);
+        }
+    }
+    Ok(metrics)
+}
+
 async fn run_scenario(
     scenario: Scenario,
     bins: &Bins,
     key_interval_ms: Option<u64>,
 ) -> Result<Metrics> {
+    if scenario == Scenario::FilesTree {
+        return files_tree().await;
+    }
     let mut stack = match scenario {
         Scenario::Transcript | Scenario::Streaming | Scenario::Switching | Scenario::IdlePanels => {
             crate::bench_ui::start_stack(bins).await?
@@ -1029,6 +1111,7 @@ async fn run_scenario(
         Scenario::EditorScroll => crate::bench_ui::editor_scroll(&mut stack).await,
         Scenario::EditorType => crate::bench_ui::editor_type(&mut stack).await,
         Scenario::EditorTypeWrap => crate::bench_ui::editor_type_wrap(&mut stack).await,
+        Scenario::FilesTree => unreachable!("run before a stack exists"),
     };
     // The trace of the run stays next to the report: what the harness reads is what you can read.
     let trace = stack.path("trace.jsonl");

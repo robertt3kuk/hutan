@@ -756,6 +756,41 @@ Test `quick_open_gpui::the_finders_first_results_on_a_hundred_thousand_files`: a
 
 **Miss, not relaxed.** Medians of the release runs sit around the budget (≈ 49–73 ms) and one key in each run takes 110–185 ms. Not yet separated: the load of the machine (load 54–67 on 10 cores), the daemon's `fs.find` itself (a subsequence test over 100 001 paths, the fzy matrix for each match, a sort; built per query from the shared index), and late `fs.generation`s from the tree just written (FSEvents after the watch starts) that make the daemon rebuild its index and ⌘P ask again. Follow-up: time `fs.find` alone in the daemon on an idle machine, keep a scorer and its buffers per index, narrow a query that extends the last one to the last answer's candidates, and make this test wait until the root's generations are quiet; then measure again on an idle machine with `just bench`.
 
+## Files tree (slice EX-1, B-EX)
+
+`just bench --only BEX` (scenario `files tree (BEX)`, `xtask/src/bench.rs`; the numbers come from the
+desktop's `files_tree_bench` example, `crates/desktop/examples/files_tree_bench.rs`). It needs no window
+and no daemon: it builds the listings of a generated project — 100 packages × 10 modules × 100
+`file_NNNN.rs`, **101 100 rows once every folder is open** — and times what the UI thread does with
+them (`Tree`, `panels/files_tree.rs`). What the frame costs is separate and proved by a test, not
+timed: `quick_open_gpui::the_tree_builds_only_the_rows_in_view_with_twenty_thousand_entries_open`
+(a frame builds at most 60 rows however many are open). Release build, M1 Pro, three runs; the same
+harness gave the *before* by its `full` metric, which is exactly the work every listing did until
+the splice (the tree was rebuilt row by row, 101 100 `Row`s with a `PathBuf` and a name each).
+
+| # | Metric | Budget | Before the splice | After | Result |
+|---|---|---|---|---|---|
+| BEXa | a listing arrives for one open folder (a file was added or removed), p95 | ≤ 2 ms | 8.9 ms (a full rebuild) | **0.21 ms** (0.21, 0.22, 0.21) | pass |
+| BEXb | every row built again (the root listed with a change, a filter toggled), p95 | ≤ 16 ms | 8.9 ms | 8.88 ms (8.98, 8.88, 8.87) | pass |
+| BEXc | a 1 000-entry folder opened in the full tree (rows in) | ≤ 16 ms | ~9 ms | 0.54 ms (0.54, 0.54, 0.52) | pass |
+| BEXd | memory held by the 101 100 rows and their listings (RSS growth) | ≤ 40 MB | — | 31.0 MB (31.03, 31.00, 31.06) | pass |
+
+The spike (`docs/spikes/2026-10-27-file-explorer.md` § 3.6) guessed 16 ms for `rebuild` at 100 000 open
+rows with a goal of 2 ms by splicing, and ≤ 30 MB for the rows: the rebuild is 8.9 ms (inside the guess),
+the splice 0.21 ms (the goal, 10× under), and the memory 31 MB, one MB over the guess — each row holds
+its path and name, and the listing it came from holds them again; the budget is set at 40 MB. A
+listing whose entries look the same (an `fs.generation`, a touched file: size and time are not on a row)
+rebuilds nothing at all: 0.02 ms p95. `BEXb` is the worst case that remains — the root's own listing
+changing, or a filter or folding toggled, rebuilds every row once — and stays under a frame (16.7 ms at
+60 Hz). Per folder, a burst of `fs.changed` is one listing now and one a quarter second later (at most
+four a second), and the git marks are read at most once in two seconds (`files_explorer_gpui`:
+`a_burst_of_changes_lists_a_folder_at_most_four_times_a_second`,
+`the_git_marks_are_read_at_most_once_in_two_seconds_and_never_overlapping`); the test clock runs the
+quarter second and the two seconds out, nothing sleeps. A window-level number (key → selection drawn, the
+frame at 100 000 open rows) was not measured: the bench has no GPUI window for this panel, and a Cua
+run cannot time a frame (`docs/process.md` § UI checks); the rows built per frame are what the test above
+holds, and the scrollbar and the guides add one overlay and at most six lines to each of those rows.
+
 ## Editor: completion (slice E-12b, B16)
 
 B16 of `docs/spikes/2026-10-21-editor.md` § 4.8: with a local fake server, keystroke → completion items on screen ≤ 100 ms, of which protocol + daemon ≤ 5 ms (the server's own compute excluded). Measured by two tests over a real daemon and `hutan-fake-lsp` (which answers at once), run in the gate in debug and once in release for the numbers below (`cargo nextest run --cargo-profile release -p hutan-desktop -p hutan-daemon -E 'test(=completion_gpui::b16_keystroke_to_items_on_screen) | test(=lsp::completion_resolve_and_signature_help_run_through_the_daemon)' --no-capture`; build `hutan-fake-lsp` in release first). Apple M1 Pro, macOS 27.0.1, 2026-10-22, load average 12–14 (other agents building).
