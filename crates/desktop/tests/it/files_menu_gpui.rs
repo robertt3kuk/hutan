@@ -940,3 +940,111 @@ fn attach_to_chat_puts_a_file_chip_of_each_selected_file_in_the_open_chat(cx: &m
         Some("Attached 2 files to the chat")
     );
 }
+
+#[gpui::test]
+fn a_row_dragged_onto_the_chat_composer_types_its_relative_path(cx: &mut TestAppContext) {
+    let fx = ChatProject::new();
+    let (view, cx, chat, panel) = fx.window(cx);
+    let model = view.read_with(cx, |wb, _| wb.chat_model_of(chat).unwrap());
+    let rows = Rows::of(&view, cx);
+    let composer = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Chat("composer")))
+        .expect("the composer is drawn")
+        .center();
+    let text = |cx: &VisualTestContext| model.read_with(cx, |m, _| m.input().text().to_owned());
+
+    // A nested row: its path below the tree's root, and a space after it.
+    drag_to(cx, rows.at(1), composer);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("path-overlay")))
+            .is_some(),
+        "the chat shows it takes the drop"
+    );
+    cx.simulate_mouse_up(composer, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    assert_eq!(text(cx), "src/lib.rs ");
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.journal_depth()),
+        (0, 0),
+        "nothing was moved on disk"
+    );
+
+    // Several selected rows travel together. (The keys select without previewing a file over
+    // the chat, which would take the composer away.)
+    draw(cx);
+    panel.update_in(cx, |p, window, cx| p.focus_tree(window, cx));
+    cx.simulate_keystrokes("down down shift-down");
+    assert_eq!(selected_names(&panel, cx), ["notes.md", "todo.md"]);
+    drag_to(cx, rows.at(3), composer);
+    cx.simulate_mouse_up(composer, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    assert_eq!(text(cx), "src/lib.rs notes.md todo.md ");
+    assert!(fx.root.join("notes.md").exists() && fx.root.join("todo.md").exists());
+}
+
+#[gpui::test]
+fn a_row_dragged_onto_a_terminal_types_its_relative_path_quoted_for_the_shell(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (_dir, root) = scratch();
+    write(&root, "src/lib.rs", "// lib\n");
+    write(&root, "my notes.md", "# notes\n");
+    let workspace = daemon.create_workspace("proj", &[&root]);
+    // `cat` echoes what is typed, so the screen shows what the terminal received.
+    let session = daemon.create_session(&["cat"], Some(workspace.id));
+    let (view, cx) = open(cx, &daemon);
+    project(&view, cx, &root);
+    view.update_in(cx, |wb, window, cx| wb.open_session(session.id, window, cx));
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["src", "my notes.md"]);
+    draw(cx);
+    let rows = Rows::of(&view, cx);
+    click(cx, rows.at(0), Modifiers::none());
+    wait_names(&panel, cx, &["src", "  lib.rs", "my notes.md"]);
+    draw(cx);
+    let terminal = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Center))
+        .expect("the centre is drawn")
+        .center();
+    let screen = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            wb.terminal_view_of(session.id)
+                .map(|v| common::screen_text(&v.read(cx).model()))
+                .unwrap_or_default()
+        })
+    };
+
+    drag_to(cx, rows.at(1), terminal);
+    cx.simulate_mouse_up(terminal, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    wait_until(cx, "the path on the terminal's screen", |cx| {
+        screen(cx).contains("src/lib.rs")
+    });
+    // A name with a space is quoted, as a dropped Finder file is.
+    draw(cx);
+    drag_to(cx, rows.at(2), terminal);
+    cx.simulate_mouse_up(terminal, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    wait_until(cx, "the quoted name on the screen", |cx| {
+        screen(cx).contains("'my notes.md'")
+    });
+}
+
+/// Presses on `from` and drags to `to` (the button stays down).
+fn drag_to(
+    cx: &mut VisualTestContext,
+    from: gpui::Point<gpui::Pixels>,
+    to: gpui::Point<gpui::Pixels>,
+) {
+    cx.simulate_mouse_move(from, None, Modifiers::none());
+    cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        from + gpui::point(gpui::px(4.0), gpui::px(4.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    draw(cx);
+    cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+    draw(cx);
+}

@@ -1795,6 +1795,14 @@ impl Render for ChatView {
                     window.focus(&this.focus_handle, cx);
                 },
             ))
+            .on_drop::<crate::workbench::panels::FilesDragged>(cx.listener(
+                |this, rows: &crate::workbench::panels::FilesDragged, window, cx| {
+                    // Rows of the Files tree dropped anywhere on the chat type their paths into
+                    // the composer.
+                    this.insert_dropped_rows(rows, cx);
+                    window.focus(&this.focus_handle, cx);
+                },
+            ))
             .relative()
             .size_full()
             .flex()
@@ -1815,6 +1823,7 @@ impl Render for ChatView {
             .children(attach)
             .child(composer)
             .child(drop_overlay)
+            .child(self.render_path_overlay(&look))
     }
 }
 
