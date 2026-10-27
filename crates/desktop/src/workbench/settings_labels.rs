@@ -534,6 +534,13 @@ const FIELDS: &[FieldText] = &[
         "Confirm the first drag to a folder",
         "Asks the first time in a session that you drop a row onto another folder, and not again after you confirm.",
     ),
+    choice(
+        "panels.files",
+        "filter_mode",
+        "Filter mode",
+        "What typing in the Files panel's filter does: show only the files that match and the folders they are in, or keep the tree as it is and mark the matches.",
+        &[("filter", "Filter"), ("highlight", "Highlight")],
+    ),
     // ---- problems ----
     choice(
         "panels.problems",

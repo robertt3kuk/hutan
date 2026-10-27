@@ -55,10 +55,10 @@ pub use common::{
 pub(crate) use common::{edit_text, field_box};
 pub use files::{
     DraggedRows as FilesDragged, EditKind as FilesEditKind, FILES_AUTOSCROLL_EVERY,
-    FILES_SPRING_AFTER, FilesCommand, FilesMemory, FilesPanel,
-    GIT_READ_EVERY as FILES_GIT_READ_EVERY, MAX_CACHED_ROOTS as FILES_MAX_CACHED_ROOTS,
-    MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS, NameEditView as FilesNameEdit,
-    RELIST_EVERY as FILES_RELIST_EVERY,
+    FILES_SPRING_AFTER, FILTER_DEBOUNCE as FILES_FILTER_DEBOUNCE, FilesCommand, FilesMemory,
+    FilesPanel, FilterStatus as FilesFilterStatus, GIT_READ_EVERY as FILES_GIT_READ_EVERY,
+    MAX_CACHED_ROOTS as FILES_MAX_CACHED_ROOTS, MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS,
+    NameEditView as FilesNameEdit, RELIST_EVERY as FILES_RELIST_EVERY,
 };
 pub use files_git::{GitMark as FileGitMark, GitStatus as FileGitStatus};
 pub use files_names::{

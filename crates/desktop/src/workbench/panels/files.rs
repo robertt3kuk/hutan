@@ -42,6 +42,7 @@
 
 mod drag;
 mod edit;
+mod filter;
 mod ops;
 
 use std::cell::{Cell, RefCell};
@@ -87,6 +88,8 @@ pub use drag::{
 };
 use edit::NameEdit;
 pub use edit::{EditKind, NameEditView};
+use filter::Filter;
+pub use filter::{DEBOUNCE as FILTER_DEBOUNCE, FilterStatus};
 pub use ops::FilesCommand;
 use ops::{PathClipboard, error_message};
 
@@ -263,6 +266,8 @@ pub struct FilesPanel {
     /// Pixels per tick the tree scrolls while a drag is near its edge (0: not scrolling).
     edge_speed: f32,
     autoscroll: Option<Task<()>>,
+    /// The filter field above the tree and what it shows (`filter.rs`).
+    filter: Filter,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -337,6 +342,7 @@ impl FilesPanel {
             spring: None,
             edge_speed: 0.0,
             autoscroll: None,
+            filter: Filter::new(cx),
             _subscriptions: subscriptions,
         };
         panel.follow_root(cx);
@@ -364,12 +370,34 @@ impl FilesPanel {
 
     /// The rows the tree shows now, top to bottom.
     pub fn rows(&self) -> &[Row] {
-        self.tree.as_ref().map_or(&[], Tree::rows)
+        match &self.filter.projection() {
+            Some(projection) => projection.rows(),
+            None => self.tree.as_ref().map_or(&[], Tree::rows),
+        }
+    }
+
+    /// Where `path` is among the rows (the filter's, while it narrows the tree).
+    fn index_of(&self, path: &Path) -> Option<usize> {
+        match &self.filter.projection() {
+            Some(projection) => projection.index_of(path),
+            None => self.tree.as_ref()?.index_of(path),
+        }
+    }
+
+    /// The parent row of the row at `index`.
+    fn parent_row(&self, index: usize) -> Option<usize> {
+        match &self.filter.projection() {
+            Some(projection) => projection.parent_index(index),
+            None => self.tree.as_ref()?.parent_index(index),
+        }
     }
 
     /// The rows to draw: the tree's, or while a switch of container waits for its first listing
     /// the ones of the tree before it.
     fn shown_rows(&self) -> &[Row] {
+        if let Some(projection) = self.filter.projection() {
+            return projection.rows();
+        }
         match (&self.stale_root, self.rows()) {
             (Some(root), []) => self
                 .cache
@@ -387,18 +415,18 @@ impl FilesPanel {
     /// The rows selected, as the tree names them: the ⇧ / ⌘ picked ones top to bottom, else the
     /// row the cursor is on. Empty without a selection.
     pub fn selection(&self) -> Vec<PathBuf> {
-        let Some(tree) = &self.tree else {
+        if self.tree.is_none() {
             return Vec::new();
-        };
+        }
         if self.picked.is_empty() {
             return self
                 .selected
                 .iter()
-                .filter(|s| tree.index_of(s).is_some())
+                .filter(|s| self.index_of(s).is_some())
                 .cloned()
                 .collect();
         }
-        tree.rows()
+        self.rows()
             .iter()
             .filter(|r| self.picked.contains(&r.path))
             .map(|r| r.path.clone())
@@ -416,7 +444,7 @@ impl FilesPanel {
 
     /// Selects the row of `path` when the tree shows it (without opening anything).
     pub fn select_path(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(path)) {
+        if let Some(index) = self.index_of(path) {
             self.select_index(index);
             cx.notify();
         }
@@ -543,6 +571,7 @@ impl FilesPanel {
         self.git_asked = None;
         self.pending_reveal = None;
         self.editing = None;
+        self.filter.reset();
         self.follow = None;
         self.rename_when_listed = None;
         self.hint = None;
@@ -635,6 +664,9 @@ impl FilesPanel {
             self.watch(&dir, cx);
         }
         self.keep_selection();
+        if self.filtering() && !self.projecting() {
+            self.count_marked();
+        }
         self.remember(cx);
     }
 
@@ -720,7 +752,7 @@ impl FilesPanel {
             let selected_is_row = self
                 .selected
                 .as_deref()
-                .is_some_and(|s| self.tree.as_ref().is_some_and(|t| t.index_of(s).is_some()));
+                .is_some_and(|s| self.index_of(s).is_some());
             let count = self.rows().len();
             if !selected_is_row && count > 0 {
                 self.select_index(index.min(count - 1));
@@ -920,6 +952,7 @@ impl FilesPanel {
             _ => return,
         };
         self.relist(again, cx);
+        self.refind(cx);
         self.refresh_git(cx);
     }
 
@@ -1036,6 +1069,7 @@ impl FilesPanel {
         };
         self.set_single(row.path.clone());
         match row.kind {
+            RowKind::Dir if self.projecting() => self.leave_filter_at(row.folder(), window, cx),
             RowKind::Dir => self.toggle(&row.path, cx),
             RowKind::File | RowKind::Link => {
                 let place = if focus {
@@ -1053,14 +1087,19 @@ impl FilesPanel {
                     cx,
                 );
             }
-            RowKind::More | RowKind::Failed => {}
+            // The row after a truncated listing: filter that folder, where the rest is found.
+            RowKind::More => {
+                if let Some(dir) = row.path.parent() {
+                    self.filter_in_folder(dir, window, cx);
+                }
+            }
+            RowKind::Failed => {}
         }
         cx.notify();
     }
 
     fn selected_index(&self) -> Option<usize> {
-        let tree = self.tree.as_ref()?;
-        tree.index_of(self.selected.as_deref()?)
+        self.index_of(self.selected.as_deref()?)
     }
 
     fn select_index(&mut self, index: usize) {
@@ -1081,10 +1120,7 @@ impl FilesPanel {
     /// ⇧-click and ⇧↑↓: the rows from the anchor to the row at `index` are selected, and the
     /// cursor is on it.
     fn extend_to(&mut self, index: usize) {
-        let Some(tree) = &self.tree else {
-            return;
-        };
-        let Some(target) = tree.rows().get(index).map(|r| r.path.clone()) else {
+        let Some(target) = self.rows().get(index).map(|r| r.path.clone()) else {
             return;
         };
         let anchor = self
@@ -1092,9 +1128,9 @@ impl FilesPanel {
             .clone()
             .or_else(|| self.selected.clone())
             .unwrap_or_else(|| target.clone());
-        let from = tree.index_of(&anchor).unwrap_or(index);
+        let from = self.index_of(&anchor).unwrap_or(index);
         let (first, last) = (from.min(index), from.max(index));
-        let range: HashSet<PathBuf> = tree.rows()[first..=last]
+        let range: HashSet<PathBuf> = self.rows()[first..=last]
             .iter()
             .filter(|r| !matches!(r.kind, RowKind::More | RowKind::Failed))
             .map(|r| r.path.clone())
@@ -1138,11 +1174,14 @@ impl FilesPanel {
     /// A selected row that went (its folder closed, the file was removed) hands the selection
     /// to its nearest open folder; a selection of several keeps the rows that are left.
     fn keep_selection(&mut self) {
-        let Some(tree) = &self.tree else {
-            return;
-        };
         if !self.picked.is_empty() {
-            self.picked.retain(|p| tree.index_of(p).is_some());
+            let shown: HashSet<PathBuf> = self
+                .picked
+                .iter()
+                .filter(|p| self.index_of(p).is_some())
+                .cloned()
+                .collect();
+            self.picked = shown;
             if self.picked.len() < 2
                 && let Some(only) = self.picked.drain().next()
             {
@@ -1153,14 +1192,21 @@ impl FilesPanel {
         let Some(selected) = self.selected.clone() else {
             return;
         };
-        if tree.index_of(&selected).is_some() {
+        if self.index_of(&selected).is_some() {
             return;
         }
-        self.selected = selected
-            .ancestors()
-            .skip(1)
-            .find(|a| tree.index_of(a).is_some())
-            .map(Path::to_owned);
+        // A row the filter does not show is nobody's selection (a key must not act on it).
+        if self.projecting() {
+            self.selected = None;
+            return;
+        }
+        self.selected = self.tree.as_ref().and_then(|tree| {
+            selected
+                .ancestors()
+                .skip(1)
+                .find(|a| tree.index_of(a).is_some())
+                .map(Path::to_owned)
+        });
     }
 
     /// ⌥Return and ⌘Return: the file under the cursor opens in a split to the right.
@@ -1223,7 +1269,7 @@ impl FilesPanel {
     }
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.editing.is_some() {
+        if self.editing.is_some() || self.filter_focused(window) {
             // The name field has the keyboard; what it does not use is nobody's.
             return false;
         }
@@ -1248,6 +1294,10 @@ impl FilesPanel {
             && keystroke.key == "enter"
         {
             self.open_to_side(window, cx);
+            return true;
+        }
+        // A character starts the filter (⇧ for a capital): before ⇧ means "extend the selection".
+        if self.filter_tree_key(event, window, cx) {
             return true;
         }
         if modifiers.shift && !(modifiers.platform || modifiers.control || modifiers.alt) {
@@ -1295,6 +1345,11 @@ impl FilesPanel {
                 self.select_index(next);
             }
             "up" => {
+                // The first row's way up is the field.
+                if current == Some(0) && self.filtering() {
+                    self.focus_filter(window, cx);
+                    return true;
+                }
                 let next = current.map_or(0, |i| i.saturating_sub(1));
                 self.select_index(next);
             }
@@ -1336,10 +1391,9 @@ impl FilesPanel {
                     return true;
                 };
                 let row = self.rows()[index].clone();
-                if row.kind == RowKind::Dir && row.expanded {
+                if row.kind == RowKind::Dir && row.expanded && !self.projecting() {
                     self.toggle(&row.path, cx);
-                } else if let Some(parent) = self.tree.as_ref().and_then(|t| t.parent_index(index))
-                {
+                } else if let Some(parent) = self.parent_row(index) {
                     self.select_index(parent);
                 }
             }
@@ -1388,7 +1442,10 @@ impl FilesPanel {
             self.pending_reveal = Some(file.to_owned());
         } else {
             self.pending_reveal = None;
-            if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(file)) {
+            if self.projecting() && self.filter_revealed(file) {
+                // The filter shows other rows: the tree selects the file when the filter ends.
+            } else if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(file)) {
+                self.filter_revealed(file);
                 self.set_single(file.to_owned());
                 self.scroll.scroll_to_item(index, ScrollStrategy::Center);
             }
@@ -1490,11 +1547,42 @@ impl FilesPanel {
                 };
                 let lead = tokens.spacing * 2.0;
                 // The tooltip is the whole path: a folded chain ends in its last folder.
-                let tip: Option<SharedString> =
-                    matches!(row.kind, RowKind::Dir | RowKind::File | RowKind::Link)
-                        .then(|| row.folder().display().to_string().into());
+                let tip: Option<SharedString> = match row.kind {
+                    RowKind::Dir | RowKind::File | RowKind::Link => {
+                        Some(row.folder().display().to_string().into())
+                    }
+                    RowKind::More => Some("Filter this folder to find the rest".into()),
+                    RowKind::Failed => None,
+                };
                 // A folded chain: the folders in front are muted and give way first, the last
                 // name stays whole.
+                let marks = self.filter_marks(index);
+                let mark_style = gpui::HighlightStyle {
+                    color: Some(theme.accent),
+                    font_weight: Some(gpui::FontWeight::SEMIBOLD),
+                    ..Default::default()
+                };
+                // `text` is the part of the row's name that starts `from` bytes in: the letters the
+                // filter matched are drawn in the accent colour.
+                let part = |text: SharedString, from: usize| -> AnyElement {
+                    let ranges: Vec<_> = marks
+                        .iter()
+                        .filter(|r| r.end > from && r.start < from + text.len())
+                        .map(|r| {
+                            (
+                                r.start.max(from) - from..r.end.min(from + text.len()) - from,
+                                mark_style,
+                            )
+                        })
+                        .collect();
+                    if ranges.is_empty() {
+                        text.into_any_element()
+                    } else {
+                        gpui::StyledText::new(text)
+                            .with_highlights(ranges)
+                            .into_any_element()
+                    }
+                };
                 let name: AnyElement = match row.name.rsplit_once('/') {
                     Some((front, last)) if row.tail.is_some() => div()
                         .flex()
@@ -1506,16 +1594,20 @@ impl FilesPanel {
                                 .min_w_0()
                                 .truncate()
                                 .text_color(theme.muted)
-                                .child(SharedString::from(format!("{front}/"))),
+                                .child(part(SharedString::from(format!("{front}/")), 0)),
                         )
-                        .child(div().flex_none().child(SharedString::from(last.to_owned())))
+                        .child(
+                            div()
+                                .flex_none()
+                                .child(part(SharedString::from(last.to_owned()), front.len() + 1)),
+                        )
                         .into_any_element(),
                     _ => div()
                         .flex_1()
                         .min_w_0()
                         .truncate()
                         .when(row.kind == RowKind::Link, |s| s.italic())
-                        .child(row.name.clone())
+                        .child(part(row.name.clone(), 0))
                         .into_any_element(),
                 };
                 // A rename turns the name (the last folder of a folded chain) into the field.
@@ -1782,7 +1874,9 @@ impl Render for FilesPanel {
             &tokens,
         )
         .compact()
-        .on_click(cx.listener(|this, _, window, cx| this.begin_new(false, window, cx)))
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.run_command(FilesCommand::NewFile, window, cx);
+        }))
         .into_any_element();
         let new_folder = ui::IconButton::new(
             "files-new-folder",
@@ -1792,7 +1886,9 @@ impl Render for FilesPanel {
             &tokens,
         )
         .compact()
-        .on_click(cx.listener(|this, _, window, cx| this.begin_new(true, window, cx)))
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.run_command(FilesCommand::NewFolder, window, cx);
+        }))
         .into_any_element();
         let refresh = ui::IconButton::new(
             "files-refresh",
@@ -1842,6 +1938,16 @@ impl Render for FilesPanel {
             (None, _) => empty_state(
                 "No project here",
                 "Open a project (⌘O) to see its files.",
+                &theme,
+                &tokens,
+            ),
+            (Some(_), 0) if self.filtering() => empty_state(
+                if matches!(self.filter_status(), FilterStatus::Searching) {
+                    "Searching…"
+                } else {
+                    "No file matches"
+                },
+                "",
                 &theme,
                 &tokens,
             ),
@@ -1911,6 +2017,7 @@ impl Render for FilesPanel {
                     .truncate()
                     .child(name)
             }))
+            .children(self.tree.is_some().then(|| self.filter_row(window, cx)))
             .child(body)
             .children(self.name_error_strip(cx))
     }

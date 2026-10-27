@@ -200,6 +200,11 @@ actions!(
         FilesCompareWithSelected,
         /// Compare the selected file with its version in HEAD.
         FilesCompareWithHead,
+        /// Put the keyboard in the Files panel's filter field (⌘F in the tree).
+        FilesFilter,
+        /// Filter the folder of the Files tree's selected row (the root when nothing is
+        /// selected) instead of the whole project.
+        FilesFilterInFolder,
         /// Show the history of the focused file tab's file in a tab.
         ShowFileHistory,
         RewindFocusedChat,
@@ -910,6 +915,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Files: Select for Compare", FilesSelectForCompare),
         command("Files: Compare with Selected", FilesCompareWithSelected),
         command("Files: Compare with HEAD", FilesCompareWithHead),
+        command("Files: Filter", FilesFilter),
+        command("Files: Filter in Folder", FilesFilterInFolder),
         command("Git: Show File History", ShowFileHistory),
         command("Search: Find in Files", ShowSearch),
         command("Search: Replace in Files", ShowSearchReplace),
@@ -1202,6 +1209,7 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<FilesRedo>("cmd-shift-z", Some(FILES_KEY_CONTEXT)),
         bind::<FilesCopyPath>("cmd-alt-c", Some(FILES_KEY_CONTEXT)),
         bind::<FilesCopyRelativePath>("cmd-alt-shift-c", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesFilter>("cmd-f", Some(FILES_KEY_CONTEXT)),
         bind::<hutan_terminal_view::Copy>("cmd-c", Some(hutan_terminal_view::KEY_CONTEXT)),
         bind::<hutan_terminal_view::Paste>("cmd-v", Some(hutan_terminal_view::KEY_CONTEXT)),
         // ⌘↑ / ⌘↓ scroll to the top / bottom of the scrollback, as in Terminal.app and iTerm; the
@@ -1753,6 +1761,7 @@ mod tests {
             "shift-cmd-z | workbench::FilesRedo | FilesPanel",
             "alt-cmd-c | workbench::FilesCopyPath | FilesPanel",
             "alt-shift-cmd-c | workbench::FilesCopyRelativePath | FilesPanel",
+            "cmd-f | workbench::FilesFilter | FilesPanel",
             "cmd-c | hutan_terminal_view::Copy | HutanTerminal",
             "cmd-v | hutan_terminal_view::Paste | HutanTerminal",
             "cmd-up | hutan_terminal_view::ScrollToTop | HutanTerminal",

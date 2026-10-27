@@ -167,15 +167,21 @@ impl FilesPanel {
         ) else {
             return false;
         };
-        let is_dir = self
-            .tree
-            .as_ref()
-            .and_then(|t| t.kind_of(&target))
-            .is_some_and(|k| k == hutan_protocol::fs::FsKind::Dir);
+        // What the rows show says what it is (the filter's rows are not the tree's); else what
+        // the tree's listing of its folder says.
+        let shown = self.index_of(&target).map(|i| self.rows()[i].kind);
+        let is_dir = match shown {
+            Some(kind) => kind == RowKind::Dir,
+            None => self
+                .tree
+                .as_ref()
+                .and_then(|t| t.kind_of(&target))
+                .is_some_and(|k| k == hutan_protocol::fs::FsKind::Dir),
+        };
         self.drop_edit();
         let selection = stem_range(&name, is_dir);
         self.set_single(target.clone());
-        if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(&target)) {
+        if let Some(index) = self.index_of(&target) {
             self.scroll
                 .scroll_to_item(index, gpui::ScrollStrategy::Nearest);
         }
@@ -491,11 +497,10 @@ impl FilesPanel {
             return;
         };
         let visible = match edit.kind {
-            EditKind::Rename => edit.target.as_ref().is_some_and(|t| {
-                self.tree
-                    .as_ref()
-                    .is_some_and(|tree| tree.index_of(t).is_some())
-            }),
+            EditKind::Rename => edit
+                .target
+                .as_ref()
+                .is_some_and(|t| self.index_of(t).is_some()),
             _ => self.new_row_slot().is_some(),
         };
         if !visible {

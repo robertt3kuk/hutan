@@ -41,6 +41,10 @@ pub enum FilesCommand {
     Paste,
     Undo,
     Redo,
+    /// Put the keyboard in the filter field.
+    Filter,
+    /// Filter the folder of the selected row (the root when none is selected).
+    FilterInFolder,
 }
 
 /// What ⌘C and ⌘X remembered.
@@ -144,7 +148,24 @@ impl FilesPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // What makes a row (a new entry, a copy) needs the tree itself, not the filter's rows.
+        if matches!(
+            command,
+            FilesCommand::NewFile
+                | FilesCommand::NewFolder
+                | FilesCommand::Duplicate
+                | FilesCommand::Paste
+        ) {
+            self.leave_filter(cx);
+        }
         match command {
+            FilesCommand::Filter => self.start_filter(None, window, cx),
+            FilesCommand::FilterInFolder => {
+                let folder = self.selected_folder();
+                if let Some(folder) = folder {
+                    self.filter_in_folder(&folder, window, cx);
+                }
+            }
             FilesCommand::NewFile => self.begin_new(false, window, cx),
             FilesCommand::NewFolder => self.begin_new(true, window, cx),
             FilesCommand::Rename => {
@@ -207,7 +228,8 @@ impl FilesPanel {
             if selected == tree.root() {
                 continue;
             }
-            match tree.index_of(&selected).map(|i| &tree.rows()[i]) {
+            // The rows shown are the filter's while it narrows the tree.
+            match self.index_of(&selected).map(|i| &self.rows()[i]) {
                 Some(row) if row.path == selected => paths.push(row.folder().to_owned()),
                 Some(_) => paths.push(selected),
                 None => {}

@@ -1030,6 +1030,7 @@ The **Zed** base follows Zed's published macOS keymap (`default-macos.json`) whe
 | Files tree operations, only with the keyboard in the tree itself (its key context `FilesPanel`; never in an editor tab, a terminal or the tree's own name field): new file / new folder · rename · duplicate · move to Trash (asks) · copy / cut / paste · undo / redo | ⌘N / ⌥⌘N · F2 · ⌘D · ⌘⌫ · ⌘C / ⌘X / ⌘V · ⌘Z / ⇧⌘Z | same (⌘D splits the pane everywhere else) |
 | Files tree selection and opening, with the keyboard in the tree: extend the selection · open the file to the side · open every selected file | ⇧↑ ⇧↓ ⇧Home ⇧End ⇧PgUp ⇧PgDn (⇧- and ⌘-click with the mouse) · ⌥↩ or ⌘↩ · ↩ | same |
 | Files tree: copy path · copy relative path, only with the keyboard in the tree | ⌥⌘C · ⌥⇧⌘C | same |
+| Filter the Files tree as you type (the field above the tree; with the keyboard in the tree, a printable character starts it too; ↓ moves into the results, Return opens the first file, Esc clears and brings the tree back; ⌘K *Files: Filter in Folder* looks in the selected folder only) | ⌘F in the tree · typing | same |
 | Problems panel (the language servers' diagnostics, the keyboard in its list) | ⌘⇧M | ⌘⇧M |
 | Go to definition / back · next / previous diagnostic · hover (file tabs) | F12 / ⌃O · F8 / ⇧F8 · ⌘⌥I (Vim Normal: `gd` / `⌃O` · `]d` / `[d` · `K`) | F12 / ⌃O · F8 / ⇧F8 · ⌘⌥I (Vim the same) |
 | Open a folder as a project (recent projects, Open Folder…) | ⌘O | ⌘O |

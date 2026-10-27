@@ -1241,6 +1241,14 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::FilesRedo, window, cx| {
             this.files_command(super::panels::FilesCommand::Redo, window, cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::FilesFilter, window, cx| {
+            this.files_command(super::panels::FilesCommand::Filter, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::FilesFilterInFolder, window, cx| {
+                this.files_command(super::panels::FilesCommand::FilterInFolder, window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::FilesCopyPath, window, cx| {
             this.files_row_command(super::files_menu::FilesRowAction::CopyPath, window, cx);
         }))

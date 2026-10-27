@@ -337,6 +337,30 @@ impl Tree {
         entries.iter().find(|e| e.path == path).map(|e| e.kind)
     }
 
+    /// Calls `f` with every file and link of the folders already listed at and below `dir`, in
+    /// the order the tree shows them (folders first, natural order), skipping what `.gitignore`
+    /// rules match; `f` answers whether to go on. The filter's instant matches (EX-3).
+    pub fn for_each_listed_file(&self, dir: &Path, f: &mut dyn FnMut(&FsEntry) -> bool) {
+        self.walk_listed(dir, f);
+    }
+
+    fn walk_listed(&self, dir: &Path, f: &mut dyn FnMut(&FsEntry) -> bool) -> bool {
+        let Some(Listing::Listed { entries, .. }) = self.listings.get(dir) else {
+            return true;
+        };
+        for entry in entries.iter().filter(|e| !e.ignored) {
+            let go_on = if entry.kind == FsKind::Dir {
+                self.walk_listed(&entry.path, f)
+            } else {
+                f(entry)
+            };
+            if !go_on {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Applies new options; the rows are built again when they changed. Folders the new options
     /// make foldable are opened (see [`Self::take_opened`]).
     pub fn set_options(&mut self, options: TreeOptions) {

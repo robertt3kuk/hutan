@@ -683,6 +683,19 @@ pub enum IndentGuides {
     Off,
 }
 
+/// How the Files panel's filter shows what it finds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterMode {
+    /// Only the matching files and the folders they are in (the daemon looks in the whole
+    /// project).
+    #[default]
+    Filter,
+    /// The tree stays as it is; the rows that match have their matching letters marked and ↓
+    /// moves between them.
+    Highlight,
+}
+
 /// The `panels.files` namespace: the Files panel's tree of the active project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -702,6 +715,9 @@ pub struct FilesPanelSettings {
     pub confirm_delete: bool,
     /// Ask the first time a row is dragged to another folder in a session.
     pub confirm_drag: bool,
+    /// What typing in the tree's filter field does: `filter` shows only the matches, `highlight`
+    /// keeps the tree and marks them.
+    pub filter_mode: FilterMode,
 }
 
 impl Default for FilesPanelSettings {
@@ -714,6 +730,7 @@ impl Default for FilesPanelSettings {
             indent_guides: IndentGuides::Hover,
             confirm_delete: true,
             confirm_drag: true,
+            filter_mode: FilterMode::Filter,
         }
     }
 }
