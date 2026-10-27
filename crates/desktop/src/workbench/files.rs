@@ -1104,6 +1104,18 @@ impl Workbench {
                 now.indent_guides == IndentGuides::Off,
                 &panel,
             ),
+            {
+                let panel = panel.clone();
+                let workspace = now.roots == crate::settings::FilesRoots::Workspace;
+                let mut entry = Self::entry("Show the Whole Workspace", move |_, _, cx| {
+                    let value = if workspace { "active" } else { "workspace" };
+                    panel.update(cx, |panel, cx| {
+                        panel.set_option("roots", toml::Value::String(value.to_owned()), cx);
+                    });
+                });
+                entry.checked = workspace;
+                entry.starting_group()
+            },
             Self::entry("Expand All", move |_, window, cx| {
                 expand.update(cx, |panel, cx| panel.expand_all(window, cx));
             }),

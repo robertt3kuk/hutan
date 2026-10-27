@@ -36,7 +36,7 @@ use gpui::{
 };
 use hutan_protocol::fs::{FIND_MAX, FsFind, FsFound};
 
-use super::super::files_tree::{Row, RowKind, natural_cmp};
+use super::super::files_tree::{Row, RowKind, Tree, natural_cmp};
 use super::FilesPanel;
 use crate::icons::{Icon, icon};
 use crate::settings::{FilesPanelSettings, FilterMode};
@@ -293,6 +293,7 @@ impl Projection {
                 ignored: false,
                 expanded: true,
                 loading: false,
+                root: false,
             });
             self.marks.push(marks);
             self.emit_children(nodes, tail, depth + 1, compact);
@@ -308,9 +309,46 @@ impl Projection {
                 ignored: false,
                 expanded: false,
                 loading: false,
+                root: false,
             });
             self.marks.push(node.marks.clone());
         }
+    }
+
+    /// The rows of a workspace's tree: each root that has hits is a row of its own (open), its
+    /// [`Self::build`] one level in.
+    pub fn build_roots(found: &[(PathBuf, Vec<Hit>)], compact: bool) -> Self {
+        let mut projection = Self::default();
+        for (root, hits) in found.iter().filter(|(_, hits)| !hits.is_empty()) {
+            projection.rows.push(Row {
+                path: root.clone(),
+                tail: None,
+                name: root
+                    .file_name()
+                    .map_or_else(
+                        || root.display().to_string(),
+                        |n| n.to_string_lossy().into_owned(),
+                    )
+                    .into(),
+                depth: 0,
+                kind: RowKind::Dir,
+                ignored: false,
+                expanded: true,
+                loading: false,
+                root: true,
+            });
+            projection.marks.push(Vec::new());
+            let inner = Self::build(root, hits, compact);
+            projection.files += inner.files;
+            projection.marks.extend(inner.marks);
+            projection
+                .rows
+                .extend(inner.rows.into_iter().map(|mut row| {
+                    row.depth += 1;
+                    row
+                }));
+        }
+        projection
     }
 
     pub fn rows(&self) -> &[Row] {
@@ -350,10 +388,13 @@ impl Projection {
 
 // ---- the panel's state -------------------------------------------------------------------------
 
+/// The files found below each folder looked in (several in a workspace's tree).
+type Found = Vec<(PathBuf, Vec<Hit>)>;
+
 /// What the daemon answered for a query.
 struct Answer {
-    scope: PathBuf,
-    hits: Vec<Hit>,
+    scopes: Vec<PathBuf>,
+    found: Found,
 }
 
 /// What the tree comes back to when the filter ends.
@@ -550,13 +591,20 @@ impl FilesPanel {
         }
     }
 
-    /// The folder the filter looks in.
-    fn filter_folder(&self) -> Option<PathBuf> {
+    /// The folders the filter looks in: the one it was narrowed to, else every root of the tree
+    /// (one, or a workspace's projects).
+    fn filter_folders(&self) -> Vec<PathBuf> {
         match (&self.filter.scope, &self.tree) {
-            (Some(scope), _) => Some(scope.clone()),
-            (None, Some(tree)) => Some(tree.root().to_owned()),
-            _ => None,
+            (Some(scope), _) => vec![scope.clone()],
+            (None, Some(tree)) => tree.roots().to_vec(),
+            _ => Vec::new(),
         }
+    }
+
+    /// Whether the results are grouped under a row per root: a workspace's tree not narrowed to
+    /// a folder.
+    fn filter_grouped(&self) -> bool {
+        self.filter.scope.is_none() && self.tree.as_ref().is_some_and(Tree::is_grouped)
     }
 
     // ---- starting, changing and ending the filter ---------------------------------------------
@@ -592,16 +640,18 @@ impl FilesPanel {
 
     /// *Filter in this Folder*: the filter looks in `dir` only, with nothing typed yet.
     pub fn filter_in_folder(&mut self, dir: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(root) = self.root().map(Path::to_owned) else {
+        let Some(tree) = &self.tree else {
             return;
         };
-        if !dir.starts_with(&root) {
+        let Some(root) = tree.root_of(dir) else {
             return;
-        }
+        };
+        // A single tree's root is the whole filter; a root of a workspace's tree is one project.
+        let scope = (dir != root || tree.is_grouped()).then(|| dir.to_owned());
         self.drop_edit();
         self.filter.text.clear();
         self.filter.edit.reset();
-        self.filter.scope = (dir != root).then(|| dir.to_owned());
+        self.filter.scope = scope;
         window.focus(&self.filter.focus, cx);
         self.refilter(cx);
         cx.notify();
@@ -786,97 +836,111 @@ impl FilesPanel {
     /// What the panel knows without asking: the files of the folders listed so far, and what the
     /// last answer held that still matches (so the rows of the key before do not vanish while the
     /// next answer comes).
-    fn instant_hits(&self, query: &Query) -> Vec<Hit> {
-        let Some(scope) = self.filter_folder() else {
-            return Vec::new();
-        };
+    fn instant_hits(&self, query: &Query) -> Found {
+        let scopes = self.filter_folders();
         let hidden = !self.env.settings.get::<FilesPanelSettings>().show_hidden;
-        let mut hits: Vec<Hit> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        if let Some(answer) = &self.filter.answer
-            && answer.scope == scope
-        {
-            for hit in &answer.hits {
-                if hits.len() >= RESULTS_MAX {
-                    break;
-                }
-                if let Some(ranges) = query.matches(&hit.path) {
-                    seen.insert(hit.path.clone());
-                    hits.push(Hit {
-                        path: hit.path.clone(),
-                        kind: hit.kind,
-                        ranges,
-                    });
+        let mut out: Found = Vec::with_capacity(scopes.len());
+        for scope in &scopes {
+            let mut hits: Vec<Hit> = Vec::new();
+            let mut seen: HashSet<String> = HashSet::new();
+            if let Some(answer) = &self.filter.answer
+                && answer.scopes == scopes
+                && let Some((_, before)) = answer.found.iter().find(|(s, _)| s == scope)
+            {
+                for hit in before {
+                    if hits.len() >= RESULTS_MAX {
+                        break;
+                    }
+                    if let Some(ranges) = query.matches(&hit.path) {
+                        seen.insert(hit.path.clone());
+                        hits.push(Hit {
+                            path: hit.path.clone(),
+                            kind: hit.kind,
+                            ranges,
+                        });
+                    }
                 }
             }
+            if let Some(tree) = &self.tree {
+                tree.for_each_listed_file(scope, &mut |entry| {
+                    if hits.len() >= RESULTS_MAX {
+                        return false;
+                    }
+                    let Some(relative) = entry.path.strip_prefix(scope).ok().and_then(Path::to_str)
+                    else {
+                        return true;
+                    };
+                    if seen.contains(relative) {
+                        return true;
+                    }
+                    if let Some(ranges) = query.matches(relative) {
+                        hits.push(Hit {
+                            path: relative.to_owned(),
+                            kind: match entry.kind {
+                                hutan_protocol::fs::FsKind::Symlink => RowKind::Link,
+                                _ => RowKind::File,
+                            },
+                            ranges,
+                        });
+                    }
+                    true
+                });
+            }
+            if hidden {
+                hits.retain(|h| !is_hidden(&h.path));
+            }
+            out.push((scope.clone(), hits));
         }
-        if let Some(tree) = &self.tree {
-            tree.for_each_listed_file(&scope, &mut |entry| {
-                if hits.len() >= RESULTS_MAX {
-                    return false;
-                }
-                let Some(relative) = entry.path.strip_prefix(&scope).ok().and_then(Path::to_str)
-                else {
-                    return true;
-                };
-                if seen.contains(relative) {
-                    return true;
-                }
-                if let Some(ranges) = query.matches(relative) {
-                    hits.push(Hit {
-                        path: relative.to_owned(),
-                        kind: match entry.kind {
-                            hutan_protocol::fs::FsKind::Symlink => RowKind::Link,
-                            _ => RowKind::File,
-                        },
-                        ranges,
-                    });
-                }
-                true
-            });
-        }
-        if hidden {
-            hits.retain(|h| !is_hidden(&h.path));
-        }
-        hits
+        out
     }
 
-    fn show_hits(&mut self, hits: &[Hit]) {
-        let Some(scope) = self.filter_folder() else {
-            return;
-        };
+    fn show_hits(&mut self, found: &Found) {
         let compact = self
             .env
             .settings
             .get::<FilesPanelSettings>()
             .compact_folders;
-        self.filter.projection = Some(Projection::build(&scope, hits, compact));
+        self.filter.projection = if self.filter_grouped() {
+            Some(Projection::build_roots(found, compact))
+        } else {
+            found
+                .first()
+                .map(|(scope, hits)| Projection::build(scope, hits, compact))
+        };
     }
 
-    /// Asks the daemon for the files of the folder that match, [`DEBOUNCE`] after the last key.
+    /// Asks the daemon for the files of the folders that match, [`DEBOUNCE`] after the last key.
     fn find(&mut self, cx: &mut Context<Self>) {
-        let Some(scope) = self.filter_folder() else {
-            return;
-        };
-        if self.filter.query.is_none() {
+        let scopes = self.filter_folders();
+        if scopes.is_empty() || self.filter.query.is_none() {
             return;
         }
         let text = self.filter.text.trim().to_owned();
         let seq = self.filter.seq;
         let connection = self.env.sessions.read(cx).connection().clone();
-        let request = FsFind {
-            root: scope.clone(),
-            query: text,
-            limit: Some(FIND_MAX),
-        };
+        let requests: Vec<FsFind> = scopes
+            .iter()
+            .map(|scope| FsFind {
+                root: scope.clone(),
+                query: text.clone(),
+                limit: Some(FIND_MAX),
+            })
+            .collect();
         self.filter.task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(DEBOUNCE).await;
             this.update(cx, |this, _| this.filter.requests += 1).ok();
             let answer = cx
                 .background_executor()
-                .spawn(async move { connection.fs_find(request).await })
+                .spawn(async move {
+                    let mut out = Vec::with_capacity(requests.len());
+                    for request in requests {
+                        let scope = request.root.clone();
+                        out.push((scope, connection.fs_find(request).await));
+                    }
+                    out
+                })
                 .await;
-            this.update(cx, |this, cx| this.found(seq, scope, answer, cx))
+            this.update(cx, |this, cx| this.found(seq, scopes, answer, cx))
                 .ok();
         }));
     }
@@ -884,8 +948,8 @@ impl FilesPanel {
     fn found(
         &mut self,
         seq: u64,
-        scope: PathBuf,
-        answer: Result<FsFound, hutan_client::ClientError>,
+        scopes: Vec<PathBuf>,
+        answer: Vec<(PathBuf, Result<FsFound, hutan_client::ClientError>)>,
         cx: &mut Context<Self>,
     ) {
         // A newer key made this answer stale.
@@ -894,25 +958,42 @@ impl FilesPanel {
         }
         self.filter.task = None;
         self.filter.answers += 1;
-        match answer {
-            Ok(found) => {
-                let capped = found.matches.len() >= RESULTS_MAX;
-                let index_truncated = found.index_truncated;
-                let mut hits = hits_of(found);
-                if !self.env.settings.get::<FilesPanelSettings>().show_hidden {
-                    hits.retain(|h| !is_hidden(&h.path));
+        let hide = !self.env.settings.get::<FilesPanelSettings>().show_hidden;
+        let mut found: Found = Vec::new();
+        let mut failure: Option<hutan_client::ClientError> = None;
+        let (mut shown, mut capped, mut index_truncated) = (0, false, false);
+        for (scope, result) in answer {
+            match result {
+                Ok(reply) => {
+                    capped |= reply.matches.len() >= RESULTS_MAX;
+                    index_truncated |= reply.index_truncated;
+                    let mut hits = hits_of(reply);
+                    if hide {
+                        hits.retain(|h| !is_hidden(&h.path));
+                    }
+                    shown += hits.len();
+                    found.push((scope, hits));
                 }
-                self.show_hits(&hits);
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        match failure {
+            // Every folder failed: nothing to show. One that failed beside others that answered
+            // is left out.
+            Some(error) if found.is_empty() => {
+                self.filter.status =
+                    FilterStatus::Failed(crate::workbench::files::error_text(&error));
+            }
+            _ => {
+                self.show_hits(&found);
                 self.filter.status = FilterStatus::Found {
-                    shown: hits.len(),
+                    shown,
                     capped,
                     index_truncated,
                 };
-                self.filter.answer = Some(Answer { scope, hits });
-            }
-            Err(error) => {
-                self.filter.status =
-                    FilterStatus::Failed(crate::workbench::files::error_text(&error));
+                self.filter.answer = Some(Answer { scopes, found });
             }
         }
         self.forget_hidden_selection();
@@ -1116,11 +1197,18 @@ impl FilesPanel {
         let text = self.filter.text.clone();
         let vim_on = VimConfig::of(&self.env.settings).enabled;
         let scope: Option<SharedString> = self.filter.scope.as_ref().and_then(|scope| {
-            let root = self.root()?;
-            Some(SharedString::from(format!(
-                "in {}",
-                scope.strip_prefix(root).unwrap_or(scope).display()
-            )))
+            let root = self.tree.as_ref()?.root_of(scope)?;
+            let inside = scope.strip_prefix(root).unwrap_or(scope);
+            // A root of a workspace's tree is named; a folder below the root by its path.
+            let shown = if inside.as_os_str().is_empty() {
+                root.file_name().map_or_else(
+                    || root.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                )
+            } else {
+                inside.display().to_string()
+            };
+            Some(SharedString::from(format!("in {shown}")))
         });
         let clear = self.filter.engaged().then(|| {
             ui::IconButton::new(

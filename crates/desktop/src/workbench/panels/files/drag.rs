@@ -54,10 +54,12 @@ impl FilesPanel {
     /// act on), all of them.
     pub(super) fn dragged_by(&self, index: usize, acted: &[PathBuf]) -> Option<DraggedRows> {
         let row = self.rows().get(index)?;
-        if matches!(row.kind, RowKind::More | RowKind::Failed) {
+        // A root of a workspace's tree is a place to drop on, not a thing to move.
+        if matches!(row.kind, RowKind::More | RowKind::Failed) || row.root {
             return None;
         }
-        let root = self.tree.as_ref()?.root().to_owned();
+        let tree = self.tree.as_ref()?;
+        let root = tree.root_of(&row.path).unwrap_or(tree.root()).to_owned();
         let name_of = |path: &Path| {
             path.file_name()
                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
@@ -193,7 +195,13 @@ impl FilesPanel {
         self.edge_speed = 0.0;
         let Some(dir) = target
             .and_then(|(path, is_dir)| drop_folder(path, is_dir))
-            .or_else(|| self.tree.as_ref().map(|t| t.root().to_owned()))
+            .or_else(|| {
+                // The empty part of the tree: the root of what is dragged (a workspace's tree
+                // has several).
+                let tree = self.tree.as_ref()?;
+                let first = rows.paths.first()?;
+                Some(tree.root_of(first).unwrap_or(tree.root()).to_owned())
+            })
         else {
             return;
         };

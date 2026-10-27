@@ -225,7 +225,7 @@ impl FilesPanel {
         };
         let mut paths: Vec<PathBuf> = Vec::new();
         for selected in self.selection() {
-            if selected == tree.root() {
+            if tree.is_root(&selected) {
                 continue;
             }
             // The rows shown are the filter's while it narrows the tree.
@@ -724,7 +724,7 @@ impl FilesPanel {
             for dir in tree.expanded_dirs() {
                 for (from, to) in pairs {
                     if let Some(new) = remap(&dir, from, to)
-                        && dir != tree.root()
+                        && !tree.is_root(&dir)
                     {
                         reopen.push(new);
                         break;

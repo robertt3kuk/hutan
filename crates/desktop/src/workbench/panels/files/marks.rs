@@ -19,6 +19,7 @@ use hutan_core::WorkspaceId;
 use hutan_protocol::lsp::{LspDiagnosticsRequest, LspDiagnosticsResult, LspSeverity};
 use tokio::sync::broadcast::error::RecvError;
 
+use super::super::files_tree::Tree;
 use super::FilesPanel;
 use crate::settings::{FilesDiagnostics, FilesPanelSettings};
 use crate::workbench::panels::problems::{ProblemRow, problems_of};
@@ -77,8 +78,10 @@ pub struct DiagMarks {
 }
 
 impl DiagMarks {
-    /// The marks of `result`'s files below `root`; severities below warning do not count.
-    pub fn from_result(root: &Path, result: &LspDiagnosticsResult) -> Self {
+    /// The marks of `result`'s files below one of `roots`; severities below warning do not
+    /// count. A root has a row only in a workspace's tree (`root_rows`): then it carries the sum
+    /// of what is below it.
+    pub fn from_result(roots: &[PathBuf], root_rows: bool, result: &LspDiagnosticsResult) -> Self {
         let (_, rows) = problems_of(result);
         let mut marks = Self::default();
         for row in rows {
@@ -93,11 +96,20 @@ impl DiagMarks {
             };
             let counts = DiagCounts { errors, warnings };
             let path = PathBuf::from(path);
-            if counts.is_empty() || !path.starts_with(root) {
+            let Some(root) = roots
+                .iter()
+                .filter(|r| path.starts_with(r))
+                .max_by_key(|r| r.components().count())
+            else {
+                continue;
+            };
+            if counts.is_empty() {
                 continue;
             }
             let mut dir = path.parent();
-            while let Some(parent) = dir.filter(|d| d.starts_with(root) && *d != root) {
+            while let Some(parent) =
+                dir.filter(|d| d.starts_with(root) && (root_rows || *d != root.as_path()))
+            {
                 marks.dirs.entry(parent.to_owned()).or_default().add(counts);
                 dir = parent.parent();
             }
@@ -124,7 +136,7 @@ impl DiagMarks {
 pub(super) struct DiagState {
     marks: DiagMarks,
     /// What the last read was asked for: root, connected, the setting, the container.
-    asked: Option<(PathBuf, bool, FilesDiagnostics, Option<WorkspaceId>)>,
+    asked: Option<(Vec<PathBuf>, bool, FilesDiagnostics, Option<WorkspaceId>)>,
     task: Option<Task<()>>,
     again: bool,
     cooldown: Option<Task<()>>,
@@ -168,9 +180,9 @@ impl FilesPanel {
         let store = self.env.sessions.read(cx);
         let connected = store.connection_state() == ConnectionState::Connected
             && store.connection().supports_lsp();
-        let wanted = self.root().map(|root| {
+        let wanted = self.tree.as_ref().map(|tree| {
             (
-                root.to_owned(),
+                tree.roots().to_vec(),
                 connected,
                 setting,
                 store.scope_container_id(),
@@ -215,7 +227,7 @@ impl FilesPanel {
     }
 
     fn read_diagnostics(&mut self, cx: &mut Context<Self>) {
-        let Some((root, true, setting, container)) = self.diag.asked.clone() else {
+        let Some((roots, true, setting, container)) = self.diag.asked.clone() else {
             return;
         };
         let Some(min) = min_severity(setting) else {
@@ -244,12 +256,13 @@ impl FilesPanel {
             this.update(cx, |this, cx| {
                 this.diag.task = None;
                 this.diag.reads += 1;
-                if this.root() != Some(root.as_path()) {
+                if this.roots() != roots.as_slice() {
                     return;
                 }
                 // A read that failed leaves the marks on screen.
                 if let Ok(result) = answer {
-                    let marks = DiagMarks::from_result(&root, &result);
+                    let root_rows = this.tree.as_ref().is_some_and(Tree::is_grouped);
+                    let marks = DiagMarks::from_result(&roots, root_rows, &result);
                     if marks != this.diag.marks {
                         this.diag.marks = marks;
                         cx.notify();
@@ -332,10 +345,31 @@ mod tests {
     }
 
     #[test]
+    fn a_workspaces_roots_have_rows_and_carry_the_sum_of_their_own_files() {
+        use LspSeverity::{Error, Warning};
+        let marks = DiagMarks::from_result(
+            &[PathBuf::from("/a"), PathBuf::from("/b")],
+            true,
+            &result(vec![
+                file("/a/src/x.rs", &[Error]),
+                file("/a/y.rs", &[Warning]),
+                file("/b/z.rs", &[Warning]),
+                file("/c/q.rs", &[Error]),
+            ]),
+        );
+        let counts = |errors, warnings| Some(DiagCounts { errors, warnings });
+        assert_eq!(marks.of(Path::new("/a")), counts(1, 1));
+        assert_eq!(marks.of(Path::new("/a/src")), counts(1, 0));
+        assert_eq!(marks.of(Path::new("/b")), counts(0, 1));
+        assert_eq!(marks.of(Path::new("/c/q.rs")), None, "outside every root");
+    }
+
+    #[test]
     fn counts_roll_up_to_every_folder_below_the_root_and_the_root_has_none() {
         use LspSeverity::{Error, Hint, Warning};
         let marks = DiagMarks::from_result(
-            Path::new("/r"),
+            &[PathBuf::from("/r")],
+            false,
             &result(vec![
                 file("/r/a/b/x.rs", &[Error, Error, Warning]),
                 file("/r/a/y.rs", &[Warning]),

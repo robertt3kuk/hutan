@@ -99,6 +99,19 @@ impl GitStatus {
         status
     }
 
+    /// The root's own row (a workspace's tree) holds the changes below it.
+    pub fn carry_root(&mut self, root: &Path) {
+        if !self.marks.is_empty() {
+            self.dirs.insert(root.to_owned());
+        }
+    }
+
+    /// Adds the marks of another root.
+    pub fn merge(&mut self, other: Self) {
+        self.marks.extend(other.marks);
+        self.dirs.extend(other.dirs);
+    }
+
     pub fn mark(&self, path: &Path) -> Option<GitMark> {
         self.marks.get(path).copied()
     }

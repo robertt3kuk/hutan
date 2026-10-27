@@ -12,6 +12,10 @@
 //!   first folder, `tail` the last, and the children are the last one's. Opening a folder that
 //!   holds one folder opens that one too (listed through [`Tree::take_opened`]), so a chain never
 //!   shows half-folded.
+//! - **Roots.** A tree has one root (no row of its own: its entries are the first rows) or, for a
+//!   workspace (`Tree::workspace`, EX-8), one root per project, each a collapsible row of its own
+//!   with its entries one level in. Listings and open folders are keyed by absolute path, so the
+//!   roots share one set of both.
 //! - **Filters.** `.gitignore` / `.ignore` matches and dotfiles hide unless asked for; both are
 //!   [`TreeOptions`], applied when the rows are built.
 
@@ -52,6 +56,9 @@ pub struct Row {
     pub expanded: bool,
     /// An open folder whose listing is on its way.
     pub loading: bool,
+    /// The row is a root of a workspace's tree (EX-8): a project's folder, collapsible, never
+    /// renamed, moved or removed.
+    pub root: bool,
 }
 
 impl Row {
@@ -114,10 +121,13 @@ pub const EXPAND_ALL_ROWS: usize = 2_000;
 /// *Expand all* refuses to list more folders than this first.
 pub const EXPAND_ALL_UNLISTED: usize = 10;
 
-/// The tree of one root.
+/// The tree of one root, or of every project of a workspace.
 #[derive(Debug, Clone)]
 pub struct Tree {
-    root: PathBuf,
+    /// Never empty: every constructor takes at least one root.
+    roots: Vec<PathBuf>,
+    /// One row per root (a workspace's tree), else the single root has none.
+    grouped: bool,
     listings: HashMap<PathBuf, Listing>,
     expanded: HashSet<PathBuf>,
     rows: Vec<Row>,
@@ -237,15 +247,38 @@ fn same_shape(old: &[FsEntry], new: &[FsEntry]) -> bool {
 impl Tree {
     /// The root, open and not listed yet.
     pub fn new(root: PathBuf, options: TreeOptions) -> Self {
+        Self::build(vec![root], false, options, &[])
+    }
+
+    /// The tree of a workspace: every one of `roots` (at least one) a row of its own, open and
+    /// not listed yet, except those in `collapsed`.
+    pub fn workspace(roots: Vec<PathBuf>, options: TreeOptions, collapsed: &[PathBuf]) -> Self {
+        Self::build(roots, true, options, collapsed)
+    }
+
+    fn build(
+        roots: Vec<PathBuf>,
+        grouped: bool,
+        options: TreeOptions,
+        collapsed: &[PathBuf],
+    ) -> Self {
         let mut tree = Self {
             listings: HashMap::new(),
-            expanded: HashSet::from([root.clone()]),
-            root,
+            expanded: HashSet::new(),
+            roots,
+            grouped,
             rows: Vec::new(),
             options,
             opened: Vec::new(),
         };
-        tree.listings.insert(tree.root.clone(), Listing::Loading);
+        for root in tree.roots.clone() {
+            if grouped && collapsed.contains(&root) {
+                continue;
+            }
+            tree.listings.insert(root.clone(), Listing::Loading);
+            tree.expanded.insert(root);
+        }
+        tree.rebuild();
         tree
     }
 
@@ -257,17 +290,66 @@ impl Tree {
         dirs: impl IntoIterator<Item = PathBuf>,
     ) -> Self {
         let mut tree = Self::new(root, options);
-        for dir in dirs {
-            if dir.starts_with(&tree.root) && dir != tree.root {
-                tree.listings.entry(dir.clone()).or_insert(Listing::Loading);
-                tree.expanded.insert(dir);
-            }
-        }
+        tree.open_remembered(dirs);
         tree
     }
 
+    /// The tree of a workspace with `dirs` open as well (see [`Self::with_expanded`]).
+    pub fn workspace_with_expanded(
+        roots: Vec<PathBuf>,
+        options: TreeOptions,
+        collapsed: &[PathBuf],
+        dirs: impl IntoIterator<Item = PathBuf>,
+    ) -> Self {
+        let mut tree = Self::workspace(roots, options, collapsed);
+        tree.open_remembered(dirs);
+        tree
+    }
+
+    /// Opens the folders remembered from the last run that lie in an open root.
+    fn open_remembered(&mut self, dirs: impl IntoIterator<Item = PathBuf>) {
+        for dir in dirs {
+            let in_open_root = self
+                .root_of(&dir)
+                .is_some_and(|root| self.expanded.contains(root));
+            if in_open_root && !self.is_root(&dir) {
+                self.listings.entry(dir.clone()).or_insert(Listing::Loading);
+                self.expanded.insert(dir);
+            }
+        }
+        self.rebuild();
+    }
+
+    /// The first root: the tree's only one unless it is a workspace's.
     pub fn root(&self) -> &Path {
-        &self.root
+        &self.roots[0]
+    }
+
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Whether the roots are rows of their own (a workspace's tree).
+    pub fn is_grouped(&self) -> bool {
+        self.grouped
+    }
+
+    /// Whether the tree is of exactly these roots, grouped or not.
+    pub fn is_of(&self, roots: &[PathBuf], grouped: bool) -> bool {
+        self.grouped == grouped && self.roots == roots
+    }
+
+    pub fn is_root(&self, path: &Path) -> bool {
+        self.roots.iter().any(|r| r == path)
+    }
+
+    /// The root `path` is in (the deepest one when roots nest), `path` itself included.
+    pub fn root_of(&self, path: &Path) -> Option<&Path> {
+        self.roots
+            .iter()
+            .filter(|r| path.starts_with(r))
+            .max_by_key(|r| r.components().count())
+            .map(PathBuf::as_path)
     }
 
     pub fn rows(&self) -> &[Row] {
@@ -278,12 +360,12 @@ impl Tree {
         self.options
     }
 
-    /// Whether `dir` is open (the root always is).
+    /// Whether `dir` is open (a single tree's root always is).
     pub fn is_expanded(&self, dir: &Path) -> bool {
         self.expanded.contains(dir)
     }
 
-    /// The open folders, the root first.
+    /// The open folders, the roots first.
     pub fn expanded_dirs(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = self.expanded.iter().cloned().collect();
         dirs.sort_by(|a, b| {
@@ -449,9 +531,10 @@ impl Tree {
         needs
     }
 
-    /// Closes `dir` and every folder inside it; returns the folders closed (for unwatching).
+    /// Closes `dir` and every folder inside it; returns the folders closed (for unwatching). The
+    /// root of a single tree stays open; a workspace's roots close like any folder.
     pub fn collapse(&mut self, dir: &Path) -> Vec<PathBuf> {
-        if dir == self.root {
+        if !self.grouped && self.is_root(dir) {
             return Vec::new();
         }
         let closed: Vec<PathBuf> = self
@@ -467,15 +550,15 @@ impl Tree {
         closed
     }
 
-    /// Closes every folder but the root; returns the folders closed (for unwatching).
+    /// Closes every folder but the roots; returns the folders closed (for unwatching).
     pub fn collapse_all(&mut self) -> Vec<PathBuf> {
         let closed: Vec<PathBuf> = self
             .expanded
             .iter()
-            .filter(|d| **d != self.root)
+            .filter(|d| !self.is_root(d))
             .cloned()
             .collect();
-        self.expanded.retain(|d| *d == self.root);
+        self.expanded.retain(|d| self.roots.contains(d));
         self.opened.clear();
         self.rebuild();
         closed
@@ -489,7 +572,12 @@ impl Tree {
         let mut open = Vec::new();
         let mut unlisted = Vec::new();
         let mut rows = 0usize;
-        let mut queue = vec![self.root.clone()];
+        let mut queue: Vec<PathBuf> = self
+            .roots
+            .iter()
+            .filter(|r| self.expanded.contains(*r))
+            .cloned()
+            .collect();
         while let Some(dir) = queue.pop() {
             let Some(Listing::Listed { entries, .. }) = self.listings.get(&dir) else {
                 continue;
@@ -553,12 +641,13 @@ impl Tree {
         open
     }
 
-    /// The folders between the root (included) and `path` (excluded), outermost first; `None`
-    /// when `path` is not below the root.
+    /// The folders between its root (included) and `path` (excluded), outermost first; `None`
+    /// when `path` is not below a root.
     pub fn ancestors_of(&self, path: &Path) -> Option<Vec<PathBuf>> {
-        let relative = path.strip_prefix(&self.root).ok()?;
-        let mut dirs = vec![self.root.clone()];
-        let mut at = self.root.clone();
+        let root = self.root_of(path)?;
+        let relative = path.strip_prefix(root).ok()?;
+        let mut dirs = vec![root.to_owned()];
+        let mut at = root.to_owned();
         let components: Vec<_> = relative.components().collect();
         for component in components.iter().take(components.len().saturating_sub(1)) {
             at.push(component);
@@ -614,7 +703,7 @@ impl Tree {
             return;
         }
         let mut at = dir.to_owned();
-        while at != self.root && self.expanded.contains(&at) {
+        while !self.is_root(&at) && self.expanded.contains(&at) {
             let Some(next) = self.sole_dir(&at).map(|e| e.path.clone()) else {
                 break;
             };
@@ -638,14 +727,41 @@ impl Tree {
     /// Builds every row again.
     fn rebuild(&mut self) {
         let mut rows = Vec::with_capacity(self.rows.len());
-        self.push_rows(&self.root, 0, &mut rows);
+        for root in &self.roots {
+            if !self.grouped {
+                self.push_rows(root, 0, &mut rows);
+                continue;
+            }
+            let expanded = self.expanded.contains(root);
+            rows.push(Row {
+                path: root.clone(),
+                tail: None,
+                name: root
+                    .file_name()
+                    .map_or_else(
+                        || root.display().to_string(),
+                        |n| n.to_string_lossy().into_owned(),
+                    )
+                    .into(),
+                depth: 0,
+                kind: RowKind::Dir,
+                ignored: false,
+                expanded,
+                loading: expanded
+                    && matches!(self.listings.get(root), None | Some(Listing::Loading)),
+                root: true,
+            });
+            if expanded {
+                self.push_rows(root, 1, &mut rows);
+            }
+        }
         self.rows = rows;
     }
 
     /// Builds again the rows that `dir`'s change can have moved: those of the row `dir` is on
     /// (its own, or the first folder of the chain it is folded in) and everything below it.
     fn refresh(&mut self, dir: &Path) {
-        if dir == self.root {
+        if self.is_root(dir) {
             return self.rebuild();
         }
         // A change of `dir` can fold or unfold the chain it is in, so the rows start at the
@@ -653,7 +769,7 @@ impl Tree {
         let mut dir = dir.to_owned();
         while self.options.compact
             && let Some(parent) = dir.parent()
-            && parent != self.root
+            && !self.is_root(parent)
             && self.expanded.contains(parent)
             && self.sole_dir(parent).is_some_and(|e| e.path == dir)
         {
@@ -667,7 +783,7 @@ impl Tree {
             .or_else(|| {
                 dir.ancestors()
                     .skip(1)
-                    .take_while(|a| *a != self.root)
+                    .take_while(|a| !self.is_root(a))
                     .find_map(|a| {
                         self.rows
                             .iter()
@@ -709,6 +825,7 @@ impl Tree {
                 ignored: false,
                 expanded: false,
                 loading: false,
+                root: false,
             }),
             Some(Listing::Listed { entries, truncated }) => {
                 for entry in entries.iter().filter(|e| self.visible(e)) {
@@ -724,6 +841,7 @@ impl Tree {
                         ignored: false,
                         expanded: false,
                         loading: false,
+                        root: false,
                     });
                 }
             }
@@ -762,6 +880,7 @@ impl Tree {
             ignored: entry.ignored,
             expanded,
             loading: expanded && matches!(self.listings.get(folder), None | Some(Listing::Loading)),
+            root: false,
         });
         if expanded {
             self.push_rows(folder, depth + 1, rows);
@@ -1209,5 +1328,124 @@ mod tests {
         assert_eq!(tree.kind_of(Path::new("/r/a.rs")), Some(FsKind::File));
         assert_eq!(tree.kind_of(Path::new("/r/none")), None);
         assert_eq!(tree.kind_of(Path::new("/elsewhere/a.rs")), None);
+    }
+
+    fn workspace_tree() -> Tree {
+        Tree::workspace(
+            vec![PathBuf::from("/a"), PathBuf::from("/b")],
+            TreeOptions::default(),
+            &[],
+        )
+    }
+
+    #[test]
+    fn a_workspaces_roots_are_rows_of_their_own_with_their_entries_one_level_in() {
+        let mut tree = workspace_tree();
+        assert_eq!(
+            names(&tree),
+            ["a", "b"],
+            "the roots show before any listing"
+        );
+        assert!(
+            tree.rows()
+                .iter()
+                .all(|r| r.root && r.expanded && r.loading)
+        );
+        list(
+            &mut tree,
+            "/a",
+            &[("src", FsKind::Dir), ("a.txt", FsKind::File)],
+        );
+        list(&mut tree, "/b", &[("b.txt", FsKind::File)]);
+        assert_eq!(names(&tree), ["a", "  src", "  a.txt", "b", "  b.txt"]);
+        assert!(tree.rows().iter().all(|r| !r.loading));
+        assert!(!tree.rows()[1].root, "an entry is no root");
+
+        // A folder opens inside its own root's rows.
+        tree.expand(Path::new("/a/src"));
+        list(&mut tree, "/a/src", &[("lib.rs", FsKind::File)]);
+        assert_eq!(
+            names(&tree),
+            ["a", "  src", "    lib.rs", "  a.txt", "b", "  b.txt"]
+        );
+        assert_eq!(tree.parent_index(2), Some(1));
+        assert_eq!(
+            tree.parent_index(1),
+            Some(0),
+            "an entry's parent is its root's row"
+        );
+        assert_eq!(tree.parent_index(0), None);
+    }
+
+    #[test]
+    fn a_workspaces_root_folds_into_its_row_and_opens_again_keeping_its_listing() {
+        let mut tree = workspace_tree();
+        list(&mut tree, "/a", &[("a.txt", FsKind::File)]);
+        list(&mut tree, "/b", &[("b.txt", FsKind::File)]);
+        let closed = tree.collapse(Path::new("/a"));
+        assert_eq!(closed, [PathBuf::from("/a")]);
+        assert_eq!(names(&tree), ["a", "b", "  b.txt"]);
+        assert!(!tree.is_expanded(Path::new("/a")));
+        assert!(!tree.rows()[0].expanded);
+        assert!(tree.is_listed(Path::new("/a")), "the listing is kept");
+        tree.expand(Path::new("/a"));
+        assert_eq!(names(&tree), ["a", "  a.txt", "b", "  b.txt"]);
+        // A single tree's root cannot be folded.
+        let mut single = self::tree("/r");
+        assert!(single.collapse(Path::new("/r")).is_empty());
+        assert!(single.is_expanded(Path::new("/r")));
+    }
+
+    #[test]
+    fn collapse_all_keeps_a_workspaces_roots_open_and_a_folded_root_starts_folded() {
+        let mut tree = workspace_tree();
+        list(&mut tree, "/a", &[("src", FsKind::Dir)]);
+        tree.expand(Path::new("/a/src"));
+        list(
+            &mut tree,
+            "/a/src",
+            &[("lib.rs", FsKind::File), ("deep", FsKind::Dir)],
+        );
+        let closed = tree.collapse_all();
+        assert_eq!(closed, [PathBuf::from("/a/src")]);
+        assert!(tree.is_expanded(Path::new("/a")) && tree.is_expanded(Path::new("/b")));
+        assert_eq!(names(&tree), ["a", "  src", "b"]);
+
+        let folded = Tree::workspace_with_expanded(
+            vec![PathBuf::from("/a"), PathBuf::from("/b")],
+            TreeOptions::default(),
+            &[PathBuf::from("/b")],
+            [PathBuf::from("/a/x"), PathBuf::from("/b/y")],
+        );
+        assert_eq!(names(&folded), ["a", "b"]);
+        assert!(folded.is_expanded(Path::new("/a/x")));
+        assert!(
+            !folded.is_expanded(Path::new("/b/y")),
+            "a folder of a folded root is not opened"
+        );
+        assert!(!folded.is_expanded(Path::new("/b")));
+        assert_eq!(folded.root_of(Path::new("/b/y/z")), Some(Path::new("/b")));
+    }
+
+    #[test]
+    fn a_path_belongs_to_the_deepest_root_and_its_ancestors_start_there() {
+        let tree = Tree::workspace(
+            vec![PathBuf::from("/m"), PathBuf::from("/m/sub")],
+            TreeOptions::default(),
+            &[],
+        );
+        assert_eq!(tree.root_of(Path::new("/m/a.rs")), Some(Path::new("/m")));
+        assert_eq!(
+            tree.root_of(Path::new("/m/sub/a.rs")),
+            Some(Path::new("/m/sub"))
+        );
+        assert_eq!(tree.root_of(Path::new("/other/a.rs")), None);
+        assert_eq!(
+            tree.ancestors_of(Path::new("/m/sub/x/a.rs")),
+            Some(vec![PathBuf::from("/m/sub"), PathBuf::from("/m/sub/x")])
+        );
+        assert_eq!(tree.ancestors_of(Path::new("/other/a.rs")), None);
+        assert!(tree.is_of(&[PathBuf::from("/m"), PathBuf::from("/m/sub")], true));
+        assert!(!tree.is_of(&[PathBuf::from("/m"), PathBuf::from("/m/sub")], false));
     }
 }

@@ -98,7 +98,14 @@ impl Workbench {
         match self.files_panel_entity() {
             Some(panel) => {
                 let panel = panel.read(cx);
-                (panel.acted_paths(), panel.root().map(Path::to_owned))
+                let paths = panel.acted_paths();
+                // What a path is shown relative to: its own root (a workspace's tree has several).
+                let root = paths
+                    .first()
+                    .and_then(|p| panel.tree().and_then(|t| t.root_of(p)))
+                    .or_else(|| panel.root())
+                    .map(Path::to_owned);
+                (paths, root)
             }
             None => (Vec::new(), None),
         }
@@ -273,6 +280,15 @@ impl Workbench {
             ),
         ]);
 
+        // A root of a workspace's tree takes new entries and pastes; it is never renamed,
+        // copied, cut or removed.
+        let first_is_root = single
+            && self.files_panel_entity().is_some_and(|panel| {
+                panel
+                    .read(cx)
+                    .tree()
+                    .is_some_and(|tree| tree.is_root(&first))
+            });
         let mut ops = Vec::new();
         if single {
             ops.push(op(
@@ -285,21 +301,27 @@ impl Workbench {
                 FilesCommand::NewFolder,
                 &actions::FilesNewFolder,
             ));
-            ops.push(op("Rename", FilesCommand::Rename, &actions::FilesRename));
+            if !first_is_root {
+                ops.push(op("Rename", FilesCommand::Rename, &actions::FilesRename));
+            }
         }
-        ops.push(op(
-            "Duplicate",
-            FilesCommand::Duplicate,
-            &actions::FilesDuplicate,
-        ));
-        ops.push(op("Cut", FilesCommand::Cut, &actions::FilesCut));
-        ops.push(op("Copy", FilesCommand::Copy, &actions::FilesCopy));
+        if !first_is_root {
+            ops.push(op(
+                "Duplicate",
+                FilesCommand::Duplicate,
+                &actions::FilesDuplicate,
+            ));
+            ops.push(op("Cut", FilesCommand::Cut, &actions::FilesCut));
+            ops.push(op("Copy", FilesCommand::Copy, &actions::FilesCopy));
+        }
         ops.push(op("Paste", FilesCommand::Paste, &actions::FilesPaste));
-        ops.push(op(
-            "Move to Trash",
-            FilesCommand::Trash,
-            &actions::FilesTrash,
-        ));
+        if !first_is_root {
+            ops.push(op(
+                "Move to Trash",
+                FilesCommand::Trash,
+                &actions::FilesTrash,
+            ));
+        }
         group(ops);
 
         self.open_menu(at.position, menu, window, cx);

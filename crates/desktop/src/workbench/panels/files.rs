@@ -72,7 +72,7 @@ use super::files_tree::{ExpandRefusal, file_icon};
 pub use super::files_tree::{Row, RowKind, Tree, TreeOptions};
 use crate::icons::{Icon, icon};
 use crate::sessions::{CheckoutActivity, FilesRootChoices, ScopeLabel};
-use crate::settings::{FilesPanelSettings, IndentGuides};
+use crate::settings::{FilesPanelSettings, FilesRoots, IndentGuides};
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
 use crate::workbench::actions::{
@@ -121,6 +121,9 @@ fn indent_px(depth: usize) -> f32 {
     let deep = depth.saturating_sub(INDENT_FULL_LEVELS) as f32 * INDENT_DEEP;
     (full + deep).min(INDENT_MAX)
 }
+
+/// What a folded root row is remembered as, beside the folded sections' ids (`FilesRoot::folded`).
+const ROOT_FOLDED: &str = "tree-root";
 
 /// The open folders the panel remembers per root, shared with the workbench that saves them in
 /// `desktop-state.json` (`files_expanded`). Cheap to clone.
@@ -181,6 +184,35 @@ impl FilesMemory {
         self.roots.borrow().clone()
     }
 
+    /// Whether `root`'s row is folded in a workspace's tree.
+    pub fn root_collapsed(&self, root: &Path) -> bool {
+        self.folded_of(root).iter().any(|f| f == ROOT_FOLDED)
+    }
+
+    /// Notes that `root`'s row is (not) folded; the folded sections stay.
+    fn remember_root_collapsed(&self, root: &Path, collapsed: bool, cx: &mut App) {
+        if self.root_collapsed(root) == collapsed {
+            return;
+        }
+        let mut folded = self.folded_of(root);
+        folded.retain(|f| f != ROOT_FOLDED);
+        if collapsed {
+            folded.push(ROOT_FOLDED.to_owned());
+        }
+        folded.sort();
+        self.remember_folded(root, folded, cx);
+    }
+
+    /// Notes which sections above `root`'s tree are folded; a folded root row stays so.
+    fn remember_sections(&self, root: &Path, sections: Vec<String>, cx: &mut App) {
+        let mut folded = sections;
+        if self.root_collapsed(root) {
+            folded.push(ROOT_FOLDED.to_owned());
+        }
+        folded.sort();
+        self.remember_folded(root, folded, cx);
+    }
+
     fn remember_folded(&self, root: &Path, folded: Vec<String>, cx: &mut App) {
         let changed = persistence::note_files_folded(
             &mut self.roots.borrow_mut(),
@@ -204,6 +236,17 @@ impl FilesMemory {
     }
 }
 
+fn paths_of(dirs: &[String]) -> Vec<PathBuf> {
+    dirs.iter().map(PathBuf::from).collect()
+}
+
+/// What a tree shows: its roots, and whether each is a row of its own (a workspace's tree).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RootSet {
+    roots: Vec<PathBuf>,
+    grouped: bool,
+}
+
 /// The tree of a root the window left, kept for when it comes back.
 struct CachedRoot {
     tree: Tree,
@@ -218,7 +261,7 @@ pub struct FilesPanel {
     tree: Option<Tree>,
     /// The root before the last switch of container: its cached tree is drawn (not interactive)
     /// until the new root's first listing arrives, so a switch never flashes an empty panel.
-    stale_root: Option<PathBuf>,
+    stale: Option<RootSet>,
     /// Trees of the roots the window left, most recent first, at most [`MAX_CACHED_ROOTS`].
     cache: Vec<CachedRoot>,
     /// A root the root switcher picked (EX-8): the panel shows it instead of the folder the
@@ -270,7 +313,7 @@ pub struct FilesPanel {
     git_cooldown: Option<Task<()>>,
     /// The root and connection state the git status was last asked for: it is asked again when
     /// either changes (a window that connects after the root was set has no marks yet).
-    git_asked: Option<(PathBuf, hutan_client::ConnectionState)>,
+    git_asked: Option<(Vec<PathBuf>, hutan_client::ConnectionState)>,
     /// Reads of the git status answered so far (tests wait on it).
     git_reads: usize,
     /// The language servers' diagnostics of the root's files and folders (`marks.rs`).
@@ -341,7 +384,7 @@ impl FilesPanel {
             env,
             focus: cx.focus_handle(),
             tree: None,
-            stale_root: None,
+            stale: None,
             cache: Vec::new(),
             pin: None,
             followed: None,
@@ -433,6 +476,11 @@ impl FilesPanel {
         cx.notify();
     }
 
+    /// The folders the tree shows: one, or a workspace's projects.
+    pub fn roots(&self) -> &[PathBuf] {
+        self.tree.as_ref().map_or(&[], Tree::roots)
+    }
+
     /// The tree itself.
     pub fn tree(&self) -> Option<&Tree> {
         self.tree.as_ref()
@@ -468,11 +516,11 @@ impl FilesPanel {
         if let Some(projection) = self.filter.projection() {
             return projection.rows();
         }
-        match (&self.stale_root, self.rows()) {
-            (Some(root), []) => self
+        match (&self.stale, self.rows()) {
+            (Some(stale), []) => self
                 .cache
                 .iter()
-                .find(|c| c.tree.root() == root)
+                .find(|c| c.tree.is_of(&stale.roots, stale.grouped))
                 .map_or(&[], |c| c.tree.rows()),
             (_, rows) => rows,
         }
@@ -639,11 +687,33 @@ impl FilesPanel {
         self.pin.clone().or(followed)
     }
 
+    /// The roots the tree shows: the folder the root switcher picked, else with
+    /// `panels.files.roots = workspace` every project of the workspace the window shows, else
+    /// the project the window works in.
+    fn wanted_roots(&mut self, cx: &mut Context<Self>) -> Option<RootSet> {
+        let root = self.wanted_root(cx)?;
+        if self.pin.is_none()
+            && self.env.settings.get::<FilesPanelSettings>().roots == FilesRoots::Workspace
+            && let Some(roots) = self.env.sessions.read(cx).files_workspace_roots()
+        {
+            return Some(RootSet {
+                roots,
+                grouped: true,
+            });
+        }
+        Some(RootSet {
+            roots: vec![root],
+            grouped: false,
+        })
+    }
+
     /// Follows the project the window works in: a new root starts a tree (or brings its kept
     /// one back).
     fn follow_root(&mut self, cx: &mut Context<Self>) {
-        let root = self.wanted_root(cx);
-        if root.as_deref() == self.root() {
+        let wanted = self.wanted_roots(cx);
+        if wanted.as_ref().map(|w| (w.roots.as_slice(), w.grouped))
+            == self.tree.as_ref().map(|t| (t.roots(), t.is_grouped()))
+        {
             return;
         }
         self.unwatch_all(cx);
@@ -663,7 +733,7 @@ impl FilesPanel {
         self.rename_when_listed = None;
         self.hint = None;
         self.spring = None;
-        self.stale_root = None;
+        self.stale = None;
         let offset = self.scroll.0.borrow().base_handle.offset();
         self.picked.clear();
         self.anchor = None;
@@ -671,10 +741,14 @@ impl FilesPanel {
         if let Some(tree) = self.tree.take() {
             // The tree that leaves is drawn until the new root's first listing, when there is a
             // new root and the old one showed something.
-            if root.is_some() && !tree.rows().is_empty() {
-                self.stale_root = Some(tree.root().to_owned());
+            if wanted.is_some() && !tree.rows().is_empty() {
+                self.stale = Some(RootSet {
+                    roots: tree.roots().to_vec(),
+                    grouped: tree.is_grouped(),
+                });
             }
-            self.cache.retain(|c| c.tree.root() != tree.root());
+            self.cache
+                .retain(|c| !c.tree.is_of(tree.roots(), tree.is_grouped()));
             self.cache.insert(
                 0,
                 CachedRoot {
@@ -687,8 +761,12 @@ impl FilesPanel {
         }
         let options = self.tree_options();
         let mut offset = Point::default();
-        self.tree = root.map(|root| {
-            if let Some(i) = self.cache.iter().position(|c| c.tree.root() == root) {
+        self.tree = wanted.map(|mut wanted| {
+            if let Some(i) = self
+                .cache
+                .iter()
+                .position(|c| c.tree.is_of(&wanted.roots, wanted.grouped))
+            {
                 // Back to a root seen before: its rows are drawn at once, every open folder is
                 // listed again.
                 let CachedRoot {
@@ -699,12 +777,27 @@ impl FilesPanel {
                 tree.set_options(options);
                 self.selected = selected;
                 offset = kept;
-                self.stale_root = None;
+                self.stale = None;
                 tree
             } else {
-                let dirs = self.env.files_memory.dirs_of(&root);
+                let memory = &self.env.files_memory;
+                let dirs: Vec<PathBuf> = wanted
+                    .roots
+                    .iter()
+                    .flat_map(|root| memory.dirs_of(root))
+                    .collect();
                 self.restored = dirs.iter().cloned().collect();
-                Tree::with_expanded(root, options, dirs)
+                if wanted.grouped {
+                    let collapsed: Vec<PathBuf> = wanted
+                        .roots
+                        .iter()
+                        .filter(|root| memory.root_collapsed(root))
+                        .cloned()
+                        .collect();
+                    Tree::workspace_with_expanded(wanted.roots, options, &collapsed, dirs)
+                } else {
+                    Tree::with_expanded(wanted.roots.swap_remove(0), options, dirs)
+                }
             }
         });
         self.scroll.0.borrow().base_handle.set_offset(offset);
@@ -726,8 +819,10 @@ impl FilesPanel {
     }
 
     /// Takes in what the settings say of the tree (the header's ⋯ writes them): the rows are
-    /// built again when a filter or the folding changed.
+    /// built again when a filter or the folding changed, and the roots when `roots` changed.
     fn sync_options(&mut self, cx: &mut Context<Self>) {
+        self.follow_root(cx);
+        self.sync_git(cx);
         let options = self.tree_options();
         let Some(tree) = &mut self.tree else {
             return;
@@ -758,18 +853,45 @@ impl FilesPanel {
         self.remember(cx);
     }
 
-    /// Hands the open folders to the memory that survives a restart.
+    /// Hands the open folders of every root to the memory that survives a restart (and, in a
+    /// workspace's tree, which roots are folded).
     fn remember(&mut self, cx: &mut Context<Self>) {
         let Some(tree) = &self.tree else {
             return;
         };
-        let dirs: Vec<String> = tree
-            .expanded_dirs()
-            .into_iter()
-            .filter(|d| d != tree.root())
-            .map(|d| d.display().to_string())
+        let mut by_root: Vec<(PathBuf, Vec<String>)> = tree
+            .roots()
+            .iter()
+            .map(|root| (root.clone(), Vec::new()))
             .collect();
-        self.env.files_memory.remember(tree.root(), dirs, cx);
+        for dir in tree.expanded_dirs() {
+            if tree.is_root(&dir) {
+                continue;
+            }
+            if let Some(root) = tree.root_of(&dir)
+                && let Some((_, dirs)) = by_root.iter_mut().find(|(r, _)| r == root)
+            {
+                dirs.push(dir.display().to_string());
+            }
+        }
+        let collapsed: Vec<(PathBuf, bool)> = tree
+            .roots()
+            .iter()
+            .map(|root| (root.clone(), tree.is_grouped() && !tree.is_expanded(root)))
+            .collect();
+        let grouped = tree.is_grouped();
+        for (root, dirs) in by_root {
+            // A single root is the most recent one whenever it is in use; a workspace's roots
+            // would take turns at it on every listing, so only those that changed are noted.
+            if !grouped || self.env.files_memory.dirs_of(&root) != paths_of(&dirs) {
+                self.env.files_memory.remember(&root, dirs, cx);
+            }
+        }
+        for (root, collapsed) in collapsed {
+            self.env
+                .files_memory
+                .remember_root_collapsed(&root, collapsed, cx);
+        }
     }
 
     // ---- listing and watching -------------------------------------------------------------
@@ -811,7 +933,7 @@ impl FilesPanel {
         if !tree.knows(dir) {
             return;
         }
-        let root = tree.root().to_owned();
+        let is_root = tree.is_root(dir);
         let mut gone = Vec::new();
         match answer {
             Ok(listing) => {
@@ -820,14 +942,14 @@ impl FilesPanel {
             }
             // A folder remembered from the last run that is not there any more is closed
             // without a word.
-            Err(_) if dir != root && self.restored.remove(dir) => gone = tree.forget(dir),
+            Err(_) if !is_root && self.restored.remove(dir) => gone = tree.forget(dir),
             Err(error) => tree.set_failed(dir, crate::workbench::files::error_text(&error)),
         }
         for dir in gone {
             self.unwatch(&dir, cx);
         }
-        if root == dir {
-            self.stale_root = None;
+        if is_root {
+            self.stale = None;
         }
         if let Some(file) = self.pending_reveal.clone() {
             self.reveal(&file, cx);
@@ -868,11 +990,11 @@ impl FilesPanel {
         }
     }
 
-    /// Asks for the git status when the root or the connection is not what it was asked for.
+    /// Asks for the git status when the roots or the connection are not what it was asked for.
     fn sync_git(&mut self, cx: &mut Context<Self>) {
-        let wanted = self.root().map(|root| {
+        let wanted = self.tree.as_ref().map(|tree| {
             (
-                root.to_owned(),
+                tree.roots().to_vec(),
                 self.env.sessions.read(cx).connection_state(),
             )
         });
@@ -885,9 +1007,10 @@ impl FilesPanel {
         }
     }
 
-    /// Reads which files of the root are changed (`worktree.diff` without patches): one read at
-    /// a time, at most one every [`GIT_READ_EVERY`]; a trigger meanwhile is one read when the
-    /// time is up. A root outside git, or a daemon without worktree review, has no marks.
+    /// Reads which files of the roots are changed (`worktree.diff` without patches, one per
+    /// root): one read at a time, at most one every [`GIT_READ_EVERY`]; a trigger meanwhile is
+    /// one read when the time is up. A root outside git, or a daemon without worktree review,
+    /// has no marks.
     fn refresh_git(&mut self, cx: &mut Context<Self>) {
         if self.tree.is_none() {
             return;
@@ -900,23 +1023,33 @@ impl FilesPanel {
     }
 
     fn start_git_read(&mut self, cx: &mut Context<Self>) {
-        let Some(root) = self.tree.as_ref().map(|t| t.root().to_owned()) else {
+        let Some((roots, grouped)) = self
+            .tree
+            .as_ref()
+            .map(|t| (t.roots().to_vec(), t.is_grouped()))
+        else {
             return;
         };
         let store = self.env.sessions.read(cx);
         if !store.connection().supports_worktree_review() {
             return;
         }
-        let read = self.env.sessions.update(cx, |store, cx| {
-            store.worktree_diff(
-                WorktreeDiffRequest {
-                    path: root.clone(),
-                    base: None,
-                    include_uncommitted: true,
-                },
-                cx,
-            )
-        });
+        let reads: Vec<_> = roots
+            .iter()
+            .map(|root| {
+                let read = self.env.sessions.update(cx, |store, cx| {
+                    store.worktree_diff(
+                        WorktreeDiffRequest {
+                            path: root.clone(),
+                            base: None,
+                            include_uncommitted: true,
+                        },
+                        cx,
+                    )
+                });
+                (root.clone(), read)
+            })
+            .collect();
         self.git_cooldown = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(GIT_READ_EVERY).await;
             this.update(cx, |this, cx| {
@@ -928,18 +1061,23 @@ impl FilesPanel {
             .ok();
         }));
         self.git_task = Some(cx.spawn(async move |this, cx| {
-            let answer = read.await;
+            let mut status = GitStatus::default();
+            for (root, read) in reads {
+                // A root that is not a git checkout (or unreadable) has no decorations.
+                if let Ok(diff) = read.await {
+                    let mut part = GitStatus::from_files(&root, &diff.files);
+                    if grouped {
+                        part.carry_root(&root);
+                    }
+                    status.merge(part);
+                }
+            }
             this.update(cx, |this, cx| {
                 this.git_task = None;
                 this.git_reads += 1;
-                if this.root() != Some(root.as_path()) {
+                if this.roots() != roots.as_slice() {
                     return;
                 }
-                let status = match answer {
-                    Ok(diff) => GitStatus::from_files(&root, &diff.files),
-                    // Not a git checkout (or unreadable): no decorations.
-                    Err(_) => GitStatus::default(),
-                };
                 if status != this.git {
                     this.git = status;
                     cx.notify();
@@ -1028,8 +1166,11 @@ impl FilesPanel {
                 open.into_iter().filter(|d| dirs.contains(d)).collect()
             }
             Notice::FsGeneration { root, .. } => {
-                let ours = tree.root();
-                if !(ours.starts_with(&root) || root.starts_with(ours)) {
+                if !tree
+                    .roots()
+                    .iter()
+                    .any(|ours| ours.starts_with(&root) || root.starts_with(ours))
+                {
                     return;
                 }
                 // The watched folders hear of their changes themselves.
@@ -1796,6 +1937,11 @@ impl FilesPanel {
                             .text_size(px(tokens.font_size))
                             .text_color(color)
                             .when(is_active, |s| s.font_weight(gpui::FontWeight::MEDIUM))
+                            // A root of a workspace's tree: bold, a line above all but the first.
+                            .when(row.root, |s| s.font_weight(gpui::FontWeight::SEMIBOLD))
+                            .when(row.root && index > 0, |s| {
+                                s.border_t_1().border_color(theme.border)
+                            })
                             .when(cut, |s| s.opacity(0.5))
                             .when(selected, |s| s.bg(theme.sidebar_accent))
                             .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
@@ -2248,5 +2394,28 @@ mod tests {
         assert_eq!(indent_px(10), 96.0);
         assert_eq!(indent_px(11), 100.0, "the cap");
         assert_eq!(indent_px(50), 100.0);
+    }
+
+    #[gpui::test]
+    fn a_folded_root_row_and_the_folded_sections_are_remembered_side_by_side(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let memory = FilesMemory::detached();
+        let (a, b) = (Path::new("/a"), Path::new("/b"));
+        cx.update(|cx| {
+            memory.remember_root_collapsed(a, true, cx);
+            assert!(memory.root_collapsed(a) && !memory.root_collapsed(b));
+            // Folding a section keeps the root row folded, and the other way round.
+            memory.remember_sections(a, vec!["open-editors".to_owned()], cx);
+            assert!(memory.root_collapsed(a));
+            assert_eq!(
+                memory.folded_of(a),
+                ["open-editors".to_owned(), ROOT_FOLDED.to_owned()]
+            );
+            memory.remember_root_collapsed(a, false, cx);
+            assert_eq!(memory.folded_of(a), ["open-editors".to_owned()]);
+            memory.remember_sections(a, Vec::new(), cx);
+            assert!(memory.snapshot().is_empty(), "nothing folded, nothing kept");
+        });
     }
 }

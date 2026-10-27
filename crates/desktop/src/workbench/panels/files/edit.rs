@@ -481,7 +481,7 @@ impl FilesPanel {
             .as_ref()
             .filter(|e| e.kind != EditKind::Rename)?;
         let tree = self.tree.as_ref()?;
-        if edit.parent == tree.root() {
+        if !tree.is_grouped() && edit.parent == tree.root() {
             return Some((0, 0));
         }
         let at = tree

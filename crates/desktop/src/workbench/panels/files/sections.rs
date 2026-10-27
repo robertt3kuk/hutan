@@ -173,11 +173,22 @@ pub(super) struct AgentMarks {
 }
 
 impl AgentMarks {
-    pub(super) fn of(agents: &[AgentFile], root: &Path) -> Self {
+    /// The marks of the files below one of `roots`; a root has a row only in a workspace's tree
+    /// (`root_rows`), where it holds what is below it too.
+    pub(super) fn of(agents: &[AgentFile], roots: &[PathBuf], root_rows: bool) -> Self {
         let mut marks = Self::default();
-        for file in agents.iter().filter(|a| a.path.starts_with(root)) {
+        for file in agents {
+            let Some(root) = roots
+                .iter()
+                .filter(|r| file.path.starts_with(r))
+                .max_by_key(|r| r.components().count())
+            else {
+                continue;
+            };
             let mut dir = file.path.parent();
-            while let Some(parent) = dir.filter(|d| d.starts_with(root) && *d != root) {
+            while let Some(parent) =
+                dir.filter(|d| d.starts_with(root) && (root_rows || *d != root.as_path()))
+            {
                 marks.dirs.insert(parent.to_owned());
                 dir = parent.parent();
             }
@@ -209,17 +220,15 @@ fn file_name(path: &Path) -> SharedString {
 }
 
 impl FilesPanel {
-    /// The files of the window's tabs below the root, tab order.
+    /// The files of the window's tabs below a root, tab order.
     fn open_below_root(&self, cx: &App) -> Vec<OpenEditor> {
-        let Some(root) = self.root() else {
-            return Vec::new();
-        };
+        let roots = self.roots();
         self.env
             .files_feed
             .read(cx)
             .open()
             .iter()
-            .filter(|e| e.path.starts_with(root))
+            .filter(|e| roots.iter().any(|root| e.path.starts_with(root)))
             .cloned()
             .collect()
     }
@@ -236,28 +245,46 @@ impl FilesPanel {
         if wanted { open } else { Vec::new() }
     }
 
-    /// The files of the ledger below the root, newest first (every one, not only the rows the
+    /// The files of the ledger below a root, newest first (every one, not only the rows the
     /// section draws).
     pub fn changed_by_agents(&self, cx: &App) -> Vec<AgentFile> {
-        let Some(root) = self.root() else {
-            return Vec::new();
-        };
+        let roots = self.roots();
         self.env
             .files_feed
             .read(cx)
             .agents()
             .iter()
-            .filter(|a| a.path.starts_with(root))
+            .filter(|a| roots.iter().any(|root| a.path.starts_with(root)))
             .cloned()
             .collect()
     }
 
     /// The agent marks of the rows (a lookup per row, built once a frame).
     pub(super) fn agent_marks(&self, cx: &App) -> AgentMarks {
-        match self.root() {
-            Some(root) => AgentMarks::of(self.env.files_feed.read(cx).agents(), root),
-            None => AgentMarks::default(),
+        let root_rows = self.tree.as_ref().is_some_and(|t| t.is_grouped());
+        AgentMarks::of(
+            self.env.files_feed.read(cx).agents(),
+            self.roots(),
+            root_rows,
+        )
+    }
+
+    /// Where an open file's folder is, for the *Open Editors* row: the folder below its root;
+    /// in a workspace's tree the root's name leads (`alpha/src`).
+    fn folder_label(&self, path: &Path) -> Option<String> {
+        let tree = self.tree.as_ref()?;
+        let root = tree.root_of(path)?;
+        let inside = folder_under(root, path);
+        if !tree.is_grouped() {
+            return inside;
         }
+        let name = root
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        Some(match inside {
+            Some(inside) => format!("{name}/{inside}"),
+            None => name,
+        })
     }
 
     /// The ledger's entry the tree marks the file at `path` with (◆), if any.
@@ -288,7 +315,7 @@ impl FilesPanel {
                 .map(|s| s.id().to_owned())
                 .collect();
             folded.sort();
-            self.env.files_memory.remember_folded(&root, folded, cx);
+            self.env.files_memory.remember_sections(&root, folded, cx);
         }
         cx.notify();
     }
@@ -321,7 +348,7 @@ impl FilesPanel {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let active = self.env.files_feed.read(cx).active().map(Path::to_owned);
-        let root = self.root().map(Path::to_owned)?;
+        self.root()?;
         let regions = self.env.regions.clone();
         let mut blocks: Vec<AnyElement> = Vec::new();
         if !open.is_empty() {
@@ -340,7 +367,7 @@ impl FilesPanel {
                         index,
                         editor,
                         active.as_deref() == Some(editor.path.as_path()),
-                        folder_under(&root, &editor.path),
+                        self.folder_label(&editor.path),
                         &regions,
                         &theme,
                         &tokens,
@@ -663,7 +690,8 @@ mod tests {
                 file("/r/y.rs", 2),
                 file("/other/z.rs", 1),
             ],
-            Path::new("/r"),
+            &[PathBuf::from("/r")],
+            false,
         );
         assert!(marks.file(Path::new("/r/a/b/x.rs")).is_some());
         assert!(marks.file(Path::new("/r/y.rs")).is_some());
@@ -671,6 +699,18 @@ mod tests {
         assert!(marks.holds(Path::new("/r/a")) && marks.holds(Path::new("/r/a/b")));
         assert!(!marks.holds(Path::new("/r")), "the root has no row");
         assert!(!marks.holds(Path::new("/other")));
+    }
+
+    #[test]
+    fn a_workspaces_roots_hold_the_marks_below_them() {
+        let marks = AgentMarks::of(
+            &[file("/a/src/x.rs", 1), file("/b/y.rs", 1)],
+            &[PathBuf::from("/a"), PathBuf::from("/b")],
+            true,
+        );
+        assert!(marks.holds(Path::new("/a")) && marks.holds(Path::new("/b")));
+        assert!(marks.holds(Path::new("/a/src")));
+        assert!(marks.file(Path::new("/b/y.rs")).is_some());
     }
 
     #[test]

@@ -14,8 +14,10 @@ use std::process::Command;
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::WorkspaceId;
-use hutan_desktop::workbench::panels::FilesPanel;
-use hutan_desktop::workbench::{Region, Workbench, actions};
+use hutan_desktop::workbench::panels::{
+    FILES_FILTER_DEBOUNCE, FileGitMark, FilesFilterStatus, FilesPanel,
+};
+use hutan_desktop::workbench::{FileOpen, Region, Workbench, actions};
 use hutan_protocol::messages::{
     Request, SessionCreate, SessionResult, SessionSpec, TerminalSpec, WorkspaceCreate,
     WorkspaceInfo, WorkspaceOpen, WorkspaceOpened,
@@ -359,5 +361,192 @@ fn the_root_switcher_shows_a_worktree_and_another_project_and_goes_back_with_the
     assert!(
         panel.read_with(cx, |p, _| p.pinned_root().is_none()),
         "the pick ended"
+    );
+}
+
+/// The rows as the panel draws them: two spaces per level, then the name.
+fn rows(panel: &Entity<FilesPanel>, cx: &VisualTestContext) -> Vec<String> {
+    panel.read_with(cx, |p, _| {
+        p.rows()
+            .iter()
+            .map(|r| format!("{}{}", "  ".repeat(r.depth), r.name))
+            .collect()
+    })
+}
+
+fn wait_rows(panel: &Entity<FilesPanel>, cx: &mut VisualTestContext, wanted: &[&str]) {
+    let wanted: Vec<String> = wanted.iter().map(ToString::to_string).collect();
+    wait_until(cx, &format!("the rows {wanted:?}"), |cx| {
+        rows(panel, cx) == wanted
+    });
+}
+
+const WORKSPACE: &str = "[panels.files]\nroots = \"workspace\"\n";
+
+#[gpui::test]
+fn the_workspace_stacks_every_project_as_a_collapsible_root_with_git_marks_and_comes_back_from_the_cache(
+    cx: &mut TestAppContext,
+) {
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx, WORKSPACE);
+    let panel = files_panel(&view, cx);
+
+    // One tree: a row per project, its folder's entries one level in.
+    wait_rows(
+        &panel,
+        cx,
+        &[
+            "alpha",
+            "  src",
+            "  alpha.txt",
+            "beta",
+            "  src",
+            "  beta.txt",
+            "  new.txt",
+        ],
+    );
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.roots().to_vec()),
+        vec![fx.alpha.clone(), fx.beta.clone()]
+    );
+    let scope = panel.read_with(cx, |p, cx| p.scope(cx)).expect("a chip");
+    assert_eq!(scope.name, "ws", "the chip names the workspace");
+
+    // Git marks come from each root: beta's untracked file, a dot on its root's row.
+    wait_until(cx, "the git marks of both roots", |cx| {
+        panel.read_with(cx, |p, _| p.git().mark(&fx.beta.join("new.txt")).is_some())
+    });
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.git().mark(&fx.beta.join("new.txt"))),
+        Some(FileGitMark::Untracked)
+    );
+    assert!(panel.read_with(cx, |p, _| p.git().has_changes_in(&fx.beta)));
+    assert!(!panel.read_with(cx, |p, _| p.git().has_changes_in(&fx.alpha)));
+
+    // A folder opens inside its own root; a root folds into its row and opens again.
+    panel.update(cx, |p, cx| p.toggle(&fx.beta.join("src"), cx));
+    wait_rows(
+        &panel,
+        cx,
+        &[
+            "alpha",
+            "  src",
+            "  alpha.txt",
+            "beta",
+            "  src",
+            "    beta_lib.rs",
+            "  beta.txt",
+            "  new.txt",
+        ],
+    );
+    panel.update(cx, |p, cx| p.toggle(&fx.alpha, cx));
+    assert_eq!(
+        rows(&panel, cx)[..2],
+        ["alpha".to_owned(), "beta".to_owned()],
+        "alpha folded into its row"
+    );
+    assert!(
+        panel.read_with(cx, |p, _| p.rows()[0].root && !p.rows()[0].expanded),
+        "the row says it is folded"
+    );
+    panel.update(cx, |p, cx| p.toggle(&fx.alpha, cx));
+    wait_until(cx, "alpha's rows again", |cx| {
+        rows(&panel, cx).get(1).map(String::as_str) == Some("  src")
+    });
+
+    // Switching to one project and back keeps the workspace's tree (its open folder too).
+    panel.update(cx, |p, cx| p.set_option("roots", "active".into(), cx));
+    draw(cx);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.roots().to_vec()),
+        vec![fx.alpha.clone()],
+        "one project, no root rows"
+    );
+    panel.update(cx, |p, cx| p.set_option("roots", "workspace".into(), cx));
+    draw(cx);
+    assert!(
+        rows(&panel, cx).contains(&"    beta_lib.rs".to_owned()),
+        "the workspace's tree came back with its open folder: {:?}",
+        rows(&panel, cx)
+    );
+
+    // A pick of the root switcher shows that one folder alone; following brings the stack back.
+    panel.update(cx, |p, cx| p.pin_root(Some(fx.beta.clone()), cx));
+    wait_root(&panel, cx, &fx.beta);
+    assert_eq!(panel.read_with(cx, |p, _| p.roots().len()), 1);
+    panel.update(cx, |p, cx| p.pin_root(None, cx));
+    draw(cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.roots().len()), 2);
+}
+
+#[gpui::test]
+fn the_filter_and_open_editors_look_across_every_root(cx: &mut TestAppContext) {
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx, WORKSPACE);
+    let panel = files_panel(&view, cx);
+    wait_until(cx, "both roots listed", |cx| {
+        rows(&panel, cx).contains(&"  new.txt".to_owned())
+    });
+
+    // The filter asks every root: the matches are grouped under their root's row, a root with
+    // none has no row.
+    panel.update(cx, |p, cx| p.set_filter_text("lib", cx));
+    cx.executor().advance_clock(FILES_FILTER_DEBOUNCE);
+    wait_until(cx, "the daemon's answers", |cx| {
+        panel.read_with(cx, |p, _| {
+            matches!(p.filter_status(), FilesFilterStatus::Found { .. })
+        })
+    });
+    assert_eq!(
+        rows(&panel, cx),
+        [
+            "alpha",
+            "  src",
+            "    alpha_lib.rs",
+            "beta",
+            "  src",
+            "    beta_lib.rs"
+        ]
+    );
+    assert!(panel.read_with(cx, |p, _| p.rows()[0].root && p.rows()[3].root));
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.filter_status().clone()),
+        FilesFilterStatus::Found {
+            shown: 2,
+            capped: false,
+            index_truncated: false
+        }
+    );
+    panel.update(cx, |p, cx| p.set_filter_text("new", cx));
+    cx.executor().advance_clock(FILES_FILTER_DEBOUNCE);
+    wait_until(cx, "the answers to the next query", |cx| {
+        rows(&panel, cx) == ["beta", "  new.txt"]
+    });
+    panel.update_in(cx, |p, window, cx| p.clear_filter(window, cx));
+    wait_until(cx, "the tree back", |cx| rows(&panel, cx).len() == 7);
+
+    // Open Editors lists the tabs below any root.
+    for file in [fx.alpha.join("alpha.txt"), fx.beta.join("beta.txt")] {
+        let key = file.display().to_string();
+        view.update_in(cx, |wb, window, cx| {
+            wb.open_file(FileOpen::picked(&file), window, cx);
+        });
+        wait_until(cx, "the file's tab", |cx| {
+            view.read_with(cx, |wb, cx| {
+                wb.buffers()
+                    .get(&key)
+                    .is_some_and(|b| b.read(cx).is_ready())
+            })
+        });
+    }
+    wait_until(cx, "Open Editors to list both", |cx| {
+        panel.read_with(cx, |p, cx| p.open_editors(cx).len() == 2)
+    });
+    let open: Vec<PathBuf> = panel.read_with(cx, |p, cx| {
+        p.open_editors(cx).into_iter().map(|e| e.path).collect()
+    });
+    assert_eq!(
+        open,
+        vec![fx.alpha.join("alpha.txt"), fx.beta.join("beta.txt")]
     );
 }
