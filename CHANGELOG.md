@@ -4,6 +4,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+### Added
+- File operations in the daemon (groundwork for the file explorer): create, rename, move, copy and **Trash** (never permanent delete) with undo tickets, confined to the project like writes; `hutan fs mkdir|touch|mv|cp|trash|restore`. An agent's Trash always asks, with no session-wide grant.
+
 ## 0.3.0 — 2026-10-26
 
 ### Added
