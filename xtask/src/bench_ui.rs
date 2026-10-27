@@ -828,6 +828,24 @@ fn rust_source(bytes: usize) -> String {
     text
 }
 
+/// A Markdown document of `lines` lines: headings, paragraphs of one long line each (they wrap
+/// to two or three rows in a docked editor) and bullets.
+fn markdown_source(lines: usize) -> String {
+    let mut text = String::with_capacity(lines * 80);
+    let mut n = 0usize;
+    let mut count = 0usize;
+    while count < lines {
+        text.push_str(&format!(
+            "## Section {n}\n\n\
+             The agents keep writing small, careful changes to the files of project {n}, and the review goes on while the next task waits for its turn in the queue of work.\n\n\
+             - item one of {n}\n"
+        ));
+        n += 1;
+        count += 5;
+    }
+    text
+}
+
 /// A project with the files the editor scenarios open, and a terminal shown in the center.
 async fn editor_stack(
     stack: &mut Stack<'_>,
@@ -839,7 +857,13 @@ async fn editor_stack(
     let mut files = Vec::new();
     for (name, bytes) in sizes {
         let path = project.dir.join(name);
-        std::fs::write(&path, rust_source(*bytes))?;
+        // A `.md` entry counts lines, not bytes.
+        let text = if name.ends_with(".md") {
+            markdown_source(*bytes)
+        } else {
+            rust_source(*bytes)
+        };
+        std::fs::write(&path, text)?;
         files.push(path.canonicalize()?.display().to_string());
     }
     let layout = seed::custom_layout(
@@ -955,7 +979,17 @@ const EDITOR_TYPE_INTERVAL_MS: u64 = 60;
 
 /// B12a: 300 keys typed into the middle of a 1 MB Rust file with syntax on, one every 60 ms.
 pub async fn editor_type(stack: &mut Stack<'_>) -> Result<Metrics> {
-    let (files, layout) = editor_stack(stack, &[("one_mb.rs", 1_000_000)]).await?;
+    type_into(stack, ("one_mb.rs", 1_000_000), "b12a").await
+}
+
+/// B12w: the same typing into a 10 000-line Markdown file, which wraps at the width of the
+/// view by default (`HUTAN_BENCH_SETTINGS='[editor]\nsoft_wrap = "off"'` measures it without).
+pub async fn editor_type_wrap(stack: &mut Stack<'_>) -> Result<Metrics> {
+    type_into(stack, ("ten_k_lines.md", 10_000), "b12w").await
+}
+
+async fn type_into(stack: &mut Stack<'_>, file: (&str, usize), metric: &str) -> Result<Metrics> {
+    let (files, layout) = editor_stack(stack, &[file]).await?;
     let scenario = json!({
         "scenario": "editor_type",
         "start_delay_ms": 3000,
@@ -975,18 +1009,18 @@ pub async fn editor_type(stack: &mut Stack<'_>) -> Result<Metrics> {
     let mut metrics = Metrics::new();
     put_stats(
         &mut metrics,
-        "b12a_key",
+        &format!("{metric}_key"),
         &keys.iter().map(|k| k.1).collect::<Vec<_>>(),
     );
     put_stats(
         &mut metrics,
-        "b12b_key_total",
+        &format!("{}_key_total", metric.replace("12a", "12b")),
         &keys.iter().map(|k| k.0).collect::<Vec<_>>(),
     );
     let frames = intervals(&trace, &[typing]);
     put_stats(
         &mut metrics,
-        "b12a_work",
+        &format!("{metric}_work"),
         &series(&trace, "frame", "work_us", &[typing]),
     );
     display(&mut metrics, &trace, &frames)?;

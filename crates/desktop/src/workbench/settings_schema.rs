@@ -253,6 +253,10 @@ pub fn number_range(namespace: &str, key: &str) -> Option<(f64, f64)> {
             TerminalSettings::MIN_QUICK_HEIGHT,
             TerminalSettings::MAX_QUICK_HEIGHT,
         )),
+        ("editor", "wrap_column") => Some((
+            crate::settings::EditorSettings::MIN_WRAP_COLUMN as f64,
+            crate::settings::EditorSettings::MAX_WRAP_COLUMN as f64,
+        )),
         ("resources", "interval_ms") => Some((
             f64::from(hutan_protocol::resources::MIN_INTERVAL_MS),
             f64::from(crate::workbench::panels::MAX_INTERVAL_MS),

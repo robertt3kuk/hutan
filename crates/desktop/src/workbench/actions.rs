@@ -744,6 +744,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
             hutan_code_view::ToggleFollowAgent,
         ),
         command("Editor: Toggle Blame", hutan_code_view::ToggleBlame),
+        command("Editor: Toggle Soft Wrap", hutan_code_view::ToggleSoftWrap),
         command("Editor: Go to Definition", hutan_code_view::GoToDefinition),
         command("Editor: Go Back", hutan_code_view::GoBack),
         command("Editor: Show Hover", hutan_code_view::ShowHover),
@@ -1230,6 +1231,8 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<hutan_code_view::FindNext>("cmd-g", Some(super::file_view::KEY_CONTEXT)),
         bind::<hutan_code_view::FindPrevious>("cmd-shift-g", Some(super::file_view::KEY_CONTEXT)),
         bind::<hutan_code_view::RejectAgentHunk>("cmd-alt-z", Some(super::file_view::KEY_CONTEXT)),
+        // View → Toggle Soft Wrap: VS Code's key.
+        bind::<hutan_code_view::ToggleSoftWrap>("alt-z", Some(super::file_view::KEY_CONTEXT)),
         bind::<hutan_code_view::NextAgentHunk>("cmd-alt-]", Some(super::file_view::KEY_CONTEXT)),
         bind::<hutan_code_view::PreviousAgentHunk>(
             "cmd-alt-[",
@@ -1714,6 +1717,7 @@ mod tests {
             "cmd-g | code_view::FindNext | FileView",
             "shift-cmd-g | code_view::FindPrevious | FileView",
             "alt-cmd-z | code_view::RejectAgentHunk | FileView",
+            "alt-z | code_view::ToggleSoftWrap | FileView",
             "alt-cmd-] | code_view::NextAgentHunk | FileView",
             "alt-cmd-[ | code_view::PreviousAgentHunk | FileView",
             "alt-cmd-i | code_view::ShowHover | CodeView",

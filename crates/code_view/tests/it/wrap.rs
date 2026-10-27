@@ -545,3 +545,41 @@ fn vim_j_k_stay_on_lines_and_gj_gk_g0_g_dollar_move_by_rows(cx: &mut TestAppCont
     keys(cx, "$");
     assert_eq!(head(&view, cx), words(60).len() - 1);
 }
+
+#[gpui::test]
+fn a_keystroke_in_a_big_wrapped_file_wraps_and_shapes_only_the_line_it_changed(
+    cx: &mut TestAppContext,
+) {
+    // 10 000 lines of Markdown: paragraphs that wrap to two or three rows.
+    let mut text = String::new();
+    for n in 0..2_000 {
+        text.push_str(&format!(
+            "## Section {n}\n\n{} {n}\n\n- item one of {n}\n",
+            words(30)
+        ));
+    }
+    let (view, _buffer, cx) = open(cx, "big.md", &text, false);
+    wrap(&view, cx, WrapMode::Viewport);
+    assert!(view.read_with(cx, |v, cx| v.display_rows(cx)) > 12_000);
+    // The middle paragraph.
+    let middle = text.find("## Section 1000").expect("section") + 20;
+    place(&view, cx, &[middle]);
+    let shaped = |cx: &VisualTestContext| view.read_with(cx, |v, _| v.stats().lines_shaped);
+    let rewrapped = |cx: &VisualTestContext| view.read_with(cx, |v, _| v.wrap_rewrapped());
+    let (shaped_before, rewrapped_before) = (shaped(cx), rewrapped(cx));
+    let keys = 40;
+    for _ in 0..keys {
+        cx.simulate_input("x");
+        draw(cx);
+    }
+    let shaped_per_key = (shaped(cx) - shaped_before) as f32 / keys as f32;
+    let rewrapped_per_key = (rewrapped(cx) - rewrapped_before) as f32 / keys as f32;
+    assert!(
+        rewrapped_per_key <= 1.0,
+        "a keystroke wrapped {rewrapped_per_key} lines"
+    );
+    assert!(
+        shaped_per_key <= 3.0,
+        "a keystroke shaped {shaped_per_key} rows (the rows of the line it changed)"
+    );
+}

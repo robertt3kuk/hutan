@@ -91,3 +91,4 @@ mod workbench_gpui;
 mod workspaces_gpui;
 mod worktree_setup_gpui;
 mod worktrees_gpui;
+mod wrap_gpui;

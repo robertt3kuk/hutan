@@ -41,9 +41,6 @@ pub const DEFAULT_WRAP_COLUMN: usize = 100;
 /// Breaks of this many lines are kept between frames.
 const CACHE_LINES: usize = 256;
 
-/// Edits kept for the map between two frames; past it the map is built again.
-const MAX_PENDING: usize = 256;
-
 /// How a view wraps its lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WrapMode {
@@ -559,15 +556,13 @@ impl WrapMap {
 }
 
 /// What a view keeps of its soft wrap: the mode it was asked for, the map of the last frame's
-/// width, the edits since the map was made, and where a caret that sits at the end of a row is
-/// drawn.
+/// width, and where a caret that sits at the end of a row is drawn.
 #[derive(Debug, Default)]
 pub(crate) struct WrapState {
     pub mode: WrapMode,
     /// Cells the text area of the last frame holds (`None` before the first frame).
     pub viewport_cols: Option<usize>,
     pub map: Option<WrapMap>,
-    pending: Vec<(u64, Transaction)>,
     /// The caret at this byte is drawn at the end of the row before (`End` on a wrapped row, a
     /// click past its end); the byte itself is also where the next row starts.
     pub upstream: Option<usize>,
@@ -586,67 +581,34 @@ impl WrapState {
         })
     }
 
-    /// An edit of the buffer (now at `version`), kept until the next [`sync`](Self::sync).
-    pub fn note_edit(&mut self, version: u64, transaction: &Transaction) {
-        if self.map.is_none() {
-            return;
-        }
-        if self.pending.len() >= MAX_PENDING {
-            self.map = None;
-            self.pending.clear();
-            return;
-        }
-        self.pending.push((version, transaction.clone()));
-    }
-
-    /// Brings the map to `text` (the buffer at `version`) and the current width: edits are
-    /// carried in, a new width or a text that was replaced builds it again. No map when the
-    /// view does not wrap.
-    pub fn sync(&mut self, text: &Text, version: u64) {
+    /// Brings the map to `text` (the buffer at `version`) and the current width. `edits(v)` is
+    /// what took the text from version `v` to this one, when the buffer still knows it
+    /// ([`FileBuffer::edits_since`](crate::FileBuffer::edits_since)): they are carried into the
+    /// map. A new width, or a text that was replaced, builds it again. No map when the view
+    /// does not wrap.
+    pub fn sync(
+        &mut self,
+        text: &Text,
+        version: u64,
+        edits: impl FnOnce(u64) -> Option<Transaction>,
+    ) {
         let Some(params) = self.params(text.len()) else {
             self.map = None;
-            self.pending.clear();
             return;
         };
-        if let Some(map) = &self.map
+        if let Some(map) = &mut self.map
             && map.params == params
-            && (map.version == version || self.advance(text, version))
         {
-            self.pending.clear();
-            return;
+            if map.version == version {
+                return;
+            }
+            if let Some(transaction) = edits(map.version)
+                && map.apply(text, version, &transaction)
+            {
+                return;
+            }
         }
         self.map = Some(WrapMap::new(text, version, params));
-        self.pending.clear();
-    }
-
-    /// Carries the pending edits into the map. `false` when they are not the versions between
-    /// the map's and `version`.
-    fn advance(&mut self, text: &Text, version: u64) -> bool {
-        let Some(map) = self.map.as_mut() else {
-            return false;
-        };
-        let mut next = map.version;
-        let mut composed: Option<Transaction> = None;
-        for (at, transaction) in &self.pending {
-            if *at <= map.version {
-                continue;
-            }
-            if *at != next + 1 {
-                return false;
-            }
-            next = *at;
-            composed = match composed {
-                None => Some(transaction.clone()),
-                Some(before) => match before.compose(transaction) {
-                    Ok(both) => Some(both),
-                    Err(_) => return false,
-                },
-            };
-        }
-        match composed {
-            Some(transaction) if next == version => map.apply(text, version, &transaction),
-            _ => false,
-        }
     }
 }
 
@@ -981,13 +943,15 @@ mod tests {
             viewport_cols: Some(8),
             ..WrapState::default()
         };
-        state.sync(&text(old), 1);
+        state.sync(&text(old), 1, |_| None);
         assert_eq!(state.map.as_ref().map(WrapMap::total_rows), Some(3));
-        // An edit is noted and carried in at the next sync.
+        // The buffer tells what took the text to version 2: it is carried in.
         let tx = Transaction::insert(21, " and more words");
         let new = text(&tx.apply_to_string(old).expect("applies"));
-        state.note_edit(2, &tx);
-        state.sync(&new, 2);
+        state.sync(&new, 2, |from| {
+            assert_eq!(from, 1);
+            Some(tx.clone())
+        });
         let map = state.map.as_ref().expect("map");
         assert_eq!(map.version(), 2);
         assert_eq!(
@@ -995,16 +959,16 @@ mod tests {
             3,
             "two lines scanned when built, one by the edit"
         );
-        // A version nobody told it about: built again.
-        state.sync(&new, 5);
+        // A version the buffer cannot account for: built again.
+        state.sync(&new, 5, |_| None);
         assert_eq!(state.map.as_ref().map(WrapMap::version), Some(5));
         // A new width.
         state.viewport_cols = Some(40);
-        state.sync(&new, 5);
+        state.sync(&new, 5, |_| None);
         assert_eq!(state.map.as_ref().map(|m| m.params().cols), Some(40));
         // Off: no map.
         state.mode = WrapMode::Off;
-        state.sync(&new, 5);
+        state.sync(&new, 5, |_| None);
         assert!(state.map.is_none());
     }
 

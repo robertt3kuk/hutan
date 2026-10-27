@@ -1686,6 +1686,12 @@ impl Workbench {
         if changes.contains("app") {
             self.sync_menus(cx);
         }
+        if changes.contains("editor") || changes.contains("languages") {
+            // `editor.soft_wrap`, `editor.wrap_column` and `languages.*` are live in file tabs.
+            for view in self.file_views.values() {
+                view.update(cx, |view, cx| view.sync_soft_wrap(cx));
+            }
+        }
         if changes.contains("editor") {
             self.refresh_code_style(cx);
             // `editor.vim_mode` is live in file tabs too (safe in the middle of a command).

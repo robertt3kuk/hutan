@@ -513,9 +513,6 @@ impl CodeView {
     /// matches follow it.
     fn on_buffer_edited(&mut self, event: &BufferEdited, cx: &mut Context<Self>) {
         let mine = event.origin == Some(cx.entity_id());
-        self.wrap
-            .get_mut()
-            .note_edit(event.version, &event.transaction);
         if !mine {
             self.selections = self.selections.map(&event.transaction);
             self.marked = self

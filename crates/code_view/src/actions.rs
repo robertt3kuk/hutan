@@ -136,6 +136,9 @@ gpui::actions!(
         /// Show or hide the gutter's column of git blame (the owner keeps the toggle and asks
         /// the daemon).
         ToggleBlame,
+        /// Wrap long lines of this file at the edge of the view, or stop (the owner keeps the
+        /// toggle: it is per tab).
+        ToggleSoftWrap,
         /// Go to the definition of the symbol at the caret (the owner asks the language server).
         GoToDefinition,
         /// Show the hover popover at the caret: its diagnostics and the language server's text.

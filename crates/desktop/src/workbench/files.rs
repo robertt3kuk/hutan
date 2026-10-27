@@ -472,6 +472,8 @@ impl Workbench {
                 FileViewEvent::BlameChanged(path) => {
                     this.refresh_blame(&path.display().to_string(), cx);
                 }
+                // The status bar's `Wrap` follows the tab.
+                FileViewEvent::WrapChanged => cx.notify(),
                 FileViewEvent::OpenCommit { path, commit } => {
                     this.open_file_history(path, Some(commit.clone()), window, cx);
                 }
@@ -643,7 +645,7 @@ impl Workbench {
 
     /// What the editor status items show at the workbench's level for the focused tab: its
     /// language and whether Vim is on (its line, column and Vim mode are read by the items).
-    pub(crate) fn editor_status(&self, cx: &gpui::App) -> Option<super::registry::EditorStatus> {
+    pub fn editor_status(&self, cx: &gpui::App) -> Option<super::registry::EditorStatus> {
         let view = self.focused_file_view()?;
         let view = view.read(cx);
         let buffer = view.buffer().read(cx);
@@ -658,6 +660,7 @@ impl Workbench {
         Some(super::registry::EditorStatus {
             language,
             vim: self.vim_config().enabled,
+            wrap: view.wraps(cx),
             diagnostics: self.editor_diagnostics(&path, cx),
         })
     }

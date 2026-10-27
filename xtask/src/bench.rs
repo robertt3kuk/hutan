@@ -244,6 +244,14 @@ pub const BUDGETS: &[Budget] = &[
         frame_margin_ms: None,
     },
     Budget {
+        id: "B12w",
+        name: "Typing into a 10 000-line Markdown file with soft wrap on: key handled to frame submitted (Hutan path), p95",
+        metric: "b12w_key_p95_ms",
+        unit: "ms",
+        limit: 2.0,
+        frame_margin_ms: None,
+    },
+    Budget {
         id: "B13",
         name: "Continuous scroll of a 1 MB file: frame interval p95 (one frame + 2 ms)",
         metric: "b13_scroll_frame_p95_ms",
@@ -281,10 +289,12 @@ enum Scenario {
     EditorScroll,
     /// B12a: typing into a 1 MB Rust file.
     EditorType,
+    /// B12w: typing into a 10 000-line Markdown file that wraps.
+    EditorTypeWrap,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 13] = [
+    const ALL: [Scenario; 14] = [
         Scenario::Idle,
         Scenario::IdleWide,
         Scenario::Typing,
@@ -298,6 +308,7 @@ impl Scenario {
         Scenario::EditorOpen,
         Scenario::EditorScroll,
         Scenario::EditorType,
+        Scenario::EditorTypeWrap,
     ];
 
     fn name(self) -> &'static str {
@@ -315,6 +326,7 @@ impl Scenario {
             Scenario::EditorOpen => "editor open (B11)",
             Scenario::EditorScroll => "editor scroll (B13)",
             Scenario::EditorType => "editor typing (B12a)",
+            Scenario::EditorTypeWrap => "editor typing, soft wrap (B12w)",
         }
     }
 
@@ -333,6 +345,7 @@ impl Scenario {
             Scenario::EditorOpen => &["B11a", "B11b", "B11c", "B11d"],
             Scenario::EditorScroll => &["B13"],
             Scenario::EditorType => &["B12a"],
+            Scenario::EditorTypeWrap => &["B12w"],
         }
     }
 }
@@ -371,7 +384,7 @@ pub async fn run(options: Options) -> Result<()> {
     for id in &wanted {
         if !BUDGETS.iter().any(|b| selects(id, b.id)) {
             bail!(
-                "unknown budget {id}; known: B1, B2, B2w, B3, B3p, B4a, B4b, B5, B6, B7a, B7b, B7c, B8a, B8b, B8c, B9a, B9b, B10, B11a, B11b, B11c, B11d, B12a, B13"
+                "unknown budget {id}; known: B1, B2, B2w, B3, B3p, B4a, B4b, B5, B6, B7a, B7b, B7c, B8a, B8b, B8c, B9a, B9b, B10, B11a, B11b, B11c, B11d, B12a, B12w, B13"
             );
         }
     }
@@ -785,7 +798,12 @@ impl<'a> Stack<'a> {
         )?;
         // A fresh home shows the first-run setup over the whole window: a user who has set up
         // Hutan (everyone who uses it) does not see it, and it blocks the mouse.
-        std::fs::write(self.path("settings.toml"), "[app]\nsetup_done = true\n")?;
+        // `HUTAN_BENCH_SETTINGS`: more settings for the run (an A/B of one setting).
+        let extra = std::env::var("HUTAN_BENCH_SETTINGS").unwrap_or_default();
+        std::fs::write(
+            self.path("settings.toml"),
+            format!("[app]\nsetup_done = true\n{extra}\n"),
+        )?;
         let log = std::fs::File::create(self.path("desktop.out"))?;
         let mut command = Command::new(&self.bins.desktop);
         command
@@ -1010,6 +1028,7 @@ async fn run_scenario(
         Scenario::EditorOpen => crate::bench_ui::editor_open(&mut stack).await,
         Scenario::EditorScroll => crate::bench_ui::editor_scroll(&mut stack).await,
         Scenario::EditorType => crate::bench_ui::editor_type(&mut stack).await,
+        Scenario::EditorTypeWrap => crate::bench_ui::editor_type_wrap(&mut stack).await,
     };
     // The trace of the run stays next to the report: what the harness reads is what you can read.
     let trace = stack.path("trace.jsonl");

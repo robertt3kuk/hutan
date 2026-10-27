@@ -1161,6 +1161,13 @@ pub struct EditorSettings {
     /// Show the git blame of the caret's line (author, date, message) after the end of the line.
     /// Off by default; the gutter's blame column is the *Toggle Blame* command.
     pub inline_blame: bool,
+    /// Long lines in file tabs: `auto` (Markdown and plain text wrap at the width of the view,
+    /// code scrolls sideways), `off`, `viewport` or `column`. `languages.<language>.soft_wrap`
+    /// overrides it for one language; View → Toggle Soft Wrap (⌥Z) flips it for one tab.
+    pub soft_wrap: SoftWrap,
+    /// For `soft_wrap = "column"`: the width of a row, in cells (20 to 1000). A view narrower
+    /// than that wraps at its own edge.
+    pub wrap_column: u64,
 }
 
 /// `editor.large_file_bytes` by default: 16 MiB.
@@ -1192,12 +1199,90 @@ impl Default for EditorSettings {
             autosave_delay_ms: 1000,
             agent_highlight: true,
             inline_blame: false,
+            soft_wrap: SoftWrap::Auto,
+            wrap_column: hutan_code_view::DEFAULT_WRAP_COLUMN as u64,
         }
     }
 }
 
 impl Setting for EditorSettings {
     const NAMESPACE: &'static str = "editor";
+}
+
+impl EditorSettings {
+    /// Smallest and largest `editor.wrap_column`.
+    pub const MIN_WRAP_COLUMN: u64 = 20;
+    pub const MAX_WRAP_COLUMN: u64 = 1000;
+
+    /// How a file of `language` (`None`: plain text) wraps: `languages.<language>.soft_wrap`
+    /// first, then `editor.soft_wrap`, and `auto` is on for Markdown and plain text.
+    pub fn wrap_mode(
+        &self,
+        languages: &LanguagesSettings,
+        language: Option<&str>,
+    ) -> hutan_code_view::WrapMode {
+        let key = language.unwrap_or(PLAIN_TEXT_LANGUAGE);
+        let choice = languages
+            .0
+            .get(key)
+            .and_then(|l| l.soft_wrap)
+            .unwrap_or(self.soft_wrap);
+        match choice {
+            SoftWrap::Off => hutan_code_view::WrapMode::Off,
+            SoftWrap::Viewport => hutan_code_view::WrapMode::Viewport,
+            SoftWrap::Column => hutan_code_view::WrapMode::Column(self.wrap_columns()),
+            SoftWrap::Auto if matches!(key, PLAIN_TEXT_LANGUAGE | "markdown") => {
+                hutan_code_view::WrapMode::Viewport
+            }
+            SoftWrap::Auto => hutan_code_view::WrapMode::Off,
+        }
+    }
+
+    /// `editor.wrap_column`, kept in range.
+    pub fn wrap_columns(&self) -> usize {
+        self.wrap_column
+            .clamp(Self::MIN_WRAP_COLUMN, Self::MAX_WRAP_COLUMN) as usize
+    }
+}
+
+/// The `languages` key of files without a language (plain text).
+pub const PLAIN_TEXT_LANGUAGE: &str = "plaintext";
+
+/// How file tabs wrap long lines (`editor.soft_wrap`, `languages.<lang>.soft_wrap`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftWrap {
+    /// On at the width of the view for Markdown and plain text, off for code.
+    #[default]
+    Auto,
+    /// Long lines scroll sideways.
+    Off,
+    /// Rows are as wide as the view.
+    Viewport,
+    /// Rows are at most `editor.wrap_column` cells wide (or as wide as the view when that is
+    /// narrower).
+    Column,
+}
+
+/// What `languages.<name>` sets for one language.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct LanguageSettings {
+    /// This language's soft wrap, over `editor.soft_wrap`; unset: the editor's.
+    pub soft_wrap: Option<SoftWrap>,
+}
+
+/// The `languages` namespace: settings per language, by the name the language goes by
+/// (`markdown`, `rust`, `toml`; `plaintext` for files without one). It has no page in the
+/// settings sheet: write it in `settings.toml`, e.g. `[languages.rust]` / `soft_wrap =
+/// "viewport"`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct LanguagesSettings(pub BTreeMap<String, LanguageSettings>);
+
+impl Setting for LanguagesSettings {
+    const NAMESPACE: &'static str = "languages";
+    const WORKSPACE_OVERRIDABLE: bool = true;
 }
 
 /// Which agent sessions the contextual Agents panel lists.
@@ -1890,6 +1975,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<HistorySettings>();
     store.register::<ChatSettings>();
     store.register::<EditorSettings>();
+    store.register::<LanguagesSettings>();
     store.register::<AgentsSettings>();
     store.register::<ResourcesSettings>();
     store.register::<TasksSettings>();

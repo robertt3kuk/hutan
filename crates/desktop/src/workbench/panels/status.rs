@@ -452,6 +452,26 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         }),
     });
     registry.register(StatusItemSpec {
+        id: "editor.wrap",
+        default_side: StatusSide::Right,
+        render: gives_way(|ctx: &StatusContext<'_>| -> AnyElement {
+            match &ctx.data.editor {
+                Some(editor) if editor.wrap => clickable("status-editor-wrap", ctx)
+                    .text_color(ctx.theme.muted)
+                    .tooltip(tooltip(
+                        "Long lines wrap at the edge of the view (editor.soft_wrap). Click, or ⌥Z, to turn it off for this tab"
+                            .to_owned(),
+                    ))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(hutan_code_view::ToggleSoftWrap), cx);
+                    })
+                    .child("Wrap")
+                    .into_any_element(),
+                _ => div().id("status-editor-wrap").into_any_element(),
+            }
+        }),
+    });
+    registry.register(StatusItemSpec {
         id: "editor.language",
         default_side: StatusSide::Right,
         render: gives_way(|ctx: &StatusContext<'_>| -> AnyElement {
@@ -703,6 +723,7 @@ mod tests {
                 "editor.diagnostics",
                 "editor.mode",
                 "editor.position",
+                "editor.wrap",
                 "editor.language",
                 "working",
                 "palette_hint"

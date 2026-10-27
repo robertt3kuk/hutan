@@ -206,6 +206,8 @@ pub struct EditorStatus {
     pub language: String,
     /// `editor.vim_mode` is on: `editor.mode` shows.
     pub vim: bool,
+    /// The tab wraps long lines: `editor.wrap` shows.
+    pub wrap: bool,
     /// The file's diagnostics and its language server (`editor.diagnostics`, E-12a).
     pub diagnostics: EditorDiagnostics,
 }
@@ -310,6 +312,7 @@ impl Default for StatusBarLayout {
                 "editor.diagnostics",
                 "editor.mode",
                 "editor.position",
+                "editor.wrap",
                 "editor.language",
                 "working",
                 "palette_hint",

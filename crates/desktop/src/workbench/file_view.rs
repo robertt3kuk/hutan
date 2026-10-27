@@ -20,8 +20,8 @@ use hutan_chat_view::diff::DiffLine;
 use hutan_code_view::{
     AcceptAgentChanges, CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason,
     FileBuffer, Find, FindNext, FindPrevious, FindQuery, FindReplace, LoadState, NextAgentHunk,
-    PreviousAgentHunk, RejectAgentHunk, Save, ToggleBlame, ToggleFollowAgent, VimKey, VimSettings,
-    VimWindow,
+    PreviousAgentHunk, RejectAgentHunk, Save, ToggleBlame, ToggleFollowAgent, ToggleSoftWrap,
+    VimKey, VimSettings, VimWindow, WrapMode,
 };
 use hutan_settings::SettingsStore;
 use hutan_vim::ex::Ex;
@@ -32,7 +32,7 @@ use super::style::{TextTooltip, UiStyle};
 use super::text_field::FieldRef;
 use super::ui::{self, ButtonKind, FocusRingExt as _, Mascot};
 use super::vim_ui::{self, FieldEdit, VimConfig};
-use crate::settings::EditorSettings;
+use crate::settings::{EditorSettings, LanguagesSettings, SoftWrap};
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
 /// The key context of a file tab (find in file is bound here, so ⌘F works from the find field
@@ -82,6 +82,9 @@ pub enum FileViewEvent {
     /// inline_blame` changed): the workbench asks the daemon, or drops what the buffer holds
     /// when no tab of the file wants one (GIT-HISTORY).
     BlameChanged(PathBuf),
+    /// The tab wraps its lines now, or no longer (*Toggle Soft Wrap*, settings, the language):
+    /// the status bar's `Wrap` follows.
+    WrapChanged,
     /// A click on a line's blame: open the history of the file at that commit.
     OpenCommit { path: PathBuf, commit: String },
     /// The code view asks for completions (E-12b; see [`CodeViewEvent::CompletionRequested`]).
@@ -155,6 +158,8 @@ pub struct FileView {
     lsp: Option<Entity<super::lsp::LspStore>>,
     /// *Toggle Blame*: the gutter's column of git blame (GIT-HISTORY).
     blame: bool,
+    /// *Toggle Soft Wrap*: what the tab does instead of what settings say.
+    wrap_override: Option<WrapMode>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -191,6 +196,8 @@ impl FileView {
                     this.diff = None;
                 }
                 this.follow_agent(cx);
+                // The file's language may have come with its text (a shebang).
+                this.sync_soft_wrap(cx);
                 cx.notify();
             }),
             cx.subscribe(&code, |this, _, event: &CodeViewEvent, cx| match event {
@@ -284,10 +291,12 @@ impl FileView {
             had_command_bar: false,
             lsp: None,
             blame: false,
+            wrap_override: None,
             _subscriptions: subscriptions,
         };
         this.sync_vim(cx);
         this.sync_blame_setting(cx);
+        this.sync_soft_wrap(cx);
         this
     }
 
@@ -532,6 +541,61 @@ impl FileView {
             self.command = None;
         }
         self.code.update(cx, |code, cx| code.set_vim(settings, cx));
+    }
+
+    // ---- soft wrap (EDITOR-WRAP) -----------------------------------------------------------
+
+    /// What settings say for this file now: `languages.<language>.soft_wrap`, else
+    /// `editor.soft_wrap` (`auto`: on for Markdown and plain text).
+    fn configured_wrap(&self, cx: &App) -> WrapMode {
+        let language = self.buffer.read(cx).language();
+        self.settings.get::<EditorSettings>().wrap_mode(
+            &self.settings.get::<LanguagesSettings>(),
+            language.map(|l| l.name()),
+        )
+    }
+
+    /// How this tab wraps (settings, unless *Toggle Soft Wrap* chose for the tab).
+    pub fn soft_wrap(&self, cx: &App) -> WrapMode {
+        self.code.read(cx).soft_wrap()
+    }
+
+    /// Whether the code wraps its lines (the status bar's `Wrap`).
+    pub fn wraps(&self, cx: &App) -> bool {
+        self.code.read(cx).wraps_text(cx)
+    }
+
+    /// Follows `editor.soft_wrap`, `editor.wrap_column`, `languages.*` and the file's language
+    /// (live), unless the tab was toggled by hand.
+    pub fn sync_soft_wrap(&mut self, cx: &mut Context<Self>) {
+        let mode = match self.wrap_override {
+            Some(mode) => mode,
+            None => self.configured_wrap(cx),
+        };
+        if self.code.read(cx).soft_wrap() != mode {
+            self.code
+                .update(cx, |code, cx| code.set_soft_wrap(mode, cx));
+            cx.emit(FileViewEvent::WrapChanged);
+        }
+    }
+
+    /// *Toggle Soft Wrap* (⌥Z): this tab wraps, or does not, whatever settings say. Wrapping
+    /// again uses the width settings ask for, else the window's.
+    pub fn toggle_soft_wrap(&mut self, cx: &mut Context<Self>) {
+        let now = self.code.read(cx).soft_wrap();
+        let next = if now == WrapMode::Off {
+            let editor = self.settings.get::<EditorSettings>();
+            match editor.soft_wrap {
+                SoftWrap::Column => WrapMode::Column(editor.wrap_columns()),
+                _ => WrapMode::Viewport,
+            }
+        } else {
+            WrapMode::Off
+        };
+        // Back to what settings say: the tab follows them again.
+        self.wrap_override = (next != self.configured_wrap(cx)).then_some(next);
+        self.sync_soft_wrap(cx);
+        cx.notify();
     }
 
     // ---- git blame (GIT-HISTORY) -------------------------------------------------------------
@@ -1671,6 +1735,7 @@ impl Render for FileView {
                 this.accept_agent_changes(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleBlame, _, cx| this.toggle_blame(cx)))
+            .on_action(cx.listener(|this, _: &ToggleSoftWrap, _, cx| this.toggle_soft_wrap(cx)))
             .on_action(cx.listener(|this, _: &ToggleFollowAgent, _, cx| {
                 let on = !this.follow;
                 this.set_follow(on, cx);

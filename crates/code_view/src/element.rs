@@ -294,7 +294,8 @@ fn prepare(
         line_height: line_h,
         rows,
     });
-    view.sync_wrap_frame(&text, version);
+    let buffer = view.buffer().clone();
+    view.sync_wrap_frame(&text, version, |from| buffer.read(cx).edits_since(from));
     if std::mem::take(&mut view.keep_in_place)
         && let Some(previous) = previous_top
     {

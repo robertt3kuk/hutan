@@ -39,6 +39,7 @@ pub fn status_item_title(id: &str) -> &str {
         "approvals" => "Approvals",
         "editor.mode" => "Vim mode",
         "editor.position" => "Line and column",
+        "editor.wrap" => "Soft wrap",
         "editor.language" => "Language",
         "editor.diagnostics" => "Diagnostics",
         "density" => "Density",

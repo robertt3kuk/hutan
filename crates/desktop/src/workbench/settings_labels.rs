@@ -733,6 +733,24 @@ const FIELDS: &[FieldText] = &[
         "Show git blame at the caret",
         "The caret's line shows who last changed it, when, and the commit message after the end of the line. Off by default; Toggle Blame in the command palette shows a column for every line.",
     ),
+    choice(
+        "editor",
+        "soft_wrap",
+        "Wrap long lines",
+        "Auto wraps Markdown and plain text at the width of the window and lets code scroll sideways. Window width and At a column wrap every file; Off never does. A language of your own can say otherwise in settings.toml, under languages. View, Toggle Soft Wrap (⌥Z) flips it for one tab.",
+        &[
+            ("auto", "Auto"),
+            ("off", "Off"),
+            ("viewport", "Window width"),
+            ("column", "At a column"),
+        ],
+    ),
+    field(
+        "editor",
+        "wrap_column",
+        "Wrap column",
+        "With Wrap long lines set to At a column: how wide a row is, in cells (20 to 1000). A window narrower than that wraps at its own edge.",
+    ),
     // ---- agents ----
     field(
         "agents",

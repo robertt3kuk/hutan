@@ -16,6 +16,7 @@
 //! after every change (at once after a reload or a Reject, after a pause while the user types,
 //! after a longer one for a large or minified file) and carried across edits until then.
 
+use std::collections::VecDeque;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -34,6 +35,9 @@ use crate::rules::IndentUnit;
 
 /// Typing that pauses longer than this starts a new undo step.
 pub const TYPING_GROUP_PAUSE: Duration = Duration::from_secs(1);
+
+/// How many edits a buffer remembers for [`FileBuffer::edits_since`].
+pub const EDIT_LOG_LEN: usize = 256;
 
 /// Why a file cannot be shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +155,8 @@ pub struct FileBuffer {
     buffer: Buffer,
     /// Bumped every time the text changes; caches of what was drawn and the parser key on it.
     version: u64,
+    /// The last [`EDIT_LOG_LEN`] edits with the version each made (cleared by a load).
+    edit_log: VecDeque<(u64, Transaction)>,
     language: Option<Language>,
     indent: IndentUnit,
     /// Large-file mode: no syntax, read-only until the user says otherwise.
@@ -221,6 +227,7 @@ impl FileBuffer {
             state: LoadState::Loading,
             buffer: Buffer::new(),
             version: 0,
+            edit_log: VecDeque::new(),
             indent: IndentUnit::default(),
             large: false,
             read_only: false,
@@ -295,6 +302,31 @@ impl FileBuffer {
 
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// The edits that took the text from `version` to the current one, as one transaction (in
+    /// the coordinates of the text at `version`); `None` when the text was replaced since
+    /// (a load) or more than [`EDIT_LOG_LEN`] edits ago. A view that keeps something derived
+    /// from the text (the soft wrap's rows) carries it across the edits instead of building
+    /// it again.
+    pub fn edits_since(&self, version: u64) -> Option<Transaction> {
+        if version == self.version {
+            return Some(Transaction::empty());
+        }
+        let first = version + 1;
+        let mut next = first;
+        let mut composed: Option<Transaction> = None;
+        for (at, transaction) in self.edit_log.iter().skip_while(|(at, _)| *at < first) {
+            if *at != next {
+                return None;
+            }
+            next += 1;
+            composed = match composed {
+                None => Some(transaction.clone()),
+                Some(before) => Some(before.compose(transaction).ok()?),
+            };
+        }
+        composed.filter(|_| next == self.version + 1)
     }
 
     pub fn language(&self) -> Option<Language> {
@@ -374,6 +406,7 @@ impl FileBuffer {
         self.conflict = None;
         self.size = self.size.max(text.len() as u64);
         self.version += 1;
+        self.edit_log.clear();
         self.large = large;
         self.indent = IndentUnit::detect(self.buffer.text());
         if self.language.is_none() {
@@ -600,6 +633,11 @@ impl FileBuffer {
         cx: &mut Context<Self>,
     ) -> bool {
         self.version += 1;
+        if self.edit_log.len() >= EDIT_LOG_LEN {
+            self.edit_log.pop_front();
+        }
+        self.edit_log
+            .push_back((self.version, applied.transaction.clone()));
         self.remap_blame();
         self.map_agent_hunks(&applied.transaction);
         if !self.diagnostics.is_empty() {

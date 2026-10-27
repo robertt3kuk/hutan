@@ -3,7 +3,7 @@
 //! now counts (scrolling, the caret, the mouse). Without a map a row is a line.
 
 use gpui::{App, Context};
-use hutan_buffer::Text;
+use hutan_buffer::{Text, Transaction};
 
 use crate::view::CodeView;
 use crate::wrap::{RowGeom, WrapMap, WrapMode, WrapParams};
@@ -31,6 +31,23 @@ impl CodeView {
         self.wrap.borrow().map.is_some()
     }
 
+    /// Whether the view wraps (or will, at its next frame): the mode is on and the text is
+    /// small enough ([`MAX_WRAP_BYTES`](crate::MAX_WRAP_BYTES)). The status bar's `Wrap`.
+    pub fn wraps_text(&self, cx: &App) -> bool {
+        self.soft_wrap() != WrapMode::Off
+            && self.buffer().read(cx).text().len() <= crate::wrap::MAX_WRAP_BYTES
+    }
+
+    /// How many lines the view's map wrapped by a scan since it was built (what an edit costs;
+    /// tests and benchmarks).
+    pub fn wrap_rewrapped(&self) -> u64 {
+        self.wrap
+            .borrow()
+            .map
+            .as_ref()
+            .map_or(0, WrapMap::rewrapped)
+    }
+
     /// The row width of the last frame, in cells, while wrapping.
     pub fn wrap_params(&self) -> Option<WrapParams> {
         self.wrap.borrow().map.as_ref().map(WrapMap::params)
@@ -39,7 +56,11 @@ impl CodeView {
     /// Brings the map in step with the buffer's text (a no-op when it already is).
     pub(crate) fn sync_wrap(&self, cx: &App) {
         let buffer = self.buffer().read(cx);
-        self.wrap.borrow_mut().sync(buffer.text(), buffer.version());
+        self.wrap
+            .borrow_mut()
+            .sync(buffer.text(), buffer.version(), |from| {
+                buffer.edits_since(from)
+            });
     }
 
     /// Runs `f` on the map and the text, `None` when the view does not wrap. `f` must not call
@@ -125,7 +146,12 @@ impl CodeView {
     /// Called by the frame: tells the state how wide the text area is, brings the map to the
     /// text and keeps the row at the top of the view where it was when the wrapping changed
     /// (the mode, the width).
-    pub(crate) fn sync_wrap_frame(&mut self, text: &Text, version: u64) {
+    pub(crate) fn sync_wrap_frame(
+        &mut self,
+        text: &Text,
+        version: u64,
+        edits: impl FnOnce(u64) -> Option<Transaction>,
+    ) {
         let Some(layout) = self.layout else {
             return;
         };
@@ -146,7 +172,7 @@ impl CodeView {
                 .ok(),
         };
         state.viewport_cols = Some(cols.saturating_sub(1));
-        state.sync(text, version);
+        state.sync(text, version, edits);
         let after = state.map.as_ref().map(WrapMap::params);
         if before != after
             && let Some(anchor) = anchor
