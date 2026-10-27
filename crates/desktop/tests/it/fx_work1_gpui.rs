@@ -237,9 +237,15 @@ fn cmd_up_and_cmd_down_scroll_a_focused_terminal_to_the_ends_of_its_scrollback(
     assert!(focused(cx), "the keyboard is in the terminal");
     let item = view.read_with(cx, |wb, _| wb.state().active_item());
     assert_eq!(offset(cx), 0);
+    // 300 numbers and the mark are more lines than any screen the test window gives (the view
+    // may be 24 or 60 rows tall): the rest is scrollback, and the view clamps to what it knows.
+    let history = |cx: &VisualTestContext| terminal.read_with(cx, |t, _| t.model().history_len());
+    wait_until(cx, "the scrollback", |cx| history(cx) >= 200);
 
     cx.simulate_keystrokes("cmd-up");
-    wait_until(cx, "the top of the scrollback", |cx| offset(cx) >= 250);
+    wait_until(cx, "the top of the scrollback", |cx| {
+        offset(cx) > 0 && offset(cx) == history(cx)
+    });
     assert!(focused(cx), "⌘↑ stays in the terminal");
     assert_eq!(view.read_with(cx, |wb, _| wb.state().active_item()), item);
 
