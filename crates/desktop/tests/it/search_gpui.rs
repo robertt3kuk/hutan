@@ -424,6 +424,72 @@ fn replace_all_is_one_undo_step_per_file_and_skips_a_file_changed_since(cx: &mut
     );
 }
 
+/// F-17: after *Replace All* the notice and the replacement text go with the next query, so one
+/// more click never applies the last replacement to the new search's matches.
+#[gpui::test]
+fn the_replace_notice_and_the_replacement_clear_when_the_query_changes(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let first = write(&root, "first.txt", "needle\n");
+    write(&root, "second.txt", "haystack\n");
+    project(&view, cx, &root);
+
+    let panel = search_panel(&view, cx, true);
+    panel.update(cx, |p, cx| {
+        p.set_query("needle", cx);
+        p.set_replacement("pin", cx);
+    });
+    let before = panel.read_with(cx, |p, _| p.answers());
+    answered(&panel, cx, before);
+    wait_until(cx, "the versions the search saw", |cx| {
+        panel.read_with(cx, |p, _| p.versions_ready())
+    });
+    // Before any replace, a new query keeps what was typed for the replacement.
+    panel.update(cx, |p, cx| p.set_query("needles", cx));
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.replacement().to_owned()),
+        "pin"
+    );
+    panel.update(cx, |p, cx| p.set_query("needle", cx));
+    let before = panel.read_with(cx, |p, _| p.answers());
+    answered(&panel, cx, before);
+    wait_until(cx, "the versions the search saw", |cx| {
+        panel.read_with(cx, |p, _| p.versions_ready())
+    });
+
+    panel.update(cx, |p, cx| p.ask_replace_all(cx));
+    panel.update_in(cx, |p, window, cx| p.confirm_replace(window, cx));
+    wait_until(cx, "the replace", |cx| {
+        panel.read_with(cx, |p, _| !p.replacing() && p.last_replace().is_some())
+    });
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "pin\n");
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.replacement().to_owned()),
+        "pin"
+    );
+
+    // The notice and the replacement stay while the replacement is edited, and go with the
+    // next query.
+    panel.update(cx, |p, cx| p.set_replacement("pin2", cx));
+    assert!(panel.read_with(cx, |p, _| p.last_replace().is_some()));
+    panel.update(cx, |p, cx| p.set_query("hay", cx));
+    assert!(
+        panel.read_with(cx, |p, _| p.last_replace().is_none()),
+        "the notice is gone"
+    );
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.replacement().to_owned()),
+        "",
+        "and the replacement text with it"
+    );
+    let before = panel.read_with(cx, |p, _| p.answers());
+    answered(&panel, cx, before);
+    assert_eq!(listed(&panel, cx), [("second.txt".to_owned(), 1)]);
+    assert!(panel.read_with(cx, |p, _| p.last_replace().is_none()));
+}
+
 /// Pumps GPUI until `condition` holds; panics after `limit`.
 fn wait_long(
     cx: &mut VisualTestContext,

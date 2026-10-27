@@ -393,6 +393,13 @@ impl SearchPanel {
     pub fn set_query(&mut self, query: &str, cx: &mut Context<Self>) {
         if self.query != query {
             self.query = query.to_owned();
+            // A finished *Replace All* is over with the next query: its notice goes, and so does
+            // the replacement text, so that one click on *Replace All* never applies what was
+            // typed for the last search to the matches of the new one (F-17).
+            if self.last_replace.take().is_some() {
+                self.replacement.clear();
+                self.replace_edit.reset();
+            }
             self.schedule(true, cx);
         }
     }
