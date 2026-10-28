@@ -28,11 +28,13 @@ use crate::theme::{Theme, Tokens, mascot_size, pill_radius};
 mod button;
 mod lane;
 mod rhythm;
+mod ring;
 mod splitter;
 pub use button::{
     Button, ButtonKind, ButtonSize, IconButton, approval_button_kind, spinner, spinner_at,
 };
 pub use lane::{BadgeState, row_lane, state_badge};
+pub use ring::ring;
 pub use splitter::{HANDLE as SPLITTER_HANDLE, SplitAxis, Splitter};
 
 /// The font files macOS ships New York in. GPUI cannot select the system serif by name (CoreText

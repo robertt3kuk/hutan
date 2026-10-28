@@ -80,32 +80,42 @@ pub fn tooltip_scroll_observer() -> impl gpui::IntoElement {
     .size_0()
 }
 
+/// The [`TooltipGate`] epoch a tooltip view was first looked at in; a tooltip is stale once the
+/// epoch moved on.
+#[derive(Debug, Default)]
+pub struct TooltipBirth(std::cell::Cell<Option<u64>>);
+
+impl TooltipBirth {
+    /// Whether the wheel moved or an overlay opened since the first look (the first call is
+    /// that look).
+    pub fn stale(&self, cx: &gpui::App) -> bool {
+        let now = TooltipGate::epoch(cx);
+        self.0.get().unwrap_or_else(|| {
+            self.0.set(Some(now));
+            now
+        }) != now
+    }
+}
+
 /// A tooltip of text: one line, or wrapped at 360 px when the text is longer than that.
 #[derive(Debug)]
 pub struct TextTooltip {
     text: gpui::SharedString,
-    /// The [`TooltipGate`] epoch of its first frame.
-    born: std::cell::Cell<Option<u64>>,
+    born: TooltipBirth,
 }
 
 impl TextTooltip {
     pub fn new(text: gpui::SharedString) -> Self {
         Self {
             text,
-            born: std::cell::Cell::new(None),
+            born: TooltipBirth::default(),
         }
     }
-}
 
-impl TextTooltip {
     /// Whether the wheel moved or an overlay opened since this tooltip's first look (the first
     /// call is that look): it draws nothing then.
     pub fn stale(&self, cx: &gpui::App) -> bool {
-        let now = TooltipGate::epoch(cx);
-        self.born.get().unwrap_or_else(|| {
-            self.born.set(Some(now));
-            now
-        }) != now
+        self.born.stale(cx)
     }
 }
 

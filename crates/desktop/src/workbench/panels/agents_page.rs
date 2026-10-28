@@ -1055,16 +1055,7 @@ impl AgentsPage {
                         crate::sessions::usage::Severity::Warning => theme.warning,
                         crate::sessions::usage::Severity::Critical => theme.danger,
                     };
-                    let name = if row.harness == "omp" {
-                        format!("{} ({})", limit.label, limit.provider)
-                    } else {
-                        limit.label.clone()
-                    };
-                    // Two accounts of one harness have a window each: each says whose it is.
-                    let name = match &limit.account {
-                        Some(account) => format!("{name} · {account}"),
-                        None => name,
-                    };
+                    let name = limit.title(&row.harness);
                     div()
                         .id(("usage-limit", index * 16 + n))
                         .flex()

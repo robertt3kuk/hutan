@@ -206,6 +206,37 @@ pub struct LimitView {
     pub severity: Severity,
 }
 
+impl LimitView {
+    /// What the window is called next to a harness's name: `5-hour`, and for OMP, which has one
+    /// login per provider, `5-hour (anthropic)`; the account follows (`· Work`) when it is not
+    /// the harness's own.
+    pub fn title(&self, harness: &str) -> String {
+        let name = if harness == "omp" {
+            format!("{} ({})", self.label, self.provider)
+        } else {
+            self.label.clone()
+        };
+        match &self.account {
+            Some(account) => format!("{name} · {account}"),
+            None => name,
+        }
+    }
+}
+
+fn limit_view(limit: &UsageLimit, now_ms: u64) -> LimitView {
+    LimitView {
+        label: limit.label.clone(),
+        provider: limit.provider.clone(),
+        account: account_name(limit),
+        percent: percent(limit.used_percent),
+        fraction: (limit.used_percent / 100.0).clamp(0.0, 1.0) as f32,
+        resets: limit
+            .resets_at_ms
+            .map(|resets| format!("resets in {}", reset_in(resets, now_ms))),
+        severity: severity(limit.used_percent),
+    }
+}
+
 /// One harness of the Usage section.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HarnessView {
@@ -231,17 +262,7 @@ pub fn section(summary: &UsageSummary, now_ms: u64) -> Vec<HarnessView> {
                 .limits
                 .iter()
                 .filter(|l| current(l, now_ms))
-                .map(|l| LimitView {
-                    label: l.label.clone(),
-                    provider: l.provider.clone(),
-                    account: account_name(l),
-                    percent: percent(l.used_percent),
-                    fraction: (l.used_percent / 100.0).clamp(0.0, 1.0) as f32,
-                    resets: l
-                        .resets_at_ms
-                        .map(|resets| format!("resets in {}", reset_in(resets, now_ms))),
-                    severity: severity(l.used_percent),
-                })
+                .map(|l| limit_view(l, now_ms))
                 .collect();
             let note = limits.is_empty().then_some(match harness.harness.as_str() {
                 HARNESS_DIRECT => None,
@@ -259,6 +280,115 @@ pub fn section(summary: &UsageSummary, now_ms: u64) -> Vec<HarnessView> {
                 week: format!("This week: {}", totals_text(&harness.week)),
                 note: note.flatten().map(str::to_owned),
             }
+        })
+        .collect()
+}
+
+// The status bar's meters ---------------------------------------------------------------------
+
+/// The hover card of a meter: every running window of one harness, its account and reset time,
+/// then what its turns used.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CardView {
+    /// `Claude Code`.
+    pub title: String,
+    /// One row per running window, the harness's own order.
+    pub rows: Vec<CardRow>,
+    /// `Today: 22k tokens`, when turns ran today; `This week: …` likewise.
+    pub today: Option<String>,
+    pub week: Option<String>,
+}
+
+/// One window of a [`CardView`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct CardRow {
+    /// `5-hour`, `5-hour · Work`, `weekly (anthropic)`: [`LimitView::title`].
+    pub name: String,
+    pub limit: LimitView,
+    /// This is the window the ring shows.
+    pub tightest: bool,
+}
+
+/// One ring of the `usage.meters` status item: a harness's tightest running window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeterView {
+    pub harness: String,
+    /// `Codex`.
+    pub name: String,
+    /// How much of the ring is drawn, 0 to 1.
+    pub fraction: f32,
+    /// `72%`.
+    pub percent: String,
+    pub severity: Severity,
+    pub card: CardView,
+}
+
+impl MeterView {
+    /// A ring that is not calm says its number beside it, so the colour is never the only
+    /// signal; a calm one is the ring alone (the card has the number).
+    pub fn says_percent(&self) -> bool {
+        self.severity != Severity::Calm
+    }
+
+    /// The meter's one sentence, for a screen reader and a test: `Codex 5-hour 72%`.
+    pub fn summary(&self) -> String {
+        let tightest = self
+            .card
+            .rows
+            .iter()
+            .find(|row| row.tightest)
+            .map(|row| row.name.clone())
+            .unwrap_or_default();
+        format!("{} {tightest} {}", self.name, self.percent)
+    }
+}
+
+/// The meters: one per harness that has a running limit window, in the daemon's order, each the
+/// harness's most used window (of any of its accounts). A harness with no limit, or whose
+/// windows have all reset, has none, and nothing at all is the empty list.
+pub fn meters(summary: &UsageSummary, now_ms: u64) -> Vec<MeterView> {
+    summary
+        .harnesses
+        .iter()
+        .filter_map(|harness| {
+            let tightest = harness
+                .limits
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| current(l, now_ms))
+                .max_by(|(_, a), (_, b)| a.used_percent.total_cmp(&b.used_percent))?
+                .0;
+            let rows: Vec<CardRow> = harness
+                .limits
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| current(l, now_ms))
+                .map(|(index, l)| {
+                    let limit = limit_view(l, now_ms);
+                    CardRow {
+                        name: limit.title(&harness.harness),
+                        limit,
+                        tightest: index == tightest,
+                    }
+                })
+                .collect();
+            let top = &harness.limits[tightest];
+            let name = harness_label(&harness.harness);
+            Some(MeterView {
+                harness: harness.harness.clone(),
+                fraction: (top.used_percent / 100.0).clamp(0.0, 1.0) as f32,
+                percent: percent(top.used_percent),
+                severity: severity(top.used_percent),
+                card: CardView {
+                    title: name.clone(),
+                    rows,
+                    today: (harness.today.turns > 0)
+                        .then(|| format!("Today: {}", totals_text(&harness.today))),
+                    week: (harness.week.turns > 0)
+                        .then(|| format!("This week: {}", totals_text(&harness.week))),
+                },
+                name,
+            })
         })
         .collect()
 }
@@ -653,5 +783,142 @@ mod tests {
             .map(|w| (w.harness.as_str(), w.level))
             .collect();
         assert_eq!(who, [("omp", 95), ("codex", 80)]);
+    }
+
+    #[test]
+    fn a_meter_is_a_harness_tightest_running_window_and_none_without_a_limit() {
+        let mut codex = harness(
+            "codex",
+            vec![
+                limit("openai", "5h", 72.0, Some(NOW + 3 * HOUR)),
+                limit("openai", "7d", 31.0, None),
+                // Over: the window began again and the daemon has not said so yet.
+                limit("openai", "5h", 99.0, Some(NOW - 1)),
+            ],
+        );
+        codex.today = UsageTotals {
+            turns: 1,
+            total_tokens: 22_178,
+            ..UsageTotals::default()
+        };
+        let usage = summary(vec![
+            codex,
+            harness(
+                "omp",
+                vec![limit("anthropic", "5h", 7.0, Some(NOW + 2 * HOUR))],
+            ),
+            // No limit reported: no ring (the Agents page says why).
+            harness("claude", vec![]),
+            harness(HARNESS_DIRECT, vec![]),
+        ]);
+        let rings = meters(&usage, NOW);
+        let names: Vec<_> = rings
+            .iter()
+            .map(|m| (m.name.as_str(), m.percent.as_str()))
+            .collect();
+        assert_eq!(names, [("Codex", "72%"), ("OMP", "7%")]);
+        assert_eq!(rings[0].summary(), "Codex 5-hour 72%");
+        assert!((rings[0].fraction - 0.72).abs() < 1e-6);
+        // The card lists the running windows only, the tightest marked, with their resets.
+        let rows: Vec<_> = rings[0]
+            .card
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    r.name.as_str(),
+                    r.limit.percent.as_str(),
+                    r.limit.resets.as_deref(),
+                    r.tightest,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("5-hour", "72%", Some("resets in 3h"), true),
+                ("weekly", "31%", None, false)
+            ]
+        );
+        assert_eq!(rings[0].card.today.as_deref(), Some("Today: 22k tokens"));
+        assert_eq!(rings[0].card.week, None, "no turn this week, no line");
+        // OMP names the provider of a window.
+        assert_eq!(rings[1].card.rows[0].name, "5-hour (anthropic)");
+        // Nothing reported, or every window over: nothing at all.
+        assert!(meters(&summary(vec![harness("codex", vec![])]), NOW).is_empty());
+        assert!(
+            meters(
+                &summary(vec![harness(
+                    "omp",
+                    vec![limit("anthropic", "5h", 90.0, Some(NOW - 1))]
+                )]),
+                NOW
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_meter_turns_amber_at_80_and_red_at_95_and_then_says_its_number() {
+        let at = |used: f64| {
+            meters(
+                &summary(vec![harness(
+                    "omp",
+                    vec![limit("anthropic", "5h", used, None)],
+                )]),
+                NOW,
+            )
+            .remove(0)
+        };
+        let calm = at(79.4);
+        assert_eq!(
+            (calm.severity, calm.says_percent()),
+            (Severity::Calm, false)
+        );
+        let amber = at(80.0);
+        assert_eq!(
+            (amber.severity, amber.says_percent()),
+            (Severity::Warning, true)
+        );
+        assert_eq!(at(94.9).severity, Severity::Warning);
+        let red = at(95.0);
+        assert_eq!(
+            (red.severity, red.percent.as_str()),
+            (Severity::Critical, "95%")
+        );
+        // The ring is never over full.
+        assert_eq!(at(130.0).fraction, 1.0);
+    }
+
+    #[test]
+    fn two_accounts_make_one_ring_for_the_tightest_and_the_card_says_whose() {
+        let own = limit("anthropic", "5h", 10.0, Some(NOW + HOUR));
+        let work = of_account(
+            limit("anthropic", "5h", 82.0, Some(NOW + HOUR)),
+            "work",
+            "Work",
+        );
+        let weekly = of_account(limit("anthropic", "7d", 40.0, None), "work", "Work");
+        let rings = meters(
+            &summary(vec![harness("claude", vec![own, work, weekly])]),
+            NOW,
+        );
+        assert_eq!(rings.len(), 1, "one ring per harness, not per account");
+        assert_eq!(rings[0].summary(), "Claude Code 5-hour · Work 82%");
+        assert_eq!(rings[0].severity, Severity::Warning);
+        let rows: Vec<_> = rings[0]
+            .card
+            .rows
+            .iter()
+            .map(|r| (r.name.as_str(), r.tightest))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("5-hour", false),
+                ("5-hour · Work", true),
+                ("weekly · Work", false)
+            ]
+        );
     }
 }

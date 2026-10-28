@@ -100,6 +100,7 @@ pub mod text_field;
 mod track_changes;
 pub mod ui;
 pub mod usage;
+pub mod usage_card;
 mod view;
 mod vim_keys;
 pub mod vim_ui;
