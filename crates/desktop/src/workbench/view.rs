@@ -1007,6 +1007,8 @@ impl Workbench {
             let _ = state.switch_preset(&def.layout.name, &presets);
         }
 
+        super::docks::apply_right_rail(&mut state, layout_settings.right_rail);
+
         let window_appearance = window.appearance();
         let themes = match settings.paths().as_ref().and_then(|p| p.user.parent()) {
             Some(data_dir) => ThemeRegistry::new(data_dir),
@@ -1870,6 +1872,7 @@ impl Workbench {
 
     pub(crate) fn after_change(&mut self, cx: &mut Context<Self>) {
         self.notice = None;
+        super::docks::apply_right_rail(&mut self.state, self.layout_seen.right_rail);
         self.note_dock_modes();
         self.attach_open_items(cx);
         self.sync_session_focus(cx);

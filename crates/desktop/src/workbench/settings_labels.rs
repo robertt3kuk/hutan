@@ -394,6 +394,17 @@ const FIELDS: &[FieldText] = &[
         "Open side panels over a narrow window",
         "In a window too narrow for the center to keep 480 pt beside a side panel, clicking a rail icon (or ⌘L, ⌘⇧E, a panel command) shows the panel floating over the edge of the center instead of squeezing it. Esc, a click outside, opening a file or the same icon closes it. Off: the panel is pushed in beside the center.",
     ),
+    choice(
+        "layout",
+        "right_rail",
+        "Right side when its panel is closed",
+        "What closing the right panel (⌘L, the title bar button, a click on the open panel's icon) leaves. Like the left sidebar: the icon rail stays and the title bar button hides or shows the whole right side. Rail always: the icon rail never goes away. Hide it too: closing the panel hides the rail as well. A narrow window still shows the rail, so a panel can open over the center.",
+        &[
+            ("auto", "Like the left sidebar"),
+            ("always", "Keep the icon rail"),
+            ("never", "Hide it too"),
+        ],
+    ),
     field(
         "layout",
         "offer_new_default",

@@ -1804,6 +1804,10 @@ impl Workbench {
             .cloned();
         self.refresh_layout_defs(cx);
         let layout = self.layout_seen.clone();
+        if layout.right_rail != previous.right_rail {
+            // The right dock's saved mode follows the new policy (`docks::apply_right_rail`).
+            self.mutate(cx, |_| {});
+        }
         if layout.preset != previous.preset {
             self.apply_preset_named(&layout.preset.clone(), cx);
         } else if let Some(before) = before

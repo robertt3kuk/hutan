@@ -26,6 +26,7 @@ use super::style::TextTooltip;
 use super::ui;
 use super::view::{DragPreview, DraggedItem, Region, Workbench};
 use crate::icons::{Icon, icon};
+use crate::settings::RightRail;
 use crate::theme::DensityExt as _;
 
 /// Nav rows are 13 px medium labels with 16 px icons, 8 px × 6 px padding, 2 px apart (Orca):
@@ -993,7 +994,7 @@ impl Workbench {
 
     /// The titlebar button of a side dock, always there: with the left sidebar hidden it is the
     /// way back, next to the traffic lights; with the right rail hidden it is the recovery
-    /// button. The left one hides the sidebar (or restores it); the right one does what ⌘L does.
+    /// button. Both hide their side, the rail with it, or bring it back (`toggle_dock_titlebar_cmd`).
     /// A right click offers every state with the current one checked.
     pub(super) fn dock_toggle_button(
         &mut self,
@@ -1009,11 +1010,14 @@ impl Workbench {
         } else {
             self.dock_mode(pos)
         };
-        let (glyph, name, states): (Icon, &str, [(&str, DockMode); 3]) = match pos {
+        // The states the right-click menu lists: the right side leaves out the one
+        // `layout.right_rail` does not allow.
+        let rail = self.layout_seen.right_rail;
+        let (glyph, name, states): (Icon, &str, Vec<(&str, DockMode)>) = match pos {
             DockPosition::Left => (
                 Icon::DockLeft,
                 "sidebar",
-                [
+                vec![
                     ("Expanded", DockMode::Expanded),
                     ("Compact (icons)", DockMode::Compact),
                     ("Hidden", DockMode::Hidden),
@@ -1026,19 +1030,31 @@ impl Workbench {
                     ("Panel open", DockMode::Expanded),
                     ("Rail only", DockMode::Compact),
                     ("Hidden", DockMode::Hidden),
-                ],
+                ]
+                .into_iter()
+                .filter(|(_, state)| match rail {
+                    RightRail::Auto => true,
+                    RightRail::Always => *state != DockMode::Hidden,
+                    RightRail::Never => *state != DockMode::Compact,
+                })
+                .collect(),
             ),
         };
         let hint = match pos {
             DockPosition::Left => key_hint_of(window, &actions::ToggleLeftDock),
             _ => key_hint_of(window, &actions::ToggleRightDock),
         };
+        // One button per side, the same words: it shows the side or hides it (the rail with
+        // it); with the rail kept always it collapses the panel to the rail instead.
         let tip: SharedString = match (pos, mode) {
-            (DockPosition::Left, DockMode::Hidden) => format!("Show {name}{hint}"),
-            (DockPosition::Left, _) => format!("Hide {name}{hint}"),
-            (_, DockMode::Expanded) => format!("Collapse {name}{hint}"),
-            (_, DockMode::Compact) => format!("Expand {name}{hint}"),
+            (DockPosition::Right, DockMode::Expanded) if rail == RightRail::Always => {
+                format!("Collapse {name}{hint}")
+            }
+            (DockPosition::Right, DockMode::Compact) if rail == RightRail::Always => {
+                format!("Expand {name}{hint}")
+            }
             (_, DockMode::Hidden) => format!("Show {name}{hint}"),
+            _ => format!("Hide {name}{hint}"),
         }
         .into();
         div()
@@ -1073,12 +1089,9 @@ impl Workbench {
                 )
                 .compact()
                 .toggled(mode == DockMode::Expanded)
-                .on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| match pos {
-                        DockPosition::Left => this.toggle_dock_hidden_cmd(pos, cx),
-                        _ => this.toggle_dock_cmd(pos, cx),
-                    },
-                )),
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.toggle_dock_titlebar_cmd(pos, cx);
+                })),
             )
             .child(probe(&self.regions, Region::DockToggle(pos)))
             .into_any_element()

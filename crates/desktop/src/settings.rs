@@ -441,6 +441,24 @@ pub struct PresetSetting {
     pub status_bar: StatusBarSetting,
 }
 
+/// What happens to the right side when its panel is closed (`layout.right_rail`, FX-DOCK-TOGGLES).
+/// A window too narrow for the panel always shows the rail (the panel opens from it as a peek);
+/// this is about what *you* leave when you close it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RightRail {
+    /// Like the left sidebar: ⌘L and a click on the open panel's icon close the panel to the
+    /// icon rail, and the title bar button hides or shows the whole right side.
+    #[default]
+    Auto,
+    /// The rail never goes away: closing the panel leaves the rail, and so does the title bar
+    /// button and *Hide Right Rail*.
+    Always,
+    /// The rail is only there beside an open panel (and in a narrow window): closing the panel
+    /// hides the whole right side, and the title bar button, ⌘L or the status bar bring it back.
+    Never,
+}
+
 /// The `layout` namespace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -460,6 +478,11 @@ pub struct LayoutSettings {
     /// click outside it, opening a file or the same icon. Off: the panel is pushed in beside
     /// the center.
     pub rail_peek: bool,
+    /// What closing the right panel leaves: `auto` (default; like the left sidebar: the icon
+    /// rail, and the title bar button hides or shows the whole right side), `always` (the rail
+    /// stays whatever you do) or `never` (closing the panel hides the rail too). A narrow
+    /// window still shows the rail for the peek.
+    pub right_rail: RightRail,
     /// Offer the quieter default layout (three icons on the right rail, the rest under `⋯`) once
     /// to a layout saved before it existed: one line under the title bar with *Use new default*
     /// and *Keep mine*. Off after you answered, so it is asked once; nothing changes unless you
@@ -478,6 +501,7 @@ impl Default for LayoutSettings {
             presets: BTreeMap::new(),
             auto_collapse: true,
             rail_peek: true,
+            right_rail: RightRail::Auto,
             offer_new_default: true,
             files_hint: true,
         }

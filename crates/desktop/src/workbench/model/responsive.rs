@@ -239,6 +239,17 @@ impl Responsive {
         }
     }
 
+    /// Takes back [`Self::reveal`] for `pos`: the dock the user just brought back is left to the
+    /// window, which shows it on its rail while the window is too narrow for its body. For a
+    /// dock whose body would only have been a peek.
+    pub fn leave_to_window(&mut self, pos: DockPosition) {
+        if let Some(state) = self.state_mut(pos)
+            && *state == AutoState::Overridden
+        {
+            *state = AutoState::Off;
+        }
+    }
+
     /// The user asked for a dock the window collapsed to open: it stays open until the window has
     /// grown. No effect on a dock the window did not collapse.
     pub fn open(&mut self, pos: DockPosition) {

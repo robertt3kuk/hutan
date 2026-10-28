@@ -18,8 +18,38 @@ use gpui::{Context, Window};
 
 use super::model::{
     AutoState, DockMode, DockPosition, FocusTarget, MIN_CENTER_WIDTH, OpenAs, PanelId, Responsive,
+    WorkbenchState,
 };
 use super::view::{Resizing, Workbench};
+use crate::settings::RightRail;
+
+/// Brings the right dock's saved mode in line with `layout.right_rail` and returns whether it
+/// changed anything: `never` has no rail-only state (a dock left on its rail is hidden, and a
+/// hidden one comes back open), `always` has no hidden state (a hidden dock is down to its rail).
+/// `auto` keeps all three, like the left sidebar. Runs after every model change, so each way
+/// of closing the panel (⌘L, its icon, the drag, a preset) ends in a mode the setting allows.
+pub(super) fn apply_right_rail(state: &mut WorkbenchState, policy: RightRail) -> bool {
+    match policy {
+        RightRail::Auto => false,
+        RightRail::Always => {
+            if state.docks.right.mode() == DockMode::Hidden {
+                state.set_dock_mode(DockPosition::Right, DockMode::Compact);
+                true
+            } else {
+                false
+            }
+        }
+        RightRail::Never => {
+            if state.docks.right.collapsed {
+                state.set_dock_mode(DockPosition::Right, DockMode::Hidden);
+                state.docks.right.collapsed = false;
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
 
 /// An invisible element whose paint registers window-level mouse observers for the frame: while a
 /// dock edge or a divider is dragged, every move and the release reach the workbench whatever is
@@ -241,7 +271,24 @@ impl Workbench {
             cx.notify();
             return;
         }
+        let squeezes = self.hidden_body_would_peek(pos);
         self.mutate(cx, |s| s.toggle_dock(pos));
+        if squeezes && self.state.docks.get(pos).is_expanded() {
+            self.responsive.leave_to_window(pos);
+        }
+    }
+
+    /// Whether `pos` is hidden now and its body, shown beside the center, would leave the center
+    /// under 480 pt in a window that peeks: bringing it back then shows its rail (a rail icon
+    /// peeks the panel) instead of pushing the center aside. Only the right side: the left
+    /// sidebar's own pages are never a peek.
+    fn hidden_body_would_peek(&self, pos: DockPosition) -> bool {
+        pos == DockPosition::Right
+            && self.dock_mode(pos) == DockMode::Hidden
+            && self
+                .responsive
+                .open_as(&self.state.docks, pos, self.layout_seen.rail_peek)
+                == OpenAs::Peek
     }
 
     /// Puts `pos` in `mode` as the user's choice (the titlebar menus, "Hide Left Sidebar", "Hide
@@ -271,15 +318,33 @@ impl Workbench {
         self.dock_focus[index].clone()
     }
 
-    /// The titlebar's sidebar button: hides the sidebar, or brings it back in the mode it was
-    /// hidden from.
+    /// The titlebar button of a side dock, the same for both: it closes an open peek; else it
+    /// hides the dock — the rail with it — or brings it back in the mode it was hidden from. With
+    /// `layout.right_rail = always` the right side has no hidden state and the button is ⌘L.
+    pub(crate) fn toggle_dock_titlebar_cmd(&mut self, pos: DockPosition, cx: &mut Context<Self>) {
+        if self.peek == Some(pos) {
+            self.release_peek();
+            cx.notify();
+        } else if pos == DockPosition::Right && self.layout_seen.right_rail == RightRail::Always {
+            self.toggle_dock_cmd(pos, cx);
+        } else {
+            self.toggle_dock_hidden_cmd(pos, cx);
+        }
+    }
+
+    /// Hides a shown side dock, or brings a hidden one back in the mode it was hidden from.
     pub(crate) fn toggle_dock_hidden_cmd(&mut self, pos: DockPosition, cx: &mut Context<Self>) {
         if self.peek == Some(pos) {
             self.release_peek();
         }
         if self.dock_mode(pos) == DockMode::Hidden {
+            let squeezes = self.hidden_body_would_peek(pos);
             self.mutate(cx, |s| s.toggle_dock_hidden(pos));
-            self.responsive.reveal(&self.state.docks, pos);
+            if squeezes && self.state.docks.get(pos).is_expanded() {
+                self.responsive.leave_to_window(pos);
+            } else {
+                self.responsive.reveal(&self.state.docks, pos);
+            }
         } else {
             self.mutate(cx, |s| s.set_dock_mode(pos, DockMode::Hidden));
         }

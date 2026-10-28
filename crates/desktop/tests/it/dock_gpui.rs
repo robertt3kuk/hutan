@@ -362,34 +362,263 @@ fn hide_right_rail_is_a_full_hide_with_a_titlebar_recovery_button(cx: &mut TestA
     assert!(!painted(&view, cx, Region::Rail(Right)));
     assert!(!painted(&view, cx, Region::Dock(Right)));
     assert!(!painted(&view, cx, Region::DockTab(Right, 0)));
-    // ⌘L (and the titlebar button) bring it back open.
+    // The titlebar button brings it back in the mode it was hidden from, like the left one.
     click(&view, cx, Region::DockToggle(Right));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert!(painted(&view, cx, Region::Rail(Right)));
-    // The titlebar button collapses to the rail, then opens again, like ⌘L.
+    // And hides it again, the rail with it: the same click, the same two states.
     click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+    assert!(!painted(&view, cx, Region::Rail(Right)));
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Expanded);
+    // ⌘L keeps its own cycle: the panel, then the rail alone.
+    cx.simulate_keystrokes("cmd-l");
+    draw(cx);
+    assert_eq!(chosen(&view, cx, Right), Compact);
+}
+
+// ---- one titlebar button per side, the same for both (FX-DOCK-TOGGLES) ------------------------
+
+/// A window with the right side's `layout.right_rail` set before it opens.
+fn open_rail<'a>(
+    cx: &'a mut TestAppContext,
+    rail: &str,
+    saved: Option<WorkbenchState>,
+) -> (Entity<Workbench>, SettingsStore, &'a mut VisualTestContext) {
+    let (connection, settings, _) = offline_connection();
+    settings
+        .write_user("layout.right_rail", toml::Value::String(rail.into()))
+        .unwrap();
+    let state_path = saved.map(|saved| {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let path = dir.join(STATE_FILE);
+        std::fs::write(&path, saved.to_json().unwrap()).unwrap();
+        path
+    });
+    let (view, cx) = open_with(cx, settings.clone(), connection, state_path);
+    (view, settings, cx)
+}
+
+fn menu_labels(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("a menu")
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect()
+}
+
+fn right_click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
+    let at = bounds(view, cx, region).center();
+    cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
+    draw(cx);
+}
+
+#[gpui::test]
+fn both_titlebar_buttons_hide_their_side_completely_and_bring_it_back(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    resize(cx, 1280.0);
+    click(&view, cx, Region::DockToggle(Left));
+    click(&view, cx, Region::DockToggle(Right));
+    for pos in [Left, Right] {
+        assert_eq!(chosen(&view, cx, pos), Hidden);
+        assert_eq!(shown(&view, cx, pos), Hidden);
+        assert!(!painted(&view, cx, Region::Dock(pos)));
+        assert!(!painted(&view, cx, Region::Rail(pos)), "{pos:?}: no rail");
+        assert!(painted(&view, cx, Region::DockToggle(pos)), "{pos:?}");
+    }
+    assert!(!painted(&view, cx, Region::DockTab(Right, 0)));
+    assert_size(bounds(&view, cx, Region::Center).size.width, 1280.0);
+    click(&view, cx, Region::DockToggle(Left));
+    click(&view, cx, Region::DockToggle(Right));
+    for pos in [Left, Right] {
+        assert_eq!(chosen(&view, cx, pos), Expanded);
+        assert!(painted(&view, cx, Region::Dock(pos)));
+    }
+    assert!(painted(&view, cx, Region::Rail(Right)));
+}
+
+#[gpui::test]
+fn the_right_button_brings_the_side_back_in_the_mode_it_was_hidden_from(cx: &mut TestAppContext) {
+    // `auto` (the default) is the left sidebar's rule: Hidden is one click from every state and
+    // the way back is the mode left.
+    let (view, cx) = open(cx);
+    cx.simulate_keystrokes("cmd-l");
+    draw(cx);
     assert_eq!(chosen(&view, cx, Right), Compact);
     click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+    assert!(!painted(&view, cx, Region::Rail(Right)));
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Compact);
+    assert!(painted(&view, cx, Region::Rail(Right)));
+    // ⌘L opens from Hidden whatever the mode it left.
+    click(&view, cx, Region::DockToggle(Right));
+    cx.simulate_keystrokes("cmd-l");
+    draw(cx);
     assert_eq!(chosen(&view, cx, Right), Expanded);
 }
 
-/// FX-DOCK-TOGGLES item 1, the state before the fix: the left titlebar button goes from the
-/// sidebar to nothing, the right one only to the 40 pt rail (the rail stays, with a second
-/// open/close button at its foot), so the right side never closes all the way from the title bar.
 #[gpui::test]
-fn before_the_fix_the_right_titlebar_button_stops_at_the_rail_and_the_rail_has_a_second_toggle(
+fn a_right_click_on_the_right_button_lists_the_three_states(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    right_click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(
+        menu_labels(&view, cx),
+        ["Panel open", "Rail only", "Hidden"]
+    );
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(2, window, cx));
+    draw(cx);
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+}
+
+#[gpui::test]
+fn with_right_rail_never_closing_the_panel_hides_the_rail_too(cx: &mut TestAppContext) {
+    let (view, _, cx) = open_rail(cx, "never", None);
+    resize(cx, 1280.0);
+    // ⌘L: the panel and its rail go together, and come back together.
+    cx.simulate_keystrokes("cmd-l");
+    draw(cx);
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+    assert!(!painted(&view, cx, Region::Rail(Right)));
+    cx.simulate_keystrokes("cmd-l");
+    draw(cx);
+    assert_eq!(chosen(&view, cx, Right), Expanded);
+    assert!(painted(&view, cx, Region::Rail(Right)));
+    // The open panel's own icon closes it to nothing.
+    click(&view, cx, Region::DockTab(Right, 0));
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+    assert!(!painted(&view, cx, Region::Rail(Right)));
+    // The title bar button shows it again, and hides it.
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Expanded);
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+    click(&view, cx, Region::DockToggle(Right));
+    // There is no rail-only state to choose.
+    right_click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(menu_labels(&view, cx), ["Panel open", "Hidden"]);
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    // Dragging the edge past its minimum collapses it the same way.
+    let dock = bounds(&view, cx, Region::Dock(Right));
+    let from = point(dock.left() + px(2.0), px(400.0));
+    let end = from + point(px(160.0), px(0.0));
+    press_and_move(cx, from, end);
+    release(cx, end);
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+    assert!(!painted(&view, cx, Region::Rail(Right)));
+}
+
+#[gpui::test]
+fn with_right_rail_never_a_narrow_window_still_shows_the_rail_and_peeks(cx: &mut TestAppContext) {
+    let (view, _, cx) = open_rail(cx, "never", None);
+    resize(cx, 1100.0);
+    assert_eq!(
+        shown(&view, cx, Right),
+        Compact,
+        "the window's own collapse"
+    );
+    assert_eq!(chosen(&view, cx, Right), Expanded);
+    click(&view, cx, Region::DockTab(Right, 2));
+    assert_eq!(view.read_with(cx, |wb, _| wb.peek_dock()), Some(Right));
+    assert!(painted(&view, cx, Region::Peek));
+    // The titlebar button closes the peek, then hides the rail, then brings it back as a rail.
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(view.read_with(cx, |wb, _| wb.peek_dock()), None);
+    assert!(painted(&view, cx, Region::Rail(Right)));
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(shown(&view, cx, Right), Hidden);
+    assert!(!painted(&view, cx, Region::Rail(Right)));
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(shown(&view, cx, Right), Compact);
+    assert!(painted(&view, cx, Region::Rail(Right)));
+    click(&view, cx, Region::DockTab(Right, 1));
+    assert_eq!(view.read_with(cx, |wb, _| wb.peek_dock()), Some(Right));
+}
+
+#[gpui::test]
+fn with_right_rail_always_the_rail_never_goes_away(cx: &mut TestAppContext) {
+    let (view, _, cx) = open_rail(cx, "always", None);
+    resize(cx, 1280.0);
+    cx.dispatch_action(actions::HideRightRail);
+    draw(cx);
+    assert_eq!(chosen(&view, cx, Right), Compact, "Hide leaves the rail");
+    assert!(painted(&view, cx, Region::Rail(Right)));
+    // The title bar button goes between the panel and the rail, like ⌘L.
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Expanded);
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Compact);
+    assert_eq!(menu_labels_after(&view, cx), ["Panel open", "Rail only"]);
+    // ⌘⌥Y hides the left and the bottom; the right keeps its rail.
+    cx.dispatch_action(actions::CloseAllDocks);
+    draw(cx);
+    assert_eq!(chosen(&view, cx, Left), Hidden);
+    assert_eq!(chosen(&view, cx, Right), Compact);
+}
+
+fn menu_labels_after(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+    right_click(view, cx, Region::DockToggle(Right));
+    let labels = menu_labels(view, cx);
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    labels
+}
+
+#[gpui::test]
+fn a_saved_right_side_follows_layout_right_rail_when_it_opens_and_when_it_changes(
     cx: &mut TestAppContext,
 ) {
-    let (view, cx) = open(cx);
-    click(&view, cx, Region::DockToggle(Left));
-    assert_eq!(chosen(&view, cx, Left), Hidden);
-    click(&view, cx, Region::DockToggle(Right));
-    assert_eq!(chosen(&view, cx, Right), Compact, "the rail stays");
+    let mut saved = WorkbenchState::default();
+    saved.set_dock_mode(Right, Compact);
+    let (view, settings, cx) = open_rail(cx, "never", Some(saved.clone()));
+    assert_eq!(chosen(&view, cx, Right), Hidden, "no rail-only state");
+    assert!(!painted(&view, cx, Region::Rail(Right)));
+    // `always` brings a hidden side back as its rail, live.
+    settings
+        .write_user("layout.right_rail", toml::Value::String("always".into()))
+        .unwrap();
+    wait_until(cx, "the setting to apply", |cx| {
+        chosen(&view, cx, Right) == Compact
+    });
     assert!(painted(&view, cx, Region::Rail(Right)));
-    assert!(
-        painted(&view, cx, Region::Toolbar("right-collapse")),
-        "the rail's own toggle: a second one"
-    );
+    // And back to `auto`, which keeps what is there.
+    settings
+        .write_user("layout.right_rail", toml::Value::String("auto".into()))
+        .unwrap();
+    cx.run_until_parked();
+    draw(cx);
+    assert_eq!(chosen(&view, cx, Right), Compact);
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+}
+
+#[gpui::test]
+fn both_docks_hidden_are_saved_and_come_back_hidden(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(STATE_FILE);
+    std::fs::write(&path, WorkbenchState::default().to_json().unwrap()).unwrap();
+    let (view, _, cx) = open_at(cx, false, Some(path.clone()));
+    click(&view, cx, Region::DockToggle(Left));
+    click(&view, cx, Region::DockToggle(Right));
+    cx.executor().advance_clock(SAVE_DEBOUNCE * 2);
+    cx.run_until_parked();
+    view.update(cx, |wb, _| wb.flush_save());
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(on_disk["docks"]["left"]["visible"], false);
+    assert_eq!(on_disk["docks"]["right"]["visible"], false);
+    drop(view);
+    let (view, _, cx) = open_at(cx, false, Some(path));
+    draw(cx);
+    for pos in [Left, Right] {
+        assert_eq!(shown(&view, cx, pos), Hidden);
+        assert!(!painted(&view, cx, Region::Rail(pos)));
+    }
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Expanded);
 }
 
 #[gpui::test]

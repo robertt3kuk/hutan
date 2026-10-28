@@ -21,7 +21,7 @@ use hutan_desktop::workbench::model::{
 use hutan_desktop::workbench::{FileOpen, Region, Workbench};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
-use DockMode::{Compact, Expanded};
+use DockMode::{Compact, Expanded, Hidden};
 use DockPosition::{Left, Right};
 
 fn open(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
@@ -328,12 +328,22 @@ fn the_same_icon_and_cmd_l_close_the_peek(cx: &mut TestAppContext) {
     assert_eq!(peeking(&view, cx), Some(Right));
     click(&view, cx, Region::Toolbar("right-collapse"));
     assert_eq!(peeking(&view, cx), None);
-    // And so does the titlebar's right button.
-    click(&view, cx, Region::DockToggle(Right));
+    // The titlebar's right button closes an open peek...
+    click(&view, cx, icon(2));
     assert_eq!(peeking(&view, cx), Some(Right));
     click(&view, cx, Region::DockToggle(Right));
     assert_eq!(peeking(&view, cx), None);
     assert_eq!(chosen(&view, cx, Right), Expanded, "never changed");
+    // ...and otherwise hides the rail and brings it back like the left one's does: a rail
+    // again in this window (the body would only have been a peek), never the body pushed in.
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(shown(&view, cx, Right), Hidden);
+    assert!(!painted(&view, cx, Region::Rail(Right)));
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(shown(&view, cx, Right), Compact);
+    assert!(painted(&view, cx, Region::Rail(Right)));
+    assert_eq!(peeking(&view, cx), None);
+    assert_eq!(chosen(&view, cx, Right), Expanded);
 }
 
 #[gpui::test]
