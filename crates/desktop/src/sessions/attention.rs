@@ -12,7 +12,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use hutan_core::{Epoch, SessionId, SessionState};
-use hutan_protocol::messages::{AgentReport, AgentState, SessionInfo};
+use hutan_protocol::messages::{
+    AgentReport, AgentState, SessionInfo, TerminalAgent, TerminalAgentState,
+};
 
 use super::models::ModelNames;
 
@@ -32,6 +34,9 @@ pub enum Unread {
     FailedSeen,
     /// The user marked it unread (*Mark as unread*): it stays until the session is looked at.
     Marked,
+    /// The terminal rang its bell while the session was not on screen. Only a mark (the tab's
+    /// bell, the row's dot): never a group, and gone as soon as the session is looked at.
+    Bell,
 }
 
 impl Unread {
@@ -297,9 +302,10 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
             }
         }
         // A coding agent that reports (`agent.report`) says more than a bare "idle".
-        SessionState::Running | SessionState::Idle => match &info.agent {
-            Some(report) => present_agent(report),
-            None => quiet("idle", String::new(), Tone::Muted, false),
+        SessionState::Running | SessionState::Idle => match (&info.agent, &info.terminal_agent) {
+            (Some(report), _) => present_agent(report),
+            (None, Some(agent)) => present_terminal_agent(agent, unread),
+            (None, None) => quiet("idle", String::new(), Tone::Muted, false),
         },
         SessionState::WaitingApproval => Presentation {
             label: "approval".into(),
@@ -326,7 +332,7 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
                     attention: Some(Attention::Failed),
                 },
                 // A mark is applied over this in `present`, which never passes it down.
-                None | Some(Unread::Marked | Unread::Turn) => quiet(
+                None | Some(Unread::Marked | Unread::Turn | Unread::Bell) => quiet(
                     "exited",
                     detail,
                     if matches!((code, signal), (Some(0), None)) {
@@ -341,7 +347,7 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
         // An assistant that could not start says so in the Assistant panel, which offers Retry
         // and another backend; it is not a session the user went away from.
         SessionState::Failed { reason } => {
-            let looked_after = !matches!(unread, None | Some(Unread::Turn))
+            let looked_after = !matches!(unread, None | Some(Unread::Turn | Unread::Bell))
                 && !info.chat.as_ref().is_some_and(|chat| chat.is_assistant());
             Presentation {
                 label: "failed".into(),
@@ -399,6 +405,8 @@ pub struct AttentionTracker {
     baseline: Option<HashMap<SessionId, bool>>,
     /// Whether a chat turn ran in each known session in the last list (same baseline).
     turns: HashMap<SessionId, bool>,
+    /// What the coding agent of each live terminal said it did in the last list (same baseline).
+    agents: HashMap<SessionId, TerminalAgentState>,
     epoch: Option<Epoch>,
 }
 
@@ -438,6 +446,11 @@ impl AttentionTracker {
             .iter()
             .map(|s| (s.id, s.chat.as_ref().is_some_and(|c| c.turn_active)))
             .collect();
+        let agents: HashMap<SessionId, TerminalAgentState> = sessions
+            .iter()
+            .filter(|s| s.state.is_live())
+            .filter_map(|s| s.terminal_agent.as_ref().map(|a| (s.id, a.state)))
+            .collect();
         if let Some(before) = &self.baseline {
             for session in sessions {
                 let was_live = before.get(&session.id).copied();
@@ -453,10 +466,27 @@ impl AttentionTracker {
                         self.turns.get(&session.id).copied(),
                         turns.get(&session.id).copied().unwrap_or(false),
                     );
-                } else if was_live == Some(true)
-                    && let Some(kind) = unread_for_end(&session.state)
-                {
-                    self.unread.insert(session.id, kind);
+                    observe_terminal_agent(
+                        &mut self.unread,
+                        session.id,
+                        self.agents.get(&session.id).copied(),
+                        agents.get(&session.id).copied(),
+                    );
+                } else if was_live == Some(true) {
+                    match unread_for_end(&session.state) {
+                        Some(kind) => {
+                            self.unread.insert(session.id, kind);
+                        }
+                        // Nothing to look at: what was only a mark on a live session goes.
+                        None => {
+                            if matches!(
+                                self.unread.get(&session.id),
+                                Some(Unread::Turn | Unread::Bell)
+                            ) {
+                                self.unread.remove(&session.id);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -464,6 +494,7 @@ impl AttentionTracker {
         self.snoozed.retain(|id, _| now.contains_key(id));
         self.baseline = Some(now);
         self.turns = turns;
+        self.agents = agents;
     }
 
     /// A terminal notification arrived for `session`: it wants a look unless something worse is
@@ -474,8 +505,30 @@ impl AttentionTracker {
             .as_ref()
             .is_some_and(|b| b.contains_key(&session))
         {
-            self.unread.entry(session).or_insert(Unread::Done);
+            match self.unread.get(&session) {
+                None | Some(Unread::Bell) => {
+                    self.unread.insert(session, Unread::Done);
+                }
+                Some(_) => {}
+            }
         }
+    }
+
+    /// The terminal of `session` rang its bell while it was not on screen: a mark on the tab
+    /// and the row, nothing worse than what is flagged already. Whether anything changed.
+    pub fn belled(&mut self, session: SessionId) -> bool {
+        if !self
+            .baseline
+            .as_ref()
+            .is_some_and(|b| b.contains_key(&session))
+        {
+            return false;
+        }
+        if self.unread.contains_key(&session) {
+            return false;
+        }
+        self.unread.insert(session, Unread::Bell);
+        true
     }
 
     /// The user looked at `session`: finished work and marks are seen; a failure stays listed
@@ -488,7 +541,7 @@ impl AttentionTracker {
                 true
             }
             Some(Unread::FailedSeen) | None => false,
-            Some(Unread::Done | Unread::Turn | Unread::Marked) => {
+            Some(Unread::Done | Unread::Turn | Unread::Marked | Unread::Bell) => {
                 self.unread.remove(&session);
                 true
             }
@@ -567,6 +620,43 @@ impl AttentionTracker {
     }
 }
 
+/// What the coding agent of a live terminal did between two lists. A turn that ends well is an
+/// unseen mark on the row (like a chat turn); one that ends in an error is a failure; a new turn
+/// is the work going on again, and an agent that left takes its failure with it.
+fn observe_terminal_agent(
+    unread: &mut BTreeMap<SessionId, Unread>,
+    session: SessionId,
+    was: Option<TerminalAgentState>,
+    now: Option<TerminalAgentState>,
+) {
+    use TerminalAgentState::{Blocked, Done, Error, Working};
+    match (was, now) {
+        (was, Some(Working)) if was != Some(Working) => {
+            if matches!(
+                unread.get(&session),
+                Some(Unread::Turn | Unread::Failed | Unread::FailedSeen)
+            ) {
+                unread.remove(&session);
+            }
+        }
+        (Some(Working | Blocked), Some(Done | TerminalAgentState::Idle)) => {
+            unread.entry(session).or_insert(Unread::Turn);
+        }
+        (was, Some(Error)) if was != Some(Error) => {
+            unread.insert(session, Unread::Failed);
+        }
+        (Some(Error), None) => {
+            if matches!(
+                unread.get(&session),
+                Some(Unread::Failed | Unread::FailedSeen)
+            ) {
+                unread.remove(&session);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// A chat turn that ended while nobody was asked anything is an unseen mark on its row, no group
 /// (a turn that changed files is *Ready for review* by the task's own rule); a new turn is the
 /// work going on again. `was` is
@@ -607,6 +697,141 @@ pub struct Marks {
 impl Marks {
     pub fn is_empty(&self) -> bool {
         self.unread.is_empty() && self.snoozed.is_empty()
+    }
+}
+
+/// Presentation of a live terminal whose agent said what it does itself (OSC 7501) or is only
+/// known by its program, when no hook reports for it. An error is a failure while it is unseen.
+fn present_terminal_agent(agent: &TerminalAgent, unread: Option<Unread>) -> Presentation {
+    let with = |text: Option<&str>| match text {
+        Some(text) => format!("{}: {text}", agent.app),
+        None => agent.app.clone(),
+    };
+    let message = agent.message.as_deref();
+    let (label, tone, filled, attention, detail) = match agent.state {
+        TerminalAgentState::Unknown | TerminalAgentState::Idle | TerminalAgentState::Done => {
+            ("idle", Tone::Muted, false, None, with(None))
+        }
+        TerminalAgentState::Working => ("working", Tone::Accent, true, None, with(None)),
+        TerminalAgentState::Blocked => (
+            "approval",
+            Tone::Warning,
+            true,
+            Some(Attention::Request),
+            with(message),
+        ),
+        TerminalAgentState::Error => {
+            let looked_after = matches!(unread, Some(Unread::Failed | Unread::FailedSeen));
+            (
+                "failed",
+                Tone::Error,
+                unread == Some(Unread::Failed),
+                looked_after.then_some(Attention::Failed),
+                with(message),
+            )
+        }
+    };
+    Presentation {
+        label: label.into(),
+        detail,
+        tone,
+        filled,
+        attention,
+    }
+}
+
+/// The program of the coding agent in a live session, from what the terminal said or an
+/// installed hook reported: `omp`, `claude`, `codex`, …
+pub fn agent_app(info: &SessionInfo) -> Option<&str> {
+    info.terminal_agent
+        .as_ref()
+        .map(|agent| agent.app.as_str())
+        .or_else(|| info.agent.as_ref().map(|report| report.agent.as_str()))
+}
+
+/// The one line under a live terminal's row when its agent waits or failed: the question it asks
+/// or the message of the error. A hook's blocked report wins over what the terminal said.
+pub fn agent_note(info: &SessionInfo) -> Option<String> {
+    if !info.state.is_live() || info.chat.is_some() {
+        return None;
+    }
+    let reported = info
+        .agent
+        .as_ref()
+        .filter(|report| report.state == AgentState::Blocked && report.blocked_sub.is_none())
+        .and_then(|report| report.message.as_deref());
+    let said = info
+        .terminal_agent
+        .as_ref()
+        .filter(|agent| {
+            matches!(
+                agent.state,
+                TerminalAgentState::Blocked | TerminalAgentState::Error
+            )
+        })
+        .and_then(|agent| agent.message.as_deref());
+    let line = reported
+        .or(said)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!line.is_empty()).then_some(line)
+}
+
+/// The agent's own name for its session, under a row whose title is not it (the user named the
+/// session): muted, one line.
+pub fn agent_subtitle(info: &SessionInfo) -> Option<String> {
+    if !info.state.is_live() || info.chat.is_some() {
+        return None;
+    }
+    info.terminal_agent
+        .as_ref()
+        .and_then(|agent| agent.title.clone())
+        .filter(|title| *title != info.title)
+}
+
+/// What a tab says about its session besides the title: how the work went and whether the
+/// terminal wants a look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TabMarks {
+    pub state: Option<TabState>,
+    /// A bell: the agent waits for an answer, or the terminal rang or notified while the
+    /// session was not on screen. Gone once it is looked at (or answered).
+    pub bell: bool,
+}
+
+/// The work of a session as its tab shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabState {
+    /// A turn is in progress: a spinner.
+    Working,
+    /// A turn ended and nobody has looked yet.
+    Done,
+    /// The turn or the session failed.
+    Failed,
+}
+
+/// The marks of the tab of `info`, from the presentation the rest of the window shows and the
+/// unread state the tracker keeps (no second mechanism).
+pub fn tab_marks(
+    info: &SessionInfo,
+    presentation: &Presentation,
+    unread: Option<Unread>,
+) -> TabMarks {
+    let live = info.state.is_live();
+    let state = if presentation.label == "failed" {
+        Some(TabState::Failed)
+    } else if presentation.label == "working" {
+        Some(TabState::Working)
+    } else if live && unread == Some(Unread::Turn) {
+        Some(TabState::Done)
+    } else {
+        None
+    };
+    TabMarks {
+        state,
+        bell: presentation.is_request()
+            || (live && matches!(unread, Some(Unread::Done | Unread::Bell))),
     }
 }
 
@@ -1246,5 +1471,161 @@ mod tests {
         assert_eq!(again.snoozed_key(a), Some("blocked|approval"));
         assert!(again.unsnooze(a));
         assert!(!again.unsnooze(a));
+    }
+    fn with_agent(
+        mut session: SessionInfo,
+        state: TerminalAgentState,
+        message: Option<&str>,
+    ) -> SessionInfo {
+        session.terminal_agent = Some(TerminalAgent {
+            app: "omp".into(),
+            state,
+            kind: None,
+            message: message.map(str::to_owned),
+            since_ms: 1,
+            title: None,
+            source: hutan_protocol::messages::TerminalAgentSource::Osc,
+        });
+        session
+    }
+
+    #[test]
+    fn a_terminal_agents_turns_are_marks_failures_and_requests_like_a_chats() {
+        use TerminalAgentState::{Blocked, Done, Error, Idle, Working};
+        let epoch = Some(Epoch::new());
+        let id = SessionId::new();
+        let base = info(id, SessionState::Running);
+        let mut tracker = AttentionTracker::new();
+        let names = ModelNames::default();
+        let mut step = |tracker: &mut AttentionTracker, state, message| {
+            let session = with_agent(base.clone(), state, message);
+            tracker.observe(epoch, std::slice::from_ref(&session));
+            session
+        };
+        // The first list is the baseline; a turn that ends later is news.
+        step(&mut tracker, Working, None);
+        assert_eq!(tracker.unread(id), None);
+        let done = step(&mut tracker, Done, None);
+        assert_eq!(tracker.unread(id), Some(Unread::Turn));
+        assert_eq!(present(&done, tracker.unread(id), &names).attention, None);
+        assert!(tracker.look_at(id));
+
+        // A question is a request with the agent's words; the turn then goes on.
+        step(&mut tracker, Working, None);
+        let asking = step(&mut tracker, Blocked, Some("Run the tests?"));
+        let shown = present(&asking, tracker.unread(id), &names);
+        assert_eq!(shown.attention, Some(Attention::Request));
+        assert_eq!(shown.detail, "omp: Run the tests?");
+
+        // A failure is unseen until looked at, then listed without a badge; a new turn or the
+        // agent leaving takes it away.
+        let failed = step(&mut tracker, Error, Some("Rate limited"));
+        assert_eq!(tracker.unread(id), Some(Unread::Failed));
+        let shown = present(&failed, tracker.unread(id), &names);
+        assert_eq!(
+            (shown.label.as_str(), shown.attention),
+            ("failed", Some(Attention::Failed))
+        );
+        assert!(shown.filled && shown.detail.ends_with("Rate limited"));
+        assert!(tracker.look_at(id));
+        assert_eq!(tracker.unread(id), Some(Unread::FailedSeen));
+        step(&mut tracker, Working, None);
+        assert_eq!(tracker.unread(id), None);
+        step(&mut tracker, Error, Some("x"));
+        tracker.observe(epoch, &[base.clone()]);
+        assert_eq!(
+            tracker.unread(id),
+            None,
+            "an agent that left takes its failure with it"
+        );
+
+        // A program-only agent's turn ends when its title stops spinning.
+        step(&mut tracker, Working, None);
+        step(&mut tracker, Idle, None);
+        assert_eq!(tracker.unread(id), Some(Unread::Turn));
+    }
+
+    #[test]
+    fn a_bell_is_a_mark_a_notification_wins_over_and_looking_clears() {
+        let epoch = Some(Epoch::new());
+        let id = SessionId::new();
+        let session = info(id, SessionState::Running);
+        let mut tracker = AttentionTracker::new();
+        assert!(
+            !tracker.belled(id),
+            "nothing is known before the first list"
+        );
+        tracker.observe(epoch, std::slice::from_ref(&session));
+        assert!(tracker.belled(id));
+        assert!(!tracker.belled(id), "one mark, however many bells");
+        let shown = present(&session, tracker.unread(id), &ModelNames::default());
+        assert_eq!(shown.attention, None, "a bell is never a group");
+        assert!(tracker.unread(id).unwrap().is_unseen());
+        tracker.notified(id);
+        assert_eq!(tracker.unread(id), Some(Unread::Done));
+        assert!(tracker.look_at(id));
+        assert!(tracker.belled(id));
+        assert!(tracker.look_at(id));
+        // A session that ends quietly takes the mark with it.
+        assert!(tracker.belled(id));
+        let stopped = info(id, SessionState::Stopped);
+        tracker.observe(epoch, &[stopped]);
+        assert_eq!(tracker.unread(id), None);
+    }
+
+    #[test]
+    fn the_tab_shows_the_work_and_a_bell_for_what_waits() {
+        let id = SessionId::new();
+        let names = ModelNames::default();
+        let marks = |session: &SessionInfo, unread| {
+            tab_marks(session, &present(session, unread, &names), unread)
+        };
+        let plain = info(id, SessionState::Running);
+        assert_eq!(marks(&plain, None), TabMarks::default());
+        let working = with_agent(plain.clone(), TerminalAgentState::Working, None);
+        assert_eq!(marks(&working, None).state, Some(TabState::Working));
+        let asking = with_agent(plain.clone(), TerminalAgentState::Blocked, Some("ok?"));
+        assert_eq!(
+            marks(&asking, None),
+            TabMarks {
+                state: None,
+                bell: true
+            }
+        );
+        let failed = with_agent(plain.clone(), TerminalAgentState::Error, Some("x"));
+        assert_eq!(
+            marks(&failed, Some(Unread::Failed)).state,
+            Some(TabState::Failed)
+        );
+        assert_eq!(
+            marks(&plain, Some(Unread::Turn)).state,
+            Some(TabState::Done)
+        );
+        // A bell and a notification ring a live tab only; a session that ended has no bell.
+        assert!(marks(&plain, Some(Unread::Bell)).bell);
+        assert!(marks(&plain, Some(Unread::Done)).bell);
+        assert!(!marks(&info(id, SessionState::Stopped), Some(Unread::Done)).bell);
+    }
+
+    #[test]
+    fn a_waiting_or_failed_agent_has_a_line_and_a_named_session_the_agents_title() {
+        let id = SessionId::new();
+        let plain = info(id, SessionState::Running);
+        assert_eq!(agent_note(&plain), None);
+        let asking = with_agent(
+            plain.clone(),
+            TerminalAgentState::Blocked,
+            Some("Run\n  the tests?"),
+        );
+        assert_eq!(agent_note(&asking).as_deref(), Some("Run the tests?"));
+        let working = with_agent(plain.clone(), TerminalAgentState::Working, Some("ignored"));
+        assert_eq!(agent_note(&working), None);
+        let mut titled = with_agent(plain, TerminalAgentState::Idle, None);
+        titled.title = "my build".into();
+        titled.terminal_agent.as_mut().unwrap().title = Some("Fix the build".into());
+        assert_eq!(agent_subtitle(&titled).as_deref(), Some("Fix the build"));
+        titled.title = "Fix the build".into();
+        assert_eq!(agent_subtitle(&titled), None, "the name already says it");
+        assert_eq!(agent_app(&titled), Some("omp"));
     }
 }

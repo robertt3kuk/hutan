@@ -26,13 +26,13 @@ use hutan_protocol::messages::{SessionInfo, WorkspaceInfo, WorkspaceKind};
 
 use super::common::{
     age_label, agent_badge, panel_header_controls, placement, placement_badge, recovery_chip,
-    session_icon, shared_checkout_marker, state_dot, time_tooltip,
+    session_icon, shared_checkout_marker, state_mark, time_tooltip,
 };
 use crate::icons::{Icon, icon};
 use crate::sessions::tree::{
     self, Node, ProjectNode, Subtitle, SubtitleInputs, folder_label, session_folder,
 };
-use crate::sessions::{Attention, StoreChanged};
+use crate::sessions::{Attention, StoreChanged, Tone, agent_note, agent_subtitle};
 use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
 };
@@ -2175,7 +2175,11 @@ impl SessionsPanel {
                                 s.tooltip(move |_, cx| {
                                     cx.new(|_| TextTooltip::new(tip.clone())).into()
                                 })
-                                .child(state_dot(&theme, &presentation))
+                                .child(state_mark(
+                                    SharedString::from(format!("row-spinner-{id}")),
+                                    &theme,
+                                    &presentation,
+                                ))
                             })
                             .when(unread, |s| {
                                 let dot = div()
@@ -2323,6 +2327,28 @@ impl SessionsPanel {
                 }),
             )
             .child(line)
+            // What a waiting or failed agent says, under its title: one muted line, the only
+            // second line a row ever has.
+            .children(
+                agent_note(info)
+                    .or_else(|| agent_subtitle(info))
+                    .map(|note| {
+                        div()
+                            .id(SharedString::from(format!("session-note-{}", info.id)))
+                            .pl(px(STATUS_LANE + 14.0 + gap * 2.0))
+                            .pb(px(tokens.spacing))
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(if presentation.label == "failed" {
+                                super::common::tone_color(&theme, Tone::Error)
+                            } else {
+                                theme.muted
+                            })
+                            .child(SharedString::from(note))
+                            .child(probe(&self.env.regions, Region::SessionNote(info.id)))
+                    }),
+            )
             .child(probe(&self.env.regions, Region::SessionRow(info.id)))
             .into_any_element()
     }

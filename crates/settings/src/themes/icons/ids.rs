@@ -80,9 +80,9 @@ catalog! {
     HarnessHutan => ("harness.hutan", "terminal.svg"),
     SessionHarness => ("session.harness", "robot.svg"),
     SessionDirect => ("session.direct", "chat-circle.svg"),
-    HarnessOmp => ("harness.omp", "terminal.svg"),
-    HarnessClaude => ("harness.claude", "chat-circle.svg"),
-    HarnessCodex => ("harness.codex", "robot.svg"),
+    HarnessOmp => ("harness.omp", "harness-omp.svg"),
+    HarnessClaude => ("harness.claude", "harness-claude.svg"),
+    HarnessCodex => ("harness.codex", "harness-codex.svg"),
     HarnessUnknown => ("harness.unknown", "robot.svg"),
     VcsBranch => ("vcs.branch", "git-branch.svg"),
     VcsWorktree => ("vcs.worktree", "tree-structure.svg"),
@@ -105,6 +105,7 @@ catalog! {
     StateStopped => ("state.stopped", "stop-circle.svg"),
     StateUnknown => ("state.unknown", "question.svg"),
     StateUnread => ("state.unread", "circle.svg"),
+    StateBell => ("state.bell", "bell.svg"),
     StateMuted => ("state.muted", "bell-slash.svg"),
     StateApproval => ("state.approval", "hand-palm.svg"),
     StatusApprovals => ("status.approvals", "hand-palm.svg"),
@@ -324,6 +325,15 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
         )),
         "house.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/house.svg"
+        )),
+        "harness-omp.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/harness-omp.svg"
+        )),
+        "harness-claude.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/harness-claude.svg"
+        )),
+        "harness-codex.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/harness-codex.svg"
         )),
         "hutan.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/hutan.svg"

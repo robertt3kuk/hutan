@@ -2465,6 +2465,16 @@ impl Workbench {
             })
     }
 
+    /// Whether a session of the tab has a request waiting (an agent blocked, an approval).
+    fn waits_on_tab(&self, sessions: &[hutan_core::SessionId], cx: &Context<Self>) -> bool {
+        let store = self.sessions.read(cx);
+        sessions.iter().any(|id| {
+            store
+                .session(*id)
+                .is_some_and(|info| store.presentation(info).is_request())
+        })
+    }
+
     fn render_tab(
         &mut self,
         pane_id: PaneId,
@@ -2484,13 +2494,46 @@ impl Workbench {
             .item_tooltip(item, cx)
             .map(SharedString::from)
             .or_else(|| (title.chars().count() > TAB_TITLE_TOOLTIP_CHARS).then(|| title.clone()));
-        let agent_badge =
-            session_of_item(item).map(|id| (id, self.sessions.read(cx).agent_badge(id)));
-        // One attention mark per tab: the agent badge's warning glyph already says "blocked",
-        // so the attention dot only shows when the badge has none (CL-CHROME).
-        let badge_blocked = agent_badge
-            .as_ref()
-            .is_some_and(|(_, badge)| badge.blocked_icon().is_some());
+        // The tab's sessions (every split of a tab of splits): what their work and their
+        // terminals say shows on the tab itself, from the unread state the window keeps.
+        let tab_sessions: Vec<hutan_core::SessionId> = item
+            .sessions()
+            .into_iter()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        let called = tab_sessions
+            .iter()
+            .any(|id| self.sessions.read(cx).is_called(*id));
+        let marks = {
+            let store = self.sessions.read(cx);
+            tab_sessions
+                .iter()
+                .filter_map(|id| {
+                    let info = store.session(*id)?;
+                    Some(crate::sessions::tab_marks(
+                        info,
+                        &store.presentation(info),
+                        store.unread(*id),
+                    ))
+                })
+                .fold(crate::sessions::TabMarks::default(), |all, one| {
+                    crate::sessions::TabMarks {
+                        state: all.state.or(one.state),
+                        bell: all.bell || one.bell,
+                    }
+                })
+        };
+        let bell = marks.bell || called;
+        let waits = self.waits_on_tab(&tab_sessions, cx);
+        let agent_badge = session_of_item(item).map(|id| {
+            let mut badge = self.sessions.read(cx).agent_badge(id);
+            if bell {
+                // The bell already says it waits; the badge's ▲ does not say it twice.
+                badge.blocked.clear();
+            }
+            (id, badge)
+        });
+        // One attention mark per tab: the bell, else the dot (CL-CHROME).
         let badge = agent_badge.and_then(|(id, badge)| {
             super::panels::agent_badge(
                 &theme,
@@ -2502,11 +2545,6 @@ impl Workbench {
             )
         });
         // The attention of any split of a tab of splits shows on the tab.
-        let tab_sessions: Vec<hutan_core::SessionId> = item
-            .sessions()
-            .into_iter()
-            .filter_map(|s| s.parse().ok())
-            .collect();
         let attention = tab_sessions
             .iter()
             .find_map(|id| {
@@ -2516,10 +2554,42 @@ impl Workbench {
                     .map(|info| store.presentation(info))
                     .filter(|p| p.attention.is_some())
             })
-            .filter(|_| !badge_blocked);
-        let called = tab_sessions
-            .iter()
-            .any(|id| self.sessions.read(cx).is_called(*id));
+            .filter(|_| !bell && marks.state != Some(crate::sessions::TabState::Failed));
+        let state_mark = marks.state.map(|state| {
+            use crate::sessions::{TabState, Tone};
+            let (glyph, tone, tip) = match state {
+                TabState::Working => (None, Tone::Accent, "Working"),
+                TabState::Done => (
+                    Some(crate::icons::Icon::StateCompleted),
+                    Tone::Success,
+                    "Done: nobody has looked yet",
+                ),
+                TabState::Failed => (Some(crate::icons::Icon::StateFailed), Tone::Error, "Failed"),
+            };
+            let color = super::panels::tone_color(&theme, tone);
+            let mark = div()
+                .id(id(format!("tab-state-{pane_id}-{index}")))
+                .relative()
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(14.0))
+                .text_color(color)
+                .tooltip(move |_, cx| {
+                    cx.new(|_| super::style::TextTooltip::new(tip.into()))
+                        .into()
+                })
+                .child(probe(&self.regions, Region::TabState(pane_id, index)));
+            match glyph {
+                Some(glyph) => mark.child(crate::icons::glyph(glyph)),
+                None => mark.child(super::ui::spinner(
+                    id(format!("tab-spinner-{pane_id}-{index}")),
+                    12.0,
+                    color,
+                )),
+            }
+        });
         let split_badge = self.split_count_badge(pane_id, index, item);
         let preview = item.as_file().is_some_and(|path| self.is_preview(path));
         let dragged = DraggedItem {
@@ -2612,22 +2682,34 @@ impl Workbench {
             )
             .children(split_badge)
             .children(badge)
-            // A request called for this session while it was not on screen and nobody has
-            // looked since: an accent dot (the one attention mark of the tab, then).
-            .children(called.then(|| {
+            .children(state_mark)
+            // A bell: an agent waits for an answer (or asked for you while the tab was out of
+            // sight), or the terminal rang or sent a notification while it was. It goes when
+            // the tab is shown or the question answered.
+            .children(bell.then(|| {
+                let (tone, tip) = if called {
+                    (theme.warning, "Asked for you")
+                } else if waits {
+                    (theme.warning, "Waiting for you")
+                } else {
+                    (theme.accent, "The terminal rang")
+                };
                 div()
-                    .id(id(format!("tab-call-{pane_id}-{index}")))
+                    .id(id(format!("tab-bell-{pane_id}-{index}")))
+                    .relative()
                     .flex_none()
-                    .size(px(7.0))
-                    .rounded_full()
-                    .bg(accent)
-                    .tooltip(|_, cx| {
-                        cx.new(|_| super::style::TextTooltip::new("Asked for you".into()))
+                    .text_color(tone)
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| super::style::TextTooltip::new(tip.into()))
                             .into()
                     })
-                    .child(probe(&self.regions, Region::TabCall(pane_id, index)))
+                    .child(crate::icons::glyph(crate::icons::Icon::StateBell))
+                    .child(probe(&self.regions, Region::TabBell(pane_id, index)))
+                    .when(called, |s| {
+                        s.child(probe(&self.regions, Region::TabCall(pane_id, index)))
+                    })
             }))
-            .children(attention.filter(|_| !called).map(|p| {
+            .children(attention.map(|p| {
                 div()
                     .relative()
                     .flex_none()

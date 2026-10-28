@@ -22,8 +22,9 @@ pub mod workspaces;
 
 pub use agents::{AgentAttentionChanged, AgentBadge, BlockedNode};
 pub use attention::{
-    Attention, AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread,
-    classify, ended_text, present,
+    Attention, AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, TabMarks,
+    TabState, Tone, Unread, agent_app, agent_note, agent_subtitle, classify, ended_text, present,
+    tab_marks,
 };
 pub use placement::{PlacementBadge, placement_badge, row_placement_badge, works_in_checkout};
 pub use presentation::{

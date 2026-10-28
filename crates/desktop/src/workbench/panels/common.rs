@@ -99,6 +99,20 @@ pub fn agent_lead_glyph(record: &AgentRecord, theme: &Theme) -> gpui::Div {
         .child(crate::icons::glyph(icon_id))
 }
 
+/// [`state_dot`] for a row or tab: a turn in progress is a turning arc (`id` keeps its
+/// animation), every other state its shape.
+pub fn state_mark(
+    id: impl Into<gpui::ElementId>,
+    theme: &Theme,
+    presentation: &Presentation,
+) -> AnyElement {
+    if presentation.label == "working" {
+        return crate::workbench::ui::spinner(id, 12.0, tone_color(theme, presentation.tone))
+            .into_any_element();
+    }
+    state_dot(theme, presentation)
+}
+
 /// State shape and tone from the same presentation used by the adjacent label/tooltip.
 pub fn state_dot(theme: &Theme, presentation: &Presentation) -> AnyElement {
     icon(
@@ -287,6 +301,17 @@ pub fn recovery_chip(
         .into_any_element()
 }
 
+/// The glyph of a coding agent by its program (`omp`, `claude`, `codex`); another harness wears
+/// the generic one.
+pub fn harness_icon(app: &str) -> Icon {
+    match app {
+        "omp" => Icon::HarnessOmp,
+        "claude" => Icon::HarnessClaude,
+        "codex" => Icon::HarnessCodex,
+        _ => Icon::HarnessUnknown,
+    }
+}
+
 /// The icon of a session on every surface (tab, sidebar row, picker): Mawas's conversations
 /// wear the Mawas sparkle whatever backend runs them, every other session its kind's icon.
 pub fn session_icon(info: &SessionInfo) -> Icon {
@@ -294,7 +319,11 @@ pub fn session_icon(info: &SessionInfo) -> Icon {
         return Icon::PanelAssistant;
     }
     match info.kind {
-        SessionKind::Terminal => Icon::SessionTerminal,
+        // A terminal with a coding agent in it is that agent's, not a plain terminal.
+        SessionKind::Terminal => match crate::sessions::agent_app(info) {
+            Some(app) => harness_icon(app),
+            None => Icon::SessionTerminal,
+        },
         SessionKind::Harness => Icon::SessionHarness,
         SessionKind::Direct => Icon::SessionDirect,
     }

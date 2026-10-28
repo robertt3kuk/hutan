@@ -991,7 +991,11 @@ impl SessionsStore {
                 if replay {
                     return;
                 }
-                if let Some(session) = self.session_of(*terminal) {
+                // The session on screen needs no mark: the user is looking at it.
+                if let Some(session) = self
+                    .session_of(*terminal)
+                    .filter(|session| self.focused != Some(*session))
+                {
                     self.attention.notified(session);
                     self.changed(StoreChanged::ATTENTION, cx);
                 }
@@ -1056,8 +1060,22 @@ impl SessionsStore {
             Notice::WorktreesChanged { .. } => self.refresh_checkouts(cx),
             // Files changed under a watched folder: the badges count again, once per burst.
             Notice::FsChanged { .. } | Notice::FsGeneration { .. } => self.note_fs_changed(cx),
+            // A bell is the terminal asking for a look, like a notification, but quieter: a mark
+            // on the tab and the row until the session is on screen.
+            Notice::Bell { terminal } => {
+                let replay = self
+                    .connected_since
+                    .is_none_or(|since| since.elapsed() < REPLAY_WINDOW);
+                if !replay
+                    && let Some(session) = self
+                        .session_of(*terminal)
+                        .filter(|session| self.focused != Some(*session))
+                    && self.attention.belled(session)
+                {
+                    self.changed(StoreChanged::ATTENTION, cx);
+                }
+            }
             Notice::SessionExited { .. }
-            | Notice::Bell { .. }
             | Notice::DaemonRestarted { .. }
             // `workbench/remote.rs` follows `Connection::notices` itself.
             | Notice::UiCommand { .. }

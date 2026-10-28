@@ -593,8 +593,8 @@ fn blocked(daemon: &TestDaemon, session: SessionId) {
     Reporter::new(session, "omp-extension", "omp").report(daemon, Node::main("m").blocked());
 }
 
-/// A request in any split shows on the tab: a dot while the split is on screen, the toast and
-/// the accent dot while its tab is not, and looking at the tab clears them.
+/// A request in any split shows on the tab: a bell while the split is on screen, the toast and
+/// the bell asked-for while its tab is not, and looking at the tab clears them.
 #[gpui::test]
 fn the_attention_of_any_split_shows_on_the_tab(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
@@ -616,9 +616,9 @@ fn the_attention_of_any_split_shows_on_the_tab(cx: &mut TestAppContext) {
     let pane = split_pane(&view, cx);
 
     blocked(&daemon, b);
-    wait_until(cx, "the tab's attention dot", |cx| {
+    wait_until(cx, "the tab's bell", |cx| {
         draw(cx);
-        drawn(&view, cx, Region::TabAttention(pane, 0))
+        drawn(&view, cx, Region::TabBell(pane, 0))
     });
     assert!(
         view.read_with(cx, |wb, _| wb.attention_toasts().is_empty()),
@@ -643,13 +643,13 @@ fn the_attention_of_any_split_shows_on_the_tab(cx: &mut TestAppContext) {
             wb.attention_toasts().iter().any(|t| t.session == a)
         })
     });
-    wait_until(cx, "the accent dot on the tab", |cx| {
+    wait_until(cx, "the bell on the tab, asked for", |cx| {
         draw(cx);
         drawn(&view, cx, Region::TabCall(pane, index))
     });
     // Bringing the tab forward is seeing it: the dot goes.
     view.update_in(cx, |wb, window, cx| wb.open_session(b, window, cx));
-    wait_until(cx, "the dot to clear", |cx| {
+    wait_until(cx, "the bell to clear", |cx| {
         draw(cx);
         !drawn(&view, cx, Region::TabCall(pane, index))
     });

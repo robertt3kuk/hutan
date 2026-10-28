@@ -511,8 +511,8 @@ pub enum Region {
     RestoreToast(&'static str),
     /// A control of the request toast at `index` (oldest first): `toast`, `review`, `dismiss`.
     AttentionToast(usize, &'static str),
-    /// The dot on the tab at `index` of a pane: a request called for its session and the user has
-    /// not looked yet.
+    /// Marks the bell of the tab at `index` of a pane when a request called for its session and
+    /// the user has not looked yet.
     TabCall(PaneId, usize),
     /// The terminal of a split of a tab of terminal splits, by its session.
     TermSplit(hutan_core::SessionId),
@@ -523,6 +523,14 @@ pub enum Region {
     TabSplits(PaneId, usize),
     /// The attention dot (not a request called for the user) of the tab at `index` of a pane.
     TabAttention(PaneId, usize),
+    /// The bell of the tab at `index` of a pane: an agent waits for an answer, or the terminal
+    /// rang or sent a notification while the tab was out of sight.
+    TabBell(PaneId, usize),
+    /// The state of the work of the tab at `index` of a pane: working (a spinner), done, failed.
+    TabState(PaneId, usize),
+    /// The line under a session's row in the sessions panel: the question a blocked agent asks, the
+    /// message of its error, or the agent's own title under a name the user chose.
+    SessionNote(hutan_core::SessionId),
     /// A control of a file tab's language-server bar (`trust`, `not-now`, `copy`, `dismiss`).
     FileLsp(&'static str),
     /// Diagnostic row `index` of the Problems panel (the listed diagnostics, top to bottom,

@@ -4,7 +4,8 @@ stop-fill.svg: the Fill weight of the same revision (the composer's solid stop s
 Only artwork named by the Hutan semantic catalog is included.
 sidebar-right.svg: sidebar-simple.svg mirrored in geometry.
 hutan.svg: original Hutan-owned monochrome mascot silhouette (MIT).
-Mawas and harness identities use the catalog-approved Phosphor fallbacks.
+Mawas and the generic harness identity use the catalog-approved Phosphor fallbacks.
+harness-omp.svg (a pi), harness-claude.svg (an eight-point asterisk), harness-codex.svg (a prompt chevron with a cursor bar): original Hutan-owned monochrome glyphs (MIT), plain geometry, not the vendors' marks (AGENT-TERM-1).
 See LICENSE for the upstream MIT notice.
 file-rs.svg, file-js.svg, file-ts.svg, file-py.svg, file-md.svg, file-html.svg, file-css.svg, file-image.svg, file-zip.svg, file-pdf.svg, file-lock.svg, file-sql.svg, brackets-curly.svg, arrows-in-line-vertical.svg: Phosphor Regular, the same revision (the Files panel's per-type file icons `item.file.*` and *Collapse all*, EX-1).
 file-plus.svg, folder-plus.svg: Phosphor Regular, the same revision (the Files panel header's *New File* / *New Folder*, EX-7).
