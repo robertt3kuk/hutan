@@ -6,6 +6,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ### Added
 - Agents in terminals are recognised: when OMP, Claude Code, Codex (and others) run in a terminal, the tab and the sidebar row show the agent's own icon instead of `>_`, the **session takes the agent's name** (OMP's session title, without the `π` prefix; a name you set yourself stays, with the agent's title under it), and the state shows — a spinner while it works, a bell when it waits for you (the question appears under the row and in Requests), a cross on error, a check when done. A bell also marks a tab that rang or notified while out of sight. Read from OMP's status signal (OSC 7501), the window title and the running process — no hooks needed; `hutan ls` has an AGENT column.
+- Fork a chat from a turn (daemon and CLI first; the buttons come next): `hutan chat fork SESSION [--turn N] [--mode exact|head|summary]` starts a new chat with the conversation up to that turn and leaves the original untouched — exact at any turn for direct chats, Codex and Claude Code (adapter 0.98+), the latest turn for OMP, or a fresh chat seeded with a summary; Hutan says which, never silently; MCP `chat_fork`.
 
 ### Changed
 - The right side hides completely like the left (rail included) from its title-bar button, which is now its only toggle (the button at the foot of the rail is gone); ⌘L and the active icon still close it to the rail; `layout.right_rail = auto|always|never`. The `⌘⇧P` hint left the status bar (right-click the bar to bring it back).
