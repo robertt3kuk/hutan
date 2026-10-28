@@ -543,10 +543,12 @@ fn a_running_terminal_agent_is_typed_add_dir_for_the_user_to_confirm(cx: &mut Te
 }
 
 #[gpui::test]
-fn a_plain_shell_has_no_chip_but_the_session_menu_still_opens_its_folders(cx: &mut TestAppContext) {
+fn a_plain_shell_has_no_chip_or_menu_entry_until_the_plus_menu_gives_it_a_folder(
+    cx: &mut TestAppContext,
+) {
     let daemon = TestDaemon::start_with_config("[terminal]\nenv_inherit = \"daemon\"\n");
     let folders = Folders::new();
-    let project = folders.make("project");
+    let (project, docs) = (folders.make("project"), folders.make("docs"));
     let shell = terminal(&daemon, "exec sleep 60", &project, None);
     let (view, cx) = open(cx, &daemon);
     view.update_in(cx, |wb, window, cx| wb.open_session(shell.id, window, cx));
@@ -554,17 +556,43 @@ fn a_plain_shell_has_no_chip_but_the_session_menu_still_opens_its_folders(cx: &m
         view.read_with(cx, |wb, _| wb.terminal_view_of(shell.id).is_some())
     });
     draw(cx);
+    let session_menu = |view: &Entity<Workbench>, cx: &mut VisualTestContext| {
+        view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                Box::new(actions::ShowSessionMenu(actions::SessionMenuAt {
+                    session: shell.id.to_string(),
+                    position: point(px(80.0), px(80.0)),
+                })),
+                cx,
+            );
+        });
+        draw(cx);
+        menu_labels(view, cx)
+    };
     assert!(bounds_of(&view, cx, Region::Folders("terminal-chip")).is_none());
-    view.update_in(cx, |_, window, cx| {
-        window.dispatch_action(
-            Box::new(actions::ShowSessionMenu(actions::SessionMenuAt {
-                session: shell.id.to_string(),
-                position: point(px(80.0), px(80.0)),
-            })),
-            cx,
-        );
+    assert!(
+        !session_menu(&view, cx)
+            .iter()
+            .any(|l| l.starts_with("Folders…")),
+        "a shell runs no agent that could use a folder"
+    );
+    cx.simulate_keystrokes("escape");
+
+    // The ＋ menu's entry still gives the session a folder (the file service has it at once, and
+    // Files shows it); then the chip and the menu entry appear, and the popover says what the
+    // folder is good for here.
+    let labels = plus_menu(&view, cx);
+    assert!(labels.contains(&"Add Folder to the Focused Session…".to_owned()));
+    run_entry(&view, cx, "Add Folder to the Focused Session…");
+    choose(cx, &docs);
+    wait_extras(&view, cx, shell.id, "the folder", |e| {
+        e == [(docs.clone(), ChatDirApplied::Now)]
     });
-    draw(cx);
+    wait_region(&view, cx, Region::Folders("terminal-chip"));
+    assert!(
+        session_menu(&view, cx).contains(&"Folders… (+1)".to_owned()),
+        "the menu has it now"
+    );
     run_entry(&view, cx, "Folders…");
     assert_eq!(
         view.read_with(cx, |wb, _| wb.folders_popover_session()),

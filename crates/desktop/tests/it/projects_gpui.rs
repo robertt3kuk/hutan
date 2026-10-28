@@ -959,6 +959,8 @@ fn the_plus_menu_makes_workspaces_and_opens_folders_into_them(cx: &mut TestAppCo
     let _panel = panel(&view, cx);
 
     // Open Folder into Workspace asks for a folder and puts its project into the workspace.
+    // Below it the two entries that add a folder (SESSION-DIRS-B), greyed with their reasons
+    // while Home is shown and no session is.
     let plus = center_of_region(&view, cx, Region::SidebarControl("plus"));
     cx.simulate_click(plus, Modifiers::none());
     assert_eq!(
@@ -966,7 +968,9 @@ fn the_plus_menu_makes_workspaces_and_opens_folders_into_them(cx: &mut TestAppCo
         [
             "New Workspace…",
             "Open Folder…",
-            "Open Folder into Workspace"
+            "Open Folder into Workspace",
+            "Add Folder to This Workspace… (Home has one folder)",
+            "Add Folder to the Focused Session… (no chat or terminal in view)"
         ]
     );
     run_entry(&view, cx, "Open Folder into Workspace");

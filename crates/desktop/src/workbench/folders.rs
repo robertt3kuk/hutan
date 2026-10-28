@@ -59,9 +59,9 @@ impl FoldersControl {
     }
 }
 
-/// The chip of a session's folders: the working folder's name, `+N` for the extra ones; a click
-/// opens the popover under it. `region` is where tests find it; `compact` (a narrow header)
-/// leaves the name to the tooltip.
+/// The chip of a session's folders: a ghost button with the folder glyph, the working folder's
+/// name and, for the extra ones, a `+N` counter; a click opens the popover under it. `region`
+/// is where tests find it; `compact` (a narrow header) leaves the name to the tooltip.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn chip(
     id: &'static str,
@@ -73,44 +73,23 @@ pub(crate) fn chip(
     theme: &Theme,
     tokens: &Tokens,
 ) -> AnyElement {
-    let tip = SharedString::from(folders.chip_tooltip());
-    let waiting = folders.extras.iter().any(|folder| folders.waits(folder));
-    let hover = theme.surface_hover;
-    div()
-        .id(id)
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(tokens.spacing))
-        .px(px(tokens.spacing))
-        .rounded(px(tokens.radius))
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .text_size(px(tokens.secondary_font_size))
-        .child(icon(
-            Icon::ItemFolder,
-            13.0,
-            if waiting { theme.warning } else { theme.muted },
-        ))
-        .when(!compact, |s| {
-            s.child(
-                div()
-                    .max_w(px(160.0))
-                    .truncate()
-                    .whitespace_nowrap()
-                    .text_color(theme.muted)
-                    .child(SharedString::from(folders.chip_name())),
+    let label = if compact {
+        folders.chip_count().unwrap_or_else(|| "Folders".to_owned())
+    } else {
+        folders.chip_name()
+    };
+    Button::new(id, label, theme, tokens)
+        .ghost()
+        .compact()
+        .icon(Icon::ItemFolder)
+        .max_width(200.0)
+        .tooltip(folders.chip_tooltip())
+        .when(!compact, |button| {
+            button.children(
+                folders
+                    .chip_count()
+                    .map(|count| ui::counter(count, theme, tokens).into_any_element()),
             )
-        })
-        .children(
-            folders
-                .chip_count()
-                .map(|count| ui::counter(count, theme, tokens)),
-        )
-        .tooltip(move |_, cx| {
-            cx.new(|_| crate::workbench::style::TextTooltip::new(tip.clone()))
-                .into()
         })
         .on_click(move |event, window, cx| {
             window.dispatch_action(
@@ -536,7 +515,12 @@ impl Workbench {
         if !store.supports_session_dirs() {
             return None;
         }
+        // The same sessions that show the chip: a chat, a coding agent in a terminal, anything
+        // that holds folders. A plain shell gets one from the ＋ menu first.
         let folders = store.session_folders(session)?;
+        if !folders.has_chip() {
+            return None;
+        }
         let label = match folders.chip_count() {
             Some(count) => format!("Folders… ({count})"),
             None => "Folders…".to_owned(),
