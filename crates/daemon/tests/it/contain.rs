@@ -580,3 +580,165 @@ async fn an_omp_chat_that_asks_for_the_boundary_runs_its_process_inside_it() {
     assert_eq!(safety.enforced_by, SafetyEnforcer::Hutan);
     t.stop().await;
 }
+
+// Session folders (protocol 0.57): Contain's profile is fixed at spawn ---------------------------
+
+fn applied(session: &SessionInfo) -> Vec<(PathBuf, hutan_protocol::chat::ChatDirApplied)> {
+    let dirs = session
+        .chat
+        .as_ref()
+        .map_or(&session.extra_dirs, |chat| &chat.dirs);
+    dirs.iter()
+        .filter(|dir| dir.role == hutan_protocol::chat::ChatDirRole::Extra)
+        .map(|dir| (dir.path.clone(), dir.applied))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_folder_is_writable_in_a_contained_terminal_and_one_added_later_waits_for_a_restart()
+ {
+    use hutan_protocol::chat::ChatDirApplied::{Now, Restart};
+    let t = TestDaemon::start_with(TOML, |_| {}).await;
+    let client = t.connect().await;
+    let repo = repo();
+    let given = Outside::new();
+    let later = Outside::new();
+    let mut spec = contained_shell(
+        &repo.wt,
+        Contain::default(),
+        "echo x > \"$GIVEN/x\"; echo \"GIVEN=$?\"; ( echo x > \"$LATER/x\" ) 2>/dev/null; echo \"LATER=$?\"; echo DONE; exec cat",
+        &[
+            ("GIVEN", given.0.to_str().unwrap()),
+            ("LATER", later.0.to_str().unwrap()),
+        ],
+    );
+    spec.extra_dirs = vec![given.0.clone()];
+    let session = create(&client, spec).await;
+    let mut view = View::attach(&client, terminal_of(&session), None).await;
+    view.wait_for("the script finished", |s| s.contains("DONE"))
+        .await;
+    let text = view.screen.text();
+    assert!(text.contains("GIVEN=0"), "{text}");
+    assert!(text.contains("LATER=1"), "{text}");
+    assert!(given.0.join("x").exists() && !later.0.join("x").exists());
+    // The boundary lists the folder among its writable roots, and the session says it holds it.
+    let containment = session.containment.clone().expect("containment");
+    assert!(
+        containment.write_roots.contains(&given.0),
+        "{containment:?}"
+    );
+    assert_eq!(applied(&session), [(given.0.clone(), Now)]);
+
+    // The profile is fixed at spawn: a folder added now is not pretended to be writable.
+    let added = client.chat_add_dir(session.id, &later.0).await.unwrap();
+    assert_eq!(
+        applied(&added),
+        [(given.0.clone(), Now), (later.0.clone(), Restart)]
+    );
+    t.stop().await;
+}
+
+/// A contained OMP chat: its boundary lists the folders it was started with, `/add-dir` is only
+/// sent for those, and a folder added later says `restart` and is never announced to OMP.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_contained_omp_chat_can_write_its_session_folders_and_says_restart_for_later_ones() {
+    use hutan_protocol::chat::ChatDirApplied::{Now, Restart};
+    let work = tempfile::tempdir().unwrap();
+    let given = Outside::new();
+    let later = Outside::new();
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/tests/fixtures/acp-omp-18.11");
+    let acp = {
+        let exe = std::env::current_exe().unwrap();
+        exe.parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join("hutan-acp-fixture")
+    };
+    assert!(acp.is_file(), "hutan-acp-fixture not built");
+    // The agent's transcript: the handshake, then OMP's answer to `/add-dir`.
+    let mut lines: Vec<String> = std::fs::read_to_string(fixtures.join("handshake.jsonl"))
+        .unwrap()
+        .lines()
+        .take(4)
+        .map(str::to_owned)
+        .collect();
+    lines.push(
+        r#"{"dir":"out","msg":{"jsonrpc":"2.0","method":"session/prompt","id":1}}"#.to_owned(),
+    );
+    lines.push(format!(
+        r#"{{"dir":"in","msg":{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"sess_fixture_1","update":{{"sessionUpdate":"agent_message_chunk","messageId":"l","content":{{"type":"text","text":"Added {}."}}}}}}}}}}"#,
+        given.0.display()
+    ));
+    lines.push(
+        r#"{"dir":"in","msg":{"jsonrpc":"2.0","id":0,"result":{"stopReason":"end_turn"}}}"#
+            .to_owned(),
+    );
+    let transcript = work.path().join("omp.jsonl");
+    std::fs::write(&transcript, lines.join("\n") + "\n").unwrap();
+    let probe = work.path().join("probe.sh");
+    std::fs::write(
+        &probe,
+        "#!/bin/sh\n\
+         if ( : > \"$GIVEN/probe\" ) 2>/dev/null; then echo given=written; else echo given=denied; fi >> \"$LOG\"\n\
+         if ( : > \"$LATER/probe\" ) 2>/dev/null; then echo later=written; else echo later=denied; fi >> \"$LOG\"\n\
+         exec \"$FIXTURE\" \"$@\"\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let log = work.path().join("probe.log");
+    let received = work.path().join("received.jsonl");
+    let cwd = work.path().canonicalize().unwrap();
+    let toml = format!(
+        "{TOML}[harness.omp]\nbin = {probe:?}\nargs = [\"replay\", \"--received\", {received:?}, {transcript:?}, \"acp\"]\nenv = {{ LOG = {log:?}, GIVEN = {given:?}, LATER = {later:?}, FIXTURE = {acp:?} }}\n",
+        given = given.0,
+        later = later.0,
+    );
+    let t = TestDaemon::start_with(&toml, |_| {}).await;
+    let client = t.connect().await;
+    let session = client
+        .chat_create(ChatCreate {
+            cwd: cwd.clone(),
+            extra_dirs: vec![given.0.clone()],
+            contain: Some(Contain::default()),
+            ..chat_request()
+        })
+        .await
+        .unwrap();
+    let log = std::fs::read_to_string(&log).unwrap();
+    assert!(log.contains("given=written"), "{log}");
+    assert!(log.contains("later=denied"), "{log}");
+    let containment = session.containment.clone().expect("the applied boundary");
+    assert!(
+        containment.write_roots.contains(&given.0),
+        "{containment:?}"
+    );
+    assert!(!containment.write_roots.contains(&later.0));
+    assert_eq!(applied(&session), [(given.0.clone(), Now)]);
+
+    let added = client.chat_add_dir(session.id, &later.0).await.unwrap();
+    assert_eq!(
+        applied(&added),
+        [(given.0.clone(), Now), (later.0.clone(), Restart)]
+    );
+    // OMP was told of the folder it was started with, and of nothing else.
+    let prompts: Vec<String> = std::fs::read_to_string(&received)
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            let msg: serde_json::Value = serde_json::from_str(line).unwrap();
+            let msg = msg["msg"].clone();
+            (msg["method"] == "session/prompt").then(|| {
+                msg["params"]["prompt"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+        })
+        .collect();
+    assert_eq!(prompts, [format!("/add-dir {}", given.0.display())]);
+    t.stop().await;
+}
