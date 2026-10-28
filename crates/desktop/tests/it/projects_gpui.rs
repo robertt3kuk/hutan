@@ -635,30 +635,56 @@ fn session_rows_are_one_line_and_only_a_checkout_that_is_news_adds_a_second(
     );
     assert!(main.subtitle.is_none(), "one line");
     assert!(!main.shared);
-    // A linked worktree is news: its badge, and only that (its folder is in the tooltip).
+    // A linked worktree's session sits under the worktree row, which says the branch: no badge
+    // repeats it and the name keeps the room.
     let wt = row(&listed, "s-wt");
-    assert_eq!(wt.badge.as_deref(), Some("wt topic"));
+    assert_eq!(wt.badge, None);
+    assert!(wt.subtitle.is_none(), "one line: {wt:?}");
     assert_eq!(
         wt.folder, None,
         "the folder is inside the checkout it belongs to"
     );
-    assert!(wt.subtitle.is_some());
+    assert!(
+        listed
+            .iter()
+            .any(|r| r.kind == RowKind::Worktree && r.title == "topic"),
+        "the worktree row says it"
+    );
     // A folder outside git has no placement and sits in its project's folder.
     let notes = row(&listed, "s-notes");
     assert!(notes.subtitle.is_none() && notes.badge.is_none());
-    // Only the worktree draws a badge.
+    for id in [w.s_main.id, w.s_wt.id, w.s_notes.id] {
+        assert!(view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::PlacementBadge(BadgeSite::Row, id))
+                .is_none()
+        }));
+    }
+
+    // Away from its checkout (a flat list) the badge is news again.
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user(
+            "panels.sessions.group_by",
+            toml::Value::String("none".into()),
+        )
+        .unwrap();
+    wait_until(cx, "the flat list", |cx| {
+        row(&rows(&panel, cx), "s-wt").badge.as_deref() == Some("wt topic")
+    });
     wait_until(cx, "the worktree's badge", |cx| {
         view.read_with(cx, |wb, _| {
             wb.region_bounds(Region::PlacementBadge(BadgeSite::Row, w.s_wt.id))
                 .is_some()
         })
     });
-    for id in [w.s_main.id, w.s_notes.id] {
-        assert!(view.read_with(cx, |wb, _| {
-            wb.region_bounds(Region::PlacementBadge(BadgeSite::Row, id))
-                .is_none()
-        }));
-    }
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user(
+            "panels.sessions.group_by",
+            toml::Value::String("workspace".into()),
+        )
+        .unwrap();
+    wait_until(cx, "the tree again", |cx| {
+        row(&rows(&panel, cx), "s-wt").badge.is_none()
+    });
 
     // Two agents in one checkout: the warning is one chip on the project row of that checkout,
     // said once; the session rows below it do not repeat it.

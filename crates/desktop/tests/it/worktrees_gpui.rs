@@ -135,11 +135,16 @@ fn rows_and_tabs_show_main_and_worktree_badges(cx: &mut TestAppContext) {
         Some(("wt topic".into(), false))
     );
 
-    // The rows draw the one that is news: a worktree. The main checkout alone is the quiet
-    // default and its row stays one line (CL-SIDEBAR).
-    wait_until(cx, "the worktree's row badge", |cx| {
-        drawn(&view, cx, in_wt, BadgeSite::Row)
+    // The rows draw no badge: the worktree's session sits under its worktree row, which says the
+    // branch, and the main checkout alone is the quiet default (CL-SIDEBAR). The tab says it.
+    wait_until(cx, "the worktree row and its session", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::worktree(&wt)).is_some()
+                && wb.region_bounds(Region::SessionRow(in_wt)).is_some()
+        })
     });
+    assert!(!drawn(&view, cx, in_wt, BadgeSite::Row));
     assert!(!drawn(&view, cx, in_main, BadgeSite::Row));
 
     // The tab tooltip says it too.

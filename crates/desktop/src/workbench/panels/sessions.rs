@@ -1131,16 +1131,26 @@ impl SessionsPanel {
                 .sum();
             own + members
         };
-        let session = |entries: &mut Vec<Entry>, list: &[&SessionInfo], depth: usize| {
-            entries.extend(list.iter().map(|info| {
-                Entry::Session(Box::new(SessionRow {
-                    subtitle: subtitle_of(info, false),
-                    info: (*info).clone(),
-                    depth,
-                    news: None,
-                }))
-            }));
-        };
+        // `in_checkout`: the rows sit under their worktree row, which already says the branch;
+        // the placement badge would only take the name's room.
+        let session =
+            |entries: &mut Vec<Entry>, list: &[&SessionInfo], depth: usize, in_checkout: bool| {
+                entries.extend(list.iter().map(|info| {
+                    let mut subtitle = subtitle_of(info, false);
+                    if in_checkout && let Some(sub) = subtitle.as_mut() {
+                        sub.badge = None;
+                        if sub.container.is_none() && sub.folder.is_none() {
+                            subtitle = None;
+                        }
+                    }
+                    Entry::Session(Box::new(SessionRow {
+                        subtitle,
+                        info: (*info).clone(),
+                        depth,
+                        news: None,
+                    }))
+                }));
+            };
         let project = |entries: &mut Vec<Entry>, node: &ProjectNode, depth: usize| {
             let info = &node.info;
             let is_expanded = expanded(
@@ -1195,7 +1205,7 @@ impl SessionsPanel {
                 .iter()
                 .filter(|s| !checkouts.iter().any(|c| in_checkout(s, &c.path)))
                 .collect();
-            session(entries, &own, depth + 1);
+            session(entries, &own, depth + 1, false);
             for checkout in &checkouts {
                 let listed: Vec<&SessionInfo> = node
                     .sessions
@@ -1235,7 +1245,7 @@ impl SessionsPanel {
                         |p| p.root == checkout.path,
                     ),
                 }));
-                session(entries, &listed, depth + 2);
+                session(entries, &listed, depth + 2, true);
             }
         };
         for node in nodes {
@@ -1259,7 +1269,7 @@ impl SessionsPanel {
                             project(entries, node, 1);
                         }
                         let direct: Vec<&SessionInfo> = workspace.sessions.iter().collect();
-                        session(entries, &direct, 1);
+                        session(entries, &direct, 1, false);
                     }
                 }
                 Node::Project(node) | Node::Home(node) => project(entries, node, 0),

@@ -193,15 +193,18 @@ fn a_shell_stays_one_line_and_an_agent_card_grows_a_line_only_with_news(cx: &mut
     assert_eq!(height(&view, cx, shell.id), one_line);
 
     // The link opens Settings → Agent Integrations.
+    wait_until(cx, "the hint to be on screen", |cx| {
+        drawn(&view, cx, Region::HooksHint(agent.id))
+    });
     let hint = view
         .read_with(cx, |wb, _| wb.region_bounds(Region::HooksHint(agent.id)))
         .expect("the hint is drawn");
-    cx.simulate_click(
+    common::click_at(
+        cx,
         gpui::point(
             hint.origin.x + hint.size.width - gpui::px(20.0),
             hint.origin.y + hint.size.height / 2.0,
         ),
-        Modifiers::none(),
     );
     draw(cx);
     assert_eq!(
