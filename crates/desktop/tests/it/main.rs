@@ -88,6 +88,7 @@ mod settings_clean_gpui;
 mod settings_gpui;
 mod settings_r4_gpui;
 mod setup_gpui;
+mod sidebar_cards_gpui;
 mod staging_gpui;
 mod start_failure_gpui;
 mod statusbar_gpui;

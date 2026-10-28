@@ -686,6 +686,7 @@ impl ChangesPanel {
                             .children(counted.map(|c| {
                                 div()
                                     .id(SharedString::from(format!("changes-counts-{index}")))
+                                    .relative()
                                     .flex_none()
                                     .flex()
                                     .gap(px(tokens.spacing))
@@ -697,7 +698,10 @@ impl ChangesPanel {
                                         c.files_text()
                                     }))
                                     .when(diffstat, |s| {
-                                        s.child(counts_of(c.added, c.removed, &look))
+                                        s.child(counts_of(c.added, c.removed, &look)).child(probe(
+                                            &self.env.regions,
+                                            Region::ChangesPanelCounts(index),
+                                        ))
                                     })
                             })),
                     )
@@ -886,7 +890,21 @@ impl ChangesPanel {
                     .settings
                     .get::<crate::settings::ChangesPanelSettings>()
                     .show_diffstat
-                    .then(|| counts_of(file.additions as usize, file.deletions as usize, &look))
+                    .then(|| {
+                        div()
+                            .relative()
+                            .flex_none()
+                            .child(counts_of(
+                                file.additions as usize,
+                                file.deletions as usize,
+                                &look,
+                            ))
+                            .child(probe(
+                                &self.env.regions,
+                                Region::ChangesPanelFileCounts(group, index),
+                            ))
+                            .into_any_element()
+                    })
             })
             .child(probe(
                 &self.env.regions,

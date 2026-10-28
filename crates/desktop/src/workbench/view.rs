@@ -448,6 +448,10 @@ pub enum Region {
     ChangesSetup(usize),
     /// The action of that line (*Show output*, *Review…*, *Run again*).
     ChangesSetupAction(usize),
+    /// The `+N −M` of group `index` of the Changes tab (only with `panels.changes.show_diffstat`).
+    ChangesPanelCounts(usize),
+    /// The `+N −M` of file `file` of group `group` of the Changes tab (same setting).
+    ChangesPanelFileCounts(usize, usize),
     /// A control of the Changes view, by name (`toggle`, `refresh`, `merge`, `merge-confirm`,
     /// `merge-cancel`, `strategy-merge`, `strategy-squash`, `strategy-rebase`, `message`,
     /// `remove`, `keep`; delivery: `delivery`, `accept`, `request-changes`, `request-note`,
