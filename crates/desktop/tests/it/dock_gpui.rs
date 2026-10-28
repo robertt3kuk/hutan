@@ -346,11 +346,6 @@ fn cmd_l_toggles_the_body_and_keeps_the_rail_and_the_panel(cx: &mut TestAppConte
         Some(PanelId::new("history")),
         "the last panel comes back"
     );
-    // The rail's own button does the same.
-    click(&view, cx, Region::Toolbar("right-collapse"));
-    assert_eq!(chosen(&view, cx, Right), Compact);
-    click(&view, cx, Region::Toolbar("right-collapse"));
-    assert_eq!(chosen(&view, cx, Right), Expanded);
 }
 
 #[gpui::test]
@@ -413,6 +408,45 @@ fn right_click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Reg
     cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
     draw(cx);
+}
+
+/// The controls drawn for the right side that open and close it as a whole: the title bar's
+/// button, and the button the rail used to carry at its foot.
+fn right_toggles(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<Region> {
+    [Region::DockToggle(Right), Region::Toolbar("right-collapse")]
+        .into_iter()
+        .filter(|region| painted(view, cx, *region))
+        .collect()
+}
+
+#[gpui::test]
+fn the_right_side_has_exactly_one_toggle_in_every_state(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    resize(cx, 1280.0);
+    let one = [Region::DockToggle(Right)];
+    // Panel open beside its rail.
+    assert_eq!(right_toggles(&view, cx), one);
+    assert!(painted(&view, cx, Region::Rail(Right)));
+    // The rail alone.
+    cx.simulate_keystrokes("cmd-l");
+    draw(cx);
+    assert_eq!(chosen(&view, cx, Right), Compact);
+    assert_eq!(right_toggles(&view, cx), one);
+    // Hidden.
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+    assert_eq!(right_toggles(&view, cx), one);
+    // A narrow window's rail, and a peek over the center.
+    click(&view, cx, Region::DockToggle(Right));
+    click(&view, cx, Region::DockToggle(Right));
+    resize(cx, 1100.0);
+    assert_eq!(chosen(&view, cx, Right), Hidden);
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(shown(&view, cx, Right), Compact);
+    assert_eq!(right_toggles(&view, cx), one);
+    click(&view, cx, Region::DockTab(Right, 2));
+    assert_eq!(view.read_with(cx, |wb, _| wb.peek_dock()), Some(Right));
+    assert_eq!(right_toggles(&view, cx), one);
 }
 
 #[gpui::test]
@@ -482,10 +516,12 @@ fn with_right_rail_never_closing_the_panel_hides_the_rail_too(cx: &mut TestAppCo
     draw(cx);
     assert_eq!(chosen(&view, cx, Right), Hidden);
     assert!(!painted(&view, cx, Region::Rail(Right)));
+    assert_eq!(right_toggles(&view, cx), [Region::DockToggle(Right)]);
     cx.simulate_keystrokes("cmd-l");
     draw(cx);
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert!(painted(&view, cx, Region::Rail(Right)));
+    assert_eq!(right_toggles(&view, cx), [Region::DockToggle(Right)]);
     // The open panel's own icon closes it to nothing.
     click(&view, cx, Region::DockTab(Right, 0));
     assert_eq!(chosen(&view, cx, Right), Hidden);
@@ -546,6 +582,7 @@ fn with_right_rail_always_the_rail_never_goes_away(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(chosen(&view, cx, Right), Compact, "Hide leaves the rail");
     assert!(painted(&view, cx, Region::Rail(Right)));
+    assert_eq!(right_toggles(&view, cx), [Region::DockToggle(Right)]);
     // The title bar button goes between the panel and the rail, like ⌘L.
     click(&view, cx, Region::DockToggle(Right));
     assert_eq!(chosen(&view, cx, Right), Expanded);

@@ -757,13 +757,11 @@ impl Workbench {
         let accent = theme.accent;
         let status_h = self.density.ui().status_bar;
         let open = self.dock_body_shown(pos);
-        // What is left of the window's height for icons: under the inset, over the bottom
-        // button and the status bar.
+        // What is left of the window's height for icons: under the inset, over the status bar.
         let room = f32::from(window.viewport_size().height)
             - TITLEBAR_HEIGHT
             - status_h
-            - RAIL_BUTTON
-            - 3.0 * RIGHT_RAIL_PAD;
+            - 2.0 * RIGHT_RAIL_PAD;
         let approvals = self.sessions.read(cx).approvals().len();
         let badge_of = |panel: &PanelId| self.rail_badge(panel.as_str(), cx);
         // Only a waiting request calls a panel in from the strip's overflow; the count of
@@ -900,33 +898,6 @@ impl Workbench {
                 cx,
             )
         });
-        let collapse_hint = key_hint_of(window, &actions::ToggleRightDock);
-        let collapse = rail_button(
-            self,
-            RailButton {
-                id: SharedString::from("rail-collapse"),
-                face: icon(
-                    Icon::DockRight,
-                    16.0,
-                    if open { theme.fg } else { theme.muted },
-                )
-                .into_any_element(),
-                label: format!(
-                    "{} right panel{collapse_hint}",
-                    if open { "Collapse" } else { "Expand" }
-                )
-                .into(),
-                background: None,
-                badge: None,
-                calm_badge: false,
-                region: Region::Toolbar("right-collapse"),
-            },
-            hover,
-        )
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.toggle_dock_cmd(DockPosition::Right, cx);
-        }));
-
         div()
             .id("right-rail")
             .relative()
@@ -976,14 +947,6 @@ impl Workbench {
                             cx,
                         );
                     })),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .p(px(RIGHT_RAIL_PAD))
-                    .child(collapse),
             )
             .child(probe(&self.regions, Region::Rail(pos)))
             .children(hint)

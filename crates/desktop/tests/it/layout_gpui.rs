@@ -470,8 +470,8 @@ fn the_right_strip_switches_tabs(cx: &mut TestAppContext) {
 #[gpui::test]
 fn icons_that_do_not_fit_move_into_the_more_menu(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
-    // A window 240 pt high leaves the rail room for three slots, one of them More.
-    cx.simulate_resize(gpui::size(gpui::px(1280.0), gpui::px(240.0)));
+    // A window 204 pt high leaves the rail room for three slots, one of them More.
+    cx.simulate_resize(gpui::size(gpui::px(1280.0), gpui::px(204.0)));
     common::draw(cx);
     common::draw(cx);
     let more = bounds(&view, cx, Region::StripMore);

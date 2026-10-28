@@ -323,11 +323,6 @@ fn the_same_icon_and_cmd_l_close_the_peek(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(peeking(&view, cx), None);
     assert!(workbench_holds_the_keyboard(&view, cx));
-    // The rail's own button does the same.
-    click(&view, cx, Region::Toolbar("right-collapse"));
-    assert_eq!(peeking(&view, cx), Some(Right));
-    click(&view, cx, Region::Toolbar("right-collapse"));
-    assert_eq!(peeking(&view, cx), None);
     // The titlebar's right button closes an open peek...
     click(&view, cx, icon(2));
     assert_eq!(peeking(&view, cx), Some(Right));
