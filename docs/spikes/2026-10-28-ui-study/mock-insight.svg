@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="780" viewBox="0 0 900 780" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Agent insight panel, proposed</title>
+<desc>Mock: right-dock panel for the focused agent: context meter by category, per-turn tokens and cost, tools, files, time. Invented data.</desc>
+<rect x="0" y="0" width="900" height="780" rx="0" fill="#141413"/>
+<rect x="20" y="20" width="360" height="740" rx="6" fill="#1F1E1D"/>
+<text x="36" y="48" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Insight</text>
+<text x="364" y="48" font-size="14" fill="#AEACA4" font-weight="400" text-anchor="end">⋯</text>
+<line x1="20" y1="60" x2="380" y2="60" stroke="#33322F" stroke-width="1"/>
+<path d="M46,80.0 A6.0,6.0 0 1 1 40.3,84.2" fill="none" stroke="#EA7A43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="70" cy="86" r="8.0" fill="none" stroke="#F5F4EF" stroke-width="1.2"/>
+<text x="70" y="89.52" font-size="11.52" fill="#F5F4EF" font-weight="600" text-anchor="middle">π</text>
+<text x="88" y="84" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Refactor session refresh</text>
+<text x="88" y="101" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">OMP · opus-5.5 · thinking high · turn 6 · 14 min</text>
+<text x="36" y="126" font-size="10.5" fill="#AEACA4" font-weight="600" text-anchor="start">Sources</text>
+<rect x="84" y="115" width="59.6" height="16" rx="8" fill="#3A3936"/>
+<text x="91" y="127" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 7501</text>
+<rect x="149.6" y="115" width="65.30000000000001" height="16" rx="8" fill="#3A3936"/>
+<text x="156.6" y="127" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start">extension</text>
+<rect x="220.9" y="115" width="71.0" height="16" rx="8" fill="#3A3936"/>
+<text x="227.9" y="127" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start">transcript</text>
+<text x="36" y="152" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Context</text>
+<text x="364" y="152" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">98k / 200k · 49%</text>
+<rect x="36" y="162" width="328" height="14" rx="4" fill="#3A3936"/>
+<rect x="36" y="162" width="9.84" height="14" rx="0" fill="#8A8780"/>
+<rect x="45.84" y="162" width="13.12" height="14" rx="0" fill="#A39E94"/>
+<rect x="58.96" y="162" width="29.52" height="14" rx="0" fill="#C9A25D"/>
+<rect x="88.48" y="162" width="6.56" height="14" rx="0" fill="#B8865A"/>
+<rect x="95.04" y="162" width="101.68" height="14" rx="0" fill="#EA7A43"/>
+<rect x="314.8" y="162" width="49.199999999999996" height="14" rx="0" fill="none" stroke="#6F6D66" stroke-width="1"/>
+<line x1="314.8" y1="159" x2="314.8" y2="179" stroke="#E2AE45" stroke-width="1.5"/>
+<text x="314.8" y="192" font-size="10" fill="#E2AE45" font-weight="400" text-anchor="middle">auto-compact at 85%</text>
+<rect x="36" y="200" width="8" height="8" rx="2" fill="#8A8780"/>
+<text x="50" y="208" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">System prompt</text>
+<text x="186" y="208" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">6.1k</text>
+<rect x="206" y="200" width="8" height="8" rx="2" fill="#A39E94"/>
+<text x="220" y="208" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Project context</text>
+<text x="356" y="208" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">7.8k</text>
+<rect x="36" y="218" width="8" height="8" rx="2" fill="#C9A25D"/>
+<text x="50" y="226" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Tools</text>
+<text x="186" y="226" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">17.6k</text>
+<rect x="206" y="218" width="8" height="8" rx="2" fill="#B8865A"/>
+<text x="220" y="226" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Skills</text>
+<text x="356" y="226" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">3.9k</text>
+<rect x="36" y="236" width="8" height="8" rx="2" fill="#EA7A43"/>
+<text x="50" y="244" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Messages</text>
+<text x="186" y="244" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">62.4k</text>
+<text x="36" y="270" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Messages: 6 user · 21 assistant · 35 tool results (estimate)</text>
+<text x="36" y="300" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Tokens per turn</text>
+<text x="364" y="300" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">$2.41 this session · cache hit 71%</text>
+<rect x="42" y="350.0" width="34" height="18.0" rx="3" fill="#3A3936"/>
+<text x="59" y="382" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="middle">T1</text>
+<text x="59" y="346.0" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="middle">12k</text>
+<rect x="94" y="341.0" width="34" height="27.0" rx="3" fill="#3A3936"/>
+<text x="111" y="382" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="middle">T2</text>
+<text x="111" y="337.0" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="middle">18k</text>
+<rect x="146" y="354.5" width="34" height="13.5" rx="3" fill="#3A3936"/>
+<text x="163" y="382" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="middle">T3</text>
+<text x="163" y="350.5" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="middle">9k</text>
+<rect x="198" y="329.0" width="34" height="39.0" rx="3" fill="#3A3936"/>
+<text x="215" y="382" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="middle">T4</text>
+<text x="215" y="325.0" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="middle">26k</text>
+<rect x="250" y="321.5" width="34" height="46.5" rx="3" fill="#3A3936"/>
+<text x="267" y="382" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="middle">T5</text>
+<text x="267" y="317.5" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="middle">31k</text>
+<rect x="302" y="347.0" width="34" height="21.0" rx="3" fill="#EA7A43"/>
+<text x="319" y="382" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="middle">T6</text>
+<text x="319" y="343.0" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="middle">14k</text>
+<text x="36" y="412" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Tools</text>
+<text x="364" y="412" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">38 calls · 2 failed</text>
+<text x="36" y="441" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Read</text>
+<rect x="96" y="432" width="200.0" height="10" rx="3" fill="#3A3936"/>
+<text x="302" y="441" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">14</text>
+<text x="36" y="461" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Edit</text>
+<rect x="96" y="452" width="128.57142857142858" height="10" rx="3" fill="#3A3936"/>
+<text x="302" y="461" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">9</text>
+<text x="36" y="481" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Bash</text>
+<rect x="96" y="472" width="100.0" height="10" rx="3" fill="#3A3936"/>
+<text x="302" y="481" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">7</text>
+<text x="328" y="481" font-size="10.5" fill="#F08C7A" font-weight="400" text-anchor="start">2 failed</text>
+<text x="36" y="501" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Grep</text>
+<rect x="96" y="492" width="71.42857142857143" height="10" rx="3" fill="#3A3936"/>
+<text x="302" y="501" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">5</text>
+<text x="36" y="521" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Task</text>
+<rect x="96" y="512" width="42.857142857142854" height="10" rx="3" fill="#3A3936"/>
+<text x="302" y="521" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">3</text>
+<text x="36" y="544" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Files touched</text>
+<text x="364" y="544" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">5 files · +154 −21</text>
+<text x="36" y="566" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/refresh.ts</text>
+<text x="364" y="566" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">+119 −8</text>
+<text x="36" y="586" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/tokens.ts</text>
+<text x="364" y="586" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">+21 −2</text>
+<text x="36" y="606" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">tests/auth.test.ts</text>
+<text x="364" y="606" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">+14 −11</text>
+<text x="36" y="630" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">+ 2 more · open in Changes</text>
+<text x="36" y="656" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Time</text>
+<text x="364" y="656" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">14 min 52 s</text>
+<rect x="36" y="666" width="202.52348993288592" height="10" rx="0" fill="#EA7A43"/>
+<rect x="238.52348993288592" y="666" width="59.436241610738264" height="10" rx="0" fill="#E2AE45"/>
+<rect x="297.9597315436242" y="666" width="66.04026845637584" height="10" rx="0" fill="#3A3936"/>
+<text x="36" y="694" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">working 9m 12s · waiting for you 2m 40s · idle 3m</text>
+<text x="420" y="44" font-size="14" fill="#F5F4EF" font-weight="600" text-anchor="start">Where each block comes from</text>
+<text x="420" y="72" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Header</text>
+<text x="420" y="90" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 7501 app + state; extension: model, thinking level, turn</text>
+<text x="420" y="106" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">count; process start time</text>
+<text x="420" y="134" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Context bar</text>
+<text x="420" y="152" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OMP: context breakdown (system prompt, project context, tools,</text>
+<text x="420" y="168" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">skills, messages, compaction buffer) via the extension. Claude</text>
+<text x="420" y="184" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Code and Codex: used / window only, split shown as “not</text>
+<text x="420" y="200" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">reported”</text>
+<text x="420" y="228" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Messages line</text>
+<text x="420" y="246" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Estimate from the transcript (never presented as exact)</text>
+<text x="420" y="274" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Tokens per turn, cost</text>
+<text x="420" y="292" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Extension usage events; chats Hutan runs: TurnUsage (exists).</text>
+<text x="420" y="308" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Subscription cost is always labelled estimate</text>
+<text x="420" y="336" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Tools, files</text>
+<text x="420" y="354" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Hook events (tool_execution_*), the E-10 changes ledger; or the</text>
+<text x="420" y="370" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">transcript when the history index is on</text>
+<text x="420" y="398" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Time</text>
+<text x="420" y="416" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">State transitions the daemon already records (state, since)</text>
+<text x="420" y="450" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Rules</text>
+<text x="420" y="468" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">• A block with no data says “not reported by this harness”, never zero.</text>
+<text x="420" y="486" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">• Read-only: nothing here steers the agent.</text>
+<text x="420" y="504" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">• Follows the focused session; pinned per tab on request.</text>
+<text x="420" y="522" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">• Nothing here is stored beyond what Hutan already keeps.</text>
+</svg>

@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Hutan workbench, proposed: agent cards, agent tabs, usage meters</title>
+<desc>Mock: sidebar project &gt; worktree &gt; agent cards, tabs with agent icon + state + bell, status bar with usage meters. Invented data.</desc>
+<rect x="0" y="0" width="1280" height="800" rx="0" fill="#1F1E1D"/>
+<rect x="280" y="66" width="610" height="710" rx="0" fill="#262624"/>
+<rect x="890" y="36" width="350" height="740" rx="0" fill="#1F1E1D"/>
+<rect x="1240" y="36" width="40" height="740" rx="0" fill="#1F1E1D"/>
+<line x1="280" y1="0" x2="280" y2="776" stroke="#33322F" stroke-width="1"/>
+<line x1="890" y1="36" x2="890" y2="776" stroke="#33322F" stroke-width="1"/>
+<line x1="1240" y1="36" x2="1240" y2="776" stroke="#33322F" stroke-width="1"/>
+<line x1="0" y1="776" x2="1280" y2="776" stroke="#33322F" stroke-width="1"/>
+<circle cx="20" cy="18" r="6" fill="#FF5F57"/>
+<circle cx="40" cy="18" r="6" fill="#FEBC2E"/>
+<circle cx="60" cy="18" r="6" fill="#28C840"/>
+<rect x="86" y="10" width="16" height="16" rx="3" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="92" y1="10" x2="92" y2="26" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="585" y="22" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="middle">acme-web</text>
+<rect x="1218" y="10" width="16" height="16" rx="3" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="1227" y1="10" x2="1227" y2="26" stroke="#AEACA4" stroke-width="1.2"/>
+<circle cx="24" cy="59" r="6" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="40" y="63" font-size="13" fill="#AEACA4" font-weight="500" text-anchor="start">Agents</text>
+<rect x="250" y="52" width="18" height="16" rx="8" fill="#3E2C23"/>
+<text x="259" y="64" font-size="10" fill="#E2AE45" font-weight="600" text-anchor="middle">2</text>
+<circle cx="24" cy="91" r="6" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="40" y="95" font-size="13" fill="#AEACA4" font-weight="500" text-anchor="start">Mawas</text>
+<circle cx="24" cy="123" r="6" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="40" y="127" font-size="13" fill="#AEACA4" font-weight="500" text-anchor="start">Memory</text>
+<text x="12" y="150" font-size="12" fill="#AEACA4" font-weight="600" text-anchor="start">Projects</text>
+<text x="240" y="151" font-size="16" fill="#AEACA4" font-weight="400" text-anchor="start">+</text>
+<text x="260" y="151" font-size="14" fill="#AEACA4" font-weight="400" text-anchor="start">⋯</text>
+<rect x="8" y="162" width="264" height="26" rx="6" fill="#30302E"/>
+<text x="20" y="179" font-size="12" fill="#6F6D66" font-weight="400" text-anchor="start">Filter projects and sessions</text>
+<text x="14" y="217" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start">▾</text>
+<path d="M30,207 v10 M30,207 a3,3 0 1 0 0.1,0 M38,213 a3,3 0 1 0 0.1,0 M30,213 q0,-6 8,-6" fill="none" stroke="#AEACA4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="48" y="218" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">acme-web</text>
+<text x="200" y="218" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">⑂ main</text>
+<rect x="244" y="205" width="24" height="18" rx="9" fill="#3A3936"/>
+<text x="256" y="218" font-size="10" fill="#F5F4EF" font-weight="500" text-anchor="middle">4</text>
+<rect x="8" y="228" width="264" height="44" rx="6" fill="#2E2D2B"/>
+<path d="M30,236.0 A6.0,6.0 0 1 1 24.3,240.2" fill="none" stroke="#EA7A43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="50" cy="242" r="7.0" fill="none" stroke="#F5F4EF" stroke-width="1.2"/>
+<text x="50" y="245.08" font-size="10.08" fill="#F5F4EF" font-weight="600" text-anchor="middle">π</text>
+<text x="64" y="246" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Refactor session refresh</text>
+<text x="264" y="246" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="end">4m</text>
+<rect x="64" y="253" width="52.8" height="14" rx="4" fill="#3A3936"/>
+<text x="68" y="263" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">opus-5.5</text>
+<text x="122.8" y="263" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Edit src/auth/refresh.ts</text>
+<circle cx="30" cy="290" r="6.0" fill="#E2AE45"/>
+<text x="30" y="293.2" font-size="9" fill="#1F1E1D" font-weight="700" text-anchor="middle">!</text>
+<circle cx="50" cy="290" r="7.0" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="46.15" y1="290.0" x2="53.85" y2="290.0" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="47.27763889243179" y1="287.2776388924318" x2="52.72236110756821" y2="292.7223611075682" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="50.0" y1="286.15" x2="50.0" y2="293.85" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="52.722361107568204" y1="287.2776388924318" x2="47.277638892431796" y2="292.7223611075682" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="64" y="294" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Fix flaky checkout test</text>
+<text x="264" y="294" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="end">now</text>
+<rect x="64" y="301" width="64.0" height="14" rx="4" fill="#3A3936"/>
+<text x="68" y="311" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">sonnet-5.5</text>
+<text x="134.0" y="311" font-size="11" fill="#E2AE45" font-weight="400" text-anchor="start">Needs approval: pnpm tes…</text>
+<circle cx="30" cy="338" r="6.0" fill="#6BBF85"/>
+<path d="M27.4,338.2 L29.4,340.2 L32.8,336" fill="none" stroke="#1F1E1D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="50" cy="338" r="7.0" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<path d="M47.2,336.25 L50,338.35 L47.2,340.45 M50.35,340.8 L53.15,340.8" fill="none" stroke="#AEACA4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="64" y="342" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Handoff docs</text>
+<text x="264" y="342" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="end">12m</text>
+<circle cx="34" cy="333" r="3" fill="#EA7A43" stroke="#1F1E1D" stroke-width="1.2"/>
+<rect x="64" y="349" width="47.199999999999996" height="14" rx="4" fill="#3A3936"/>
+<text x="68" y="359" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">gpt-5.5</text>
+<text x="117.19999999999999" y="359" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Done · 3 files, tests pass</text>
+<path d="M45,382 L49,385 L45,388 M51,389 L55,389" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="64" y="389" font-size="13" fill="#AEACA4" font-weight="500" text-anchor="start">zsh</text>
+<text x="264" y="389" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="end">1h</text>
+<path d="M24,412 a2.5,2.5 0 1 0 0.1,0 M24,414 v8 M32,418 a2.5,2.5 0 1 0 0.1,0" fill="none" stroke="#AEACA4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="42" y="419" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">feature/auth-refresh</text>
+<text x="206" y="419" font-size="10.5" fill="#6BBF85" font-weight="500" text-anchor="start">+142</text>
+<text x="232" y="419" font-size="10.5" fill="#F08C7A" font-weight="500" text-anchor="start">−18</text>
+<rect x="254" y="409" width="18" height="14" rx="4" fill="#3A3936"/>
+<text x="263" y="419" font-size="8" fill="#AEACA4" font-weight="600" text-anchor="middle">PR</text>
+<circle cx="44" cy="446" r="4.5" fill="none" stroke="#6F6D66" stroke-width="1.3"/>
+<circle cx="64" cy="446" r="7.0" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="64" y="449.08" font-size="10.08" fill="#AEACA4" font-weight="600" text-anchor="middle">π</text>
+<text x="78" y="450" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Token rotation</text>
+<text x="264" y="450" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="end">2h</text>
+<rect x="78" y="457" width="52.8" height="14" rx="4" fill="#3A3936"/>
+<text x="82" y="467" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">opus-5.5</text>
+<text x="136.8" y="467" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Last: added rotation tes…</text>
+<circle cx="44" cy="494" r="6.0" fill="#F08C7A"/>
+<path d="M41.6,491.6 L46.4,496.4 M46.4,491.6 L41.6,496.4" fill="none" stroke="#1F1E1D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="64" cy="494" r="7.0" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="60.15" y1="494.0" x2="67.85" y2="494.0" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="61.27763889243179" y1="491.2776388924318" x2="66.7223611075682" y2="496.7223611075682" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="64.0" y1="490.15" x2="64.0" y2="497.85" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="66.7223611075682" y1="491.2776388924318" x2="61.277638892431796" y2="496.7223611075682" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="78" y="498" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Migrate billing schema</text>
+<text x="264" y="498" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="end">3h</text>
+<rect x="78" y="505" width="64.0" height="14" rx="4" fill="#3A3936"/>
+<text x="82" y="515" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">sonnet-5.5</text>
+<text x="148.0" y="515" font-size="11" fill="#F08C7A" font-weight="400" text-anchor="start">Failed: migration 004…</text>
+<text x="14" y="546" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start">▸</text>
+<text x="34" y="546" font-size="13" fill="#AEACA4" font-weight="500" text-anchor="start">Home</text>
+<line x1="0" y1="742" x2="280" y2="742" stroke="#33322F" stroke-width="1"/>
+<text x="30" y="764" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">+  Start</text>
+<circle cx="190" cy="759" r="6" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="204" y="764" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Settings</text>
+<rect x="280" y="36" width="610" height="30" rx="0" fill="#1F1E1D"/>
+<rect x="284" y="38" width="176" height="28" rx="6" fill="#262624"/>
+<path d="M298,46.5 A5.5,5.5 0 1 1 292.775,50.35" fill="none" stroke="#EA7A43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="316" cy="52" r="6.5" fill="none" stroke="#F5F4EF" stroke-width="1.2"/>
+<text x="316" y="54.86" font-size="9.36" fill="#F5F4EF" font-weight="600" text-anchor="middle">π</text>
+<text x="330" y="56" font-size="12" fill="#F5F4EF" font-weight="500" text-anchor="start">Refactor session…</text>
+<text x="448" y="56" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<circle cx="476" cy="52" r="5.5" fill="#E2AE45"/>
+<text x="476" y="55.2" font-size="9" fill="#1F1E1D" font-weight="700" text-anchor="middle">!</text>
+<circle cx="494" cy="52" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="490.425" y1="52.0" x2="497.575" y2="52.0" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="491.4720932572581" y1="49.472093257258095" x2="496.5279067427419" y2="54.527906742741905" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="494.0" y1="48.425" x2="494.0" y2="55.575" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="496.5279067427419" y1="49.472093257258095" x2="491.4720932572581" y2="54.527906742741905" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="508" y="56" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Fix flaky check…</text>
+<text x="618" y="56" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<circle cx="646" cy="52" r="5.5" fill="#6BBF85"/>
+<path d="M643.4,52.2 L645.4,54.2 L648.8,50" fill="none" stroke="#1F1E1D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="664" cy="52" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<path d="M661.4,50.375 L664,52.325 L661.4,54.275 M664.325,54.6 L666.925,54.6" fill="none" stroke="#AEACA4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="678" y="56" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Handoff…</text>
+<path d="M733.5,54.5 Q733.5,47.0 738,47.0 Q742.5,47.0 742.5,54.5 Z" fill="#E2AE45"/>
+<circle cx="738" cy="57.0" r="1.4000000000000001" fill="#E2AE45"/>
+<text x="760" y="56" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<circle cx="788" cy="52" r="4.0" fill="none" stroke="#6F6D66" stroke-width="1.3"/>
+<path d="M801,49 L805,52 L801,55 M807,56 L811,56" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="820" y="56" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">zsh</text>
+<text x="846" y="56" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<text x="868" y="56" font-size="15" fill="#AEACA4" font-weight="400" text-anchor="start">+</text>
+<line x1="280" y1="66" x2="284" y2="66" stroke="#33322F" stroke-width="1"/>
+<line x1="462" y1="66" x2="890" y2="66" stroke="#33322F" stroke-width="1"/>
+<text x="300" y="96" font-size="12.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">π  Refactor session refresh</text>
+<text x="300" y="134" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">Reading src/auth/refresh.ts</text>
+<text x="300" y="153" font-size="12.5" fill="#6BBF85" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">Edit src/auth/refresh.ts  +12 −3</text>
+<text x="300" y="172" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">Ran pnpm test auth  PASS (14)</text>
+<text x="300" y="210" font-size="12.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="Menlo, 'SF Mono', monospace">Working…  esc to interrupt</text>
+<text x="906" y="58" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Changes</text>
+<text x="1224" y="58" font-size="14" fill="#AEACA4" font-weight="400" text-anchor="end">⋯</text>
+<line x1="890" y1="76" x2="1240" y2="76" stroke="#33322F" stroke-width="1"/>
+<text x="906" y="100" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">+154 −21 · 5 files · ⑂ main</text>
+<text x="906" y="126" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">▾ src/auth</text>
+<rect x="900" y="136" width="330" height="26" rx="6" fill="#2E2D2B"/>
+<text x="912" y="153" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/refresh.ts</text>
+<text x="1220" y="153" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">+119 −8</text>
+<rect x="900" y="164" width="330" height="26" rx="6" fill="none"/>
+<text x="912" y="181" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/tokens.ts</text>
+<text x="1220" y="181" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">+21 −2</text>
+<rect x="900" y="192" width="330" height="26" rx="6" fill="none"/>
+<text x="912" y="209" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/session.ts</text>
+<text x="1220" y="209" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">+14 −11</text>
+<rect x="1250" y="48" width="20" height="20" rx="5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<rect x="1250" y="88" width="20" height="20" rx="5" fill="none" stroke="#F5F4EF" stroke-width="1.2"/>
+<rect x="1250" y="128" width="20" height="20" rx="5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<rect x="1250" y="168" width="20" height="20" rx="5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<rect x="1250" y="208" width="20" height="20" rx="5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<rect x="1245" y="86" width="30" height="30" rx="6" fill="#2E2D2B" fill-opacity="0.0"/>
+<circle cx="14" cy="788" r="3.5" fill="#6BBF85"/>
+<text x="24" y="792" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">hutand</text>
+<text x="86" y="792" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">acme-web · ⑂ main</text>
+<circle cx="560" cy="788" r="6.0" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="556.7" y1="788.0" x2="563.3" y2="788.0" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="557.6665476220844" y1="785.6665476220844" x2="562.3334523779156" y2="790.3334523779156" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="560.0" y1="784.7" x2="560.0" y2="791.3" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="562.3334523779156" y1="785.6665476220844" x2="557.6665476220844" y2="790.3334523779156" stroke="#AEACA4" stroke-width="1.2"/>
+<rect x="572" y="785" width="44" height="6" rx="3" fill="#3A3936"/>
+<rect x="572" y="785" width="25.52" height="6" rx="3" fill="#EA7A43"/>
+<text x="622" y="792" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">58% 5h · 41% wk</text>
+<circle cx="720" cy="788" r="6.0" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<path d="M717.6,786.5 L720,788.3 L717.6,790.1 M720.3,790.4 L722.7,790.4" fill="none" stroke="#AEACA4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="732" y="785" width="44" height="6" rx="3" fill="#3A3936"/>
+<rect x="732" y="785" width="22.88" height="6" rx="3" fill="#EA7A43"/>
+<text x="782" y="792" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">52% 5h · 37% wk</text>
+<text x="900" y="792" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">●2 working</text>
+<text x="990" y="792" font-size="11" fill="#E2AE45" font-weight="400" text-anchor="start">▲ 1 request</text>
+<text x="1264" y="792" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">⌘⇧P</text>
+</svg>

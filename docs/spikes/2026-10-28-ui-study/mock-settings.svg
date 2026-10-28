@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Settings sheet, proposed</title>
+<desc>Mock: icon navigation, page header with description, grouped cards of fixed-height rows, aligned controls.</desc>
+<rect x="0" y="0" width="1200" height="660" rx="0" fill="#141413"/>
+<rect x="20" y="20" width="880" height="620" rx="10" fill="#30302E" stroke="#33322F" stroke-width="1"/>
+<rect x="20" y="20" width="224" height="620" rx="10" fill="#1F1E1D"/>
+<rect x="234" y="20" width="10" height="620" rx="0" fill="#1F1E1D"/>
+<line x1="244" y1="20" x2="244" y2="640" stroke="#33322F" stroke-width="1"/>
+<rect x="32" y="32" width="200" height="28" rx="6" fill="#30302E"/>
+<circle cx="46" cy="46" r="5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="58" y="50" font-size="12" fill="#6F6D66" font-weight="400" text-anchor="start">Search settings</text>
+<text x="220" y="50" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">⌘F</text>
+<text x="40" y="90" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">General</text>
+<rect x="28" y="100" width="208" height="28" rx="6" fill="#2E2D2B"/>
+<circle cx="46" cy="114" r="6" fill="none" stroke="#F5F4EF" stroke-width="1.3"/>
+<circle cx="46" cy="114" r="2" fill="#F5F4EF"/>
+<text x="64" y="119" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Appearance</text>
+<rect x="40" y="136" width="12" height="12" rx="3" fill="none" stroke="#AEACA4" stroke-width="1.3"/>
+<text x="64" y="147" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Keyboard</text>
+<path d="M40,175 L46,164 L52,175 Z" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="64" y="175" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Terminal</text>
+<rect x="40" y="194" width="12" height="8" rx="2" fill="none" stroke="#AEACA4" stroke-width="1.3"/>
+<line x1="43" y1="205" x2="49" y2="205" stroke="#AEACA4" stroke-width="1.3"/>
+<text x="64" y="203" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Editor</text>
+<path d="M40,226 L46,220 L52,226 L46,232 Z" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="64" y="231" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Files</text>
+<text x="40" y="260" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">Agents</text>
+<circle cx="46" cy="284" r="6" fill="none" stroke="#AEACA4" stroke-width="1.3"/>
+<circle cx="46" cy="284" r="2" fill="#AEACA4"/>
+<text x="64" y="289" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Agents &amp; harnesses</text>
+<rect x="40" y="306" width="12" height="12" rx="3" fill="none" stroke="#AEACA4" stroke-width="1.3"/>
+<text x="64" y="317" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Models &amp; accounts</text>
+<path d="M40,345 L46,334 L52,345 Z" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="64" y="345" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Mawas</text>
+<rect x="40" y="364" width="12" height="8" rx="2" fill="none" stroke="#AEACA4" stroke-width="1.3"/>
+<line x1="43" y1="375" x2="49" y2="375" stroke="#AEACA4" stroke-width="1.3"/>
+<text x="64" y="373" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Notifications</text>
+<text x="40" y="402" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">Workspace</text>
+<path d="M40,426 L46,420 L52,426 L46,432 Z" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="64" y="431" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Projects</text>
+<circle cx="46" cy="454" r="6" fill="none" stroke="#AEACA4" stroke-width="1.3"/>
+<circle cx="46" cy="454" r="2" fill="#AEACA4"/>
+<text x="64" y="459" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Layout</text>
+<rect x="40" y="476" width="12" height="12" rx="3" fill="none" stroke="#AEACA4" stroke-width="1.3"/>
+<text x="64" y="487" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Status bar</text>
+<text x="40" y="516" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">Data</text>
+<path d="M40,545 L46,534 L52,545 Z" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="64" y="545" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">History</text>
+<rect x="40" y="564" width="12" height="8" rx="2" fill="none" stroke="#AEACA4" stroke-width="1.3"/>
+<line x1="43" y1="575" x2="49" y2="575" stroke="#AEACA4" stroke-width="1.3"/>
+<text x="64" y="573" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Data &amp; logs</text>
+<text x="40" y="602" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">Advanced ▸</text>
+<text x="276" y="66" font-size="20" fill="#F5F4EF" font-weight="600" text-anchor="start">Appearance</text>
+<text x="276" y="88" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">How Hutan looks: density, color mode and themes.</text>
+<text x="868" y="66" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="end">Reset page…</text>
+<text x="276" y="124" font-size="12" fill="#AEACA4" font-weight="600" text-anchor="start">Theme</text>
+<rect x="276" y="134" width="592" height="208" rx="10" fill="#262624"/>
+<text x="292" y="157" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Density</text>
+<text x="292" y="174" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Compact fits more; Comfortable gives rows room.</text>
+<rect x="684" y="146" width="168" height="28" rx="6" fill="#3A3936"/>
+<text x="696" y="164" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Compact</text>
+<text x="838" y="165" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="middle">⌄</text>
+<line x1="292" y1="186" x2="852" y2="186" stroke="#33322F" stroke-width="1"/>
+<text x="292" y="209" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Color mode</text>
+<text x="292" y="226" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Follow macOS or pin light or dark.</text>
+<rect x="684" y="198" width="168" height="28" rx="6" fill="#3A3936"/>
+<text x="696" y="216" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">System</text>
+<text x="838" y="217" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="middle">⌄</text>
+<line x1="292" y1="238" x2="852" y2="238" stroke="#33322F" stroke-width="1"/>
+<text x="292" y="261" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Dark theme</text>
+<text x="292" y="278" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Hover a theme to preview it; Return applies.</text>
+<rect x="684" y="250" width="168" height="28" rx="6" fill="#3A3936"/>
+<text x="696" y="268" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Hutan Dark</text>
+<text x="838" y="269" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="middle">⌄</text>
+<line x1="292" y1="290" x2="852" y2="290" stroke="#33322F" stroke-width="1"/>
+<text x="292" y="313" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Icon theme</text>
+<text x="292" y="330" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Icons a theme leaves out fall back to Phosphor.</text>
+<rect x="684" y="302" width="168" height="28" rx="6" fill="#3A3936"/>
+<text x="696" y="320" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Phosphor Regular</text>
+<text x="838" y="321" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="middle">⌄</text>
+<text x="276" y="370" font-size="12" fill="#AEACA4" font-weight="600" text-anchor="start">Motion and scrolling</text>
+<rect x="276" y="380" width="592" height="104" rx="10" fill="#262624"/>
+<text x="292" y="403" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Reduce motion</text>
+<text x="292" y="420" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Menus and sheets fade instead of sliding.</text>
+<rect x="684" y="392" width="168" height="28" rx="6" fill="#3A3936"/>
+<text x="696" y="410" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">System</text>
+<text x="838" y="411" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="middle">⌄</text>
+<line x1="292" y1="432" x2="852" y2="432" stroke="#33322F" stroke-width="1"/>
+<text x="292" y="455" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Scroll bars</text>
+<text x="292" y="472" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">System follows macOS; always or while scrolling.</text>
+<rect x="684" y="444" width="168" height="28" rx="6" fill="#3A3936"/>
+<text x="696" y="462" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">System</text>
+<text x="838" y="463" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="middle">⌄</text>
+<line x1="244" y1="604" x2="900" y2="604" stroke="#33322F" stroke-width="1"/>
+<text x="276" y="626" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Problems · none</text>
+<text x="920" y="44" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Spacing scale (pt)</text>
+<text x="920" y="70" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• 4 · 8 · 12 · 16 · 24 · 32 — nothing else</text>
+<text x="920" y="92" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Sheet 880 × 620, nav 224</text>
+<text x="920" y="114" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Page padding 32 left/right</text>
+<text x="920" y="136" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Page title 20 semibold + 13 muted line</text>
+<text x="920" y="158" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Section label 12 semibold, 24 above, 10 below</text>
+<text x="920" y="180" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Card: 10 radius, `bg` on `surface`, no border</text>
+<text x="920" y="202" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Row 52 fixed: label 13 / help 12 (one line)</text>
+<text x="920" y="224" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Row text inset 16; hairline inset 16</text>
+<text x="920" y="246" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Control column 168 wide, right edge 16 from card</text>
+<text x="920" y="268" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Nav: 28 rows, 16 px icon, 12 gap, 11 group labels</text>
+<text x="920" y="290" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• Footer 36: Problems line, one line</text>
+<text x="920" y="330" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">What changed against today</text>
+<text x="920" y="356" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• icons in the nav (Orca, Zed, Linear)</text>
+<text x="920" y="378" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• one fixed row height (today 52 / 65 / 79 pt)</text>
+<text x="920" y="400" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• help is one line; the full text is the tooltip</text>
+<text x="920" y="422" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• all controls share one width and one edge</text>
+<text x="920" y="444" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• page description line (Orca)</text>
+<text x="920" y="466" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• rows grouped into labelled cards (Orca, macOS)</text>
+<text x="920" y="488" font-size="11.5" fill="#C9C7BF" font-weight="400" text-anchor="start">• one page per namespace today (34) → about 14 pages in 5 groups</text>
+</svg>

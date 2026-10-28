@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="470" viewBox="0 0 1100 470" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Quit sheet, proposed</title>
+<desc>Mock: a sheet that lists what is running and offers keep-running or stop, buttons right-aligned inside the card.</desc>
+<rect x="0" y="0" width="1100" height="470" rx="0" fill="#141413"/>
+<text x="24" y="30" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">TODAY</text>
+<rect x="24" y="44" width="470" height="160" rx="12" fill="#30302E"/>
+<text x="44" y="76" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Quit Hutan and stop 5 live sessions?</text>
+<text x="44" y="100" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">The daemon stops with Hutan, and so do its sessions. To leave</text>
+<text x="44" y="118" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">them running, keep the daemon running in the background:</text>
+<text x="44" y="136" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Hutan turns on &quot;Keep daemon running after Hutan quits&quot; and</text>
+<text x="44" y="154" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">quits. That does not start it at login.</text>
+<rect x="14" y="164" width="76" height="28" rx="6" fill="none" stroke="#33322F" stroke-width="1"/>
+<text x="52" y="182" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="middle">Cancel</text>
+<rect x="100" y="164" width="170" height="28" rx="6" fill="none" stroke="#33322F" stroke-width="1"/>
+<text x="185" y="182" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="middle">Keep running in background</text>
+<rect x="280" y="164" width="184" height="28" rx="6" fill="none" stroke="#F08C7A" stroke-width="1"/>
+<text x="372" y="182" font-size="12.5" fill="#F08C7A" font-weight="400" text-anchor="middle">Stop sessions and quit</text>
+<text x="24" y="230" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Gaps seen in the real window:</text>
+<text x="24" y="248" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">• the three buttons are wider than the card: Cancel sticks out on the left</text>
+<text x="24" y="266" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">• four lines of mechanism, no word on what is running</text>
+<text x="24" y="284" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">• a working agent, a waiting request and idle shells look the same</text>
+<text x="24" y="302" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">• three outlined buttons of equal weight; the red one reads as the default</text>
+<text x="560" y="30" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">PROPOSED</text>
+<rect x="560" y="44" width="520" height="384" rx="12" fill="#30302E"/>
+<text x="584" y="78" font-size="15" fill="#F5F4EF" font-weight="600" text-anchor="start">Quit Hutan?</text>
+<text x="584" y="100" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">5 sessions are running. Choose what happens to them.</text>
+<rect x="584" y="114" width="472" height="142" rx="8" fill="#262624"/>
+<path d="M602,124.0 A5.0,5.0 0 1 1 597.25,127.5" fill="none" stroke="#EA7A43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="626" cy="129" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="626" y="131.86" font-size="9.36" fill="#AEACA4" font-weight="600" text-anchor="middle">π</text>
+<text x="642" y="133" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Refactor session refresh</text>
+<text x="1044" y="133" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">working 4m</text>
+<circle cx="602" cy="156" r="5.0" fill="#E2AE45"/>
+<text x="602" y="159.2" font-size="9" fill="#1F1E1D" font-weight="700" text-anchor="middle">!</text>
+<circle cx="626" cy="156" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="622.425" y1="156.0" x2="629.575" y2="156.0" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="623.472093257258" y1="153.47209325725808" x2="628.527906742742" y2="158.52790674274192" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="626.0" y1="152.425" x2="626.0" y2="159.575" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="628.527906742742" y1="153.47209325725808" x2="623.472093257258" y2="158.52790674274192" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="642" y="160" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix flaky checkout test</text>
+<text x="1044" y="160" font-size="11.5" fill="#E2AE45" font-weight="400" text-anchor="end">waiting for you</text>
+<circle cx="602" cy="183" r="5.0" fill="#6BBF85"/>
+<path d="M599.4,183.2 L601.4,185.2 L604.8,181" fill="none" stroke="#1F1E1D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="626" cy="183" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<path d="M623.4,181.375 L626,183.325 L623.4,185.275 M626.325,185.6 L628.925,185.6" fill="none" stroke="#AEACA4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="642" y="187" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Handoff docs</text>
+<text x="1044" y="187" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">finished, unread</text>
+<circle cx="602" cy="210" r="3.5" fill="none" stroke="#6F6D66" stroke-width="1.3"/>
+<path d="M621,207 L625,210 L621,213 M627,214 L631,214" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="642" y="214" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">zsh</text>
+<text x="1044" y="214" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">idle</text>
+<circle cx="602" cy="237" r="3.5" fill="none" stroke="#6F6D66" stroke-width="1.3"/>
+<circle cx="626" cy="237" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="626" y="239.86" font-size="9.36" fill="#AEACA4" font-weight="600" text-anchor="middle">π</text>
+<text x="642" y="241" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Token rotation</text>
+<text x="1044" y="241" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">idle</text>
+<rect x="584" y="268" width="472" height="50" rx="8" fill="#3E2C23" stroke="#EA7A43" stroke-width="1.2"/>
+<circle cx="604" cy="293" r="7" fill="none" stroke="#EA7A43" stroke-width="1.5"/>
+<circle cx="604" cy="293" r="3.5" fill="#EA7A43"/>
+<text x="622" y="288" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Keep them running in the background</text>
+<text x="622" y="306" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Hutan quits; the daemon and its sessions stay up. Reopen Hutan to continue.</text>
+<rect x="584" y="326" width="472" height="50" rx="8" fill="none" stroke="#33322F" stroke-width="1"/>
+<circle cx="604" cy="351" r="7" fill="none" stroke="#AEACA4" stroke-width="1.5"/>
+<text x="622" y="346" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Stop all 5 sessions</text>
+<text x="622" y="364" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Ends the shells and agents. A working agent loses its current turn.</text>
+<text x="584" y="406" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">☐ Remember my choice</text>
+<rect x="860" y="388" width="80" height="28" rx="6" fill="none" stroke="#33322F" stroke-width="1"/>
+<text x="900" y="406" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="middle">Cancel</text>
+<rect x="948" y="388" width="108" height="28" rx="6" fill="#EA7A43"/>
+<text x="1002" y="406" font-size="12.5" fill="#1F1E1D" font-weight="600" text-anchor="middle">Keep running</text>
+<text x="560" y="448" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">↩ confirms the selected option · Esc cancels · the primary button names the option (danger style for Stop)</text>
+</svg>

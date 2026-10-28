@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="470" viewBox="0 0 1040 470" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Tab strip: today and proposed</title>
+<desc>Mock: tabs show agent identity, state and an unread bell. Invented data.</desc>
+<rect x="0" y="0" width="1040" height="470" rx="0" fill="#262624"/>
+<text x="20" y="29" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">TODAY (Hutan 0.3.1): every terminal has the same glyph; an agent is visible only as a small badge</text>
+<rect x="20" y="40" width="1000" height="30" rx="0" fill="#1F1E1D"/>
+<path d="M38,53 L42,56 L38,59 M44,60 L48,60" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="55" y="60" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">omp</text>
+<text x="102" y="60" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<rect x="116" y="42" width="100" height="28" rx="6" fill="#262624"/>
+<path d="M130,53 L134,56 L130,59 M136,60 L140,60" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="147" y="60" font-size="12" fill="#F5F4EF" font-weight="500" text-anchor="start">claude</text>
+<text x="204" y="60" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<path d="M232,53 L236,56 L232,59 M238,60 L242,60" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="249" y="60" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">π &gt; acme-web</text>
+<text x="346" y="60" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<line x1="20" y1="70" x2="1020" y2="70" stroke="#33322F" stroke-width="1"/>
+<text x="20" y="88" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">The title is the program name or the raw window title (π &gt; …); the tab does not say which agent runs, its state, or that something finished.</text>
+<text x="20" y="129" font-size="11" fill="#AEACA4" font-weight="600" text-anchor="start">PROPOSED: identity icon + state mark + session name + unread bell</text>
+<rect x="20" y="140" width="1000" height="30" rx="0" fill="#1F1E1D"/>
+<rect x="24" y="142" width="210" height="28" rx="6" fill="#262624"/>
+<path d="M37,150.5 A5.5,5.5 0 1 1 31.775,154.35" fill="none" stroke="#EA7A43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="60" cy="156" r="6.5" fill="none" stroke="#F5F4EF" stroke-width="1.2"/>
+<text x="60" y="158.86" font-size="9.36" fill="#F5F4EF" font-weight="600" text-anchor="middle">π</text>
+<text x="72" y="160" font-size="12" fill="#F5F4EF" font-weight="500" text-anchor="start">Refactor session refresh</text>
+<text x="222" y="160" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<circle cx="249" cy="156" r="5.5" fill="#E2AE45"/>
+<text x="249" y="159.2" font-size="9" fill="#1F1E1D" font-weight="700" text-anchor="middle">!</text>
+<circle cx="272" cy="156" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="268.425" y1="156.0" x2="275.575" y2="156.0" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="269.4720932572581" y1="153.47209325725808" x2="274.5279067427419" y2="158.52790674274192" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="272.0" y1="152.425" x2="272.0" y2="159.575" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="274.5279067427419" y1="153.47209325725808" x2="269.4720932572581" y2="158.52790674274192" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="284" y="160" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Fix flaky checkout test</text>
+<text x="414" y="160" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<circle cx="441" cy="156" r="5.5" fill="#6BBF85"/>
+<path d="M438.4,156.2 L440.4,158.2 L443.8,154" fill="none" stroke="#1F1E1D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="464" cy="156" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<path d="M461.4,154.375 L464,156.325 L461.4,158.275 M464.325,158.6 L466.925,158.6" fill="none" stroke="#AEACA4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="476" y="160" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Handoff docs</text>
+<text x="588" y="160" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<path d="M566.5,158.5 Q566.5,151.0 571,151.0 Q575.5,151.0 575.5,158.5 Z" fill="#E2AE45"/>
+<circle cx="571" cy="161.0" r="1.4000000000000001" fill="#E2AE45"/>
+<circle cx="615" cy="156" r="5.5" fill="#F08C7A"/>
+<path d="M612.6,153.6 L617.4,158.4 M617.4,153.6 L612.6,158.4" fill="none" stroke="#1F1E1D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="638" cy="156" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="634.425" y1="156.0" x2="641.575" y2="156.0" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="635.472093257258" y1="153.47209325725808" x2="640.527906742742" y2="158.52790674274192" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="638.0" y1="152.425" x2="638.0" y2="159.575" stroke="#AEACA4" stroke-width="1.2"/>
+<line x1="640.527906742742" y1="153.47209325725808" x2="635.472093257258" y2="158.52790674274192" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="650" y="160" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Migrate billing</text>
+<text x="754" y="160" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<circle cx="781" cy="156" r="4.0" fill="none" stroke="#6F6D66" stroke-width="1.3"/>
+<circle cx="804" cy="156" r="6.5" fill="none" stroke="#AEACA4" stroke-width="1.2"/>
+<text x="804" y="158.86" font-size="9.36" fill="#AEACA4" font-weight="600" text-anchor="middle">π</text>
+<text x="816" y="160" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Token rotation</text>
+<text x="916" y="160" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<path d="M944,153 L948,156 L944,159 M950,160 L954,160" fill="none" stroke="#AEACA4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="961" y="160" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">zsh</text>
+<text x="1008" y="160" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="middle">×</text>
+<line x1="20" y1="170" x2="1020" y2="170" stroke="#33322F" stroke-width="1"/>
+<text x="20" y="208" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Left to right: working (spinner) · blocked on you (warning, stays until answered) · finished with an unread result (bell, clears when the tab is shown) · failed · idle · plain shell.</text>
+<text x="20" y="236" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Marks and where each comes from</text>
+<line x1="20" y1="246" x2="1020" y2="246" stroke="#33322F" stroke-width="1"/>
+<text x="24" y="270" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">spinner</text>
+<text x="150" y="270" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">state=working</text>
+<text x="560" y="270" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 7501 / OMP extension / Claude and Codex hooks</text>
+<line x1="20" y1="278" x2="1020" y2="278" stroke="#33322F" stroke-width="1"/>
+<text x="24" y="294" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">warning</text>
+<text x="150" y="294" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">state=blocked (+ kind, msg = the question)</text>
+<text x="560" y="294" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 7501 kind=permission|question|auth / hook approval events</text>
+<line x1="20" y1="302" x2="1020" y2="302" stroke="#33322F" stroke-width="1"/>
+<text x="24" y="318" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">check + bell</text>
+<text x="150" y="318" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">state=done, or a normal turn end after work</text>
+<text x="560" y="318" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 7501 done; extension agent_end; clears on focus</text>
+<line x1="20" y1="326" x2="1020" y2="326" stroke="#33322F" stroke-width="1"/>
+<text x="24" y="342" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">danger</text>
+<text x="150" y="342" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">state=error (+ msg)</text>
+<text x="560" y="342" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 7501 error; hook failure; process exit ≠ 0</text>
+<line x1="20" y1="350" x2="1020" y2="350" stroke="#33322F" stroke-width="1"/>
+<text x="24" y="366" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">hollow</text>
+<text x="150" y="366" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">state=idle (dim: the agent is alive and waits for the next prompt)</text>
+<text x="560" y="366" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 7501 idle; foreground process is a known harness</text>
+<line x1="20" y1="374" x2="1020" y2="374" stroke="#33322F" stroke-width="1"/>
+<text x="24" y="390" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">bell, muted</text>
+<text x="150" y="390" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">BEL (0x07) from a plain program while the tab is not shown</text>
+<text x="560" y="390" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">terminal engine; Zed, Ghostty, iTerm2 do the same</text>
+<line x1="20" y1="398" x2="1020" y2="398" stroke="#33322F" stroke-width="1"/>
+<text x="24" y="414" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">title</text>
+<text x="150" y="414" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">session name: user name &gt; agent session title &gt; folder/command</text>
+<text x="560" y="414" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 0/2 title with the “π &gt;” wrapper removed; transcript title (OMP title slot)</text>
+<line x1="20" y1="422" x2="1020" y2="422" stroke="#33322F" stroke-width="1"/>
+<text x="20" y="448" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Rule: one state mark + one bell per tab. A bell never plays sound by itself (the notification policy of docs/design.md § Attention decides); focus clears it.</text>
+</svg>
