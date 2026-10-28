@@ -287,6 +287,7 @@ fn usage_of(usage: &Value) -> TokenCounts {
     TokenCounts {
         input_tokens: number("/prompt_tokens"),
         cached_input_tokens: number("/prompt_tokens_details/cached_tokens"),
+        cache_write_tokens: None,
         output_tokens: number("/completion_tokens"),
         reasoning_output_tokens: number("/completion_tokens_details/reasoning_tokens"),
         total_tokens: number("/total_tokens"),
@@ -352,6 +353,7 @@ mod tests {
                 GatewayEvent::Usage(TokenCounts {
                     input_tokens: Some(9),
                     cached_input_tokens: Some(4),
+                    cache_write_tokens: None,
                     output_tokens: Some(2),
                     reasoning_output_tokens: None,
                     total_tokens: Some(11),

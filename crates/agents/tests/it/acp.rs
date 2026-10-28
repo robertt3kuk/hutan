@@ -2203,3 +2203,52 @@ async fn an_agent_that_never_advertised_folders_is_sent_none_and_says_unsupporte
     assert!(dirs.given.is_empty());
     assert_eq!(dirs.change, hutan_agents::DirsChange::Unsupported);
 }
+
+/// Cache writes (Claude prices them above plain input) reach the turn's `usage`, from the
+/// prompt's own `usage` and, when the adapter sends only `_meta.quota.token_count`, from there.
+#[tokio::test]
+async fn cache_writes_reach_the_usage_of_a_turn_from_usage_or_from_the_quota() {
+    let h = Harness::new();
+    let AcpSession {
+        adapter,
+        mut events,
+        ..
+    } = h
+        .start_dirs("claude", &fixture("insight-claude"), &[], None)
+        .await
+        .unwrap();
+    initial(&mut events).await;
+    let mut last_of_turn = Vec::new();
+    for prompt in ["Fix it.", "/context", "Anything else?"] {
+        adapter.send_message(prompt.into()).await.unwrap();
+        let seen = collect_until(&mut events, ends_turn).await;
+        let last = kinds(&seen).into_iter().find_map(|kind| match kind {
+            AgentEventKind::Usage {
+                last: Some(last), ..
+            } => Some(*last),
+            _ => None,
+        });
+        last_of_turn.push(last);
+    }
+    let first = last_of_turn[0].expect("the first turn has usage");
+    assert_eq!(
+        (
+            first.input_tokens,
+            first.output_tokens,
+            first.cached_input_tokens,
+            first.cache_write_tokens
+        ),
+        (Some(1_500), Some(420), Some(30_000), Some(9_000))
+    );
+    assert!(last_of_turn[1].is_none(), "/context spends nothing");
+    let quota = last_of_turn[2].expect("the quota stands in for a missing usage");
+    assert_eq!(
+        (
+            quota.input_tokens,
+            quota.cached_input_tokens,
+            quota.cache_write_tokens
+        ),
+        (Some(50), Some(42_000), Some(120))
+    );
+    adapter.shutdown().await;
+}

@@ -68,7 +68,8 @@ use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
 use crate::providers::ProviderService;
 use crate::registry::{self, ChatNotifier};
-use crate::usage::{Attribution, TurnUsage, UsageService};
+use crate::usage::{Attribution, UsageService};
+use hutan_core::insight::TurnUsage;
 
 use fork::fork_from;
 pub use fork::{ChatForkSpec, FORK_MAX_EVENTS, ForkPending, JournalCopy};

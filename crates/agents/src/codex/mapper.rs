@@ -1527,6 +1527,7 @@ fn counts(b: TokenBreakdown) -> TokenCounts {
     TokenCounts {
         input_tokens: b.input_tokens,
         cached_input_tokens: b.cached_input_tokens,
+        cache_write_tokens: b.cache_write_input_tokens,
         output_tokens: b.output_tokens,
         reasoning_output_tokens: b.reasoning_output_tokens,
         total_tokens: b.total_tokens,

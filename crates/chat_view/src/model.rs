@@ -1830,6 +1830,7 @@ mod tests {
             total_tokens: v["totalTokens"].as_u64(),
             input_tokens: v["inputTokens"].as_u64(),
             cached_input_tokens: v["cachedInputTokens"].as_u64(),
+            cache_write_tokens: v["cacheWriteInputTokens"].as_u64(),
             output_tokens: v["outputTokens"].as_u64(),
             reasoning_output_tokens: v["reasoningOutputTokens"].as_u64(),
         };

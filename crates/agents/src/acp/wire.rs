@@ -267,9 +267,34 @@ pub struct PromptResult {
     /// Per-turn token counts (an ACP extension some agents send).
     #[serde(default)]
     pub usage: Option<PromptUsage>,
+    /// Claude Code's adapter also sends the turn's counts as `_meta.quota.token_count`; it is
+    /// read when `usage` is absent.
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<PromptMeta>,
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PromptMeta {
+    #[serde(default)]
+    pub quota: Option<PromptQuota>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PromptQuota {
+    #[serde(default)]
+    pub token_count: Option<PromptUsage>,
+}
+
+impl PromptResult {
+    /// The turn's own counts: the prompt's `usage`, else the adapter's `_meta.quota`.
+    pub fn counts(&self) -> Option<&PromptUsage> {
+        self.usage
+            .as_ref()
+            .or_else(|| self.meta.as_ref()?.quota.as_ref()?.token_count.as_ref())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptUsage {
     #[serde(default)]
@@ -282,4 +307,6 @@ pub struct PromptUsage {
     pub thought_tokens: Option<u64>,
     #[serde(default)]
     pub cached_read_tokens: Option<u64>,
+    #[serde(default)]
+    pub cached_write_tokens: Option<u64>,
 }

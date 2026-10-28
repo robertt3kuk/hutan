@@ -552,6 +552,25 @@ fn usage_keeps_missing_numbers_missing() {
 }
 
 #[test]
+fn codex_cache_writes_are_kept() {
+    let mut m = mapper();
+    let usage = only(notify(
+        &mut m,
+        "thread/tokenUsage/updated",
+        json!({"turnId": TURN, "tokenUsage": {
+            "total": {"totalTokens": 100, "inputTokens": 90, "cachedInputTokens": 30,
+                      "cacheWriteInputTokens": 12, "outputTokens": 10},
+            "last": {"totalTokens": 100, "inputTokens": 90, "outputTokens": 10},
+            "modelContextWindow": 258400}}),
+    ));
+    let AgentEventKind::Usage { total, last, .. } = usage.kind else {
+        panic!()
+    };
+    assert_eq!(total.unwrap().cache_write_tokens, Some(12));
+    assert_eq!(last.unwrap().cache_write_tokens, None, "never zero-filled");
+}
+
+#[test]
 fn errors_and_warnings_become_notices() {
     let mut m = mapper();
     let error = only(notify(

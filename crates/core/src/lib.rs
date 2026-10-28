@@ -1,12 +1,14 @@
 //! Hutan domain types: identifiers, session lifecycle, the agent event model, the agent
 //! observation tree, tasks with dependencies, checkpoints, the plan of a restore and where a
-//! forked chat came from. No I/O lives here.
+//! forked chat came from, and what an agent's context holds and spends (`insight`). No I/O lives
+//! here.
 
 pub mod agent;
 pub mod checkpoint;
 pub mod contain;
 pub mod fork;
 pub mod ids;
+pub mod insight;
 pub mod observation;
 pub mod question;
 pub mod restore;

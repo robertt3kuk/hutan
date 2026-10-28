@@ -261,6 +261,10 @@ pub struct TokenCounts {
     pub input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cached_input_tokens: Option<u64>,
+    /// Protocol 0.59: tokens written to the prompt cache (priced above plain input by Claude);
+    /// Codex's `cacheWriteInputTokens`, an ACP prompt's `cachedWriteTokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -247,7 +247,10 @@ impl Mapper {
         };
         let (stop, usage, error) = match result {
             Ok(value) => match serde_json::from_value::<PromptResult>(value.clone()) {
-                Ok(parsed) => (parsed.stop_reason, parsed.usage, None),
+                Ok(parsed) => {
+                    let usage = parsed.counts().copied();
+                    (parsed.stop_reason, usage, None)
+                }
                 Err(error) => (
                     String::new(),
                     None,
@@ -266,6 +269,7 @@ impl Mapper {
             let counts = TokenCounts {
                 input_tokens: usage.input_tokens,
                 cached_input_tokens: usage.cached_read_tokens,
+                cache_write_tokens: usage.cached_write_tokens,
                 output_tokens: usage.output_tokens,
                 reasoning_output_tokens: usage.thought_tokens,
                 total_tokens: usage.total_tokens,

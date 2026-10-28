@@ -223,6 +223,8 @@ impl AnthropicDecoder {
                 let number = |p: &str| value.pointer(p).and_then(Value::as_u64);
                 self.usage.input_tokens = number("/message/usage/input_tokens");
                 self.usage.cached_input_tokens = number("/message/usage/cache_read_input_tokens");
+                self.usage.cache_write_tokens =
+                    number("/message/usage/cache_creation_input_tokens");
                 self.usage.output_tokens = number("/message/usage/output_tokens");
             }
             Some("content_block_delta") => {
@@ -345,6 +347,7 @@ mod tests {
                 GatewayEvent::Usage(TokenCounts {
                     input_tokens: Some(25),
                     cached_input_tokens: Some(10),
+                    cache_write_tokens: None,
                     output_tokens: Some(15),
                     reasoning_output_tokens: None,
                     total_tokens: None,
