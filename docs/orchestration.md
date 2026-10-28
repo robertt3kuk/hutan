@@ -22,6 +22,8 @@ A workspace's repositories are the git repositories its roots belong to; a root 
 | `worktree.remove {path, force?, delete_branch?}` | `git worktree remove`. Refused with `invalid_state` and the reason: the main worktree; live sessions in it (always, `force` does not override this); a locked worktree; uncommitted changes without `force`. With `delete_branch` the branch is deleted with `-d` afterwards; an unmerged branch stays, the answer says why (`branch_kept`), and the worktree is removed anyway. |
 | `worktree.changed {workspace_id}` | Event after a create or remove, for every workspace with a root in the repository: list again. |
 
+**Files.** Every linked worktree of a workspace's repositories is a root of the daemon's file service (`fs.*`, `docs/protocol.md` § Files) whether or not a session works in it — read from the repository's `.git/worktrees/*/gitdir` records, so a worktree is browsable the moment git makes it (also by a plain `git worktree add`) and refused the moment it is removed, with the same confinement as any root. The desktop's Files root switcher lists them for that reason.
+
 Creating and removing are serialised in the daemon. A repository that cannot be listed any more (its folder is gone) is skipped, not an error for the rest.
 
 ## Placement

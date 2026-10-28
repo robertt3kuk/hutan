@@ -138,6 +138,49 @@ pub fn repository_of(root: &Path) -> Option<Repository> {
     })
 }
 
+/// The linked worktrees of the repository the folder `dir` is in, whether or not a session works
+/// in them (the file service's roots, `docs/protocol.md` § Files): read from the repository's
+/// own `worktrees/<name>/gitdir` records, so a worktree appears the moment git makes it and is
+/// gone the moment git removes it. A record counts only while the worktree's `.git` file points
+/// back at it and its directory exists, so a stale or forged record opens nothing. Canonical
+/// paths; empty outside git.
+pub fn linked_worktrees(dir: &Path) -> Vec<PathBuf> {
+    let Ok(canonical) = fs::canonicalize(dir) else {
+        return Vec::new();
+    };
+    let Some(repository) = projects::git_root(&canonical).and_then(|r| repository_of(&r)) else {
+        return Vec::new();
+    };
+    let admin = repository.common_dir.join("worktrees");
+    let Ok(entries) = fs::read_dir(&admin) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let record = entry.path();
+        let Ok(text) = fs::read_to_string(record.join("gitdir")) else {
+            continue;
+        };
+        let dot_git = record.join(text.trim());
+        let Some(root) = dot_git.parent().and_then(|p| fs::canonicalize(p).ok()) else {
+            continue;
+        };
+        let (Ok(back), Ok(mine)) = (
+            read_gitdir_file(&root.join(".git"), &root)
+                .ok_or(())
+                .and_then(|d| fs::canonicalize(d).map_err(|_| ())),
+            fs::canonicalize(&record),
+        ) else {
+            continue;
+        };
+        if back == mine && !found.contains(&root) {
+            found.push(root);
+        }
+    }
+    found.sort();
+    found
+}
+
 /// The main checkout of the repository the checkout at `root` belongs to: `root` itself for a
 /// main checkout, the repository's own top level for a linked worktree.
 pub fn main_checkout_of(root: &Path) -> Option<PathBuf> {

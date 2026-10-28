@@ -75,6 +75,11 @@ struct Fx {
 
 impl Fx {
     fn new() -> Self {
+        Self::build(true)
+    }
+
+    /// `session`: a terminal works in the worktree (else nothing does).
+    fn build(session: bool) -> Self {
         let daemon = TestDaemon::start();
         let keep = tempfile::tempdir().unwrap();
         let parent = fs::canonicalize(keep.path()).unwrap();
@@ -108,17 +113,18 @@ impl Fx {
         git(&wt, &["add", "-A"]);
         git(&wt, &["commit", "-q", "-m", "feature work"]);
         fs::write(beta.join("new.txt"), "hello\n").unwrap();
-        // The daemon lets a client read the checkouts its sessions work in: one works in the
-        // worktree.
-        let _: SessionResult = daemon.call(Request::SessionCreate(SessionCreate {
-            workspace_id: Some(alpha_project.id),
-            spec: SessionSpec::Terminal(TerminalSpec {
-                command: vec!["sh".into(), "-c".into(), "sleep 300".into()],
-                cwd: Some(wt.clone()),
-                title: Some("in the worktree".to_owned()),
-                ..TerminalSpec::default()
-            }),
-        }));
+        // A session in the worktree used to be what made the daemon list its folder.
+        if session {
+            let _: SessionResult = daemon.call(Request::SessionCreate(SessionCreate {
+                workspace_id: Some(alpha_project.id),
+                spec: SessionSpec::Terminal(TerminalSpec {
+                    command: vec!["sh".into(), "-c".into(), "sleep 300".into()],
+                    cwd: Some(wt.clone()),
+                    title: Some("in the worktree".to_owned()),
+                    ..TerminalSpec::default()
+                }),
+            }));
+        }
         Self {
             daemon,
             _keep: keep,
@@ -595,4 +601,33 @@ fn files_dropped_from_finder_on_a_root_row_are_copied_into_that_project(cx: &mut
     wait_until(cx, "beta's new row", |cx| {
         rows(&panel, cx).contains(&"  logo.png".to_owned())
     });
+}
+
+#[gpui::test]
+fn a_worktree_nobody_works_in_is_in_the_switcher_and_its_tree_lists(cx: &mut TestAppContext) {
+    let fx = Fx::build(false);
+    fs::write(fx.wt.join("wt_only.txt"), "only here\n").unwrap();
+    let (view, cx) = open(cx, &fx, "");
+    let panel = files_panel(&view, cx);
+    wait_root(&panel, cx, &fx.alpha);
+    wait_until(cx, "alpha's worktree to be listed", |cx| {
+        panel.read_with(cx, |p, cx| p.root_choices(cx).checkouts.len() == 2)
+    });
+    let entries = open_switcher(&view, cx);
+    assert!(
+        entries.contains(&("Worktree · feature/x".to_owned(), false)),
+        "{entries:?}"
+    );
+    run_entry(&view, cx, "Worktree · feature/x");
+    wait_root(&panel, cx, &fx.wt);
+    wait_until(cx, "the worktree's files", |cx| {
+        names(&panel, cx).iter().any(|n| n == "wt_only.txt")
+    });
+    assert!(
+        !names(&panel, cx)
+            .iter()
+            .any(|n| n.contains("outside the workspace roots")),
+        "{:?}",
+        names(&panel, cx)
+    );
 }

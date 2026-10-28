@@ -156,12 +156,23 @@ impl FileService {
         service
     }
 
-    /// The folders the daemon tracks: those of its workspaces and the checkouts its sessions
-    /// work in. Canonicalised by the blocking side.
+    /// The folders the daemon tracks: those of its workspaces, every linked worktree of the
+    /// repositories they are in (a worktree needs no session to be browsable), and the
+    /// checkouts its sessions work in. Canonicalised by the blocking side.
     async fn roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Ok(list) = self.registry.list_workspaces().await {
             roots.extend(list.workspaces.into_iter().flat_map(|w| w.roots));
+            let folders = roots.clone();
+            let linked = spawn_blocking(move || {
+                folders
+                    .iter()
+                    .flat_map(|root| crate::placement::linked_worktrees(root))
+                    .collect::<Vec<PathBuf>>()
+            })
+            .await
+            .unwrap_or_default();
+            roots.extend(linked);
         }
         if let Ok(list) = self
             .registry

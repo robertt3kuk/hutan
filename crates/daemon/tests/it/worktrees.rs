@@ -14,6 +14,7 @@ use common::{TestDaemon, create_in, sh, stop, wait_event};
 use hutan_client::{Client, ClientError};
 use hutan_core::{SessionId, SessionState, WorkspaceId};
 use hutan_protocol::ErrorCode;
+use hutan_protocol::fs::{FsList, FsRead, FsWriteBegin};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, AgentState, Event, Request, SessionInfo,
     WorkspaceOpen, WorkspaceOpened,
@@ -859,4 +860,153 @@ impl Env {
             .find(|s| s.id == id)
             .unwrap()
     }
+}
+
+// The file service's roots -----------------------------------------------------------------
+
+/// A worktree with no session in it is browsable through `fs.*` (list, read, write) from the
+/// moment git makes it — also one made with plain `git worktree add` — with the confinement of
+/// any root; nothing else outside the checkouts opens, and a removed worktree is refused again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worktree_without_a_session_is_a_file_root_until_it_is_removed() {
+    let env = Env::start().await;
+    let c = &env.client;
+    let list = |dir: &Path| FsList {
+        dir: dir.to_owned(),
+        ignore: false,
+        limit: None,
+        picked: false,
+    };
+    let read = |path: &Path| FsRead {
+        path: path.to_owned(),
+        offset: None,
+        max_bytes: None,
+        picked: false,
+    };
+    let forbidden = |result: Result<_, ClientError>| {
+        let error: ClientError = result.map(|_: ()| ()).unwrap_err();
+        match error {
+            ClientError::Remote(body) => {
+                assert_eq!(body.code, ErrorCode::Forbidden, "{body:?}");
+                body.data
+                    .and_then(|d| d["reason"].as_str().map(str::to_owned))
+                    .unwrap_or_default()
+            }
+            other => panic!("not a remote error: {other:?}"),
+        }
+    };
+
+    // One made by Hutan, one by git itself; no session works in either.
+    let made = env.create("feature/x").await;
+    let by_git = env.repo.wt("by-git");
+    git(
+        &env.repo.root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "by-git",
+            by_git.to_str().unwrap(),
+        ],
+    );
+    let by_git = fs::canonicalize(&by_git).unwrap();
+    for wt in [&made.path, &by_git] {
+        let listing = c.fs_list(list(wt)).await.unwrap();
+        assert!(listing.entries.iter().any(|e| e.name == "a.txt"), "{wt:?}");
+        assert_eq!(
+            c.fs_read(read(&wt.join("a.txt"))).await.unwrap().text,
+            "one\n"
+        );
+        let target = wt.join("written.txt");
+        c.fs_write(
+            FsWriteBegin {
+                path: target.clone(),
+                expect: None,
+                create: true,
+                size_hint: None,
+                picked: false,
+            },
+            "hello\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "hello\n");
+        // The usual rules: `.git` is not written, a link out of the checkout is not followed.
+        let dot_git = FsWriteBegin {
+            path: wt.join(".git"),
+            expect: None,
+            create: false,
+            size_hint: None,
+            picked: false,
+        };
+        assert_eq!(
+            forbidden(
+                c.fs_write(dot_git, "gitdir: /elsewhere\n")
+                    .await
+                    .map(|_| ())
+            ),
+            "git_dir"
+        );
+        std::os::unix::fs::symlink("/etc/hosts", wt.join("leak")).unwrap();
+        assert_eq!(
+            forbidden(c.fs_read(read(&wt.join("leak"))).await.map(|_| ())),
+            "symlink"
+        );
+    }
+
+    // A neighbour that is no checkout, and a folder that merely looks like one (a forged
+    // record that no `.git` file confirms), stay outside.
+    let neighbour = env.repo.wt("not-a-checkout");
+    fs::create_dir_all(&neighbour).unwrap();
+    fs::write(neighbour.join("secret.txt"), "no").unwrap();
+    assert_eq!(
+        forbidden(
+            c.fs_read(read(&neighbour.join("secret.txt")))
+                .await
+                .map(|_| ())
+        ),
+        "outside_roots"
+    );
+    let forged = env.repo.root.join(".git/worktrees/forged");
+    fs::create_dir_all(&forged).unwrap();
+    fs::write(
+        forged.join("gitdir"),
+        format!("{}\n", neighbour.join(".git").display()),
+    )
+    .unwrap();
+    assert_eq!(
+        forbidden(
+            c.fs_read(read(&neighbour.join("secret.txt")))
+                .await
+                .map(|_| ())
+        ),
+        "outside_roots",
+        "a record without a `.git` file pointing back opens nothing"
+    );
+    fs::write(neighbour.join(".git"), "gitdir: /nowhere\n").unwrap();
+    assert_eq!(
+        forbidden(
+            c.fs_read(read(&neighbour.join("secret.txt")))
+                .await
+                .map(|_| ())
+        ),
+        "outside_roots"
+    );
+
+    // Removed, it is refused again at once (by Hutan and by git alike).
+    env.remove(&made.path, true, false).await.unwrap();
+    assert!(c.fs_list(list(&made.path)).await.is_err());
+    git(
+        &env.repo.root,
+        &["worktree", "remove", "--force", by_git.to_str().unwrap()],
+    );
+    fs::create_dir_all(&by_git).unwrap();
+    fs::write(by_git.join("left.txt"), "x").unwrap();
+    assert_eq!(
+        forbidden(c.fs_read(read(&by_git.join("left.txt"))).await.map(|_| ())),
+        "outside_roots",
+        "a folder left where a worktree was is not a root"
+    );
+    env.daemon.stop().await;
 }
