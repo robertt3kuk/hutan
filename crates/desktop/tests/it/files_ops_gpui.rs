@@ -1021,17 +1021,19 @@ fn files_dropped_from_finder_are_copied_into_the_folder_under_them_as_one_undoab
     cx: &mut TestAppContext,
 ) {
     use hutan_desktop::workbench::panels::FILES_SPRING_AFTER;
-    let (daemon, view, cx, panel, (_dir, root), (_other, outside)) = finder_fixture(cx);
+    let (it, cx) = finder_fixture(cx);
+    let (daemon, view, panel, root, outside) =
+        (&it.daemon, &it.view, &it.panel, &it.root, &it.outside);
 
     // What Finder drags lives outside the project: a file whose name `docs` has already, another
     // file and a folder with something inside.
-    let theirs = write(&outside, "readme.md", "theirs\n");
-    let report = write(&outside, "report.pdf", "%PDF\n");
-    write(&outside, "pics/one.png", "png\n");
+    let theirs = write(outside, "readme.md", "theirs\n");
+    let report = write(outside, "report.pdf", "%PDF\n");
+    write(outside, "pics/one.png", "png\n");
     let dragged = [theirs, report, outside.join("pics")];
 
     // Over the closed `docs` row it springs open under the files, then they are let go.
-    let docs_row = row_center(&view, cx, 0);
+    let docs_row = row_center(view, cx, 0);
     finder_enters(cx, docs_row, &dragged);
     assert!(!panel.read_with(cx, |p, _| p.tree().unwrap().is_expanded(&root.join("docs"))));
     assert_eq!(
@@ -1063,7 +1065,7 @@ fn files_dropped_from_finder_are_copied_into_the_folder_under_them_as_one_undoab
         outside.join("report.pdf").exists() && outside.join("pics/one.png").exists(),
         "Finder's files are copied, not moved"
     );
-    idle(&panel, cx);
+    idle(panel, cx);
     assert_eq!(
         panel.read_with(cx, |p, _| p.journal_depth()),
         (1, 0),
@@ -1071,14 +1073,14 @@ fn files_dropped_from_finder_are_copied_into_the_folder_under_them_as_one_undoab
     );
 
     // One ⌘Z takes all three away (to the Trash); ⇧⌘Z brings them back.
-    focus_tree(&panel, cx);
+    focus_tree(panel, cx);
     cx.simulate_keystrokes("cmd-z");
     wait_until(cx, "all three gone", |_| {
         !root.join("docs/readme copy.md").exists()
             && !root.join("docs/report.pdf").exists()
             && !root.join("docs/pics").exists()
     });
-    assert!(in_trash(&daemon, "report.pdf") && in_trash(&daemon, "pics"));
+    assert!(in_trash(daemon, "report.pdf") && in_trash(daemon, "pics"));
     cx.simulate_keystrokes("shift-cmd-z");
     wait_until(cx, "all three back", |_| {
         root.join("docs/readme copy.md").exists()
@@ -1087,18 +1089,18 @@ fn files_dropped_from_finder_are_copied_into_the_folder_under_them_as_one_undoab
     });
 }
 
-/// A project with `docs/readme.md`, `src/lib.rs` and `a.txt`, its tree drawn, and a file of
+/// A project with `docs/readme.md`, `src/lib.rs` and `a.txt`, its tree drawn, and a folder of
 /// Finder's outside it.
-fn finder_fixture(
-    cx: &mut TestAppContext,
-) -> (
-    TestDaemon,
-    Entity<Workbench>,
-    &mut VisualTestContext,
-    Entity<FilesPanel>,
-    (tempfile::TempDir, PathBuf),
-    (tempfile::TempDir, PathBuf),
-) {
+struct FinderFixture {
+    daemon: TestDaemon,
+    view: Entity<Workbench>,
+    panel: Entity<FilesPanel>,
+    root: PathBuf,
+    outside: PathBuf,
+    _dirs: (tempfile::TempDir, tempfile::TempDir),
+}
+
+fn finder_fixture(cx: &mut TestAppContext) -> (FinderFixture, &mut VisualTestContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
     let (dir, root) = scratch();
@@ -1110,17 +1112,26 @@ fn finder_fixture(
     wait_names(&panel, cx, &["docs", "src", "a.txt"]);
     draw(cx);
     let (other, outside) = scratch();
-    (daemon, view, cx, panel, (dir, root), (other, outside))
+    let fixture = FinderFixture {
+        daemon,
+        view,
+        panel,
+        root,
+        outside,
+        _dirs: (dir, other),
+    };
+    (fixture, cx)
 }
 
 #[gpui::test]
 fn a_file_dropped_from_finder_on_a_file_row_goes_into_that_files_folder(cx: &mut TestAppContext) {
-    let (_daemon, view, cx, panel, (_dir, root), (_other, outside)) = finder_fixture(cx);
+    let (it, cx) = finder_fixture(cx);
+    let (view, panel, root, outside) = (&it.view, &it.panel, &it.root, &it.outside);
     panel.update(cx, |p, cx| p.toggle(&root.join("docs"), cx));
-    wait_names(&panel, cx, &["docs", "  readme.md", "src", "a.txt"]);
+    wait_names(panel, cx, &["docs", "  readme.md", "src", "a.txt"]);
     draw(cx);
-    let notes = write(&outside, "notes.md", "# notes\n");
-    let on_file = row_center(&view, cx, 1);
+    let notes = write(outside, "notes.md", "# notes\n");
+    let on_file = row_center(view, cx, 1);
     finder_enters(cx, on_file, std::slice::from_ref(&notes));
     finder_drops(cx, on_file);
     wait_until(cx, "the file in the file's folder", |_| {
@@ -1131,8 +1142,9 @@ fn a_file_dropped_from_finder_on_a_file_row_goes_into_that_files_folder(cx: &mut
 
 #[gpui::test]
 fn files_dropped_from_finder_on_the_empty_part_of_the_tree_go_to_the_root(cx: &mut TestAppContext) {
-    let (_daemon, view, cx, panel, (_dir, root), (_other, outside)) = finder_fixture(cx);
-    let last = write(&outside, "last.md", "# last\n");
+    let (it, cx) = finder_fixture(cx);
+    let (view, panel, root, outside) = (&it.view, &it.panel, &it.root, &it.outside);
+    let last = write(outside, "last.md", "# last\n");
     let tree = view
         .read_with(cx, |wb, _| {
             wb.region_bounds(hutan_desktop::workbench::Region::Files("tree"))
@@ -1147,8 +1159,8 @@ fn files_dropped_from_finder_on_the_empty_part_of_the_tree_go_to_the_root(cx: &m
     wait_until(cx, "the file in the root", |_| {
         root.join("last.md").exists()
     });
-    idle(&panel, cx);
-    wait_names(&panel, cx, &["docs", "src", "a.txt", "last.md"]);
+    idle(panel, cx);
+    wait_names(panel, cx, &["docs", "src", "a.txt", "last.md"]);
 }
 
 #[gpui::test]

@@ -1272,15 +1272,15 @@ impl SessionsStore {
             },
         };
         let checkouts = self.checkouts_of(project);
-        if checkouts.is_empty() {
-            if let Some(root) = project_folder(project) {
-                out.checkouts.push(FilesRootChoice {
-                    working: self.working_label(&root).is_some(),
-                    root,
-                    label: project.name.clone(),
-                    kind: ScopeKind::Folder,
-                });
-            }
+        if checkouts.is_empty()
+            && let Some(root) = project_folder(project)
+        {
+            out.checkouts.push(FilesRootChoice {
+                working: self.working_label(&root).is_some(),
+                root,
+                label: project.name.clone(),
+                kind: ScopeKind::Folder,
+            });
         }
         for checkout in checkouts {
             let branch = checkout.branch.clone();

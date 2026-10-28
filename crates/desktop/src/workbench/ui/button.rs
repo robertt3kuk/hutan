@@ -849,8 +849,8 @@ mod audit {
         ),
         (
             "desktop/src/workbench/panels/files.rs",
-            1,
-            "a file tree row",
+            2,
+            "a file tree row, the scope chip that opens the root switcher (a pill that opens a menu)",
         ),
         (
             "desktop/src/workbench/panels/files/sections.rs",
