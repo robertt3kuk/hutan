@@ -34,6 +34,34 @@ pub struct StartSpec {
     /// Open the conversation as a fork of another one (ADR 0023) instead of starting a new one
     /// or continuing `resume_thread_id`: Codex `thread/fork`, ACP `session/fork`.
     pub fork: Option<ForkFrom>,
+    /// Further folders the agent works in besides `cwd` (protocol 0.57, `ChatSpec.dirs`):
+    /// absolute, canonical and existing. Each agent takes them its own way
+    /// ([`AgentAdapter::dirs`]).
+    pub dirs: Vec<PathBuf>,
+    /// The conversation has had session folders at some time, so an agent that keeps its own
+    /// list (OMP's session header) is asked for it on a resume and made equal to `dirs`.
+    pub dirs_managed: bool,
+}
+
+/// How an agent takes a session folder it has not been given yet (`ChatDirApplied`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirsChange {
+    /// With its next turn: Codex's per-turn sandbox policy, OMP's `/add-dir` between turns.
+    NextTurn,
+    /// Only when the session opens again: ACP agents that take `additionalDirectories` at
+    /// `session/new|load|resume` (Claude Code).
+    Restart,
+    /// Not at all: the agent never advertised it, or its sandbox forbids writing there.
+    Unsupported,
+}
+
+/// The session folders an agent holds, as the adapter knows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentDirs {
+    /// What the agent has been given (and has confirmed where it confirms).
+    pub given: Vec<PathBuf>,
+    /// How a folder that is not in `given` reaches it.
+    pub change: DirsChange,
 }
 
 /// The conversation a fork starts from, and where it is cut. What the agent forks is its own
@@ -225,6 +253,26 @@ pub trait AgentAdapter: Send + Sync + std::fmt::Debug {
             let _ = model;
             Err(AgentError::Unsupported(format!(
                 "{} does not offer model switching",
+                self.agent()
+            )))
+        })
+    }
+
+    /// The session folders the agent holds right now and how it takes new ones; `None` for
+    /// agents that know no session folders (the daemon says `unsupported`).
+    fn dirs(&self) -> Option<AgentDirs> {
+        None
+    }
+
+    /// Makes `dirs` the wanted extra folders of the running conversation. What cannot be given
+    /// now stays wanted and is reported by [`dirs`](Self::dirs): a change waits for the turn in
+    /// progress, and for a restart where the agent only takes folders when it opens. Agents
+    /// without session folders refuse.
+    fn set_dirs(&self, dirs: Vec<PathBuf>) -> BoxFuture<'_, Result<(), AgentError>> {
+        Box::pin(async move {
+            let _ = dirs;
+            Err(AgentError::Unsupported(format!(
+                "{} takes no extra folders",
                 self.agent()
             )))
         })

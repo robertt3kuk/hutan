@@ -51,23 +51,63 @@ impl Harness {
     }
 
     fn config(&self, name: &str) -> AcpConfig {
+        self.config_of("omp", &fixture(name))
+    }
+
+    fn config_of(&self, agent: &str, transcript: &Path) -> AcpConfig {
         AcpConfig {
-            agent: "omp".to_owned(),
+            agent: agent.to_owned(),
             program: PathBuf::from(FIXTURE_BIN),
             args: vec![
                 "replay".to_owned(),
                 "--received".to_owned(),
                 self.received.display().to_string(),
-                fixture(name).display().to_string(),
+                transcript.display().to_string(),
                 "acp".to_owned(),
             ],
             env: Vec::new(),
         }
     }
 
+    /// Starts `agent` on a transcript with the session folders `dirs`.
+    async fn start_dirs(
+        &self,
+        agent: &str,
+        transcript: &Path,
+        dirs: &[&str],
+        resume: Option<&str>,
+    ) -> Result<AcpSession, AgentError> {
+        let spec = StartSpec {
+            dirs: dirs.iter().map(PathBuf::from).collect(),
+            dirs_managed: !dirs.is_empty(),
+            ..self.spec(None, resume)
+        };
+        timeout(
+            WAIT,
+            AcpAdapter::start(&self.config_of(agent, transcript), &spec, None, &[]),
+        )
+        .await
+        .expect("start timed out")
+    }
+
+    /// The text of every `session/prompt` the fake agent received, in order.
+    fn prompt_texts(&self) -> Vec<String> {
+        self.received_of("session/prompt")
+            .iter()
+            .map(|msg| {
+                msg["params"]["prompt"][0]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    }
+
     fn spec(&self, model: Option<&str>, resume: Option<&str>) -> StartSpec {
         StartSpec {
             fork: None,
+            dirs: Vec::new(),
+            dirs_managed: false,
             cwd: self.dir.path().to_owned(),
             model: model.map(str::to_owned),
             approval_policy: ApprovalPolicy::default(),
@@ -1852,4 +1892,230 @@ async fn the_agents_message_id_is_journaled_with_its_assistant_messages() {
         _ => true,
     }));
     adapter.shutdown().await;
+}
+
+// Session folders (protocol 0.57). The transcripts `dirs-*.jsonl` are built from the
+// handshakes above and what `omp acp` 18.12.3 answers to its local commands (spike
+// 2026-10-28-best-of, `omp-acp-fork-dirs/result.json`: `/add-dir` → "Added …", `/dirs`).
+
+fn paths(dirs: &[&str]) -> Vec<PathBuf> {
+    dirs.iter().map(PathBuf::from).collect()
+}
+
+fn texts_of_messages(seen: &[AdapterMessage]) -> Vec<String> {
+    kinds(seen)
+        .into_iter()
+        .filter_map(|kind| match kind {
+            AgentEventKind::MessageEnd { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn omp_is_given_its_folders_with_local_commands_that_stay_out_of_the_conversation() {
+    let h = Harness::new();
+    let AcpSession {
+        adapter,
+        mut events,
+        ..
+    } = h
+        .start_dirs(
+            "omp",
+            &fixture("dirs-omp-new"),
+            &["/dirs/a", "/dirs/b"],
+            None,
+        )
+        .await
+        .unwrap();
+    initial(&mut events).await;
+    assert_eq!(h.prompt_texts(), ["/add-dir /dirs/a", "/add-dir /dirs/b"]);
+    let dirs = adapter.dirs().unwrap();
+    assert_eq!(dirs.given, paths(&["/dirs/a", "/dirs/b"]));
+    assert_eq!(dirs.change, hutan_agents::DirsChange::NextTurn);
+
+    // Between turns a change is a command at once.
+    adapter.set_dirs(paths(&["/dirs/a"])).await.unwrap();
+    assert_eq!(adapter.dirs().unwrap().given, paths(&["/dirs/a"]));
+    adapter
+        .set_dirs(paths(&["/dirs/a", "/dirs/c"]))
+        .await
+        .unwrap();
+    assert_eq!(
+        adapter.dirs().unwrap().given,
+        paths(&["/dirs/a", "/dirs/c"])
+    );
+
+    adapter.send_message("hi".into()).await.unwrap();
+    let seen = collect_until(&mut events, ends_turn).await;
+    assert_eq!(
+        h.prompt_texts(),
+        [
+            "/add-dir /dirs/a",
+            "/add-dir /dirs/b",
+            "/remove-dir /dirs/b",
+            "/add-dir /dirs/c",
+            "hi"
+        ]
+    );
+    // The commands' answers are not messages: the turn holds the user's message and OMP's reply.
+    assert_eq!(texts_of_messages(&seen), ["hi", "Hello"]);
+}
+
+#[tokio::test]
+async fn a_folder_added_during_a_turn_reaches_omp_before_the_next_message() {
+    let h = Harness::new();
+    let gate = h.dir.path().join("gate");
+    let base: Vec<Value> = std::fs::read_to_string(fixture("dirs-omp-new"))
+        .unwrap()
+        .lines()
+        .take(4)
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let mut transcript = base;
+    let chunk = |text: &str| {
+        json!({"dir": "in", "msg": {"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": SESSION,
+            "update": {"sessionUpdate": "agent_message_chunk", "messageId": "m", "content": {"type": "text", "text": text}}}}})
+    };
+    let prompt =
+        || json!({"dir": "out", "msg": {"jsonrpc": "2.0", "method": "session/prompt", "id": 1}});
+    let end = || json!({"dir": "in", "msg": {"jsonrpc": "2.0", "id": 0, "result": {"stopReason": "end_turn"}}});
+    transcript.extend([
+        prompt(),
+        chunk("working"),
+        json!({"dir": "hold", "file": gate}),
+        end(),
+        prompt(),
+        chunk("Added /dirs/c."),
+        end(),
+        prompt(),
+        chunk("second"),
+        end(),
+    ]);
+    let path = h.dir.path().join("held.jsonl");
+    std::fs::write(
+        &path,
+        transcript
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let AcpSession {
+        adapter,
+        mut events,
+        ..
+    } = h.start_dirs("omp", &path, &[], None).await.unwrap();
+    initial(&mut events).await;
+    adapter.send_message("first".into()).await.unwrap();
+    collect_until(&mut events, |m| {
+        matches!(m, AdapterMessage::Event(d) if matches!(&d.kind, AgentEventKind::MessageDelta { .. }))
+    })
+    .await;
+    // The turn runs: the folder is wanted, not given, and nothing was sent for it.
+    adapter.set_dirs(paths(&["/dirs/c"])).await.unwrap();
+    assert!(adapter.dirs().unwrap().given.is_empty());
+    assert_eq!(h.prompt_texts(), ["first"]);
+    std::fs::write(&gate, "").unwrap();
+    collect_until(&mut events, ends_turn).await;
+    adapter.send_message("again".into()).await.unwrap();
+    let seen = collect_until(&mut events, ends_turn).await;
+    assert_eq!(h.prompt_texts(), ["first", "/add-dir /dirs/c", "again"]);
+    assert_eq!(adapter.dirs().unwrap().given, paths(&["/dirs/c"]));
+    assert_eq!(texts_of_messages(&seen), ["again", "second"]);
+}
+
+#[tokio::test]
+async fn a_resumed_omp_session_is_asked_which_folders_it_has() {
+    let h = Harness::new();
+    let AcpSession { adapter, .. } = h
+        .start_dirs(
+            "omp",
+            &fixture("dirs-omp-resume"),
+            &["/dirs/a", "/dirs/b"],
+            Some(SESSION),
+        )
+        .await
+        .unwrap();
+    // `/dirs` lists `/dirs/a` (kept) and `/dirs/stale` (taken out); `/dirs/b` is added.
+    assert_eq!(
+        h.prompt_texts(),
+        ["/dirs", "/remove-dir /dirs/stale", "/add-dir /dirs/b"]
+    );
+    assert_eq!(
+        adapter.dirs().unwrap().given,
+        paths(&["/dirs/a", "/dirs/b"])
+    );
+}
+
+#[tokio::test]
+async fn a_folder_omp_does_not_confirm_is_not_reported_as_given() {
+    let h = Harness::new();
+    let AcpSession { adapter, .. } = h
+        .start_dirs("omp", &fixture("dirs-omp-unconfirmed"), &["/dirs/a"], None)
+        .await
+        .unwrap();
+    assert_eq!(h.prompt_texts(), ["/add-dir /dirs/a"]);
+    assert!(adapter.dirs().unwrap().given.is_empty());
+}
+
+#[tokio::test]
+async fn claude_gets_additional_directories_on_new_and_on_load_when_it_advertises_them() {
+    let h = Harness::new();
+    let session = h
+        .start_dirs(
+            "claude",
+            &fixture("dirs-claude-new"),
+            &["/dirs/a", "/dirs/b"],
+            None,
+        )
+        .await
+        .unwrap();
+    let new = &h.received_of("session/new")[0];
+    assert_eq!(
+        new["params"]["additionalDirectories"],
+        json!(["/dirs/a", "/dirs/b"])
+    );
+    let dirs = session.adapter.dirs().unwrap();
+    assert_eq!(dirs.given, paths(&["/dirs/a", "/dirs/b"]));
+    assert_eq!(dirs.change, hutan_agents::DirsChange::Restart);
+    // A change later is recorded and waits for a restart; nothing else is sent.
+    session.adapter.set_dirs(paths(&["/dirs/a"])).await.unwrap();
+    assert_eq!(
+        session.adapter.dirs().unwrap().given,
+        paths(&["/dirs/a", "/dirs/b"])
+    );
+    assert!(h.received_of("session/prompt").is_empty());
+
+    let h = Harness::new();
+    h.start_dirs(
+        "claude",
+        &fixture("dirs-claude-load"),
+        &["/dirs/a"],
+        Some(SESSION),
+    )
+    .await
+    .unwrap();
+    let load = &h.received_of("session/load")[0];
+    assert_eq!(load["params"]["additionalDirectories"], json!(["/dirs/a"]));
+}
+
+#[tokio::test]
+async fn an_agent_that_never_advertised_folders_is_sent_none_and_says_unsupported() {
+    let h = Harness::new();
+    let session = h
+        .start_dirs(
+            "claude",
+            &fixture("claude-modes-default"),
+            &["/dirs/a"],
+            None,
+        )
+        .await
+        .unwrap();
+    let new = &h.received_of("session/new")[0];
+    assert!(new["params"].get("additionalDirectories").is_none());
+    let dirs = session.adapter.dirs().unwrap();
+    assert!(dirs.given.is_empty());
+    assert_eq!(dirs.change, hutan_agents::DirsChange::Unsupported);
 }

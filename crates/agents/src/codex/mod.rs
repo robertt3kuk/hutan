@@ -16,7 +16,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
-use hutan_core::{ApprovalId, ForkSupport, ModelInfo, QuestionId, QuestionResponse, TurnId};
+use hutan_core::{
+    ApprovalId, ForkSupport, ModelInfo, QuestionId, QuestionResponse, SandboxMode, TurnId,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -25,7 +27,8 @@ use tokio::time::timeout;
 use tracing::{debug, warn};
 
 use crate::adapter::{
-    AdapterMessage, AgentAdapter, ExitInfo, MessageExtras, StartSpec, Started, TurnRef,
+    AdapterMessage, AgentAdapter, AgentDirs, DirsChange, ExitInfo, MessageExtras, StartSpec,
+    Started, TurnRef,
 };
 use crate::error::AgentError;
 use crate::jsonrpc::{Incoming, Launch, Transport};
@@ -121,6 +124,56 @@ struct Shared {
     mapper: Mutex<Mapper>,
     nodes: Mutex<NodeFeed>,
     turn: Mutex<TurnTracker>,
+    /// The session's extra folders (protocol 0.57): what is wanted, what the agent was given.
+    dirs: Mutex<CodexDirs>,
+}
+
+/// How Codex gets the session's extra folders: in the sandbox policy of a turn, which holds for
+/// the turns after it. Nothing is claimed given before a turn carried it.
+#[derive(Debug)]
+struct CodexDirs {
+    sandbox: SandboxMode,
+    wanted: Vec<PathBuf>,
+    given: Vec<PathBuf>,
+}
+
+impl CodexDirs {
+    fn new(sandbox: SandboxMode, wanted: &[PathBuf]) -> Self {
+        Self {
+            sandbox,
+            wanted: wanted.to_vec(),
+            // Full access writes everywhere already.
+            given: if sandbox == SandboxMode::DangerFullAccess {
+                wanted.to_vec()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    /// The sandbox policy the next turn carries, when the folders changed since the last one.
+    /// Only a `workspace-write` thread is widened: a read-only one never gains a place to write.
+    fn policy(&self) -> Option<Value> {
+        let same = self.wanted.len() == self.given.len()
+            && self.wanted.iter().all(|dir| self.given.contains(dir));
+        (self.sandbox == SandboxMode::WorkspaceWrite && !same).then(|| {
+            json!({
+                "type": "workspaceWrite",
+                "writableRoots": self.wanted.iter().map(|dir| dir.to_string_lossy()).collect::<Vec<_>>(),
+            })
+        })
+    }
+
+    fn state(&self) -> AgentDirs {
+        AgentDirs {
+            given: self.given.clone(),
+            change: if self.sandbox == SandboxMode::ReadOnly {
+                DirsChange::Unsupported
+            } else {
+                DirsChange::NextTurn
+            },
+        }
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -308,7 +361,14 @@ impl CodexAppServerAdapter {
     pub async fn start(config: &CodexConfig, spec: &StartSpec) -> Result<CodexSession, AgentError> {
         let (transport, incoming, exit) = Transport::spawn(&config.launch(Some(spec.cwd.clone())))?;
         match Self::open(&transport, spec).await {
-            Ok((started, mapper)) => Ok(Self::run(transport, incoming, exit, started, mapper)),
+            Ok((started, mapper)) => Ok(Self::run(
+                transport,
+                incoming,
+                exit,
+                started,
+                mapper,
+                CodexDirs::new(spec.sandbox, &spec.dirs),
+            )),
             Err(error) => {
                 transport.shutdown().await;
                 Err(error)
@@ -430,6 +490,7 @@ impl CodexAppServerAdapter {
         exit: oneshot::Receiver<ExitInfo>,
         started: Started,
         mut mapper: Mapper,
+        dirs: CodexDirs,
     ) -> CodexSession {
         let (events_tx, events) = mpsc::channel(EVENT_QUEUE);
         // The channel is empty, so this cannot wait.
@@ -446,6 +507,7 @@ impl CodexAppServerAdapter {
             mapper: Mutex::new(mapper),
             nodes: Mutex::new(NodeFeed::new(started.thread_id.clone())),
             turn: Mutex::new(TurnTracker::default()),
+            dirs: Mutex::new(dirs),
         });
         tokio::spawn(pump(shared.clone(), incoming, exit, events_tx));
         CodexSession {
@@ -631,15 +693,25 @@ impl AgentAdapter for CodexAppServerAdapter {
                     .into_iter()
                     .map(|path| wire::UserInput::LocalImage { path }),
             );
+            // The session's folders ride on the turn that follows a change.
+            let (policy, carried) = {
+                let dirs = lock(&shared.dirs);
+                (dirs.policy(), dirs.wanted.clone())
+            };
+            let carries = policy.is_some();
             let started: wire::TurnStartResult = call(
                 &shared.transport,
                 "turn/start",
                 &wire::TurnStartParams {
                     thread_id: &shared.thread_id,
                     input,
+                    sandbox_policy: policy,
                 },
             )
             .await?;
+            if carries {
+                lock(&shared.dirs).given = carried;
+            }
             let provider_turn_id = started.turn.id;
             {
                 let mut turn = lock(&shared.turn);
@@ -652,6 +724,17 @@ impl AgentAdapter for CodexAppServerAdapter {
                 turn_id,
                 provider_turn_id,
             })
+        })
+    }
+
+    fn dirs(&self) -> Option<AgentDirs> {
+        Some(lock(&self.shared.dirs).state())
+    }
+
+    fn set_dirs(&self, dirs: Vec<PathBuf>) -> BoxFuture<'_, Result<(), AgentError>> {
+        Box::pin(async move {
+            lock(&self.shared.dirs).wanted = dirs;
+            Ok(())
         })
     }
 

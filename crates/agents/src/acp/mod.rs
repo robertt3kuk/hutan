@@ -12,6 +12,7 @@
 //! Accounts stay with the harness: Hutan never logs in for an agent. An agent that needs a
 //! login Hutan cannot do for it fails to start with [`AgentError::AuthRequired`].
 
+mod dirs;
 mod mapper;
 mod nodes;
 mod udiff;
@@ -30,7 +31,8 @@ use tokio::time::timeout;
 use tracing::{debug, warn};
 
 use crate::adapter::{
-    AdapterMessage, AgentAdapter, ExitInfo, MessageExtras, SessionMode, StartSpec, Started, TurnRef,
+    AdapterMessage, AgentAdapter, AgentDirs, ExitInfo, MessageExtras, SessionMode, StartSpec,
+    Started, TurnRef,
 };
 use crate::codex::{AnswerError, Mapped, Reply};
 use crate::error::AgentError;
@@ -145,6 +147,10 @@ struct Shared {
     can_close: bool,
     /// `(id, display name)` of the session's modes: names the mode an update reports.
     mode_names: Vec<(String, String)>,
+    /// The session folders (protocol 0.57): wanted, given, and how a new one is given.
+    dirs: Mutex<dirs::SessionDirs>,
+    /// The local command (`/add-dir`) in flight: the pump keeps its output out of the journal.
+    local: Mutex<Option<dirs::LocalCommand>>,
 }
 
 /// One ACP agent process with one open session.
@@ -160,6 +166,18 @@ async fn open_call(
     incoming: &mut mpsc::Receiver<Incoming>,
     method: &str,
     params: Value,
+) -> Result<Value, AgentError> {
+    open_call_collecting(transport, incoming, method, params, None).await
+}
+
+/// [`open_call`] that also gathers the text of the `agent_message_chunk`s the agent says before
+/// it answers: what a local command of the agent (`/dirs`) prints.
+async fn open_call_collecting(
+    transport: &Transport,
+    incoming: &mut mpsc::Receiver<Incoming>,
+    method: &str,
+    params: Value,
+    mut said: Option<&mut String>,
 ) -> Result<Value, AgentError> {
     transport.request_ordered(method, params, 0).await?;
     let wait = async {
@@ -178,7 +196,13 @@ async fn open_call(
                         debug!(%error, "could not refuse a request during the handshake");
                     }
                 }
-                Incoming::Notification { .. } => {}
+                Incoming::Notification { params, .. } => {
+                    if let Some(said) = said.as_deref_mut()
+                        && let Some(text) = dirs::message_chunk(&params)
+                    {
+                        said.push_str(text);
+                    }
+                }
                 Incoming::Closed => break,
             }
         }
@@ -400,6 +424,8 @@ struct Opened {
     close: bool,
     /// What the agent says it can do for a fork.
     fork: ForkSupport,
+    /// How the session's extra folders reach this agent, and which it was given at the open.
+    dirs: dirs::SessionDirs,
 }
 
 /// `initialize`, the version gate, and the session (new, loaded, resumed or forked), with the
@@ -456,6 +482,14 @@ async fn open(
         warn!("some MCP servers were not passed: the agent does not take that transport");
     }
     let cwd = spec.cwd.to_string_lossy().into_owned();
+    // ACP agents that advertise `additionalDirectories` take the folders in the session calls,
+    // every time; OMP ignores them there and takes `/add-dir` commands after the open.
+    let mut session_dirs = dirs::SessionDirs::open(agent, &capabilities, &spec.dirs);
+    let at_open: Vec<String> = session_dirs
+        .given()
+        .iter()
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .collect();
 
     let name = init
         .agent_info
@@ -490,6 +524,7 @@ async fn open(
                 session_id: &from.thread_id,
                 cwd: &cwd,
                 mcp_servers: &servers,
+                additional_directories: &at_open,
                 meta: meta.as_ref(),
             });
             ("session/fork", params, None)
@@ -508,6 +543,7 @@ async fn open(
                 session_id: id,
                 cwd: &cwd,
                 mcp_servers: &servers,
+                additional_directories: &at_open,
                 meta: spec.session_meta.as_ref(),
             });
             (method, params, Some(id.clone()))
@@ -517,6 +553,7 @@ async fn open(
             serde_json::to_value(wire::NewSessionParams {
                 cwd: &cwd,
                 mcp_servers: &servers,
+                additional_directories: &at_open,
                 meta: spec.session_meta.as_ref(),
             }),
             None,
@@ -538,6 +575,20 @@ async fn open(
             "`{method}` answered without a sessionId"
         )));
     };
+    if session_dirs.uses_commands() {
+        dirs::open_with_commands(
+            transport,
+            incoming,
+            &mut session_dirs,
+            &session_id,
+            // A fork starts with the folders its parent had (OMP keeps them in the session
+            // header it copies): they are reconciled like a resumed conversation's.
+            resumed || spec.fork.is_some(),
+            spec.dirs_managed,
+            &spec.dirs,
+        )
+        .await;
+    }
     Ok(Opened {
         session_id,
         resumed,
@@ -545,6 +596,7 @@ async fn open(
         close: capabilities.session_capabilities.close.is_some(),
         capabilities,
         fork,
+        dirs: session_dirs,
     })
 }
 
@@ -716,6 +768,8 @@ impl AcpAdapter {
             images: opened.capabilities.prompt_capabilities.image,
             can_close: opened.close,
             mode_names: mode.map(|m| m.names).unwrap_or_default(),
+            dirs: Mutex::new(opened.dirs),
+            local: Mutex::new(None),
         });
         tokio::spawn(pump(shared.clone(), incoming, exit));
         AcpSession {
@@ -874,6 +928,13 @@ async fn pump(
 ) {
     while let Some(message) = incoming.recv().await {
         let alive = match message {
+            // What OMP prints for its own local command (`/add-dir`) is not a message of the
+            // conversation: it is the command's answer.
+            Incoming::Notification { method, params }
+                if method == "session/update" && dirs::keep_local_output(&shared, &params) =>
+            {
+                true
+            }
             Incoming::Notification { method, params } => {
                 let limits = (method == "session/update")
                     .then(|| params.get("update"))
@@ -927,6 +988,10 @@ async fn pump(
                     send_reply(&shared, reply).await;
                 }
                 alive
+            }
+            Incoming::Completed { tag, result } if tag == dirs::LOCAL_TAG => {
+                dirs::finish_local(&shared, result);
+                true
             }
             // The process went away under the prompt: the turn is the daemon's to close (it
             // knows whether the user stopped the session, and has the stderr).
@@ -1006,6 +1071,11 @@ impl AgentAdapter for AcpAdapter {
             }
             if shared.turn_active.swap(true, Ordering::AcqRel) {
                 return Err(AgentError::TurnInProgress);
+            }
+            // Folders added while a turn ran reach OMP now, before the message (a failure
+            // leaves them wanted: `dirs()` keeps saying so).
+            if let Err(error) = dirs::sync_held(shared).await {
+                warn!(%error, "the session's folders did not reach the agent before the turn");
             }
             // What the journal shows as the user's message is what the agent is given; an
             // image is journaled by its header only.
@@ -1091,6 +1161,14 @@ impl AgentAdapter for AcpAdapter {
 
     fn pid(&self) -> Option<u32> {
         self.shared.transport.pid()
+    }
+
+    fn dirs(&self) -> Option<AgentDirs> {
+        Some(lock(&self.shared.dirs).state())
+    }
+
+    fn set_dirs(&self, dirs: Vec<PathBuf>) -> BoxFuture<'_, Result<(), AgentError>> {
+        Box::pin(dirs::set(&self.shared, dirs))
     }
 
     fn interrupt(&self) -> BoxFuture<'_, Result<(), AgentError>> {
@@ -1244,6 +1322,8 @@ pub async fn list_models(config: &AcpConfig, cwd: PathBuf) -> Result<Vec<ModelIn
         resume_thread_id: None,
         developer_instructions: None,
         session_meta: None,
+        dirs: Vec::new(),
+        dirs_managed: false,
     };
     let session = AcpAdapter::start(config, &spec, None, &[]).await?;
     let models = session.models.clone();

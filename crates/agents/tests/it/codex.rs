@@ -65,6 +65,8 @@ impl Harness {
     fn spec_with(&self, resume: Option<&str>, instructions: Option<&str>) -> StartSpec {
         StartSpec {
             fork: None,
+            dirs: Vec::new(),
+            dirs_managed: false,
             cwd: self.dir.path().to_owned(),
             model: None,
             approval_policy: ApprovalPolicy::Untrusted,
@@ -1431,4 +1433,89 @@ async fn a_fork_at_a_turn_the_journal_has_no_provider_id_for_is_refused_before_a
     .unwrap_err();
     assert!(matches!(error, AgentError::Unsupported(_)), "{error}");
     assert!(received_of(&h, "thread/fork").is_empty());
+}
+
+// Session folders (protocol 0.57): a workspace-write thread gets them in the sandbox policy of
+// the turn that follows a change, a read-only one never does.
+
+async fn first_turn_of(h: &Harness, sandbox: SandboxMode, dirs: &[&str]) -> CodexSession {
+    let spec = StartSpec {
+        dirs: dirs.iter().map(PathBuf::from).collect(),
+        sandbox,
+        ..h.spec(None)
+    };
+    timeout(
+        WAIT,
+        CodexAppServerAdapter::start(&h.config(&fixture("plain-turn")), &spec),
+    )
+    .await
+    .expect("start timed out")
+    .expect("start failed")
+}
+
+fn turn_starts(h: &Harness) -> Vec<Value> {
+    h.received()
+        .into_iter()
+        .filter(|(method, _)| method == "turn/start")
+        .map(|(_, msg)| msg["params"].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_workspace_write_thread_gets_its_folders_in_the_sandbox_policy_of_the_next_turn() {
+    use hutan_agents::DirsChange;
+    let h = Harness::new();
+    let CodexSession {
+        adapter,
+        mut events,
+        ..
+    } = first_turn_of(&h, SandboxMode::WorkspaceWrite, &["/dirs/a", "/dirs/b"]).await;
+    // Nothing is claimed before a turn carried it.
+    let dirs = adapter.dirs().unwrap();
+    assert!(dirs.given.is_empty());
+    assert_eq!(dirs.change, DirsChange::NextTurn);
+
+    adapter.send_message("hello".into()).await.unwrap();
+    collect_until(&mut events, ends_turn).await;
+    let turns = turn_starts(&h);
+    assert_eq!(
+        turns[0]["sandboxPolicy"],
+        serde_json::json!({"type": "workspaceWrite", "writableRoots": ["/dirs/a", "/dirs/b"]})
+    );
+    assert_eq!(
+        adapter.dirs().unwrap().given,
+        [PathBuf::from("/dirs/a"), PathBuf::from("/dirs/b")]
+    );
+    // A change waits for the next turn; an unchanged list sends nothing.
+    adapter
+        .set_dirs(vec![PathBuf::from("/dirs/a")])
+        .await
+        .unwrap();
+    assert_eq!(adapter.dirs().unwrap().given.len(), 2);
+}
+
+#[tokio::test]
+async fn a_read_only_thread_is_never_widened_and_full_access_needs_nothing() {
+    use hutan_agents::DirsChange;
+    let h = Harness::new();
+    let CodexSession {
+        adapter,
+        mut events,
+        ..
+    } = first_turn_of(&h, SandboxMode::ReadOnly, &["/dirs/a"]).await;
+    assert_eq!(adapter.dirs().unwrap().change, DirsChange::Unsupported);
+    adapter.send_message("hello".into()).await.unwrap();
+    collect_until(&mut events, ends_turn).await;
+    assert!(turn_starts(&h)[0].get("sandboxPolicy").is_none());
+
+    let h = Harness::new();
+    let CodexSession {
+        adapter,
+        mut events,
+        ..
+    } = first_turn_of(&h, SandboxMode::DangerFullAccess, &["/dirs/a"]).await;
+    assert_eq!(adapter.dirs().unwrap().given, [PathBuf::from("/dirs/a")]);
+    adapter.send_message("hello".into()).await.unwrap();
+    collect_until(&mut events, ends_turn).await;
+    assert!(turn_starts(&h)[0].get("sandboxPolicy").is_none());
 }

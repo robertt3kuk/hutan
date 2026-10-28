@@ -64,6 +64,9 @@ pub struct AuthenticateParams<'a> {
 pub struct NewSessionParams<'a> {
     pub cwd: &'a str,
     pub mcp_servers: &'a [Value],
+    /// Only for an agent that advertised `sessionCapabilities.additionalDirectories`.
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    pub additional_directories: &'a [String],
     /// Extension metadata the agent reads (`_meta`).
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<&'a Value>,
@@ -76,6 +79,9 @@ pub struct LoadSessionParams<'a> {
     pub session_id: &'a str,
     pub cwd: &'a str,
     pub mcp_servers: &'a [Value],
+    /// ACP: omitted on load and resume means none, so the list is sent again every time.
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    pub additional_directories: &'a [String],
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<&'a Value>,
 }
@@ -89,6 +95,10 @@ pub struct ForkSessionParams<'a> {
     pub session_id: &'a str,
     pub cwd: &'a str,
     pub mcp_servers: &'a [Value],
+    /// The fork's own folders, for an agent that advertised `additionalDirectories` (the list
+    /// is sent again at every open, a fork's included).
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    pub additional_directories: &'a [String],
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<&'a Value>,
 }
@@ -178,6 +188,9 @@ pub struct SessionCapabilities {
     /// `session/fork` (an ACP unstable method both OMP and the Claude Code adapter offer).
     #[serde(default)]
     pub fork: Option<Value>,
+    /// The agent takes `additionalDirectories` on `session/new|load|resume`.
+    #[serde(default, rename = "additionalDirectories")]
+    pub additional_directories: Option<Value>,
 }
 
 /// The session a `session/new`, `session/load` or `session/resume` opened.

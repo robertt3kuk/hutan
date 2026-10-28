@@ -93,6 +93,10 @@ pub struct ThreadForkParams<'a> {
 pub struct TurnStartParams<'a> {
     pub thread_id: &'a str,
     pub input: Vec<UserInput<'a>>,
+    /// "Override for this turn and subsequent turns" (the schema's words): how the session's
+    /// extra folders reach a `workspace-write` thread (`{type: workspaceWrite, writableRoots}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
