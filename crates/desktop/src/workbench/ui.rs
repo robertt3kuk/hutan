@@ -26,11 +26,13 @@ use hutan_settings::themes::Fonts;
 use crate::theme::{Theme, Tokens, mascot_size, pill_radius};
 
 mod button;
+mod lane;
 mod rhythm;
 mod splitter;
 pub use button::{
     Button, ButtonKind, ButtonSize, IconButton, approval_button_kind, spinner, spinner_at,
 };
+pub use lane::{BadgeState, row_lane, state_badge};
 pub use splitter::{HANDLE as SPLITTER_HANDLE, SplitAxis, Splitter};
 
 /// The font files macOS ships New York in. GPUI cannot select the system serif by name (CoreText
@@ -49,6 +51,7 @@ const SYSTEM_UI: &str = ".SystemUIFont";
 struct Families {
     ui: SharedString,
     prose: SharedString,
+    mono: SharedString,
 }
 
 thread_local! {
@@ -57,6 +60,7 @@ thread_local! {
     static FAMILIES: RefCell<Families> = RefCell::new(Families {
         ui: SYSTEM_UI.into(),
         prose: SYSTEM_UI.into(),
+        mono: "Menlo".into(),
     });
 }
 
@@ -99,6 +103,7 @@ pub fn apply_fonts(cx: &App, fonts: &Fonts) {
     let families = Families {
         ui: pick_family(cx, &fonts.ui),
         prose: pick_family(cx, &fonts.prose),
+        mono: pick_family(cx, &fonts.mono),
     };
     if families.prose.as_ref() != SYSTEM_UI && families.prose.as_ref() != ".New York" {
         tracing::info!("prose font: {}", families.prose);
@@ -114,6 +119,11 @@ pub fn ui_family() -> SharedString {
 /// The prose family ([`apply_fonts`]): the UI face unless the pack names another.
 pub fn prose_family() -> SharedString {
     FAMILIES.with(|f| f.borrow().prose.clone())
+}
+
+/// The monospace family of the pack's `[fonts] mono` ([`apply_fonts`]): chips, shortcut hints.
+pub fn mono_family() -> SharedString {
+    FAMILIES.with(|f| f.borrow().mono.clone())
 }
 
 /// A GPUI `Font` for prose text.
@@ -395,6 +405,88 @@ pub fn section_label(text: impl Into<SharedString>, theme: &Theme, tokens: &Toke
     div()
         .text_size(px(tokens.section_font_size))
         .medium()
+        .text_color(theme.muted)
+        .child(text.into())
+}
+
+/// A group label: the heading of a system group (Requests, Projects) or of a panel section.
+/// `text.group.size` (10) semibold, `muted`, tracked by `text.group.tracking` em, and upper case:
+/// the string stays sentence case everywhere else (tooltips, tests, translations) and is only
+/// shown in capitals. Never for a user's own names (a project, a workspace, a session).
+pub fn group_label(text: impl AsRef<str>, theme: &Theme, tokens: &Tokens) -> gpui::Div {
+    let size = tokens.group_font_size;
+    let tracking = crate::theme::metrics().group_tracking * size;
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .whitespace_nowrap()
+        .text_size(px(size))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme.muted)
+        .children(group_text(text.as_ref()).chars().map(move |c| {
+            // GPUI has no letter spacing: every letter is its own box followed by the gap.
+            let letter = div().flex_none().mr(px(tracking));
+            if c == ' ' {
+                letter.w(px(size * 0.3))
+            } else {
+                letter.child(SharedString::from(c.to_string()))
+            }
+        }))
+}
+
+/// What a group label shows of `text`: upper case.
+pub fn group_text(text: &str) -> String {
+    text.to_uppercase()
+}
+
+/// A group label with its muted count at the far end of the row (`REQUESTS            2`): the
+/// header of a sidebar group or of a right-dock section. `count` is shown as given.
+pub fn group_header(
+    text: impl AsRef<str>,
+    count: Option<SharedString>,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(space::SM))
+        .child(group_label(text, theme, tokens))
+        .children(count.map(|count| {
+            div()
+                .flex_none()
+                .text_size(px(tokens.group_font_size))
+                .text_color(theme.faint)
+                .child(count)
+        }))
+}
+
+/// Splits a section title of the shape `Label · 3` into its label and its count.
+pub fn split_count(title: &str) -> (&str, Option<&str>) {
+    match title.rsplit_once(" · ") {
+        Some((label, count)) if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) => {
+            (label, Some(count))
+        }
+        _ => (title, None),
+    }
+}
+
+/// A chip of monospace text (a model name, a shortcut): `surface_hover` fill, radius 4,
+/// `text.chip.size` (9.5) in the pack's mono family, `muted`. The chip tier of the three fills
+/// (row, card, chip); a pill is the rounded neutral label of [`pill`].
+pub fn chip_mono(text: impl Into<SharedString>, theme: &Theme, tokens: &Tokens) -> gpui::Div {
+    div()
+        .flex_none()
+        .max_w(px(PILL_MAX_WIDTH))
+        .truncate()
+        .px(px(space::XS))
+        .py(px(1.0))
+        .rounded(px(4.0))
+        .bg(theme.surface_hover)
+        .font_family(mono_family())
+        .text_size(px(tokens.chip_font_size))
         .text_color(theme.muted)
         .child(text.into())
 }

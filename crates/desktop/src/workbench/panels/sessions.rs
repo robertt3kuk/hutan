@@ -60,14 +60,8 @@ use crate::workbench::{BadgeSite, DragPreview, Region};
 const ROW_ESTIMATE: f32 = 34.0;
 const AGE_REFRESH: Duration = Duration::from_secs(30);
 
-/// Indent per level of the tree.
-const INDENT: f32 = 12.0;
-/// A session row's leading state lane is 16 px wide (the alignment spine of the tree), titles
-/// are 13 px.
-const STATUS_LANE: f32 = 16.0;
 /// The unread dot, ring included: 6 px of amber inside a 1 px ring.
 const UNREAD_DOT: f32 = 8.0;
-const CARD_TITLE: f32 = 13.0;
 
 /// Hover fill of a card: the foreground at 4 % in light, the left sidebar's accent at 40 % in
 /// dark (Orca's workspace hover).
@@ -1485,18 +1479,24 @@ impl SessionsPanel {
                 if title.is_empty() {
                     return div().into_any_element();
                 }
-                // A group label: muted, like every section label; the attention is the rows'.
+                // A group label: small, tracked capitals with a muted count at the far end;
+                // the attention is the rows'.
+                let (label, count) = ui::split_count(title);
                 div()
                     .id(SharedString::from(format!("section-{key:?}")))
                     .flex()
-                    .items_center()
+                    .flex_col()
+                    .justify_center()
                     .h(px(tokens.sidebar_row))
-                    .px(px(tokens.spacing * 2.0))
+                    .mx(px(tokens.sidebar_inset))
+                    .px(px(tokens.spacing * 1.5))
                     .mt(px(tokens.spacing))
-                    .text_size(px(tokens.section_font_size))
-                    .medium()
-                    .text_color(theme.muted)
-                    .child(title.clone())
+                    .child(ui::group_header(
+                        label,
+                        count.map(|c| SharedString::from(c.to_owned())),
+                        &theme,
+                        &tokens,
+                    ))
                     .into_any_element()
             }
             Entry::NoWorkspace => self.render_no_workspace(cx),
@@ -1551,16 +1551,15 @@ impl SessionsPanel {
             .flex()
             .items_center()
             .h(px(tokens.sidebar_row))
-            .px(px(tokens.spacing * 2.0))
+            .mx(px(tokens.sidebar_inset))
+            .px(px(tokens.spacing * 1.5))
             .mt(px(tokens.spacing))
-            .text_size(px(tokens.section_font_size))
-            .medium()
-            .text_color(theme.muted)
+            .rounded(px(tokens.row_radius))
             .drag_over::<DraggedProject>(move |s, _, _, _| s.bg(accent.opacity(0.14)))
             .on_drop(cx.listener(|this, dragged: &DraggedProject, window, cx| {
                 this.project_dropped(dragged, None, window, cx);
             }))
-            .child("No workspace")
+            .child(ui::group_label("No workspace", &theme, &tokens))
             .child(probe(&self.env.regions, Region::NoWorkspace))
             .into_any_element()
     }
@@ -1663,11 +1662,11 @@ impl SessionsPanel {
             .items_center()
             .gap(px(tokens.spacing))
             .h(px(tokens.sidebar_row))
-            .mx(px(tokens.spacing * 1.5))
-            .pl(px(tokens.spacing * 1.5 + row.depth as f32 * INDENT))
+            .mx(px(tokens.sidebar_inset))
+            .pl(px(tokens.spacing * 1.5 + row.depth as f32 * tokens.sidebar_indent))
             .pr(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius + 4.0))
-            .text_size(px(CARD_TITLE))
+            .rounded(px(tokens.row_radius))
+            .text_size(px(tokens.row_font_size))
             .medium()
             .text_color(if current || selected {
                 theme.fg
@@ -1942,14 +1941,14 @@ impl SessionsPanel {
             .items_center()
             .gap(px(tokens.spacing))
             .h(px(tokens.sidebar_row))
-            .mx(px(tokens.spacing * 1.5))
+            .mx(px(tokens.sidebar_inset))
             .pl(px(tokens.spacing * 1.5
-                + row.depth as f32 * INDENT
+                + row.depth as f32 * tokens.sidebar_indent
                 + 12.0
                 + tokens.spacing))
             .pr(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius + 4.0))
-            .text_size(px(CARD_TITLE))
+            .rounded(px(tokens.row_radius))
+            .text_size(px(tokens.row_font_size))
             .medium()
             .text_color(if row.active { theme.fg } else { theme.muted })
             .cursor_pointer()
@@ -2113,6 +2112,8 @@ impl SessionsPanel {
             .map(|r| r.text.clone());
         let lane = lane_word(&presentation);
         let gap = tokens.spacing * 1.5;
+        // The width of the row's lead lane (a pack metric).
+        let lane_width = crate::theme::metrics().sidebar_lane;
 
         // One line, always. A row away from its project row (Requests, Ready for review) says
         // whose it is in muted text after its title; a session off the main checkout wears its
@@ -2170,7 +2171,7 @@ impl SessionsPanel {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .size(px(STATUS_LANE))
+                            .size(px(lane_width))
                             .when(lane.is_some(), |s| {
                                 s.tooltip(move |_, cx| {
                                     cx.new(|_| TextTooltip::new(tip.clone())).into()
@@ -2212,7 +2213,7 @@ impl SessionsPanel {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(CARD_TITLE))
+                                .text_size(px(tokens.row_font_size))
                                 .when(unread, |s| s.font_weight(gpui::FontWeight::MEDIUM))
                                 .child(SharedString::from(info.title.clone()));
                             // The name says what the session is; the prompt behind a short title
@@ -2298,11 +2299,11 @@ impl SessionsPanel {
             .relative()
             .flex()
             .flex_col()
-            .mx(px(tokens.spacing * 1.5))
+            .mx(px(tokens.sidebar_inset))
             .my(px(1.0))
-            .pl(px(gap + row.depth as f32 * INDENT))
+            .pl(px(gap + row.depth as f32 * tokens.sidebar_indent))
             .pr(px(gap))
-            .rounded(px(tokens.radius + 4.0))
+            .rounded(px(tokens.row_radius))
             .cursor_pointer()
             // The selected row is the sidebar's selected fill, with no outline.
             .when(selected, move |s| s.bg(theme.sidebar_accent))
@@ -2331,7 +2332,7 @@ impl SessionsPanel {
                     .map(|note| {
                         div()
                             .id(SharedString::from(format!("session-note-{}", info.id)))
-                            .pl(px(STATUS_LANE + 14.0 + gap * 2.0))
+                            .pl(px(lane_width + 14.0 + gap * 2.0))
                             .pb(px(tokens.spacing))
                             .min_w_0()
                             .truncate()

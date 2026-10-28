@@ -51,8 +51,8 @@ pub enum Section {
 impl Section {
     fn title(self) -> &'static str {
         match self {
-            Self::OpenEditors => "OPEN EDITORS",
-            Self::ChangedByAgents => "CHANGED BY AGENTS",
+            Self::OpenEditors => "Open editors",
+            Self::ChangedByAgents => "Changed by agents",
         }
     }
 
@@ -485,17 +485,20 @@ impl FilesPanel {
             .h(px(22.0))
             .px(px(tokens.spacing * 3.0))
             .cursor_pointer()
-            .text_size(px(tokens.section_font_size))
-            .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(theme.muted)
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.toggle_section(section, cx);
             }))
             .child(icon(chevron, 12.0, theme.muted))
-            .child(section.title())
+            .child(crate::workbench::ui::group_label(
+                section.title(),
+                theme,
+                tokens,
+            ))
             .child(
                 div()
+                    .text_size(px(tokens.group_font_size))
                     .text_color(theme.faint)
                     .child(SharedString::from(count.to_string())),
             )

@@ -1235,7 +1235,7 @@ impl Workbench {
                     tokens.spacing * 3.0
                 }))
                 .pb(px(2.0))
-                .child(super::ui::section_label(group.title(), &theme, &tokens))
+                .child(super::ui::group_label(group.title(), &theme, &tokens))
                 .when(group == NavGroup::Advanced, |s| {
                     s.child(
                         div()
