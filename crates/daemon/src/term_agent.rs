@@ -223,7 +223,25 @@ fn is_title_mark(c: char) -> bool {
 /// and spinner (`π ⠋ Fix the build` → `Fix the build`). A title that only says the program
 /// (`Claude Code`) or a directory (`~/proj`) names nothing: `None`.
 pub fn clean_title(raw: &str, app: &str) -> Option<String> {
-    let title = raw.trim_start_matches(is_title_mark).trim();
+    let raw = raw.trim();
+    // OMP: `π`, one glyph for its state (`>` idle, a braille frame while working, `!` waiting or
+    // failed, whatever a later version draws), then the label: nothing of the label is a mark.
+    let title = match raw.strip_prefix('π').map(str::trim_start) {
+        Some(rest) => {
+            let mut chars = rest.chars();
+            match chars.next() {
+                Some(glyph)
+                    if !glyph.is_alphanumeric()
+                        && chars.as_str().starts_with(char::is_whitespace) =>
+                {
+                    chars.as_str().trim()
+                }
+                Some(glyph) if !glyph.is_alphanumeric() && chars.as_str().is_empty() => "",
+                _ => rest.trim_start_matches(is_title_mark).trim(),
+            }
+        }
+        None => raw.trim_start_matches(is_title_mark).trim(),
+    };
     if title.is_empty() || is_path_title(title) {
         return None;
     }
@@ -488,6 +506,11 @@ mod tests {
             ("π > fix the build", Some("fix the build")),
             ("π ⠋ fix the build", Some("fix the build")),
             ("π > 👷 WORKER: worker", Some("👷 WORKER: worker")),
+            ("π ! 👷 WORKER: worker", Some("👷 WORKER: worker")),
+            ("π ⠴ - dashes stay", Some("- dashes stay")),
+            ("π ! ", None),
+            ("π", None),
+            ("π build the thing", Some("build the thing")),
             ("✳ Claude Code", None),
             ("⠂ Refactor auth", Some("Refactor auth")),
             ("π > ~/proj", None),
