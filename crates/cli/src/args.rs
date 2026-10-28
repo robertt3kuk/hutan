@@ -835,6 +835,8 @@ pub enum ChatCommand {
     Interrupt(ChatInterruptArgs),
     /// Send the chat's last message again (after a failed turn); it is not journaled twice
     Retry(TargetArgs),
+    /// Start a new chat with this chat's conversation up to a turn; the parent is not changed
+    Fork(ChatForkArgs),
     /// List the models the agent offers
     Models(ChatModelsArgs),
     /// Switch the model of a direct or harness chat for its next turn (the history stays)
@@ -1100,6 +1102,25 @@ pub struct ChatInterruptArgs {
     /// Keep the messages queued for the chat; they wait until you send again
     #[arg(long)]
     pub keep_queue: bool,
+}
+
+/// `hutan chat fork`.
+#[derive(Debug, Args)]
+pub struct ChatForkArgs {
+    #[arg(help = TARGET_HELP)]
+    pub target: String,
+    /// The turn the new chat keeps through: its number (1 is the first) or its id; default: the
+    /// latest turn
+    #[arg(long)]
+    pub turn: Option<String>,
+    /// How to cut: `exact` after the turn (what the agent can do: direct chats and Codex at any
+    /// turn, OMP only at the latest), `head` the whole conversation as it is now, `summary` a
+    /// fresh conversation given a digest of the turns up to --turn
+    #[arg(long, default_value = "exact", value_parser = ["exact", "head", "summary"])]
+    pub mode: String,
+    /// Name the new chat (default: the parent's name with " (fork)")
+    #[arg(long)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Args)]

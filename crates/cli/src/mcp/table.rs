@@ -369,6 +369,32 @@ static TOOLS: &[Tool] = &[
         },
     },
     Tool {
+        name: "chat_fork",
+        description: ask!(
+            "Start a new chat that begins with another chat's conversation up to a turn; the \
+             original is not changed and its journal is copied. Returns the new session and how \
+             the cut was made. `mode`: `exact` (default) cuts after `turn_id` where the agent can \
+             (direct chats and Codex at any turn, Claude Code with a recent adapter, OMP only at \
+             the latest turn), `head` forks the conversation as it is now, `summary` starts a \
+             fresh conversation given a digest of the turns up to `turn_id`. A cut the agent \
+             cannot make fails with `unsupported` and names the modes that work; nothing is \
+             substituted. Fails while a turn is running."
+        ),
+        read_only: false,
+        call: request("chat.fork"),
+        schema: || {
+            object(
+                json!({
+                    "session_id": session_id(),
+                    "turn_id": id("The turn to keep through (an id from `chat_log`'s `turn_id`); default: the latest turn."),
+                    "mode": {"type": "string", "enum": ["exact", "head", "summary"], "default": "exact", "description": "How to cut the conversation."},
+                    "title": text("Name of the new session (default: the original's with \" (fork)\")."),
+                }),
+                &["session_id"],
+            )
+        },
+    },
+    Tool {
         name: "chat_log",
         description: "Read an agent chat session's journal: messages, tool calls, results, oldest \
                       first, the newest `limit` events (page back with `before_seq`). Includes \
@@ -1449,6 +1475,7 @@ mod tests {
             "session_reopen",
             "chat_create",
             "chat_send",
+            "chat_fork",
             "chat_log",
             "approval_list",
             "usage_summary",

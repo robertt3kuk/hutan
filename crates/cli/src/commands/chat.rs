@@ -4,9 +4,13 @@ use std::io::Write as _;
 
 use hutan_client::Client;
 use hutan_core::question::{FieldKind, QuestionField, QuestionResponse, Values};
-use hutan_core::{AgentEvent, ApprovalId, QuestionId, SessionKind};
+use hutan_core::{
+    AgentEvent, AgentEventKind, ApprovalId, ForkMode, QuestionId, SessionId, SessionKind, TurnId,
+};
+use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ChatCreate, ChatHistory, ChatSentNow, QuestionInfo, QuestionList,
+    ApprovalInfo, ApprovalList, ChatCreate, ChatFork, ChatHistory, ChatSentNow, ForkWhere,
+    QuestionInfo, QuestionList,
 };
 use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, SessionResult, Subscribed};
 use hutan_protocol::provider::AGENT_DIRECT;
@@ -15,8 +19,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::{Ctx, print_line};
 use crate::args::{
-    AnswerArgs, ApproveArgs, ChatCommand, ChatInterruptArgs, ChatModelArgs, ChatNewArgs,
-    ChatSendArgs, TargetArgs,
+    AnswerArgs, ApproveArgs, ChatCommand, ChatForkArgs, ChatInterruptArgs, ChatModelArgs,
+    ChatNewArgs, ChatSendArgs, TargetArgs,
 };
 use crate::error::CliError;
 use hutan_cli::chat_render::ChatPrinter;
@@ -73,6 +77,7 @@ impl Ctx {
             ChatCommand::Attach(TargetArgs { target }) => self.chat_attach(&target).await,
             ChatCommand::Interrupt(args) => self.chat_interrupt(args).await,
             ChatCommand::Retry(TargetArgs { target }) => self.chat_retry(&target).await,
+            ChatCommand::Fork(args) => self.chat_fork(args).await,
             ChatCommand::Models(args) => self.chat_models(&args.agent).await,
             ChatCommand::Model(args) => self.chat_model(args).await,
         }
@@ -427,6 +432,114 @@ impl Ctx {
         self.print(&sent, || {
             format!("sent the last message again: turn {}", sent.turn_id)
         })
+    }
+
+    /// `hutan chat fork`: `chat.fork` (protocol 0.56). Prints the new chat's id.
+    async fn chat_fork(&self, args: ChatForkArgs) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        let session = self.resolve_chat(&client, &args.target).await?;
+        if !client.supports_chat_fork() {
+            return Err(CliError::Failed(
+                "this daemon cannot fork a chat (it predates protocol 0.56); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let mode = match args.mode.as_str() {
+            "head" => ForkMode::Head,
+            "summary" => ForkMode::Summary,
+            _ => ForkMode::Exact,
+        };
+        let turn_id = match args.turn.as_deref() {
+            None => None,
+            Some(turn) => Some(self.resolve_turn(&client, session.id, turn).await?),
+        };
+        let forked = client
+            .chat_fork(ChatFork {
+                session_id: session.id,
+                turn_id,
+                mode,
+                title: args.title,
+                where_: ForkWhere::ThisFolder,
+            })
+            .await
+            .map_err(|error| self.fork_failure(error))?;
+        self.print(&forked, || {
+            let fork = &forked.fork;
+            let how = match fork.mode {
+                ForkMode::Exact => format!("after turn {}", fork.ordinal),
+                ForkMode::Head => format!("at the latest turn ({})", fork.ordinal),
+                ForkMode::Summary => format!("with a summary of turns 1-{}", fork.ordinal),
+            };
+            format!(
+                "session {} forked from {} {how} ({}, {} events copied)",
+                forked.session.id,
+                session.id,
+                fork.mode.as_str(),
+                fork.copied_events
+            )
+        })
+    }
+
+    /// A turn named on the command line: its number (counted from 1) or its id.
+    async fn resolve_turn(
+        &self,
+        client: &Client,
+        session: SessionId,
+        text: &str,
+    ) -> Result<TurnId, CliError> {
+        if let Ok(id) = text.parse::<TurnId>() {
+            return Ok(id);
+        }
+        let number: usize = text.parse().map_err(|_| {
+            CliError::Failed(format!(
+                "`{text}` is neither a turn number (1 is the first) nor a turn id"
+            ))
+        })?;
+        let history = client
+            .chat_history_all(session)
+            .await
+            .map_err(|e| self.fail(e))?;
+        let turns: Vec<TurnId> = history
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, AgentEventKind::TurnStarted))
+            .filter_map(|event| event.turn_id)
+            .collect();
+        number
+            .checked_sub(1)
+            .and_then(|index| turns.get(index))
+            .copied()
+            .ok_or_else(|| {
+                CliError::Failed(format!(
+                    "the chat has {} turn(s); there is no turn {number}",
+                    turns.len()
+                ))
+            })
+    }
+
+    /// A refused fork says which cuts would have worked.
+    fn fork_failure(&self, error: hutan_client::ClientError) -> CliError {
+        let hint = match &error {
+            hutan_client::ClientError::Remote(body) if body.code == ErrorCode::Unsupported => body
+                .data
+                .as_ref()
+                .and_then(|data| data.get("alternatives"))
+                .and_then(|alternatives| alternatives.as_array())
+                .filter(|alternatives| !alternatives.is_empty())
+                .map(|alternatives| {
+                    let modes: Vec<&str> = alternatives.iter().filter_map(|m| m.as_str()).collect();
+                    format!(" (try --mode {})", modes.join(" or --mode "))
+                }),
+            _ => None,
+        };
+        match (self.fail(error), hint) {
+            (CliError::Remote(mut body), Some(hint)) => {
+                body.message.push_str(&hint);
+                CliError::Remote(body)
+            }
+            (error, _) => error,
+        }
     }
 
     async fn chat_models(&self, agent: &str) -> Result<(), CliError> {

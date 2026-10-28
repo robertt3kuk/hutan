@@ -41,6 +41,23 @@ struct Chat {
 }
 
 impl Chat {
+    /// A daemon whose codex replays `names` (the fixtures), one transcript per spawn.
+    async fn with_script(names: &[&str]) -> Self {
+        let work = tempfile::tempdir().unwrap();
+        let scripted = work.path().join("script");
+        std::fs::create_dir_all(&scripted).unwrap();
+        for (index, name) in names.iter().enumerate() {
+            std::fs::copy(
+                fixture(name),
+                scripted.join(format!("{:02}-{name}.jsonl", index + 1)),
+            )
+            .unwrap();
+        }
+        let config = replay(&scripted, &work.path().join("received.jsonl"));
+        let t = TestDaemon::start_with(move |c| c.codex = Some(config)).await;
+        Self { t, work }
+    }
+
     async fn with_fixture(name: &str) -> Self {
         let work = tempfile::tempdir().unwrap();
         let config = replay(&fixture(name), &work.path().join("received.jsonl"));
@@ -650,4 +667,52 @@ async fn chat_commands_without_a_daemon_exit_three() {
     let socket = dir.path().join("nothing.sock");
     let out = finish(command(Path::new(HUTAN), Some(&socket), &["approvals"])).await;
     assert_eq!(out.code, 3, "{out:?}");
+}
+
+// Fork (ADR 0023): `fork-turn` is built from the codex 0.162.1 schema, `two-turns` is two recorded
+// turns of `plain-turn`.
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_fork_keeps_the_turns_up_to_the_one_named_and_says_what_it_did() {
+    let c = Chat::with_script(&["two-turns", "fork-turn"]).await;
+    let id = c.new_chat(&[]).await;
+    for text in ["first", "second"] {
+        c.t.hutan(&["chat", "send", &id, text, "--wait"]).await.ok();
+    }
+    let before = c.t.hutan(&["chat", "log", &id]).await.ok().stdout;
+    assert_eq!(before.matches("> ").count(), 2, "{before}");
+
+    // A turn that is not there, and a word that is not a turn.
+    let none = c.t.hutan(&["chat", "fork", &id, "--turn", "9"]).await;
+    assert_ne!(none.code, 0);
+    assert!(none.stderr.contains("the chat has 2 turn(s)"), "{none:?}");
+    let word = c.t.hutan(&["chat", "fork", &id, "--turn", "later"]).await;
+    assert_ne!(word.code, 0);
+    assert!(word.stderr.contains("neither a turn number"), "{word:?}");
+
+    let forked =
+        c.t.hutan(&[
+            "--json", "chat", "fork", &id, "--turn", "1", "--title", "Take two",
+        ])
+        .await
+        .ok()
+        .json();
+    let child = forked["session"]["id"].as_str().unwrap().to_owned();
+    assert_ne!(child, id);
+    assert_eq!(forked["session"]["title"], "Take two");
+    assert_eq!(forked["fork"]["mode"], "exact");
+    assert_eq!(forked["fork"]["ordinal"], 1);
+    assert_eq!(forked["session"]["forked_from"]["session_id"], id.as_str());
+    assert_eq!(forked["session"]["forked_from"]["ordinal"], 1);
+    assert_eq!(forked["session"]["chat"]["fork"]["support"], "exact");
+
+    // The fork's journal is turn 1 of the parent's, and the parent's is whole.
+    let log = c.t.hutan(&["chat", "log", &child]).await.ok().stdout;
+    assert_eq!(log.matches("> ").count(), 1, "{log}");
+    assert_eq!(c.t.hutan(&["chat", "log", &id]).await.ok().stdout, before);
+
+    // A terminal session is not a chat.
+    let terminal = c.t.new_session(&[], &["sh", "-c", "sleep 30"]).await;
+    let refused = c.t.hutan(&["chat", "fork", &terminal]).await;
+    assert_ne!(refused.code, 0);
+    assert!(refused.stderr.contains("terminal session"), "{refused:?}");
 }
