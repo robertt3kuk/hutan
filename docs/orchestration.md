@@ -193,6 +193,10 @@ Whoever can push to the repository can put commands in `.hutan/worktree.toml`. S
 
 `worktree.setup_trust` is **user-only**: an agent connection gets `forbidden` under every `[control] agents` policy. A worktree an agent creates therefore comes up `needs_trust` unless the user confirmed the same commands before — an agent can neither run an unconfirmed command nor confirm it. `worktree.setup` (running it again) is an ordinary mutation: it asks the user first under `ask`, and still never runs unconfirmed commands.
 
+### Worktrees made for a fork (protocol 0.58)
+
+`chat.fork` with `where: new_worktree` (`hutan chat fork --worktree`) makes a worktree the same way — new branch, `.hutan/worktree.toml` copy, setup and trust, `[worktrees] wait_for_setup` — but holds the files of a turn's checkpoint instead of the base's (`docs/agents.md` § Fork into a worktree). The files are laid first and the setup runs after them, so `copy` and `setup` see the turn's tree. The worktree is the daemon's own (`created_by_hutan`), listed, cleaned up and removed like any other; it has uncommitted changes by construction (the turn's), so `merged`/`idle` cleanup leaves it until they are committed or discarded.
+
 ### Teardown
 
 `worktree.remove` (from `hutan wt rm`, the palette, a Finish that removes, cleanup) runs the worktree's `teardown` commands before `git worktree remove`: headless, with the worktree as the directory and the login environment, 10 minutes each, output captured. The same trust rule applies — unconfirmed commands of the file are not run. A failing command refuses the removal with its output (`invalid_state`; the worktree stays); `force` removes anyway. The refusals for live sessions, a lock and uncommitted changes come first.
