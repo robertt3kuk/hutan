@@ -164,6 +164,7 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `chat_fork` | `chat.fork` | yes | start a new chat with a chat's conversation up to a turn (`exact`, `head` or `summary`; the original is untouched; protocol 0.56) |
 | `chat_log` | `chat.history` | no | the journal of a chat |
 | `usage_summary` | `usage.summary` | no | limit windows the harnesses report and tokens / cost of Hutan's turns, today and this week (`refresh` asks the harnesses first) |
+| `agent_insight` | `agent.insight` | no | what a chat's context holds and its turns spent: tokens, cost, tools, files, time, and what the harness never reports (protocol 0.59); there is no tool that measures the context: that is the user's button |
 | `approval_list` | `approval.list` | no | what waits for the user (agents cannot answer: there is no respond tool; Mawas's grants are not a tool either) |
 | `task_add` | `task.create` | yes | add a task with dependencies |
 | `task_list` | `task.list` | no | tasks and their state |

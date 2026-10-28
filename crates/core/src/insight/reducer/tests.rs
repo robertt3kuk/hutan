@@ -855,3 +855,72 @@ fn a_snapshot_never_exceeds_the_wire_budget() {
         Some(InsightOutcome::Running)
     );
 }
+
+#[test]
+fn a_direct_chat_derives_no_cache_ratio_because_its_providers_count_differently() {
+    let mut s = Script::new();
+    let mut r = s.reducer("direct");
+    let t = TurnId::new();
+    let e = s.event(t, AgentEventKind::TurnStarted);
+    r.apply(&e);
+    let last = counts(1_000, 10, 750, 1_010);
+    let e = s.event(t, usage(Some(last), Some(last), Some(128_000)));
+    r.apply(&e);
+    let e = s.event(t, AgentEventKind::TurnCompleted { duration_ms: None });
+    r.apply(&e);
+    let insight = r.snapshot(1, s.ts, None);
+    let totals = insight.totals.expect("totals");
+    assert_eq!(
+        (totals.cache_read, totals.cache_hit_ratio),
+        (Some(750), None)
+    );
+    assert_eq!(
+        insight.unsupported,
+        [InsightField::Breakdown, InsightField::Cost]
+    );
+}
+
+/// What one session holds at every cap, so the daemon's budget can be stated: about 85 KiB.
+#[test]
+fn a_reducer_at_every_cap_holds_less_than_a_hundred_kib() {
+    let mut s = Script::new();
+    let mut r = s.reducer("omp");
+    for n in 0..(MAX_TURNS + 50) {
+        let t = TurnId::new();
+        let e = s.event(t, AgentEventKind::TurnStarted);
+        r.apply(&e);
+        let e = s.at(
+            1,
+            Some(t),
+            Some(ItemId::new()),
+            AgentEventKind::FileDiff {
+                changes: vec![change(
+                    &format!("/work/app/{}{n}.rs", "d/".repeat(110)),
+                    FileChangeKind::Update,
+                    Some("+x\n"),
+                )],
+                patch: None,
+            },
+        );
+        r.apply(&e);
+        for tool in 0..20 {
+            let item = ItemId::new();
+            for kind in [
+                tool_start(&format!("tool-{tool}-{n}")),
+                tool_end(ToolStatus::Completed, Some(1)),
+            ] {
+                let e = s.at(1, Some(t), Some(item), kind);
+                r.apply(&e);
+            }
+        }
+        let e = s.event(
+            t,
+            AgentEventKind::TurnCompleted {
+                duration_ms: Some(1),
+            },
+        );
+        r.apply(&e);
+    }
+    let held = r.approx_bytes();
+    assert!(held < 100 * 1024, "{held} bytes");
+}

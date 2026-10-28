@@ -264,7 +264,11 @@ impl InsightHub {
         fresh: bool,
         replace: bool,
     ) {
+        if !replace && lock(&self.state).entries.contains_key(&session) {
+            return;
+        }
         let _one_at_a_time = self.building.lock().await;
+        // Built by whoever held the lock before.
         if !replace && lock(&self.state).entries.contains_key(&session) {
             return;
         }
