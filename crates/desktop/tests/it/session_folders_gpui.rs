@@ -392,6 +392,33 @@ fn the_session_menu_opens_the_folders_popover(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_agents_page_row_menu_opens_the_folders_of_a_chat(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = codex_daemon(&env);
+    let chat = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    view.update_in(cx, |_, window, cx| {
+        window.dispatch_action(
+            Box::new(actions::ShowAgentMenu(actions::SessionMenuAt {
+                session: chat.id.to_string(),
+                position: point(px(80.0), px(80.0)),
+            })),
+            cx,
+        );
+    });
+    draw(cx);
+    let labels = menu_labels(&view, cx);
+    let at = labels.iter().position(|l| l == "Folders…");
+    let copy = labels.iter().position(|l| l == "Copy session ID");
+    assert!(at.is_some() && at < copy, "{labels:?}");
+    run_entry(&view, cx, "Folders…");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.folders_popover_session()),
+        Some(chat.id)
+    );
+}
+
+#[gpui::test]
 fn a_claude_chat_says_a_new_folder_needs_a_restart_and_restarts_with_it(
     cx: &mut TestAppContext,
 ) {

@@ -172,7 +172,17 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.agent_menu(session, cx);
+        let mut entries = self.agent_menu(session, cx);
+        // A chat or a terminal agent that can hold folders (SESSION-DIRS-B).
+        if !entries.is_empty()
+            && let Some(folders) = self.folders_menu_entry(session, position, cx)
+        {
+            let before = entries
+                .iter()
+                .position(|entry| entry.label.starts_with("Copy session ID"))
+                .unwrap_or(entries.len());
+            entries.insert(before, folders);
+        }
         if !entries.is_empty() {
             self.open_menu(position, entries, window, cx);
         }
