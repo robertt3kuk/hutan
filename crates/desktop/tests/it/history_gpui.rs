@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use common::history::{CLAUDE_ID, CODEX_ID, GONE_CWD, GONE_ID, HistoryEnv, OMP_ID, UNRESUMABLE_ID};
 use common::{TestDaemon, draw, open_with, wait_until};
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_core::SessionId;
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::PanelId;
@@ -51,7 +51,8 @@ fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
     let bounds = view
         .read_with(cx, |wb, _| wb.region_bounds(region))
         .unwrap_or_else(|| panic!("{region:?} is drawn"));
-    cx.simulate_click(bounds.center(), Modifiers::none());
+    // Press and release together: see `common::click_at`.
+    common::click_at(cx, bounds.center());
 }
 
 fn sources(panel: &Entity<HistoryPanel>, cx: &mut VisualTestContext) -> Vec<HistorySource> {
@@ -119,6 +120,23 @@ fn wait_new_session(
     let mut created = new_sessions(view, cx, before);
     assert_eq!(created.len(), 1, "exactly one session: {created:?}");
     created.remove(0)
+}
+
+/// Waits until the resumed `session` has its terminal on screen with `stand_in` (`claude`,
+/// `codex`, `omp`) running in it and holds the keyboard focus: a new session's terminal takes
+/// the focus when it is mounted, which under load can be after the next lines of the test have
+/// opened the palette or put the cursor in the search field, and the keys that follow would
+/// then go to the terminal instead.
+fn wait_resumed_shown(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    session: SessionId,
+    stand_in: &str,
+) {
+    pump_until(cx, "the stand-in agent to run and hold the focus", |cx| {
+        screen(view, cx, session).contains(&format!("FAKE-{stand_in} "))
+            && view.read_with(cx, |wb, _| wb.focused_session()) == Some(session)
+    });
 }
 
 fn screen(view: &Entity<Workbench>, cx: &VisualTestContext, id: SessionId) -> String {
@@ -404,6 +422,7 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
         view.read_with(cx, |wb, cx| wb.sessions().read(cx).workspaces().len()),
         workspaces_before + 1
     );
+    wait_resumed_shown(&view, cx, codex.id, "codex");
 
     // ---- ⌘J: `?` searches the history inline ---------------------------------------------------
     cx.simulate_keystrokes("cmd-p");
@@ -445,6 +464,7 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
         view.read_with(cx, |wb, _| wb.picker().is_none()),
         "Enter closes ⌘J"
     );
+    wait_resumed_shown(&view, cx, omp.id, "omp");
 
     // A hit without a resume command: Enter shows it in the panel instead.
     cx.simulate_keystrokes("cmd-p");
@@ -493,6 +513,7 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
     let gone = wait_new_session(&view, cx, &before);
     assert_eq!(gone.command, ["claude", "--resume", GONE_ID]);
     assert_eq!(gone.cwd, active_root, "it starts where the window is");
+    wait_resumed_shown(&view, cx, gone.id, "claude");
     pump_until(cx, "the notice", |cx| {
         view.read_with(cx, |wb, _| {
             wb.notice()

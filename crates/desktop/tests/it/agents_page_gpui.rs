@@ -10,7 +10,7 @@ use std::time::Duration;
 use common::agents::{Node, Reporter};
 use common::chat::ChatEnv;
 use common::{TestDaemon, draw, open_with, wait_until};
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_core::SessionId;
 use hutan_desktop::sessions::Group;
 use hutan_desktop::sessions::agents_text;
@@ -56,7 +56,8 @@ fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, what: Region) {
         .read_with(cx, |wb, _| wb.region_bounds(what))
         .unwrap()
         .center();
-    cx.simulate_click(at, Modifiers::none());
+    // Press and release together: see `common::click_at`.
+    common::click_at(cx, at);
 }
 
 fn page(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<AgentsPage> {
@@ -293,9 +294,13 @@ fn the_keyboard_walks_the_rows_return_opens_and_escape_closes_the_innermost_firs
     let _ = (first, second);
 }
 
-/// Rows the page builds for one frame once everything settled (and that a second frame builds
-/// none again when nothing changed).
-fn rows_in_a_frame(page: &Entity<AgentsPage>, cx: &mut VisualTestContext) -> usize {
+/// Rows the page builds for one frame once everything settled (and that a frame builds none
+/// again when nothing changed).
+fn rows_in_a_frame(
+    view: &Entity<Workbench>,
+    page: &Entity<AgentsPage>,
+    cx: &mut VisualTestContext,
+) -> usize {
     for _ in 0..20 {
         cx.executor().advance_clock(Duration::from_millis(50));
         draw(cx);
@@ -305,16 +310,34 @@ fn rows_in_a_frame(page: &Entity<AgentsPage>, cx: &mut VisualTestContext) -> usi
     page.update(cx, |_, cx| cx.notify());
     draw(cx);
     let one_frame = page.read_with(cx, |p, _| p.rows_rendered()) - rows;
-    let builds = page.read_with(cx, |p, _| p.listing_builds());
-    for _ in 0..5 {
+    // "Nothing changed, so the rows are not built again" is about frames in which the store did
+    // not change: the daemon's last answers (a session's state, its title) can still land while
+    // the test measures, under load even after the list shows every session, and a store that
+    // changed rebuilds the rows as it should. So: draw until five frames pass without the
+    // store's revision moving, and hold the page to building nothing in those.
+    wait_until(cx, "five frames of a store that did not change", |cx| {
         draw(cx);
-    }
-    assert_eq!(
-        page.read_with(cx, |p, _| p.listing_builds()),
-        builds,
-        "nothing changed, so the rows are not built again"
-    );
+        let revision = store_revision(view, cx);
+        let builds = page.read_with(cx, |p, _| p.listing_builds());
+        for _ in 0..5 {
+            draw(cx);
+        }
+        if store_revision(view, cx) != revision {
+            return false;
+        }
+        assert_eq!(
+            page.read_with(cx, |p, _| p.listing_builds()),
+            builds,
+            "nothing changed, so the rows are not built again"
+        );
+        true
+    });
     one_frame
+}
+
+/// The revision of the store the page lists from: it moves when the daemon's state does.
+fn store_revision(view: &Entity<Workbench>, cx: &VisualTestContext) -> u64 {
+    view.read_with(cx, |wb, cx| wb.sessions().read(cx).revision())
 }
 
 #[gpui::test]
@@ -326,7 +349,7 @@ fn the_list_builds_only_the_rows_in_view_whether_there_are_none_one_or_hundreds(
     click(&view, cx, Region::Nav("agents"));
     let page = page(&view, cx);
     // None: the teaching state, no list at all, and Today has no section to draw.
-    assert_eq!(rows_in_a_frame(&page, cx), 0, "no agents, no rows");
+    assert_eq!(rows_in_a_frame(&view, &page, cx), 0, "no agents, no rows");
     assert!(view.read_with(cx, |wb, cx| {
         today(wb.sessions().read(cx)).sections().is_empty()
     }));
@@ -344,7 +367,7 @@ fn the_list_builds_only_the_rows_in_view_whether_there_are_none_one_or_hundreds(
         wait_until(cx, "every agent to be listed", move |cx| {
             listed(&p, cx).len() >= target
         });
-        built.push(rows_in_a_frame(&page, cx));
+        built.push(rows_in_a_frame(&view, &page, cx));
     }
     // A viewport holds a bounded number of rows however many sessions exist.
     assert!(built[0] >= 1, "{built:?}");
