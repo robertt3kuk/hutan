@@ -6,6 +6,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ### Changed
 - The right side hides completely like the left (rail included) from its title-bar button, which is now its only toggle (the button at the foot of the rail is gone); ⌘L and the active icon still close it to the rail; `layout.right_rail = auto|always|never`. The `⌘⇧P` hint left the status bar (right-click the bar to bring it back).
+- The context chip of a Codex chat shows the current context (Codex's `last`), not the cumulative total — it showed about twice the real fill.
 
 ## 0.3.1 — 2026-10-28
 
