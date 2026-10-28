@@ -1706,6 +1706,87 @@ async fn three_turns(more: &[&str]) -> (MockServer, Direct, SessionInfo) {
     (mock, t, created)
 }
 
+/// A direct chat has no tools, so no turn changed a file: a fork into a new worktree starts at
+/// the base, in the folder the chat works in.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_direct_chat_forks_into_a_worktree_at_the_base() {
+    let mock = MockServer::start().await;
+    mock.route("POST", OPENAI_PATH, openai_reply(&["a1"], (1, 1)));
+    let mut t = Direct::start().await;
+    let repo = std::fs::canonicalize(t.work.path()).unwrap().join("repo");
+    std::fs::create_dir_all(repo.join("sub")).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("sub/a.txt"), "alpha\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "init"]);
+    let provider = t
+        .add_provider(
+            "openai-compatible",
+            "mock",
+            Some(format!("{}/v1", mock.url())),
+            Some("m"),
+        )
+        .await;
+    let workspace = t
+        .call::<hutan_protocol::messages::WorkspaceOpened>(Request::WorkspaceOpen(
+            hutan_protocol::messages::WorkspaceOpen {
+                path: repo.clone(),
+                created_by: None,
+            },
+        ))
+        .await
+        .workspace
+        .id;
+    let mut request = t.create_request(&provider.id, None, None);
+    if let Request::ChatCreate(create) = &mut request {
+        create.cwd = repo.join("sub");
+        create.workspace_id = Some(workspace);
+    }
+    let parent = t.call::<SessionResult>(request).await.session;
+    t.send(parent.id, "q1").await;
+    t.turn_events(parent.id).await;
+    t.wait_state(parent.id, SessionState::Idle).await;
+
+    let forked: ChatForked = t
+        .call(Request::ChatFork(ChatFork {
+            where_: ForkWhere::NewWorktree,
+            branch: Some("fork/direct".into()),
+            ..match fork_request(parent.id, None, ForkMode::Exact) {
+                Request::ChatFork(fork) => fork,
+                _ => unreachable!(),
+            }
+        }))
+        .await;
+    let worktree = forked.fork.worktree.unwrap();
+    assert_eq!(worktree.files, hutan_protocol::chat::ForkFiles::Base);
+    assert_eq!(worktree.branch, "fork/direct");
+    assert_eq!(
+        std::fs::read_to_string(worktree.path.join("sub/a.txt")).unwrap(),
+        "alpha\n"
+    );
+    // The chat works in the same place of the worktree as the parent does of its checkout.
+    assert_eq!(forked.session.cwd, Some(worktree.path.join("sub")));
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_direct_chat_forks_after_any_turn_and_the_two_chats_go_on_apart() {
     let (mock, mut t, parent) = three_turns(&["f1", "a4"]).await;

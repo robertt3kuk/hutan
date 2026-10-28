@@ -11,14 +11,15 @@
 use std::path::{Path, PathBuf};
 
 use hutan_core::{ForkSupport, RestoreAction, TurnId};
-use hutan_protocol::chat::{ChatFork, ChatForked, ForkDone, ForkWhere, ForkWorktree};
+use hutan_protocol::chat::{ChatFork, ChatForked, ForkDone, ForkFiles, ForkWhere, ForkWorktree};
 use hutan_protocol::checkpoint::{CheckpointPreviewRequest, CheckpointRestore, CheckpointRestored};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::SessionClose;
 use tracing::warn;
 
 use super::{ConnHandle, Router};
-use crate::chat::ForkParent;
+use crate::chat::{ForkParent, is_gateway_agent};
+use crate::checkpoints::turns::TurnFiles;
 use crate::resources::{Actor, audit};
 use crate::worktrees::ForkWorktreeSpec;
 
@@ -76,10 +77,7 @@ impl Router {
         let mut made: Option<(PathBuf, PathBuf, String)> = None;
         match req.where_ {
             ForkWhere::NewWorktree => {
-                let files = chats
-                    .checkpoints()
-                    .turn_files(parent.id, origin.turn_id)
-                    .await?;
+                let files = self.files_of_fork(&parent, origin.turn_id).await?;
                 let name = req.title.as_deref().unwrap_or(&parent.title);
                 let spec = ForkWorktreeSpec {
                     workspace_id: parent.workspace_id,
@@ -184,6 +182,47 @@ impl Router {
         Ok(ChatForked {
             session,
             fork: done,
+        })
+    }
+
+    /// The files a new worktree for a fork at `turn` of `parent` holds. A direct chat has no
+    /// tools, so no turn changes a file: its worktree is the base as it is (the checkout of its
+    /// folder, which must be in git); an agent chat's are those of the turn's checkpoint.
+    async fn files_of_fork(
+        &self,
+        parent: &ForkParent,
+        turn: TurnId,
+    ) -> Result<TurnFiles, ErrorBody> {
+        if !is_gateway_agent(&parent.spec.agent) {
+            return self
+                .registry
+                .chats()
+                .checkpoints()
+                .turn_files(parent.id, turn)
+                .await;
+        }
+        let cwd = parent.cwd.clone();
+        let checkout = tokio::task::spawn_blocking(move || {
+            let canonical = std::fs::canonicalize(&cwd).unwrap_or(cwd);
+            crate::projects::git_root(&canonical)
+        })
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| {
+            ErrorBody::new(
+                ErrorCode::BadRequest,
+                format!("{} is not inside a git repository", parent.cwd.display()),
+            )
+        })?;
+        Ok(TurnFiles {
+            checkout,
+            common_dir: PathBuf::new(),
+            commit: None,
+            from: ForkFiles::Base,
+            checkpoint: None,
+            head: None,
+            skipped: Vec::new(),
         })
     }
 
@@ -292,5 +331,43 @@ impl Router {
             warn!(checkpoint = %id, message = %error.message, "the restore of a failed fork was not undone");
         }
         outcome.is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_branch_is_the_slug_of_the_name_and_the_turn() {
+        assert_eq!(default_branch("Try it", 3), "fork/try-it-t3");
+        assert_eq!(
+            default_branch("omp · repo (fork)", 1),
+            "fork/omp-repo-fork-t1"
+        );
+        // A name with no letters of ours still makes a valid branch.
+        assert_eq!(default_branch("日本語", 2), "fork/chat-t2");
+    }
+
+    #[test]
+    fn a_fork_works_at_the_same_place_of_the_worktree_as_its_parent_of_its_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("repo");
+        let worktree = dir.path().join("repo-wt");
+        std::fs::create_dir_all(checkout.join("crates/api")).unwrap();
+        std::fs::create_dir_all(worktree.join("crates/api")).unwrap();
+        std::fs::create_dir_all(worktree.join("other")).unwrap();
+        // The top level maps to the top level, a subfolder to the same subfolder.
+        assert_eq!(folder_in(&checkout, &checkout, &worktree), worktree);
+        assert_eq!(
+            folder_in(&checkout.join("crates/api"), &checkout, &worktree),
+            worktree.join("crates/api")
+        );
+        // A folder the worktree does not have (it is not in the turn's files) is the top level.
+        std::fs::create_dir_all(checkout.join("new")).unwrap();
+        assert_eq!(
+            folder_in(&checkout.join("new"), &checkout, &worktree),
+            worktree
+        );
     }
 }
