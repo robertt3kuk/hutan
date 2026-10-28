@@ -16,6 +16,10 @@ pub use ids::IconId;
 pub use manifest::{Declaration, parse};
 
 pub const DEFAULT: &str = "phosphor";
+/// An icon drawn at this many points or fewer takes the pack's `[small]` artwork (Phosphor Bold
+/// in the built-in pack) when it has one for the id; larger icons, and ids without one, use
+/// the `[icons]` file.
+pub const SMALL_MAX_PX: f32 = 14.0;
 const MAX_PACK_BYTES: usize = 8 * 1024 * 1024;
 pub const LICENSE: &str = include_str!("../../../../../assets/icon-themes/phosphor/LICENSE");
 const BUILTIN: &str = include_str!("../../../../../assets/icon-themes/phosphor/icon-theme.toml");
@@ -54,18 +58,62 @@ impl IconAsset {
     }
 }
 
+/// Which artwork of an id: the `[icons]` file or the `[small]` one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum Weight {
+    Regular,
+    Small,
+}
+type Slot = (Weight, IconId);
+
+impl Declaration {
+    /// Every artwork the manifest names: the `[icons]` files, then the `[small]` ones.
+    fn slots(&self) -> impl Iterator<Item = (Slot, &String)> {
+        let regular = self
+            .icons
+            .iter()
+            .map(|(&id, rel)| ((Weight::Regular, id), rel));
+        let small = self
+            .small
+            .iter()
+            .map(|(&id, rel)| ((Weight::Small, id), rel));
+        regular.chain(small)
+    }
+}
+
 #[derive(Debug)]
 pub struct ResolvedIcons {
     pub id: String,
     pub generation: u64,
     assets: Vec<Arc<IconAsset>>,
+    /// Per id, the artwork for sizes up to [`SMALL_MAX_PX`]; `None` where the pack has none.
+    small: Vec<Option<Arc<IconAsset>>>,
 }
 impl ResolvedIcons {
+    /// The regular artwork of `id`.
     pub fn get(&self, id: IconId) -> &Arc<IconAsset> {
         &self.assets[id.index()]
     }
+    /// The artwork of `id` for an icon `size` points wide: the `[small]` one at
+    /// [`SMALL_MAX_PX`] or less when the pack has it, else the regular one.
+    pub fn get_sized(&self, id: IconId, size: f32) -> &Arc<IconAsset> {
+        self.small(id)
+            .filter(|_| size <= SMALL_MAX_PX)
+            .unwrap_or_else(|| self.get(id))
+    }
+    /// The `[small]` artwork of `id`, when the pack has one.
+    pub fn small(&self, id: IconId) -> Option<&Arc<IconAsset>> {
+        self.small[id.index()].as_ref()
+    }
+    /// Every artwork: the regular files of all ids, then the small ones.
     pub fn assets(&self) -> impl Iterator<Item = &Arc<IconAsset>> {
-        self.assets.iter()
+        self.assets.iter().chain(self.small.iter().flatten())
+    }
+    fn slot(&self, (weight, id): Slot) -> Option<&Arc<IconAsset>> {
+        match weight {
+            Weight::Regular => Some(self.get(id)),
+            Weight::Small => self.small(id),
+        }
     }
 }
 
@@ -74,8 +122,8 @@ pub struct IconPack {
     pub declaration: Declaration,
     pub source: PackSource,
     pub kept_previous: bool,
-    hashes: BTreeMap<IconId, [u8; 32]>,
-    source_hashes: BTreeMap<IconId, [u8; 32]>,
+    hashes: BTreeMap<Slot, [u8; 32]>,
+    source_hashes: BTreeMap<Slot, [u8; 32]>,
     manifest_notes: Vec<SettingsError>,
 }
 #[derive(Debug, Clone)]
@@ -106,10 +154,19 @@ static BUILTIN_ICONS: LazyLock<Arc<ResolvedIcons>> = LazyLock::new(|| {
             Arc::new(IconAsset::new(DEFAULT, id, bytes))
         })
         .collect();
+    let mut small = vec![None; IconId::COUNT];
+    for (&id, rel) in &declaration.small {
+        #[allow(clippy::expect_used)]
+        let bytes = ids::embedded(rel).expect("registered built-in small SVG exists");
+        #[allow(clippy::expect_used)]
+        let bytes = svg::sanitize(bytes).expect("built-in SVG passes the untrusted SVG sanitizer");
+        small[id.index()] = Some(Arc::new(IconAsset::new(DEFAULT, id, bytes)));
+    }
     Arc::new(ResolvedIcons {
         id: DEFAULT.into(),
         generation: 0,
         assets,
+        small,
     })
 });
 
@@ -280,15 +337,37 @@ impl IconCatalog {
         if matches!(pack.source, PackSource::Builtin) {
             return (builtin(), diagnostics);
         }
-        let mut assets: Vec<_> = builtin().assets.clone();
+        let base = builtin();
+        let mut assets: Vec<_> = base.assets.clone();
+        // A sparse pack keeps Phosphor's small artwork only for the ids it does not replace: a
+        // replaced id would otherwise show Phosphor Bold at 14 px and the pack's own icon above.
+        let mut small: Vec<_> = if pack.declaration.meta.root {
+            vec![None; IconId::COUNT]
+        } else {
+            base.small.clone()
+        };
+        for &id in pack.declaration.icons.keys() {
+            small[id.index()] = None;
+        }
         let mut bytes = 0;
-        for (&id, rel) in &pack.declaration.icons {
+        for (slot, rel) in pack.declaration.slots() {
+            let (weight, id) = slot;
+            let put = |assets: &mut Vec<_>, small: &mut Vec<_>, asset: Option<Arc<IconAsset>>| {
+                match weight {
+                    Weight::Regular => {
+                        if let Some(asset) = asset {
+                            assets[id.index()] = asset;
+                        }
+                    }
+                    Weight::Small => small[id.index()] = asset,
+                }
+            };
             if let Some(asset) = previous
                 .filter(|p| p.id == selector)
-                .map(|p| p.get(id))
-                .filter(|a| pack.hashes.get(&id) == Some(&a.hash))
+                .and_then(|p| p.slot(slot))
+                .filter(|a| pack.hashes.get(&slot) == Some(&a.hash))
             {
-                assets[id.index()] = Arc::clone(asset);
+                put(&mut assets, &mut small, Some(Arc::clone(asset)));
                 continue;
             }
             let raw = self
@@ -302,7 +381,7 @@ impl IconCatalog {
                 .and_then(|(root, file)| read_asset(root, file, rel))
                 .and_then(|raw| svg::sanitize(&raw));
             let asset = match raw {
-                Ok(raw) if pack.hashes.get(&id) == Some(&Sha256::digest(&raw).into()) => {
+                Ok(raw) if pack.hashes.get(&slot) == Some(&Sha256::digest(&raw).into()) => {
                     bytes += raw.len();
                     if bytes <= MAX_PACK_BYTES {
                         Some(Arc::new(IconAsset::new(selector, id, raw)))
@@ -313,31 +392,44 @@ impl IconCatalog {
                 _ => None,
             };
             if let Some(asset) = asset {
-                assets[id.index()] = asset;
+                put(&mut assets, &mut small, Some(asset));
             } else {
-                if let Some(old) = previous.filter(|p| p.id == selector) {
-                    assets[id.index()] = Arc::clone(old.get(id));
+                if let Some(old) = previous
+                    .filter(|p| p.id == selector)
+                    .and_then(|p| p.slot(slot))
+                {
+                    put(&mut assets, &mut small, Some(Arc::clone(old)));
                 }
                 diagnostics.push(SettingsError::warning(
                     None,
-                    format!("icons.{}", id.id()),
+                    format!("{}.{}", table_of(weight), id.id()),
                     "invalid SVG edit; kept last-good entry or default icon",
                 ));
             }
         }
+        let resolved = ResolvedIcons {
+            id: selector.into(),
+            generation: self.generation,
+            assets,
+            small,
+        };
         if let Some(previous) = previous.filter(|p| {
-            p.id == selector && p.assets.iter().zip(&assets).all(|(a, b)| a.key == b.key)
+            p.id == selector
+                && p.assets()
+                    .map(|a| &a.key)
+                    .eq(resolved.assets().map(|a| &a.key))
         }) {
             return (Arc::clone(previous), diagnostics);
         }
-        (
-            Arc::new(ResolvedIcons {
-                id: selector.into(),
-                generation: self.generation,
-                assets,
-            }),
-            diagnostics,
-        )
+        (Arc::new(resolved), diagnostics)
+    }
+}
+
+/// The manifest table a [`Weight`] is read from.
+const fn table_of(weight: Weight) -> &'static str {
+    match weight {
+        Weight::Regular => "icons",
+        Weight::Small => "small",
     }
 }
 
@@ -437,7 +529,8 @@ fn load_dir(
     let mut bytes = 0;
     let mut files = BTreeSet::new();
     // Validate one pack at a time; discard raw bytes immediately for inactive packs.
-    for (&id, rel) in &pack.declaration.icons {
+    for (slot, rel) in pack.declaration.slots() {
+        let (weight, id) = slot;
         let result = read_asset(root, &file, rel).and_then(|raw| {
             if files.insert(rel) {
                 bytes += raw.len();
@@ -446,10 +539,10 @@ fn load_dir(
                 return Err("pack exceeds 8 MiB / 512 files".into());
             }
             let source_hash = Sha256::digest(&raw).into();
-            pack.source_hashes.insert(id, source_hash);
+            pack.source_hashes.insert(slot, source_hash);
             if let Some(hash) = old
-                .filter(|old| old.source_hashes.get(&id) == Some(&source_hash))
-                .and_then(|old| old.hashes.get(&id))
+                .filter(|old| old.source_hashes.get(&slot) == Some(&source_hash))
+                .and_then(|old| old.hashes.get(&slot))
             {
                 Ok(*hash)
             } else {
@@ -458,11 +551,11 @@ fn load_dir(
         });
         match result {
             Ok(hash) => {
-                pack.hashes.insert(id, hash);
+                pack.hashes.insert(slot, hash);
             }
             Err(why) => diagnostics.push(SettingsError::warning(
                 Some(&file),
-                format!("icons.{}", id.id()),
+                format!("{}.{}", table_of(weight), id.id()),
                 format!(
                     "{why}; kept last-good entry when active, otherwise using default icon for this id"
                 ),
@@ -599,7 +692,8 @@ pub fn schema() -> serde_json::Value {
             "appearance":{"enum":["dark","light"]},
             "root":{"type":"boolean"},
             "extends":{"const":"builtin:phosphor"},
-            "icons":{"type":"object","maxProperties":512,"properties":properties,"additionalProperties":true}
+            "icons":{"type":"object","maxProperties":512,"properties":properties,"additionalProperties":true},
+            "small":{"type":"object","description":"Optional artwork for icons drawn at 14 points or less; an id without an entry uses its icons file at every size","maxProperties":512,"properties":properties,"additionalProperties":true}
         },
         "oneOf":[
             {"properties":{"root":{"const":true}},"required":["root"],"not":{"required":["extends"]}},

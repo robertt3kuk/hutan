@@ -11,6 +11,8 @@ pub struct Declaration {
     pub meta: Meta,
     pub appearance: Option<SystemAppearance>,
     pub icons: BTreeMap<IconId, String>,
+    /// `[small]`: the artwork for sizes up to [`super::SMALL_MAX_PX`], by id; may be partial.
+    pub small: BTreeMap<IconId, String>,
     pub source_hash: u64,
     /// `[provenance]` names a `source_format`: converted from another tool's files.
     pub imported: bool,
@@ -54,43 +56,21 @@ pub fn parse(text: &str, file: Option<&Path>) -> (Option<Declaration>, Vec<Setti
     if icons.len() > 512 {
         return fail("at most 512 icon entries".to_owned());
     }
-    let mut entries = BTreeMap::new();
-    for (key, value) in icons {
-        let key_path = format!("icons.{key}");
-        if !valid_token_id(&key) {
-            diagnostics.push(SettingsError::error(
-                file,
-                key_path,
-                "invalid semantic id grammar",
-            ));
-            continue;
-        }
-        let Some(id) = IconId::from_id(&key) else {
-            diagnostics.push(SettingsError::warning(
-                file,
-                key_path,
-                if key == "brand.menu-bar" {
-                    "native menu-bar identity is not themeable"
-                } else {
-                    "unknown icon id ignored"
-                },
-            ));
-            continue;
-        };
-        match value.as_str() {
-            Some(path) => {
-                entries.insert(id, path.to_owned());
+    let entries = entries_of("icons", icons, file, &mut diagnostics);
+    // `[small]`: optional artwork for icons drawn at SMALL_MAX_PX or less. Same grammar as
+    // `[icons]`; an id without an entry draws its `[icons]` file at every size.
+    let small = match table.remove("small") {
+        None => BTreeMap::new(),
+        Some(toml::Value::Table(small)) => {
+            if small.len() > 512 {
+                return fail("at most 512 [small] entries".to_owned());
             }
-            None => {
-                entries.insert(id, String::new());
-                diagnostics.push(SettingsError::error(
-                    file,
-                    key_path,
-                    "expected a relative SVG path; kept last-good or default icon for this id",
-                ));
-            }
+            entries_of("small", small, file, &mut diagnostics)
         }
-    }
+        Some(_) => {
+            return fail("small must be a flat table of quoted semantic ids".to_owned());
+        }
+    };
     if root && entries.len() != IconId::COUNT {
         return fail("root icon pack must cover every registered id".to_owned());
     }
@@ -138,16 +118,65 @@ pub fn parse(text: &str, file: Option<&Path>) -> (Option<Declaration>, Vec<Setti
             meta,
             appearance,
             icons: entries,
+            small,
             source_hash: manifest::hash_text(text),
             imported,
         }
     });
     // Per-id errors may fall back; structural errors from the shared parser reject the pack.
-    if diagnostics
-        .iter()
-        .any(|d| d.severity == Severity::Error && !d.key_path.starts_with("icons."))
-    {
+    if diagnostics.iter().any(|d| {
+        d.severity == Severity::Error
+            && !(d.key_path.starts_with("icons.") || d.key_path.starts_with("small."))
+    }) {
         return (None, diagnostics);
     }
     (declaration, diagnostics)
+}
+
+/// The ids of one table (`[icons]` or `[small]`, named by `table`) with their relative SVG paths.
+/// A bad entry is a diagnostic under `<table>.<id>` and an empty path (the id falls back).
+fn entries_of(
+    table: &str,
+    values: toml::Table,
+    file: Option<&Path>,
+    diagnostics: &mut Vec<SettingsError>,
+) -> BTreeMap<IconId, String> {
+    let mut entries = BTreeMap::new();
+    for (key, value) in values {
+        let key_path = format!("{table}.{key}");
+        if !valid_token_id(&key) {
+            diagnostics.push(SettingsError::error(
+                file,
+                key_path,
+                "invalid semantic id grammar",
+            ));
+            continue;
+        }
+        let Some(id) = IconId::from_id(&key) else {
+            diagnostics.push(SettingsError::warning(
+                file,
+                key_path,
+                if key == "brand.menu-bar" {
+                    "native menu-bar identity is not themeable"
+                } else {
+                    "unknown icon id ignored"
+                },
+            ));
+            continue;
+        };
+        match value.as_str() {
+            Some(path) => {
+                entries.insert(id, path.to_owned());
+            }
+            None => {
+                entries.insert(id, String::new());
+                diagnostics.push(SettingsError::error(
+                    file,
+                    key_path,
+                    "expected a relative SVG path; kept last-good or default icon for this id",
+                ));
+            }
+        }
+    }
+    entries
 }

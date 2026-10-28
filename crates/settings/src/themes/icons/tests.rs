@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::Severity;
 use crate::themes::{SystemAppearance, ThemeRegistry};
 use std::fs;
 
@@ -289,4 +290,153 @@ fn offline_schema_is_generated_from_the_runtime_registry() {
     ))
     .unwrap();
     assert_eq!(committed, schema());
+}
+
+#[test]
+fn builtin_small_artwork_is_phosphor_bold_and_chosen_by_size() {
+    let base = builtin();
+    let (declaration, _) = parse(BUILTIN, None);
+    let declaration = declaration.unwrap();
+    assert!(
+        declaration.small.len() > 100,
+        "the Phosphor-drawn ids have a Bold file"
+    );
+    for (&id, rel) in &declaration.small {
+        assert!(rel.starts_with("bold/"), "{}: {rel}", id.id());
+        let small = base.small(id).expect("a declared small entry resolves");
+        assert!(svg::sanitize(&small.bytes).is_ok(), "{}", id.id());
+        assert_ne!(
+            small.bytes,
+            base.get(id).bytes,
+            "{}: small differs from regular",
+            id.id()
+        );
+    }
+    // The threshold is inclusive: 14 points is small, 15 is not.
+    let id = IconId::NavProjectFolder;
+    let (regular, small) = (base.get(id), base.small(id).unwrap());
+    assert!(Arc::ptr_eq(base.get_sized(id, 12.0), small));
+    assert!(Arc::ptr_eq(base.get_sized(id, SMALL_MAX_PX), small));
+    assert!(Arc::ptr_eq(base.get_sized(id, SMALL_MAX_PX + 0.5), regular));
+    assert!(Arc::ptr_eq(base.get_sized(id, 16.0), regular));
+    // Bold's stroke is heavier: its folder outline path is not Regular's.
+    assert_ne!(small.key, regular.key);
+    // The harness monograms are our own filled glyphs: no Bold twin, one artwork at every size.
+    for id in [
+        IconId::HarnessOmp,
+        IconId::HarnessClaude,
+        IconId::HarnessCodex,
+    ] {
+        assert!(base.small(id).is_none(), "{}", id.id());
+        assert!(Arc::ptr_eq(base.get_sized(id, 12.0), base.get(id)));
+    }
+}
+
+#[test]
+fn a_pack_that_replaces_an_id_without_small_artwork_shows_it_at_every_size() {
+    let dir = tempfile::tempdir().unwrap();
+    example(dir.path(), "");
+    let registry = ThemeRegistry::new(dir.path());
+    let (selected, notes) = registry.select_icons("canopy-lines", SystemAppearance::Dark);
+    assert!(notes.is_empty(), "{notes:?}");
+    let base = builtin();
+    // `nav.search` is replaced: no Phosphor Bold under the pack's own icon at 12 px.
+    assert!(selected.small(IconId::NavSearch).is_none());
+    assert!(Arc::ptr_eq(
+        selected.get_sized(IconId::NavSearch, 12.0),
+        selected.get(IconId::NavSearch)
+    ));
+    // An id it inherits keeps the built-in pack's small artwork, and so no key changes.
+    assert_eq!(
+        selected.small(IconId::VcsBranch).map(|a| &a.key),
+        base.small(IconId::VcsBranch).map(|a| &a.key)
+    );
+}
+
+#[test]
+fn a_packs_small_table_is_used_up_to_fourteen_points_and_falls_back_per_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let pack = example(dir.path(), "");
+    fs::write(
+        pack.join("icons/tiny.svg"),
+        SAFE.replace("M6 6 18 18M18 6 6 18", "M3 3L9 9"),
+    )
+    .unwrap();
+    let file = pack.join("icon-theme.toml");
+    let manifest = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        format!(
+            "{manifest}\n[small]\n\"action.close\" = \"icons/tiny.svg\"\n\"nav.search\" = \"icons/gone.svg\"\n\"future.icon\" = \"x.svg\"\n"
+        ),
+    )
+    .unwrap();
+    let registry = ThemeRegistry::new(dir.path());
+    let diagnostics = &registry.icon_snapshot().diagnostics;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.key_path == "small.nav.search" && d.severity == Severity::Warning),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.key_path == "small.future.icon"),
+        "{diagnostics:?}"
+    );
+    let (selected, _) = registry.select_icons("canopy-lines", SystemAppearance::Dark);
+    let close = IconId::ActionClose;
+    assert!(
+        std::str::from_utf8(&selected.get_sized(close, 12.0).bytes)
+            .unwrap()
+            .contains("M3 3L9 9")
+    );
+    assert!(
+        std::str::from_utf8(&selected.get_sized(close, 16.0).bytes)
+            .unwrap()
+            .contains("M6 6 18 18M18 6 6 18")
+    );
+    // The small file of `nav.search` is missing: its regular file serves every size.
+    assert!(selected.small(IconId::NavSearch).is_none());
+    assert!(Arc::ptr_eq(
+        selected.get_sized(IconId::NavSearch, 12.0),
+        selected.get(IconId::NavSearch)
+    ));
+
+    // An edit to the small file changes the served artwork and its key.
+    fs::write(
+        pack.join("icons/tiny.svg"),
+        SAFE.replace("M6 6 18 18M18 6 6 18", "M4 4L10 10"),
+    )
+    .unwrap();
+    assert!(registry.rescan());
+    let (next, _) = registry.select_icons("canopy-lines", SystemAppearance::Dark);
+    assert_ne!(
+        selected.small(close).unwrap().key,
+        next.small(close).unwrap().key
+    );
+    assert_eq!(selected.get(close).key, next.get(close).key);
+}
+
+#[test]
+fn a_root_pack_without_small_artwork_has_none_at_any_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let pack = dir.path().join("icon-themes/flat");
+    fs::create_dir_all(&pack).unwrap();
+    fs::write(pack.join("a.svg"), SAFE).unwrap();
+    let mut text = String::from(
+        "schema_version = 1\nid = \"flat\"\nname = \"Flat\"\nauthors = [\"t\"]\nlicense = \"MIT\"\nroot = true\n\n[icons]\n",
+    );
+    for id in IconId::ALL {
+        text.push_str(&format!("\"{}\" = \"a.svg\"\n", id.id()));
+    }
+    fs::write(pack.join("icon-theme.toml"), text).unwrap();
+    let registry = ThemeRegistry::new(dir.path());
+    let (selected, notes) = registry.select_icons("flat", SystemAppearance::Dark);
+    assert!(notes.is_empty(), "{notes:?}");
+    for &id in IconId::ALL {
+        assert!(selected.small(id).is_none(), "{}", id.id());
+    }
+    assert_eq!(selected.assets().count(), IconId::COUNT);
 }

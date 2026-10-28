@@ -6,6 +6,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use gpui::{AssetSource, Hsla, ParentElement as _, SharedString, Styled as _, canvas, div, px};
 pub use hutan_settings::themes::icons::IconId as Icon;
+pub use hutan_settings::themes::icons::SMALL_MAX_PX;
 use hutan_settings::themes::icons::{self, ResolvedIcons};
 
 struct Active {
@@ -27,8 +28,8 @@ pub fn install(next: Arc<ResolvedIcons>) -> bool {
     if active
         .current
         .assets()
-        .zip(next.assets())
-        .all(|(a, b)| a.key == b.key)
+        .map(|a| &a.key)
+        .eq(next.assets().map(|a| &a.key))
     {
         return false;
     }
@@ -63,7 +64,9 @@ impl AssetSource for Assets {
     }
 }
 
-/// Fixed control geometry and location-supplied color; packs cannot change hit targets.
+/// Fixed control geometry and location-supplied color; packs cannot change hit targets. An icon
+/// of [`SMALL_MAX_PX`] points or less draws the pack's `[small]` artwork (Phosphor Bold in the
+/// built-in pack) where it has one, a larger one the regular artwork.
 pub fn icon(id: Icon, size: f32, color: Hsla) -> gpui::Div {
     element(id, size).text_color(color)
 }
@@ -76,7 +79,7 @@ pub fn sized(id: Icon, size: f32) -> gpui::Div {
 
 fn element(id: Icon, size: f32) -> gpui::Div {
     let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
-    let asset = Arc::clone(active.current.get(id));
+    let asset = Arc::clone(active.current.get_sized(id, size));
     drop(active);
     element_of(asset, size)
 }
@@ -85,7 +88,7 @@ fn element(id: Icon, size: f32) -> gpui::Div {
 /// installed, so nothing else in the app changes. The artwork is the pack's validated bytes,
 /// painted through the same bounded raster cache as every icon.
 pub fn icon_in(pack: &ResolvedIcons, id: Icon, size: f32, color: Hsla) -> gpui::Div {
-    element_of(Arc::clone(pack.get(id)), size).text_color(color)
+    element_of(Arc::clone(pack.get_sized(id, size)), size).text_color(color)
 }
 
 fn element_of(asset: Arc<icons::IconAsset>, size: f32) -> gpui::Div {
@@ -121,6 +124,58 @@ mod tests {
         }
         assert!(Assets.load("file:///etc/passwd").unwrap().is_none());
         assert!(Assets.load("icons/search.svg").unwrap().is_none());
+    }
+
+    #[test]
+    fn every_small_asset_is_served_and_tintable() {
+        let builtin = icons::builtin();
+        let mut small = 0;
+        for &id in Icon::ALL {
+            let Some(asset) = builtin.small(id) else {
+                continue;
+            };
+            small += 1;
+            let bytes = Assets.load(&asset.key).unwrap().unwrap();
+            let text = std::str::from_utf8(&bytes).unwrap();
+            assert!(
+                text.contains("<svg") && text.contains("currentColor"),
+                "{}",
+                id.id()
+            );
+        }
+        assert!(small > 100);
+    }
+
+    #[test]
+    fn a_pack_that_changes_only_a_small_artwork_is_a_new_snapshot() {
+        use hutan_settings::themes::{SystemAppearance, ThemeRegistry};
+        let dir = tempfile::tempdir().unwrap();
+        let pack = dir.path().join("icon-themes/small-only");
+        std::fs::create_dir_all(&pack).unwrap();
+        std::fs::write(
+            pack.join("icon-theme.toml"),
+            "schema_version = 1\nid = \"small-only\"\nname = \"S\"\nauthors = [\"t\"]\nlicense = \"MIT\"\nextends = \"builtin:phosphor\"\n\n[icons]\n\n[small]\n\"action.close\" = \"c.svg\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pack.join("c.svg"),
+            "<svg viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M1 1L20 20\"/></svg>",
+        )
+        .unwrap();
+        let registry = ThemeRegistry::new(dir.path());
+        let (resolved, notes) = registry.select_icons("small-only", SystemAppearance::Dark);
+        assert!(notes.is_empty(), "{notes:?}");
+        // Regular artwork is Phosphor's; only the small one differs from the built-in pack.
+        assert_eq!(
+            resolved.get(Icon::ActionClose).key,
+            icons::builtin().get(Icon::ActionClose).key
+        );
+        assert!(
+            install(Arc::clone(&resolved)),
+            "a changed small asset is a change"
+        );
+        assert!(!install(resolved), "the same pack twice is not");
+        assert!(install(icons::builtin()), "and back");
     }
 
     #[test]

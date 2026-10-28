@@ -246,278 +246,194 @@ catalog! {
     SettingsExperimental => ("settings.experimental", "flask.svg"),
 }
 
+/// The artwork of the built-in pack by the path `icon-theme.toml` names it: the Regular files of
+/// `assets/icon-themes/phosphor` and the Bold ones of its `bold/` folder (the `[small]` table).
 pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
-    match path {
-        "file-rs.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-rs.svg"
-        )),
-        "file-js.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-js.svg"
-        )),
-        "file-ts.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-ts.svg"
-        )),
-        "file-py.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-py.svg"
-        )),
-        "file-md.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-md.svg"
-        )),
-        "file-html.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-html.svg"
-        )),
-        "file-css.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-css.svg"
-        )),
-        "brackets-curly.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/brackets-curly.svg"
-        )),
-        "file-image.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-image.svg"
-        )),
-        "file-zip.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-zip.svg"
-        )),
-        "file-pdf.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-pdf.svg"
-        )),
-        "file-lock.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-lock.svg"
-        )),
-        "file-sql.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-sql.svg"
-        )),
-        "arrows-in-line-vertical.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/arrows-in-line-vertical.svg"
-        )),
-        "file-plus.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-plus.svg"
-        )),
-        "folder-plus.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/folder-plus.svg"
-        )),
-        "arrow-clockwise.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/arrow-clockwise.svg"
-        )),
-        "arrow-up.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/arrow-up.svg"
-        )),
-        "arrow-square-out.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/arrow-square-out.svg"
-        )),
-        "arrows-down-up.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/arrows-down-up.svg"
-        )),
-        "arrows-in.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/arrows-in.svg"
-        )),
-        "arrows-out.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/arrows-out.svg"
-        )),
-        "bell-slash.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/bell-slash.svg"
-        )),
-        "bell.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/bell.svg"
-        )),
-        "brain.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/brain.svg"
-        )),
-        "caret-down.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/caret-down.svg"
-        )),
-        "caret-left.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/caret-left.svg"
-        )),
-        "caret-right.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/caret-right.svg"
-        )),
-        "caret-up.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/caret-up.svg"
-        )),
-        "chat-circle.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/chat-circle.svg"
-        )),
-        "check-circle.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/check-circle.svg"
-        )),
-        "circle-notch.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/circle-notch.svg"
-        )),
-        "circle.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/circle.svg"
-        )),
-        "clock-counter-clockwise.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/clock-counter-clockwise.svg"
-        )),
-        "command.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/command.svg"
-        )),
-        "copy.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/copy.svg"
-        )),
-        "dots-three.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/dots-three.svg"
-        )),
-        "eye.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/eye.svg"
-        )),
-        "file-code.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-code.svg"
-        )),
-        "file-text.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/file-text.svg"
-        )),
-        "folder-open.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/folder-open.svg"
-        )),
-        "folder.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/folder.svg"
-        )),
-        "folders.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/folders.svg"
-        )),
-        "funnel.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/funnel.svg"
-        )),
-        "gauge.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/gauge.svg"
-        )),
-        "gear-six.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/gear-six.svg"
-        )),
-        "git-branch.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/git-branch.svg"
-        )),
-        "git-diff.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/git-diff.svg"
-        )),
-        "hand-palm.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/hand-palm.svg"
-        )),
-        "house.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/house.svg"
-        )),
-        "harness-omp.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/harness-omp.svg"
-        )),
-        "harness-claude.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/harness-claude.svg"
-        )),
-        "harness-codex.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/harness-codex.svg"
-        )),
-        "hutan.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/hutan.svg"
-        )),
-        "info.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/info.svg"
-        )),
-        "lightning.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/lightning.svg"
-        )),
-        "list-checks.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/list-checks.svg"
-        )),
-        "magnifying-glass.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/magnifying-glass.svg"
-        )),
-        "pencil.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/pencil.svg"
-        )),
-        "play.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/play.svg"
-        )),
-        "plug.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/plug.svg"
-        )),
-        "plugs.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/plugs.svg"
-        )),
-        "plus.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/plus.svg"
-        )),
-        "prohibit.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/prohibit.svg"
-        )),
-        "push-pin.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/push-pin.svg"
-        )),
-        "question.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/question.svg"
-        )),
-        "robot.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/robot.svg"
-        )),
-        "rows.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/rows.svg"
-        )),
-        "sidebar-right.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/sidebar-right.svg"
-        )),
-        "sidebar-simple.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/sidebar-simple.svg"
-        )),
-        "sparkle.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/sparkle.svg"
-        )),
-        "stack.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/stack.svg"
-        )),
-        "stop-circle.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/stop-circle.svg"
-        )),
-        "stop-fill.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/stop-fill.svg"
-        )),
-        "sun.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/sun.svg"
-        )),
-        "terminal.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/terminal.svg"
-        )),
-        "trash.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/trash.svg"
-        )),
-        "tree-structure.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/tree-structure.svg"
-        )),
-        "warning.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/warning.svg"
-        )),
-        "x-circle.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/x-circle.svg"
-        )),
-        "x.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/x.svg"
-        )),
-        "palette.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/palette.svg"
-        )),
-        "database.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/database.svg"
-        )),
-        "keyboard.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/keyboard.svg"
-        )),
-        "layout.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/layout.svg"
-        )),
-        "user.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/user.svg"
-        )),
-        "cpu.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/cpu.svg"
-        )),
-        "shield-check.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/shield-check.svg"
-        )),
-        "wrench.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/wrench.svg"
-        )),
-        "flask.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/flask.svg"
-        )),
-        _ => None,
+    macro_rules! files {
+        ($($file:literal),+ $(,)?) => {
+            match path {
+                $($file => Some(include_bytes!(concat!(
+                    "../../../../../assets/icon-themes/phosphor/",
+                    $file
+                )) as &'static [u8]),)+
+                _ => None,
+            }
+        };
     }
+    files!(
+        "arrow-clockwise.svg",
+        "arrow-square-out.svg",
+        "arrow-up.svg",
+        "arrows-down-up.svg",
+        "arrows-in-line-vertical.svg",
+        "arrows-in.svg",
+        "arrows-out.svg",
+        "bell-slash.svg",
+        "bell.svg",
+        "brackets-curly.svg",
+        "brain.svg",
+        "caret-down.svg",
+        "caret-left.svg",
+        "caret-right.svg",
+        "caret-up.svg",
+        "chat-circle.svg",
+        "check-circle.svg",
+        "circle-notch.svg",
+        "circle.svg",
+        "clock-counter-clockwise.svg",
+        "command.svg",
+        "copy.svg",
+        "cpu.svg",
+        "database.svg",
+        "dots-three.svg",
+        "eye.svg",
+        "file-code.svg",
+        "file-css.svg",
+        "file-html.svg",
+        "file-image.svg",
+        "file-js.svg",
+        "file-lock.svg",
+        "file-md.svg",
+        "file-pdf.svg",
+        "file-plus.svg",
+        "file-py.svg",
+        "file-rs.svg",
+        "file-sql.svg",
+        "file-text.svg",
+        "file-ts.svg",
+        "file-zip.svg",
+        "flask.svg",
+        "folder-open.svg",
+        "folder-plus.svg",
+        "folder.svg",
+        "folders.svg",
+        "funnel.svg",
+        "gauge.svg",
+        "gear-six.svg",
+        "git-branch.svg",
+        "git-diff.svg",
+        "hand-palm.svg",
+        "harness-claude.svg",
+        "harness-codex.svg",
+        "harness-omp.svg",
+        "house.svg",
+        "hutan.svg",
+        "info.svg",
+        "keyboard.svg",
+        "layout.svg",
+        "lightning.svg",
+        "list-checks.svg",
+        "magnifying-glass.svg",
+        "palette.svg",
+        "pencil.svg",
+        "play.svg",
+        "plug.svg",
+        "plugs.svg",
+        "plus.svg",
+        "prohibit.svg",
+        "push-pin.svg",
+        "question.svg",
+        "robot.svg",
+        "rows.svg",
+        "shield-check.svg",
+        "sidebar-right.svg",
+        "sidebar-simple.svg",
+        "sparkle.svg",
+        "stack.svg",
+        "stop-circle.svg",
+        "stop-fill.svg",
+        "sun.svg",
+        "terminal.svg",
+        "trash.svg",
+        "tree-structure.svg",
+        "user.svg",
+        "warning.svg",
+        "wrench.svg",
+        "x-circle.svg",
+        "x.svg",
+        "bold/arrow-clockwise.svg",
+        "bold/arrow-square-out.svg",
+        "bold/arrow-up.svg",
+        "bold/arrows-down-up.svg",
+        "bold/arrows-in-line-vertical.svg",
+        "bold/arrows-in.svg",
+        "bold/arrows-out.svg",
+        "bold/bell-slash.svg",
+        "bold/bell.svg",
+        "bold/brackets-curly.svg",
+        "bold/brain.svg",
+        "bold/caret-down.svg",
+        "bold/caret-left.svg",
+        "bold/caret-right.svg",
+        "bold/caret-up.svg",
+        "bold/chat-circle.svg",
+        "bold/check-circle.svg",
+        "bold/circle-notch.svg",
+        "bold/circle.svg",
+        "bold/clock-counter-clockwise.svg",
+        "bold/command.svg",
+        "bold/copy.svg",
+        "bold/cpu.svg",
+        "bold/database.svg",
+        "bold/dots-three.svg",
+        "bold/eye.svg",
+        "bold/file-code.svg",
+        "bold/file-css.svg",
+        "bold/file-html.svg",
+        "bold/file-image.svg",
+        "bold/file-js.svg",
+        "bold/file-lock.svg",
+        "bold/file-md.svg",
+        "bold/file-pdf.svg",
+        "bold/file-plus.svg",
+        "bold/file-py.svg",
+        "bold/file-rs.svg",
+        "bold/file-sql.svg",
+        "bold/file-text.svg",
+        "bold/file-ts.svg",
+        "bold/file-zip.svg",
+        "bold/flask.svg",
+        "bold/folder-open.svg",
+        "bold/folder-plus.svg",
+        "bold/folder.svg",
+        "bold/folders.svg",
+        "bold/funnel.svg",
+        "bold/gauge.svg",
+        "bold/gear-six.svg",
+        "bold/git-branch.svg",
+        "bold/git-diff.svg",
+        "bold/hand-palm.svg",
+        "bold/house.svg",
+        "bold/info.svg",
+        "bold/keyboard.svg",
+        "bold/layout.svg",
+        "bold/lightning.svg",
+        "bold/list-checks.svg",
+        "bold/magnifying-glass.svg",
+        "bold/palette.svg",
+        "bold/pencil.svg",
+        "bold/play.svg",
+        "bold/plug.svg",
+        "bold/plugs.svg",
+        "bold/plus.svg",
+        "bold/prohibit.svg",
+        "bold/push-pin.svg",
+        "bold/question.svg",
+        "bold/robot.svg",
+        "bold/rows.svg",
+        "bold/shield-check.svg",
+        "bold/sidebar-simple.svg",
+        "bold/sparkle.svg",
+        "bold/stack.svg",
+        "bold/stop-circle.svg",
+        "bold/sun.svg",
+        "bold/terminal.svg",
+        "bold/trash.svg",
+        "bold/tree-structure.svg",
+        "bold/user.svg",
+        "bold/warning.svg",
+        "bold/wrench.svg",
+        "bold/x-circle.svg",
+        "bold/x.svg",
+    )
 }

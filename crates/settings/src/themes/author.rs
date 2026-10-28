@@ -978,7 +978,12 @@ fn export_icon(
     let mut assets: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let manifest_text = match &pack.source {
         PackSource::Builtin => {
-            for rel in pack.declaration.icons.values() {
+            for rel in pack
+                .declaration
+                .icons
+                .values()
+                .chain(pack.declaration.small.values())
+            {
                 if !assets.contains_key(rel) {
                     let bytes = icons::builtin_asset(rel)
                         .ok_or_else(|| failed(format!("embedded artwork `{rel}` is missing")))?;
@@ -988,7 +993,12 @@ fn export_icon(
             icons::builtin_manifest().to_owned()
         }
         PackSource::User(manifest) => {
-            for rel in pack.declaration.icons.values() {
+            for rel in pack
+                .declaration
+                .icons
+                .values()
+                .chain(pack.declaration.small.values())
+            {
                 if !assets.contains_key(rel) {
                     assets.insert(
                         rel.clone(),
@@ -1044,6 +1054,29 @@ fn export_icon(
             mapping.insert(icon.id(), target);
             used_fallback = true;
         }
+        // `[small]`: the pack's own entries, plus Phosphor's for the ids the pack does not
+        // replace (a replaced id would show Phosphor Bold at 14 px next to the pack's own icon).
+        let embedded_small = embedded.get("small").and_then(toml::Value::as_table);
+        let mut small_mapping: BTreeMap<&'static str, String> = BTreeMap::new();
+        for icon in IconId::ALL {
+            if let Some(rel) = pack.declaration.small.get(icon) {
+                small_mapping.insert(icon.id(), rel.clone());
+            } else if !pack.declaration.icons.contains_key(icon)
+                && !pack.declaration.meta.root
+                && let Some(rel) = embedded_small
+                    .and_then(|t| t.get(icon.id()))
+                    .and_then(toml::Value::as_str)
+            {
+                let target = format!("{fallback_dir}/{rel}");
+                if !assets.contains_key(&target) {
+                    let bytes = icons::builtin_asset(rel)
+                        .ok_or_else(|| failed(format!("embedded artwork `{rel}` is missing")))?;
+                    assets.insert(target.clone(), bytes.to_vec());
+                }
+                small_mapping.insert(icon.id(), target);
+                used_fallback = true;
+            }
+        }
         let mut text = String::new();
         let _ = writeln!(
             text,
@@ -1083,6 +1116,12 @@ fn export_icon(
         let _ = writeln!(text, "root = true\n\n[icons]");
         for (icon, rel) in &mapping {
             let _ = writeln!(text, "{} = {}", quoted(icon), quoted(rel));
+        }
+        if !small_mapping.is_empty() {
+            let _ = writeln!(text, "\n[small]");
+            for (icon, rel) in &small_mapping {
+                let _ = writeln!(text, "{} = {}", quoted(icon), quoted(rel));
+            }
         }
         files.push(("icon-theme.toml".to_owned(), text.into_bytes()));
         if used_fallback {
