@@ -478,7 +478,7 @@ fn quitting_still_asks_when_start_at_login_is_off_or_not_approved(cx: &mut TestA
     dispatch(cx, actions::Quit);
     assert_eq!(
         view.read_with(cx, |wb, _| wb.modal().map(|m| m.title.to_string())),
-        Some("Quit Hutan and stop 1 live session?".to_owned()),
+        Some("Quit Hutan?".to_owned()),
         "off: the usual question"
     );
     view.update_in(cx, |wb, window, cx| wb.close_modal(window, cx));
@@ -492,7 +492,7 @@ fn quitting_still_asks_when_start_at_login_is_off_or_not_approved(cx: &mut TestA
     dispatch(cx, actions::Quit);
     assert_eq!(
         view.read_with(cx, |wb, _| wb.modal().map(|m| m.title.to_string())),
-        Some("Quit Hutan and stop 1 live session?".to_owned()),
+        Some("Quit Hutan?".to_owned()),
         "not approved: nothing launchd-owned to leave"
     );
     assert!(!view.read_with(cx, |wb, _| wb.quitting()));
@@ -1235,7 +1235,7 @@ fn closing_the_last_window_quits_by_default_like_command_q(cx: &mut TestAppConte
     );
     assert_eq!(
         view.read_with(cx, |wb, _| wb.modal().map(|m| m.title.to_string())),
-        Some("Quit Hutan and stop 1 live session?".to_owned()),
+        Some("Quit Hutan?".to_owned()),
         "the same question as for ⌘Q"
     );
     assert!(
@@ -1354,7 +1354,7 @@ fn quitting_from_the_menu_bar_with_live_sessions_shows_the_window_and_asks(
     );
     assert_eq!(
         view.read_with(cx, |wb, _| wb.modal().map(|m| m.title.to_string())),
-        Some("Quit Hutan and stop 1 live session?".to_owned())
+        Some("Quit Hutan?".to_owned())
     );
     assert!(daemon.session(session.id).state.is_live());
 }
@@ -1470,7 +1470,7 @@ fn an_old_on_quit_key_is_ignored_with_a_diagnostic(cx: &mut TestAppContext) {
     dispatch(cx, actions::Quit);
     assert_eq!(
         view.read_with(cx, |wb, _| wb.modal().map(|m| m.title.to_string())),
-        Some("Quit Hutan and stop 1 live session?".to_owned())
+        Some("Quit Hutan?".to_owned())
     );
 }
 

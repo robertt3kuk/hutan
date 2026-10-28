@@ -794,6 +794,7 @@ impl Workbench {
             Modal {
                 title: words::CONFIRM_ON_TITLE.into(),
                 message: words::confirm_on_message(remembered).into(),
+                rows: Vec::new(),
                 confirm_label: words::CONFIRM_ON_FORGET.into(),
                 input: None,
                 secure_input: false,

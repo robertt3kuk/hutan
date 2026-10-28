@@ -19,7 +19,7 @@ use serde_json::Value;
 use tokio::sync::watch;
 
 use super::actions::daemon;
-use super::modal::{Modal, ModalChoice};
+use super::modal::{Modal, ModalChoice, ModalRow};
 use super::palette::Candidate;
 use super::panels::{
     CHIP_HINT, ChipKind, ConnectionChip, START_HINT, StatusTone, chip_of_connection,
@@ -27,6 +27,7 @@ use super::panels::{
 };
 use super::view::Workbench;
 use crate::app::DaemonMenu;
+use crate::sessions::Attention;
 use crate::settings::{AppSettings, LastWindowClose};
 
 /// Longest wait for a stopping daemon to remove its socket.
@@ -863,36 +864,76 @@ impl Workbench {
         self.open_quit_dialog(window, cx);
     }
 
-    /// "Quit Hutan and stop N sessions?": Stop Sessions & Quit, Keep Running in Background
-    /// (turns `app.keep_running` on, so the daemon stays; no login item), Cancel.
+    /// "Quit Hutan?" with the live sessions listed: *Keep running* (primary: turns
+    /// `app.keep_running` on, so the daemon stays; no login item), *Stop sessions and quit*
+    /// (the danger option, never the Return default) and Cancel.
     fn open_quit_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Quit from the menu bar item or the Dock while the window is hidden, minimised or behind
         // other apps: the question is in that window, so the window comes forward with it.
         self.bring_forward(window, cx);
-        let live = self.live_sessions(cx);
+        let rows = self.live_session_rows(cx);
+        let (is, them) = if rows.len() == 1 {
+            ("session is", "it")
+        } else {
+            ("sessions are", "them")
+        };
         let modal = Modal {
-            title: SharedString::from(format!("Quit Hutan and stop {}?", sessions_phrase(live))),
-            message: SharedString::from(
-                "The daemon stops with Hutan, and so do its sessions. To leave them running, \
-                 keep the daemon running in the background: Hutan turns on \"Keep daemon \
-                 running after Hutan quits\" and quits. That does not start it at login.",
-            ),
-            confirm_label: "Stop sessions and quit".into(),
+            title: "Quit Hutan?".into(),
+            message: SharedString::from(format!(
+                "{} {is} running. Keep {them} running in the background, or stop {them}. \
+                 Keep running turns on \"Keep daemon running after Hutan quits\".",
+                rows.len()
+            )),
+            rows,
+            confirm_label: "Keep running".into(),
             input: None,
             secure_input: false,
-            destructive: true,
+            destructive: false,
             choice: Some(ModalChoice {
-                destructive: false,
-                label: "Keep running in background".into(),
-                run: Rc::new(|this, _, _, cx| this.keep_running_in_background(cx)),
+                destructive: true,
+                label: "Stop sessions and quit".into(),
+                run: Rc::new(|this, _, window, cx| this.shutdown_then_quit(true, window, cx)),
             }),
             checkbox: None,
-            on_confirm: Rc::new(|this, _, window, cx| this.shutdown_then_quit(true, window, cx)),
+            on_confirm: Rc::new(|this, _, _, cx| this.keep_running_in_background(cx)),
         };
         self.open_modal(modal, window, cx);
     }
 
-    /// The quit dialog's second choice: turns `app.keep_running` on (nothing is registered with
+    /// The live sessions as the quit sheet lists them: what waits for the user first, then what
+    /// works, then the rest in the sidebar's order.
+    fn live_session_rows(&self, cx: &App) -> Vec<ModalRow> {
+        let store = self.sessions.read(cx);
+        let mut rows: Vec<(u8, ModalRow)> = store
+            .sessions()
+            .iter()
+            .filter(|s| s.state.is_live())
+            .map(|info| {
+                let presentation = store.presentation(info);
+                let (rank, status) = if presentation.is_request() {
+                    (0, "waiting for you".to_owned())
+                } else if store.is_working(info) {
+                    (1, "working".to_owned())
+                } else if presentation.attention == Some(Attention::Review) {
+                    (2, "finished, unread".to_owned())
+                } else {
+                    (3, presentation.label.clone())
+                };
+                let row = ModalRow {
+                    icon: presentation.icon(),
+                    tone: presentation.tone,
+                    title: info.title.clone().into(),
+                    status: status.into(),
+                };
+                (rank, row)
+            })
+            .collect();
+        // Stable: rows of one rank keep the order of the sidebar's list.
+        rows.sort_by_key(|(rank, _)| *rank);
+        rows.into_iter().map(|(_, row)| row).collect()
+    }
+
+    /// The quit dialog's confirm: turns `app.keep_running` on (nothing is registered with
     /// the system) and quits leaving the daemon. When the setting cannot be saved the app stays
     /// open (the notice says why), because the user asked for the daemon to stay and that is not
     /// settled.

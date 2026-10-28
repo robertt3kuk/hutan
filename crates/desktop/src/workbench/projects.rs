@@ -221,6 +221,7 @@ impl Workbench {
             Modal {
                 title: "New workspace".into(),
                 message: message.into(),
+                rows: Vec::new(),
                 confirm_label: "Create".into(),
                 input: Some(String::new()),
                 secure_input: false,

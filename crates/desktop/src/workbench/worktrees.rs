@@ -246,6 +246,7 @@ impl Workbench {
             Modal {
                 title: "Remove worktree".into(),
                 message: message.into(),
+                rows: Vec::new(),
                 confirm_label: "Remove".into(),
                 input: None,
                 secure_input: false,

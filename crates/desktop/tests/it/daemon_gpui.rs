@@ -224,7 +224,7 @@ fn quitting_while_disconnected_quits_at_once(cx: &mut TestAppContext) {
 
 // quit: live sessions ------------------------------------------------------------------------
 
-const QUIT_TITLE: &str = "Quit Hutan and stop 1 live session?";
+const QUIT_TITLE: &str = "Quit Hutan?";
 
 #[gpui::test]
 fn with_live_sessions_quitting_asks_to_stop_them(cx: &mut TestAppContext) {
@@ -235,16 +235,21 @@ fn with_live_sessions_quitting_asks_to_stop_them(cx: &mut TestAppContext) {
 
     dispatch(cx, actions::Quit);
     assert_eq!(modal_title(&view, cx).as_deref(), Some(QUIT_TITLE));
-    let (confirm_label, choice, checkbox) = view.read_with(cx, |wb, _| {
+    let (confirm_label, choice, checkbox, destructive, rows) = view.read_with(cx, |wb, _| {
         let modal = wb.modal().unwrap();
         (
             modal.confirm_label.to_string(),
             modal.choice_label().map(ToOwned::to_owned),
             modal.checkbox.is_some(),
+            modal.destructive,
+            modal.rows.len(),
         )
     });
-    assert_eq!(confirm_label, "Stop sessions and quit");
-    assert_eq!(choice.as_deref(), Some("Keep running in background"));
+    // Keep running is the primary (Return confirms it); stopping is the danger option.
+    assert_eq!(confirm_label, "Keep running");
+    assert!(!destructive, "Return keeps the sessions running");
+    assert_eq!(choice.as_deref(), Some("Stop sessions and quit"));
+    assert_eq!(rows, 1, "the live session is listed");
     assert!(
         !checkbox,
         "there is nothing to remember: the toggle is the setting"
@@ -261,7 +266,8 @@ fn stop_sessions_and_quit_stops_everything_then_quits(cx: &mut TestAppContext) {
     wait_synced(&view, cx, 1);
 
     dispatch(cx, actions::Quit);
-    confirm(&view, cx);
+    view.update_in(cx, |wb, window, cx| wb.choose_modal_alternative(window, cx));
+    cx.run_until_parked();
     wait_socket_gone(cx, &daemon.paths.socket);
     wait_until(cx, "the quit", |cx| quitting(&view, cx));
     assert_eq!(connection_state(&view, cx), ConnectionState::Stopped);
@@ -295,7 +301,7 @@ fn keep_running_in_background_sets_only_keep_running_and_leaves_the_daemon(
     wait_synced(&view, cx, 1);
 
     dispatch(cx, actions::Quit);
-    view.update_in(cx, |wb, window, cx| wb.choose_modal_alternative(window, cx));
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
     wait_until(cx, "the quit", |cx| quitting(&view, cx));
     assert!(
         fakes.login.calls().is_empty(),
@@ -321,7 +327,7 @@ fn keep_running_works_outside_the_bundle_too(cx: &mut TestAppContext) {
     wait_synced(&view, cx, 1);
 
     dispatch(cx, actions::Quit);
-    view.update_in(cx, |wb, window, cx| wb.choose_modal_alternative(window, cx));
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
     wait_until(cx, "the quit", |cx| quitting(&view, cx));
     assert!(
         read(daemon.home(), "settings.toml").contains("keep_running = true"),
@@ -363,7 +369,7 @@ fn the_background_choice_does_not_depend_on_the_login_item(cx: &mut TestAppConte
     wait_synced(&view, cx, 1);
 
     dispatch(cx, actions::Quit);
-    view.update_in(cx, |wb, window, cx| wb.choose_modal_alternative(window, cx));
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
     wait_until(cx, "the quit", |cx| quitting(&view, cx));
     assert!(fakes.login.calls().is_empty());
     assert!(view.read_with(cx, |wb, _| wb.notice().is_none()));

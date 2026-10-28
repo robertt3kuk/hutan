@@ -318,6 +318,9 @@ pub enum Region {
     /// `restart-daemon`, `stop-daemon`, `revoke-all`, `open-keymap`, `reload-keymap`,
     /// `env-add`, `preset-save`).
     Settings(&'static str),
+    /// A part of the open dialog (`modal.rs`): `card`, `rows` (the list of what it is about),
+    /// `footer`, and its buttons `cancel`, `choice`, `ok`.
+    Modal(&'static str),
     /// Row `index` of a list of the settings sheet: `layer` (the header's switch), `reveal` and
     /// `open` (the Data & logs page, per `DataTarget`), `hooks-install`, `hooks-repair` and
     /// `hooks-uninstall` (per agent), `revoke` (per remembered choice), `env-remove`,

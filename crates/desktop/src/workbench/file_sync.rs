@@ -696,6 +696,7 @@ impl Workbench {
             Modal {
                 title: format!("Save changes to {name}?").into(),
                 message: "Your changes are lost if you close the file without saving them.".into(),
+                rows: Vec::new(),
                 confirm_label: "Save".into(),
                 input: None,
                 secure_input: false,

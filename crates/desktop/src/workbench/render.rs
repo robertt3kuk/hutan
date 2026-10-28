@@ -182,7 +182,7 @@ impl Render for Workbench {
         let agent_picker = self.render_agent_picker(window, cx);
         let launcher = self.render_launcher(window, cx);
         let menu = self.render_context_menu(cx);
-        let modal = self.render_modal(cx);
+        let modal = self.render_modal(window, cx);
         let close_toast = self.render_close_toast(cx);
         let attention_toasts = self.render_attention_toasts(window, cx);
         let restore_toast = self.render_restore_toast(cx);

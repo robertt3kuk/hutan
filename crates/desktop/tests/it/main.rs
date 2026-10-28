@@ -76,6 +76,7 @@ mod recovery_gpui;
 mod reinstall_gpui;
 mod resources_gpui;
 mod review_comments_gpui;
+mod rhythm_gpui;
 mod rich_input_gpui;
 mod scroll_gpui;
 mod scrollbars_gpui;

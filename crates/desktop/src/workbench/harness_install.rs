@@ -125,6 +125,7 @@ impl Workbench {
         let modal = Modal {
             title: title.into(),
             message: message.into(),
+            rows: Vec::new(),
             confirm_label: "Install".into(),
             input: None,
             secure_input: false,

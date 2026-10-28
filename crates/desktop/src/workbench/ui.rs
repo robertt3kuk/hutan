@@ -26,6 +26,7 @@ use hutan_settings::themes::Fonts;
 use crate::theme::{Theme, Tokens, mascot_size, pill_radius};
 
 mod button;
+mod rhythm;
 mod splitter;
 pub use button::{
     Button, ButtonKind, ButtonSize, IconButton, approval_button_kind, spinner, spinner_at,
@@ -297,11 +298,10 @@ pub trait FocusRingExt: ParentElement + Styled + Sized {
 
 impl<T: ParentElement + Styled + Sized> FocusRingExt for T {}
 
-/// The action row at the foot of a dialog or sheet: right-aligned, 12 px between buttons.
-/// Cancel goes first and the one primary (or the destructive confirm) last.
-pub fn dialog_footer() -> gpui::Div {
-    div().flex().justify_end().items_center().gap(px(12.0))
-}
+pub use rhythm::{
+    SHEET_MARGIN, SHEET_WIDTH, dialog_footer, dialog_footer_stacked, sheet, sheet_stacks,
+    sheet_width, space,
+};
 
 /// The widest a [`pill`] gets before its text is cut with "…".
 const PILL_MAX_WIDTH: f32 = 140.0;

@@ -1,6 +1,7 @@
 //! A small confirm / prompt dialog (stop session, rename session, save layout as preset, quit
 //! with live sessions).
 
+use crate::sessions::Tone;
 use crate::theme::DensityExt as _;
 use std::rc::Rc;
 
@@ -10,10 +11,11 @@ use gpui::{
 };
 
 use super::actions::modal as modal_actions;
+use super::render::probe;
 use super::ui::motion::{self, PresentExt as _};
 use super::ui::scroll::ScrollExt as _;
 use super::ui::{self, Button, FocusRingExt as _, StyledExt as _};
-use super::view::Workbench;
+use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 
 /// What the dialog hands its action: the prompt text and the state of the checkbox.
@@ -68,12 +70,28 @@ pub struct ModalCheckbox {
     pub checked: bool,
 }
 
+/// One line of the list a dialog shows under its message: the sessions a quit would stop. At
+/// most [`MODAL_ROWS_SHOWN`] are drawn, the rest is counted.
+#[derive(Debug, Clone)]
+pub struct ModalRow {
+    pub icon: crate::icons::Icon,
+    pub tone: Tone,
+    pub title: SharedString,
+    /// The state in words, at the right end of the line.
+    pub status: SharedString,
+}
+
+/// How many [`ModalRow`]s a dialog draws before it says "and N more".
+pub const MODAL_ROWS_SHOWN: usize = 6;
+
 /// What the dialog asks and what happens on OK. `input: Some(..)` makes it a prompt.
 /// Cancel (button, Escape, click outside) closes it without running anything.
 #[derive(Clone)]
 pub struct Modal {
     pub title: SharedString,
     pub message: SharedString,
+    /// What the dialog is about, one line each (empty for most dialogs).
+    pub rows: Vec<ModalRow>,
     pub confirm_label: SharedString,
     pub input: Option<String>,
     /// Write-only input: mask render snapshots and Debug; never put a key in view text.
@@ -153,6 +171,7 @@ impl Workbench {
             Modal {
                 title: title.into(),
                 message: message.into(),
+                rows: Vec::new(),
                 confirm_label: confirm_label.into(),
                 input: None,
                 secure_input: false,
@@ -177,6 +196,7 @@ impl Workbench {
             Modal {
                 title: prompt.title.into(),
                 message: prompt.message.into(),
+                rows: Vec::new(),
                 confirm_label: prompt.confirm_label.into(),
                 input: Some(prompt.initial.to_owned()),
                 secure_input: false,
@@ -352,10 +372,15 @@ impl Workbench {
         cx.notify();
     }
 
-    pub(crate) fn render_modal(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_modal(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let viewport = f32::from(window.viewport_size().width);
         if self.modal.is_some() {
             self.exits.modal.cancel();
-            return self.build_modal(true, cx);
+            return self.build_modal(true, viewport, cx);
         }
         let now = cx.background_executor().now();
         motion::while_leaving(
@@ -363,19 +388,27 @@ impl Workbench {
             now,
             |this| &mut this.modal,
             |this| &mut this.exits.modal,
-            |this| this.build_modal(false, cx),
+            |this| this.build_modal(false, viewport, cx),
         )
         .flatten()
     }
 
     /// `wanted` is false while the dialog leaves: it takes no input and its field is drawn empty.
-    fn build_modal(&mut self, wanted: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// `viewport` is the window's width: the card is 480 pt at most and always inside the
+    /// window; narrower than 480 its buttons stack, the primary on top.
+    fn build_modal(
+        &mut self,
+        wanted: bool,
+        viewport: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let stored = self.modal.as_ref()?;
         // The prompt's text is not in this snapshot: its field element draws it (a secret as
         // dots) and never keeps it.
         let modal = Modal {
             title: stored.title.clone(),
             message: stored.message.clone(),
+            rows: stored.rows.clone(),
             confirm_label: stored.confirm_label.clone(),
             input: stored.input.as_ref().map(|_| String::new()),
             secure_input: stored.secure_input,
@@ -393,6 +426,50 @@ impl Workbench {
         });
         let theme = self.theme;
         let tokens = self.density.ui();
+        let stacked = ui::sheet_stacks(viewport);
+        let list = self.modal_rows(&modal.rows, &theme, &tokens);
+
+        let cancel = Button::new("modal-cancel", "Cancel", &theme, &tokens)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.close_modal(window, cx);
+            }))
+            .child(probe(&self.regions, Region::Modal("cancel")));
+        let choice = modal.choice.as_ref().map(|choice| {
+            Button::new("modal-choice", choice.label.clone(), &theme, &tokens)
+                .kind(if choice.destructive {
+                    ui::ButtonKind::Destructive
+                } else {
+                    ui::ButtonKind::Secondary
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.choose_modal_alternative(window, cx);
+                }))
+                .child(probe(&self.regions, Region::Modal("choice")))
+        });
+        let ok = Button::new("modal-ok", modal.confirm_label.clone(), &theme, &tokens)
+            .kind(if modal.destructive {
+                ui::ButtonKind::Destructive
+            } else {
+                ui::ButtonKind::Primary
+            })
+            .when(!modal.destructive, |b| b.shortcut("↩"))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.confirm_modal(window, cx);
+            }))
+            .child(probe(&self.regions, Region::Modal("ok")));
+        // A row of buttons, right-aligned: Cancel, the second choice, the confirm last. Where
+        // the card is too narrow for the row they stand one under the other, confirm first.
+        let footer = if stacked {
+            ui::dialog_footer_stacked()
+                .child(ok.block())
+                .children(choice.map(Button::block))
+                .child(cancel.block())
+        } else {
+            ui::dialog_footer().child(cancel).children(choice).child(ok)
+        }
+        .relative()
+        .child(probe(&self.regions, Region::Modal("footer")));
+
         Some(
             div()
                 .id("modal-backdrop")
@@ -403,25 +480,21 @@ impl Workbench {
                 .justify_center()
                 .items_start()
                 .pt(px(120.0))
+                .px(px(ui::SHEET_MARGIN))
                 .bg(theme.scrim())
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| this.close_modal(window, cx)),
                 )
                 .child(
-                    div()
+                    ui::sheet(ui::sheet_width(viewport, ui::SHEET_WIDTH), &theme, &tokens)
                         .id("modal")
+                        .relative()
                         .key_context(super::vim_ui::vim_key_context(
                             "Modal",
                             self.overlay_vim_mode(super::vim_ui::OverlayField::Modal),
                         ))
                         .when(wanted, |s| s.track_focus(&self.modal_focus))
-                        .w(px(440.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(tokens.spacing * 2.0))
-                        .popover(&theme, &tokens)
-                        .p(px(tokens.spacing * 4.0))
                         .text_size(px(tokens.font_size))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -451,19 +524,28 @@ impl Workbench {
                             }
                             this.close_modal(window, cx);
                         }))
+                        .child(probe(&self.regions, Region::Modal("card")))
                         .child(
                             div()
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .child(modal.title.clone()),
+                                .flex()
+                                .flex_col()
+                                .gap(px(ui::space::SM))
+                                .child(
+                                    div()
+                                        .text_size(px(tokens.font_size + 2.0))
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child(modal.title.clone()),
+                                )
+                                .child(div().text_color(theme.muted).child(modal.message.clone())),
                         )
-                        .child(div().text_color(theme.muted).child(modal.message.clone()))
+                        .children(list)
                         .when_some(input_parts, move |s, parts| {
                             s.child(
                                 div()
                                     .flex()
                                     .items_center()
                                     .h(px(tokens.sidebar_row + 4.0))
-                                    .px(px(tokens.spacing * 2.0))
+                                    .px(px(ui::space::SM))
                                     .outlined(&theme, &tokens)
                                     .focus_ring(true, &theme, &tokens)
                                     .children(parts),
@@ -475,7 +557,7 @@ impl Workbench {
                                     .id("modal-checkbox")
                                     .flex()
                                     .items_center()
-                                    .gap(px(tokens.spacing * 2.0))
+                                    .gap(px(ui::space::SM))
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.toggle_modal_checkbox(cx);
@@ -488,52 +570,7 @@ impl Workbench {
                                     .child(checkbox.label),
                             )
                         })
-                        .child(
-                            ui::dialog_footer()
-                                .child(
-                                    Button::new("modal-cancel", "Cancel", &theme, &tokens)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.close_modal(window, cx);
-                                        })),
-                                )
-                                .children(modal.choice.as_ref().map(|choice| {
-                                    Button::new(
-                                        "modal-choice",
-                                        choice.label.clone(),
-                                        &theme,
-                                        &tokens,
-                                    )
-                                    .kind(if choice.destructive {
-                                        ui::ButtonKind::Destructive
-                                    } else {
-                                        ui::ButtonKind::Secondary
-                                    })
-                                    .on_click(cx.listener(
-                                        |this, _, window, cx| {
-                                            this.choose_modal_alternative(window, cx);
-                                        },
-                                    ))
-                                }))
-                                .child(
-                                    Button::new(
-                                        "modal-ok",
-                                        modal.confirm_label.clone(),
-                                        &theme,
-                                        &tokens,
-                                    )
-                                    .kind(if modal.destructive {
-                                        ui::ButtonKind::Destructive
-                                    } else {
-                                        ui::ButtonKind::Primary
-                                    })
-                                    .when(!modal.destructive, |b| b.shortcut("↩"))
-                                    .on_click(cx.listener(
-                                        |this, _, window, cx| {
-                                            this.confirm_modal(window, cx);
-                                        },
-                                    )),
-                                ),
-                        )
+                        .child(footer)
                         .presented(
                             "modal-motion",
                             motion::Kind::Sheet,
@@ -548,6 +585,77 @@ impl Workbench {
                     motion::Slide::None,
                 )
                 .inert(!wanted)
+                .into_any_element(),
+        )
+    }
+
+    /// The list of what a dialog is about (the sessions a quit stops): a recessed block of
+    /// one-line rows, a glyph in the state's color, the name, the state in words at the right;
+    /// the rows beyond [`MODAL_ROWS_SHOWN`] are counted. Nothing when there are no rows.
+    fn modal_rows(
+        &self,
+        rows: &[ModalRow],
+        theme: &crate::theme::Theme,
+        tokens: &crate::theme::Tokens,
+    ) -> Option<AnyElement> {
+        if rows.is_empty() {
+            return None;
+        }
+        // One slot of the block says "and N more" instead of a row when some do not fit.
+        let (shown, hidden) = if rows.len() <= MODAL_ROWS_SHOWN {
+            (rows.len(), 0)
+        } else {
+            (MODAL_ROWS_SHOWN - 1, rows.len() - (MODAL_ROWS_SHOWN - 1))
+        };
+        let line = tokens.sidebar_row + ui::space::XS;
+        Some(
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .p(px(ui::space::SM))
+                .rounded(px(tokens.card_radius))
+                .bg(theme.bg)
+                .child(probe(&self.regions, Region::Modal("rows")))
+                .children(rows.iter().take(shown).enumerate().map(|(index, row)| {
+                    let tone = super::panels::common::tone_color(theme, row.tone);
+                    div()
+                        .id(SharedString::from(format!("modal-row-{index}")))
+                        .flex()
+                        .items_center()
+                        .gap(px(ui::space::SM))
+                        .h(px(line))
+                        .px(px(ui::space::SM))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(tone)
+                                .child(crate::icons::glyph(row.icon)),
+                        )
+                        .child(div().flex_1().min_w_0().truncate().child(row.title.clone()))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_size(px(tokens.secondary_font_size))
+                                .text_color(super::panels::common::state_word_color(
+                                    theme, row.tone, false,
+                                ))
+                                .child(row.status.clone()),
+                        )
+                }))
+                .when(hidden > 0, |s| {
+                    s.child(
+                        div()
+                            .id("modal-rows-more")
+                            .flex()
+                            .items_center()
+                            .h(px(line))
+                            .px(px(ui::space::SM))
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .child(SharedString::from(format!("and {hidden} more"))),
+                    )
+                })
                 .into_any_element(),
         )
     }
