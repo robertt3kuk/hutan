@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{TestDaemon, draw, open_with, wait_until};
+use common::{TestDaemon, draw, open_with, settle, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::WorkspaceId;
 use hutan_desktop::workbench::{ChangesView, DeliveryForm, Region, Workbench};
@@ -533,6 +533,8 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     wait_until(cx, "the file to be discarded", |cx| {
         changes.read_with(cx, |c, _| c.undo_offer().is_some()) && fx.a_txt() == committed()
     });
+    // The Undo bar slides in while it opens: a click before it settles lands beside the button.
+    settle(cx);
     click(&view, cx, Region::Changes("undo-discard"));
     wait_until(cx, "the file to be back", |cx| {
         fx.a_txt() == edited() && changes.read_with(cx, |c, _| c.undo_offer().is_none())

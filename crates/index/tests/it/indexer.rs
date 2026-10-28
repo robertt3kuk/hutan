@@ -287,7 +287,13 @@ fn the_range_limits_what_is_read() {
         .set_modified(year_ago)
         .unwrap();
     let recent = env.claude.join("-work-app/recent.jsonl");
-    append(&recent, &claude_line("fresh news about rust"));
+    // An entry time that stays inside the range whatever day the test runs (the range only
+    // sets a lower bound), unlike the fixed date of `claude_line`.
+    append(
+        &recent,
+        &claude_line("fresh news about rust")
+            .replace("2026-09-28T05:01:22.983Z", "2999-01-01T00:00:00.000Z"),
+    );
 
     let indexer = Indexer::start(IndexConfig {
         range_days: 30,
