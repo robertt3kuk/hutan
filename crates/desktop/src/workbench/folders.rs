@@ -14,8 +14,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, Context, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    PathPromptOptions, Pixels, Point, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, prelude::*, px,
+    PathPromptOptions, Pixels, Point, SharedString, Styled, Window, div, prelude::*, px,
 };
 use hutan_core::SessionId;
 
