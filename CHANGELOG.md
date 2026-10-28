@@ -10,6 +10,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Extra folders in a session (daemon and CLI first; the buttons come next): `hutan chat dirs add|remove|list`, `hutan chat new --dir`, `hutan new --dir` give an agent more folders than its own — Claude Code gets them as additional directories, OMP through its `/add-dir`, Codex as writable roots in a workspace-write sandbox; a running terminal agent gets `/add-dir …` typed for you to confirm; Files and Contain include them. Only you can add folders, never an agent.
 
 ### Changed
+- Settings and dialogs look calmer: one spacing scale everywhere; settings pages with an icon for each page in the list, a 20 pt title with a one-line description, rows of one height in cards with the controls in one column and longer help in a tooltip; dialogs are one width with right-aligned buttons that stack instead of overflowing. The quit sheet asks "Quit Hutan?", lists the running sessions and makes **Keep running** the default (Stop sessions and quit is the danger choice).
 - The right side hides completely like the left (rail included) from its title-bar button, which is now its only toggle (the button at the foot of the rail is gone); ⌘L and the active icon still close it to the rail; `layout.right_rail = auto|always|never`. The `⌘⇧P` hint left the status bar (right-click the bar to bring it back).
 - The context chip of a Codex chat shows the current context (Codex's `last`), not the cumulative total — it showed about twice the real fill.
 
