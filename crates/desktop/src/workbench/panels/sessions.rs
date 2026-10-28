@@ -1663,7 +1663,9 @@ impl SessionsPanel {
             .gap(px(tokens.spacing))
             .h(px(tokens.sidebar_row))
             .mx(px(tokens.sidebar_inset))
-            .pl(px(tokens.spacing * 1.5 + row.depth as f32 * tokens.sidebar_indent))
+            .pl(px(
+                tokens.spacing * 1.5 + row.depth as f32 * tokens.sidebar_indent
+            ))
             .pr(px(tokens.spacing * 1.5))
             .rounded(px(tokens.row_radius))
             .text_size(px(tokens.row_font_size))

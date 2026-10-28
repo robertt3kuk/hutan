@@ -42,6 +42,13 @@ pub fn path(id: Icon) -> SharedString {
     SharedString::from(Arc::clone(&active.current.get(id).key))
 }
 
+/// The key of the artwork an icon of `size` points draws: the `[small]` one at
+/// [`SMALL_MAX_PX`] or less when the pack has it, else the regular one.
+pub fn path_for(id: Icon, size: f32) -> SharedString {
+    let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
+    SharedString::from(Arc::clone(&active.current.get_sized(id, size).key))
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Assets;
 impl AssetSource for Assets {
@@ -124,6 +131,24 @@ mod tests {
         }
         assert!(Assets.load("file:///etc/passwd").unwrap().is_none());
         assert!(Assets.load("icons/search.svg").unwrap().is_none());
+    }
+
+    #[test]
+    fn an_icon_of_fourteen_points_or_less_draws_the_small_artwork() {
+        // The built-in pack: Bold up to 14, Regular above; the monograms have one artwork.
+        let builtin = icons::builtin();
+        let small = |id| SharedString::from(Arc::clone(&builtin.get_sized(id, 12.0).key));
+        let regular = |id| SharedString::from(Arc::clone(&builtin.get_sized(id, 16.0).key));
+        assert_ne!(small(Icon::NavSearch), regular(Icon::NavSearch));
+        assert_eq!(small(Icon::HarnessOmp), regular(Icon::HarnessOmp));
+        assert_eq!(
+            SharedString::from(Arc::clone(&builtin.get_sized(Icon::NavSearch, 14.0).key)),
+            small(Icon::NavSearch)
+        );
+        assert_eq!(
+            SharedString::from(Arc::clone(&builtin.get_sized(Icon::NavSearch, 14.5).key)),
+            regular(Icon::NavSearch)
+        );
     }
 
     #[test]

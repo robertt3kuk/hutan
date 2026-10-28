@@ -440,3 +440,34 @@ fn a_root_pack_without_small_artwork_has_none_at_any_size() {
     }
     assert_eq!(selected.assets().count(), IconId::COUNT);
 }
+
+#[test]
+fn the_harness_ids_are_our_own_monograms_not_a_vendor_mark_or_phosphor() {
+    let (declaration, _) = parse(BUILTIN, None);
+    let declaration = declaration.unwrap();
+    for (id, file) in [
+        (IconId::HarnessOmp, "harness-omp.svg"),
+        (IconId::HarnessClaude, "harness-claude.svg"),
+        (IconId::HarnessCodex, "harness-codex.svg"),
+    ] {
+        assert_eq!(declaration.icons[&id], file, "{}", id.id());
+        assert!(
+            !declaration.small.contains_key(&id),
+            "{}: one artwork at every size",
+            id.id()
+        );
+    }
+    // The three monograms differ from each other and from the generic harness glyph.
+    let base = builtin();
+    let bytes: BTreeSet<_> = [
+        IconId::HarnessOmp,
+        IconId::HarnessClaude,
+        IconId::HarnessCodex,
+        IconId::HarnessUnknown,
+    ]
+    .iter()
+    .map(|&id| base.get(id).bytes.clone())
+    .collect();
+    assert_eq!(bytes.len(), 4);
+    assert!(PROVENANCE.contains("original Hutan-owned monochrome glyphs"));
+}
