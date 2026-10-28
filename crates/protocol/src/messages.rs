@@ -39,6 +39,7 @@ use crate::git::{GitBlame, GitFile, GitLog, GitShow};
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};
 use crate::history::{HistorySearch, HistorySetEnabled};
 use crate::hooks::{HooksLogRequest, HooksTest};
+use crate::insight::{AgentInsightRequest, AgentMeasureContext};
 use crate::lsp::{
     DocChange, DocOpen, DocRef, LspCompletionRequest, LspCompletionResolve, LspDiagnostic,
     LspDiagnosticsRequest, LspPositionRequest, LspServerInfo, LspServerRef,
@@ -257,6 +258,14 @@ pub enum Request {
     /// `SessionResult`. User-only.
     #[serde(rename = "chat.remove_dir")]
     ChatRemoveDir(ChatRemoveDir),
+    /// Capability `agent.insight` (protocol 0.59): the insight of a chat session (context,
+    /// tokens per turn, cost, tools, files, time); answered with `AgentInsightResult`. Read-only.
+    #[serde(rename = "agent.insight")]
+    AgentInsight(AgentInsightRequest),
+    /// Capability `agent.insight`: has the harness print its context by category (`/context`)
+    /// and reads the answer; answered with `AgentContextMeasured` once the turn ended.
+    #[serde(rename = "agent.measure_context")]
+    AgentMeasureContext(AgentMeasureContext),
     /// Capability `chat.codex`: the journal of a session; answered with `ChatHistory`.
     #[serde(rename = "chat.history")]
     ChatHistory(ChatHistoryRequest),
@@ -1674,6 +1683,15 @@ pub enum Event {
     /// numbers moved; the whole summary, not a diff (bursts are coalesced).
     #[serde(rename = "usage.changed")]
     UsageChanged { summary: Box<UsageSummary> },
+    /// Capability `agent.insight` (protocol 0.59): the insight of a chat session changed; the
+    /// whole snapshot, newer when its `seq` is larger. Sent **only** to connections whose
+    /// `client.focus` is that session, outside the replay ring (see
+    /// [`Event::is_connection_local`]), at most once a second per session.
+    #[serde(rename = "agent.insight_updated")]
+    AgentInsightUpdated {
+        session_id: SessionId,
+        insight: Box<hutan_core::insight::AgentInsight>,
+    },
 }
 
 impl Event {
@@ -1688,6 +1706,7 @@ impl Event {
                 | Self::FsGeneration { .. }
                 | Self::FsSearchProgress { .. }
                 | Self::LspDiagnosticsChanged { .. }
+                | Self::AgentInsightUpdated { .. }
         )
     }
 
@@ -1742,6 +1761,7 @@ impl Event {
         "lsp.diagnostics",
         "daemon.stopping",
         "usage.changed",
+        "agent.insight_updated",
     ];
 }
 

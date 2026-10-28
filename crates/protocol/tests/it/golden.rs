@@ -43,6 +43,7 @@ use hutan_protocol::hooks::{
     HookEvent, HookInfo, HookOutcome, HookPayload, HookRun, HooksList, HooksLog, HooksLogRequest,
     HooksTest, HooksTested,
 };
+use hutan_protocol::insight::*;
 use hutan_protocol::lsp::*;
 use hutan_protocol::memory::*;
 use hutan_protocol::messages::*;
@@ -3872,6 +3873,24 @@ fn requests() -> Vec<(&'static str, Request)> {
             }),
         ),
         (
+            "agent_insight",
+            Request::AgentInsight(AgentInsightRequest {
+                session_id: sid(),
+                node_id: None,
+            }),
+        ),
+        (
+            "agent_insight_node",
+            Request::AgentInsight(AgentInsightRequest {
+                session_id: sid(),
+                node_id: Some("sess_01".into()),
+            }),
+        ),
+        (
+            "agent_measure_context",
+            Request::AgentMeasureContext(AgentMeasureContext { session_id: sid() }),
+        ),
+        (
             "chat_create_dirs",
             Request::ChatCreate(ChatCreate {
                 extra_dirs: vec!["/work/api".into(), "/work/shared".into()],
@@ -5208,6 +5227,13 @@ fn events() -> Vec<(&'static str, Event)> {
             },
         ),
         (
+            "agent_insight_updated",
+            Event::AgentInsightUpdated {
+                session_id: sid(),
+                insight: Box::new(insight_fixture()),
+            },
+        ),
+        (
             "session_updated_terminal_agent_blocked",
             Event::SessionUpdated {
                 session: SessionInfo {
@@ -5295,6 +5321,160 @@ fn events() -> Vec<(&'static str, Event)> {
             },
         ),
     ]
+}
+
+/// An OMP chat after two turns and a `/context`: every block of the record.
+fn insight_fixture() -> hutan_core::insight::AgentInsight {
+    use hutan_core::CheckpointState;
+    use hutan_core::insight::*;
+    let turn_row = |n: u64, input: u64, cost: f64, checkpoint: CheckpointState| InsightTurn {
+        n,
+        turn_id: Some(turn()),
+        started_ms: 1_791_894_000_000 + n * 60_000,
+        duration_ms: Some(3_850),
+        outcome: InsightOutcome::Completed,
+        input: Some(input),
+        output: Some(52),
+        cache_read: Some(14_000),
+        cache_write: None,
+        reasoning: None,
+        cost_usd: Some(cost),
+        context_after: Some(11_200),
+        tool_calls: 1,
+        tool_failed: 0,
+        files: 1,
+        checkpoint: Some(checkpoint),
+    };
+    AgentInsight {
+        session_id: sid(),
+        node_id: Some("sess_01".into()),
+        seq: 42,
+        as_of_ms: 1_791_894_200_000,
+        harness: Some("omp".into()),
+        model: Some(InsightModel {
+            id: "claude-haiku-5-5".into(),
+            provider: Some("anthropic".into()),
+            thinking: None,
+        }),
+        context: Some(InsightContext {
+            used: 11_200,
+            window: Some(200_000),
+            exactness: Exactness::Reported,
+            as_of_ms: 1_791_894_180_000,
+            breakdown: vec![
+                BreakdownRow {
+                    id: "system_prompt".into(),
+                    label: "System prompt".into(),
+                    tokens: 2_559,
+                    kind: BreakdownKind::Used,
+                },
+                BreakdownRow {
+                    id: "messages".into(),
+                    label: "Messages".into(),
+                    tokens: 4_552,
+                    kind: BreakdownKind::Used,
+                },
+                BreakdownRow {
+                    id: "autocompact_buffer".into(),
+                    label: "Auto-compact buf".into(),
+                    tokens: 30_000,
+                    kind: BreakdownKind::Buffer,
+                },
+                BreakdownRow {
+                    id: "free".into(),
+                    label: "Free".into(),
+                    tokens: 158_800,
+                    kind: BreakdownKind::Free,
+                },
+            ],
+            breakdown_as_of_ms: Some(1_791_894_190_000),
+            breakdown_exactness: Some(Exactness::Reported),
+            compact_at: Some(170_000),
+        }),
+        totals: Some(InsightTotals {
+            turns: 2,
+            input: Some(9_400),
+            output: Some(64),
+            cache_read: Some(24_000),
+            cache_write: None,
+            reasoning: None,
+            total: Some(33_464),
+            cost_usd: Some(0.036_36),
+            cost_kind: Some(CostKind::Estimate),
+            cache_hit_ratio: Some(0.718_562_874_251_497),
+        }),
+        turns: vec![
+            turn_row(1, 8_200, 0.029_58, CheckpointState::Ok),
+            turn_row(2, 1_200, 0.006_78, CheckpointState::Unsupported),
+            InsightTurn {
+                outcome: InsightOutcome::Running,
+                duration_ms: None,
+                input: None,
+                output: None,
+                cache_read: None,
+                cost_usd: None,
+                checkpoint: Some(CheckpointState::Running),
+                ..turn_row(3, 0, 0.0, CheckpointState::Running)
+            },
+        ],
+        turns_truncated: false,
+        tools: Some(InsightTools {
+            calls: 3,
+            failed: 1,
+            by_name: vec![
+                ToolCount {
+                    name: "read".into(),
+                    calls: 2,
+                    failed: 0,
+                    ms: Some(14),
+                },
+                ToolCount {
+                    name: "bash".into(),
+                    calls: 1,
+                    failed: 1,
+                    ms: None,
+                },
+            ],
+        }),
+        files: Some(InsightFiles {
+            count: 1,
+            added: 2,
+            removed: 1,
+            items: vec![InsightFile {
+                path: "src/lib.rs".into(),
+                kind: FileChangeKind::Update,
+                added: Some(2),
+                removed: Some(1),
+            }],
+            truncated: false,
+        }),
+        time: Some(InsightTime {
+            started_ms: 1_791_894_000_000,
+            wall_ms: 200_000,
+            active_ms: Some(4_850),
+            api_ms: None,
+            tool_ms: Some(14),
+        }),
+        sources: vec![
+            InsightSource {
+                block: InsightBlock::Context,
+                source: InsightSourceKind::Chat,
+                as_of_ms: 1_791_894_180_000,
+            },
+            InsightSource {
+                block: InsightBlock::Breakdown,
+                source: InsightSourceKind::Chat,
+                as_of_ms: 1_791_894_190_000,
+            },
+            InsightSource {
+                block: InsightBlock::Turns,
+                source: InsightSourceKind::Chat,
+                as_of_ms: 1_791_894_180_000,
+            },
+        ],
+        unsupported: vec![InsightField::Reasoning],
+        can_measure: true,
+    }
 }
 
 fn usage_summary_fixture() -> UsageSummary {
@@ -8311,6 +8491,58 @@ fn responses_match_fixtures() {
             .unwrap(),
         ),
         (
+            "agent_insight",
+            ControlMessage::ok(
+                90,
+                &AgentInsightResult {
+                    insight: insight_fixture(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "agent_insight_empty",
+            ControlMessage::ok(
+                91,
+                &AgentInsightResult {
+                    insight: hutan_core::insight::AgentInsight::empty(
+                        sid(),
+                        1,
+                        1_791_894_200_000,
+                    ),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "agent_context_measured",
+            ControlMessage::ok(
+                92,
+                &AgentContextMeasured {
+                    turn_id: turn(),
+                    measured: true,
+                    insight: insight_fixture(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "agent_context_measured_unreadable",
+            ControlMessage::ok(
+                93,
+                &AgentContextMeasured {
+                    turn_id: turn(),
+                    measured: false,
+                    insight: hutan_core::insight::AgentInsight::empty(
+                        sid(),
+                        2,
+                        1_791_894_200_000,
+                    ),
+                },
+            )
+            .unwrap(),
+        ),
+        (
             "usage_summary",
             ControlMessage::ok(7, &usage_summary_fixture()).unwrap(),
         ),
@@ -8846,7 +9078,8 @@ fn only_fs_resource_and_diagnostics_events_are_connection_local() {
             event.is_connection_local(),
             name.starts_with("fs_")
                 || name.starts_with("resources_updated")
-                || name.starts_with("lsp_diagnostics"),
+                || name.starts_with("lsp_diagnostics")
+                || name.starts_with("agent_insight_updated"),
             "{name}"
         );
     }
