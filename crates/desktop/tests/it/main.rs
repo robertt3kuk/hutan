@@ -81,6 +81,7 @@ mod rich_input_gpui;
 mod scroll_gpui;
 mod scrollbars_gpui;
 mod search_gpui;
+mod session_folders_gpui;
 mod sessions_gpui;
 mod settings_clean_gpui;
 mod settings_gpui;

@@ -156,6 +156,33 @@ impl Workbench {
             .and_then(|open| open.problem.as_deref())
     }
 
+    /// What the open popover says, line by line: each folder with its words (`name · words`),
+    /// the label of the restart button when it is offered, and the harness line.
+    pub fn folders_popover_lines(&self, cx: &gpui::App) -> Vec<String> {
+        let Some(open) = self.folders.open.as_ref().filter(|open| open.shown) else {
+            return Vec::new();
+        };
+        let Some(folders) = self.sessions.read(cx).session_folders(open.session) else {
+            return Vec::new();
+        };
+        let mut lines: Vec<String> = folders
+            .primary
+            .iter()
+            .map(|path| format!("{} · working directory", name_of(path)))
+            .collect();
+        lines.extend(
+            folders
+                .extras
+                .iter()
+                .map(|folder| format!("{} · {}", folder.name(), folders.words(folder))),
+        );
+        if let Some(label) = restart_label(&folders) {
+            lines.push(label.to_owned());
+        }
+        lines.push(folders.how());
+        lines
+    }
+
     /// Opens the popover of `session`'s folders, hanging below `at`.
     pub fn show_session_folders(
         &mut self,
@@ -543,7 +570,13 @@ impl Workbench {
         let left = (f32::from(open.at.x) - 28.0)
             .min(f32::from(viewport.width) - WIDTH - 8.0)
             .max(8.0);
-        let top = (f32::from(open.at.y) + 14.0).max(8.0);
+        // Under the chip of a header; above the chip of a terminal at the foot of the pane.
+        let above = f32::from(open.at.y) > f32::from(viewport.height) / 2.0;
+        let anchor = if above {
+            (f32::from(viewport.height) - f32::from(open.at.y) + 10.0).max(8.0)
+        } else {
+            (f32::from(open.at.y) + 14.0).max(8.0)
+        };
 
         let folder_row = |index: Option<usize>, path: &Path, subtitle: Option<(&'static str, bool)>, region_row: usize| {
             let name = SharedString::from(name_of(path));
@@ -636,12 +669,7 @@ impl Workbench {
                 this.add_folder_to_session(session, window, cx);
             }))
             .child(probe(&self.regions, Region::Folders("add")));
-        let restart = folders.needs_restart().then(|| {
-            let label = if folders.restart_folders().len() == 1 {
-                "Restart with this folder"
-            } else {
-                "Restart with these folders"
-            };
+        let restart = restart_label(&folders).map(|label| {
             Button::new("folders-restart", label, &theme, &tokens)
                 .kind(ButtonKind::Primary)
                 .disabled(busy)
@@ -680,7 +708,8 @@ impl Workbench {
                         .track_focus(&self.folders.focus)
                         .absolute()
                         .left(px(left))
-                        .top(px(top))
+                        .when(above, |s| s.bottom(px(anchor)))
+                        .when(!above, |s| s.top(px(anchor)))
                         .w(px(WIDTH))
                         .flex()
                         .flex_col()
@@ -751,4 +780,14 @@ impl Workbench {
 fn folder_is(folder: &Folder, path: &Path) -> bool {
     folder.path == path
         || std::fs::canonicalize(path).is_ok_and(|real| real == folder.path)
+}
+
+/// The restart button's label while some folder only a restart gives: *Restart with this
+/// folder* (or *these folders*).
+fn restart_label(folders: &SessionFolders) -> Option<&'static str> {
+    match folders.restart_folders().len() {
+        0 => None,
+        1 => Some("Restart with this folder"),
+        _ => Some("Restart with these folders"),
+    }
 }
