@@ -1,8 +1,8 @@
 //! Status bar items: `connection`, `workspace`, `working`, `sessions`, `attention`, `approvals`,
 //! `density`, `theme`, `palette_hint`, the editor's items, and the dock buttons `dock_left`,
 //! `dock_bottom`, `dock_right`. The built-in presets show `connection`, `workspace` and
-//! `attention` on the left and the editor's items, `working` and `palette_hint` on the right
-//! ([`StatusBarLayout`]); an item with nothing to say draws nothing. `connection` always has
+//! `attention` on the left and the editor's items and `working` on the right
+//! ([`StatusBarLayout`]; `palette_hint`, the palette's key, is off by default); an item with nothing to say draws nothing. `connection` always has
 //! something to say: the daemon's state is never only in a menu (FX-STATUSBAR).
 //!
 //! [`StatusBarLayout`]: crate::workbench::registry::StatusBarLayout
@@ -757,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_status_bar_is_connection_workspace_attention_then_working_and_the_palette_key() {
+    fn the_default_status_bar_is_connection_workspace_attention_then_working() {
         use crate::workbench::registry::StatusBarLayout;
         let bar = StatusBarLayout::default();
         assert_eq!(bar.left, ["connection", "workspace", "attention"]);
@@ -769,8 +769,7 @@ mod tests {
                 "editor.position",
                 "editor.wrap",
                 "editor.language",
-                "working",
-                "palette_hint"
+                "working"
             ]
         );
         // Every item the built-in bar names is registered, and so is every item it does not
@@ -786,6 +785,7 @@ mod tests {
             "approvals",
             "density",
             "theme",
+            "palette_hint",
             "dock_left",
             "dock_bottom",
             "dock_right",

@@ -559,6 +559,8 @@ fn the_bar_gives_way_below_900_and_700_pixels(cx: &mut TestAppContext) {
         })
     });
 
+    // The palette's key is off by default: this bar shows it to see it give way.
+    view.update(cx, |wb, cx| wb.toggle_status_item("palette_hint", cx));
     // 1280 px: everything, the workspace item with the project's name and the branch.
     resize(cx, 1280.0);
     let wide_workspace = width_of(&view, cx, "workspace").expect("workspace at 1280");

@@ -304,9 +304,10 @@ impl StatusBarLayout {
 impl Default for StatusBarLayout {
     /// The status bar of the built-in presets (FX-STATUSBAR): the daemon's state, the project
     /// and its branch and the requests that wait on the left; the editor's items while a file
-    /// tab has focus, the agents at work and the palette's key on the right. The other items
-    /// (`sessions`, `approvals`, `density`, `theme`, the dock buttons) stay registered for
-    /// presets that name them.
+    /// tab has focus and the agents at work on the right. The other items (`sessions`,
+    /// `approvals`, `density`, `theme`, `palette_hint`, the dock buttons) stay registered for
+    /// presets that name them and for the bar's checklist; the palette's key is off by default
+    /// (⌘K and the menu open the palette).
     fn default() -> Self {
         Self {
             left: ["connection", "workspace", "attention"]
@@ -319,7 +320,6 @@ impl Default for StatusBarLayout {
                 "editor.wrap",
                 "editor.language",
                 "working",
-                "palette_hint",
             ]
             .map(str::to_owned)
             .to_vec(),

@@ -634,7 +634,7 @@ fn the_status_bar_checklist_hides_and_shows_items_and_a_custom_preset_holds_the_
     assert_eq!(entries[0].0, "Status bar, left", "{entries:?}");
     for (label, checked) in [
         ("Daemon state", true),
-        ("Command palette key", true),
+        ("Command palette key", false),
         ("Session count", false),
     ] {
         assert!(
@@ -644,20 +644,13 @@ fn the_status_bar_checklist_hides_and_shows_items_and_a_custom_preset_holds_the_
     }
     assert!(entries.iter().any(|(l, _)| l == "Not shown"));
 
-    // Hide the palette key: it leaves the bar, the list stays open with it unchecked.
-    run_entry(&view, cx, "Command palette key");
-    assert!(!bar(&view, cx).1.contains(&"palette_hint".to_owned()));
+    // Hide the agents count: it leaves the bar, the list stays open with it unchecked.
+    run_entry(&view, cx, "Agents at work");
+    assert!(!bar(&view, cx).1.contains(&"working".to_owned()));
     assert!(
         menu(&view, cx)
             .iter()
-            .any(|(l, on)| l == "Command palette key" && !on)
-    );
-    common::draw(cx);
-    assert!(
-        view.read_with(cx, |wb, _| wb
-            .region_bounds(Region::StatusItem("palette_hint"))
-            .is_none()),
-        "the item is no longer drawn"
+            .any(|(l, on)| l == "Agents at work" && !on)
     );
     // Show Density: it joins the right group, at its end.
     run_entry(&view, cx, "Density");
@@ -668,7 +661,7 @@ fn the_status_bar_checklist_hides_and_shows_items_and_a_custom_preset_holds_the_
     assert_eq!(saved.preset, "custom");
     let custom = &saved.presets["custom"].status_bar;
     assert_eq!(custom.left, builtin.0);
-    assert!(!custom.right.contains(&"palette_hint".to_owned()));
+    assert!(!custom.right.contains(&"working".to_owned()));
     assert!(custom.right.contains(&"density".to_owned()));
     let defs = saved.preset_defs();
     let default = defs.iter().find(|d| d.layout.name == "default").unwrap();
@@ -689,6 +682,36 @@ fn the_status_bar_checklist_hides_and_shows_items_and_a_custom_preset_holds_the_
 }
 
 #[gpui::test]
+fn the_palette_key_is_off_by_default_and_the_checklist_shows_it(cx: &mut TestAppContext) {
+    let (view, _, cx) = open(cx);
+    assert!(!bar(&view, cx).1.contains(&"palette_hint".to_owned()));
+    common::draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::StatusItem("palette_hint"))
+            .is_none()),
+        "not drawn in the built-in bar"
+    );
+    let at = bounds(&view, cx, Region::StatusBar).center();
+    right_click(&view, cx, at);
+    assert!(
+        menu(&view, cx)
+            .iter()
+            .any(|(l, on)| l == "Command palette key" && !on),
+        "listed, unchecked"
+    );
+    run_entry(&view, cx, "Command palette key");
+    assert!(bar(&view, cx).1.contains(&"palette_hint".to_owned()));
+    common::draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::StatusItem("palette_hint"))
+            .is_some()),
+        "drawn once chosen"
+    );
+}
+
+#[gpui::test]
 fn dragging_a_status_item_reorders_the_bar_and_across_to_the_other_side(cx: &mut TestAppContext) {
     let home = tempfile::tempdir().unwrap();
     let path = home
@@ -697,10 +720,10 @@ fn dragging_a_status_item_reorders_the_bar_and_across_to_the_other_side(cx: &mut
     let (connection, settings, _) = offline_connection();
     let after = {
         let (view, cx) = open_with(cx, settings.clone(), connection, Some(path));
-        assert_eq!(
-            bar(&view, cx).1.last().map(String::as_str),
-            Some("palette_hint")
-        );
+        // The palette's key is off by default: show it first.
+        view.update(cx, |wb, cx| wb.toggle_status_item("palette_hint", cx));
+        common::draw(cx);
+        assert!(bar(&view, cx).1.contains(&"palette_hint".to_owned()));
         // The palette key is dropped on the daemon's state: it goes first, on the left.
         let from = bounds(&view, cx, Region::StatusItem("palette_hint")).center();
         let to = bounds(&view, cx, Region::StatusItem("connection")).center();
