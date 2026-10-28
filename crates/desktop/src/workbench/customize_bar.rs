@@ -33,6 +33,7 @@ pub fn status_item_title(id: &str) -> &str {
         "connection" => "Daemon state",
         "workspace" => "Project and branch",
         "working" => "Agents at work",
+        "usage.meters" => "Usage rings",
         "usage" => "Usage limit",
         "sessions" => "Session count",
         "attention" => "Requests waiting",

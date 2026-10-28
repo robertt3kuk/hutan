@@ -736,6 +736,13 @@ const FIELDS: &[FieldText] = &[
         "Show the daemon's version",
         "Says which version of the daemon is running (hutand 0.2.0) in the status bar while it is up. The item's right-click menu switches it too.",
     ),
+    choice(
+        "status",
+        "usage.style",
+        "Usage limits",
+        "How the limits your harnesses report show in the status bar, once one has (nothing is drawn before). Rings: one small ring per harness with the share of its tightest window, amber from 80%, red from 95%; hover it for every window and when it resets, click it for the Agents page. Words: the tightest limit as text, such as Codex 72% · resets 3h. The Agents page's Usage section has the numbers either way.",
+        &[("meters", "Rings"), ("text", "Words"), ("off", "Not shown")],
+    ),
     // ---- search ----
     field(
         "panels.search",
@@ -1039,12 +1046,6 @@ const FIELDS: &[FieldText] = &[
         "page_usage",
         "Show usage on the Agents page",
         "On the Agents page, a Usage section lists each harness's limit windows (5-hour, weekly) with their reset times, and the tokens and cost of the turns Hutan ran today and this week. A cost is the harness's own estimate.",
-    ),
-    field(
-        "agents",
-        "usage_in_status_bar",
-        "Show the tightest limit in the status bar",
-        "Adds the usage item to the status bar: the harness limit closest to its end, such as Codex 72% · resets 3h. Harnesses report their limits themselves (Codex with its replies, OMP when asked), so it shows nothing until one has.",
     ),
     // ---- resources ----
     field(

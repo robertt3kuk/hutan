@@ -218,6 +218,9 @@ pub enum Region {
     /// The filled part of limit `limit` of harness `harness` in the Usage section: its width is
     /// the share of the window used.
     UsageBar(usize, usize),
+    /// The ring of harness `index` of the status bar's `usage.meters` item (the order the
+    /// daemon lists harnesses in, those with a running limit only).
+    UsageMeter(usize),
     /// The row of a session on the Agents page.
     AgentRow(hutan_core::SessionId),
     /// A control of a session's row on the Agents page: `primary`, `more`, `interrupt`.

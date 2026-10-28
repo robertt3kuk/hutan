@@ -1,8 +1,9 @@
-//! Status bar items: `connection`, `workspace`, `working`, `sessions`, `attention`, `approvals`,
-//! `density`, `theme`, `palette_hint`, the editor's items, and the dock buttons `dock_left`,
-//! `dock_bottom`, `dock_right`. The built-in presets show `connection`, `workspace` and
-//! `attention` on the left and the editor's items and `working` on the right
-//! ([`StatusBarLayout`]; `palette_hint`, the palette's key, is off by default); an item with nothing to say draws nothing. `connection` always has
+//! Status bar items: `connection`, `workspace`, `working`, `usage.meters`, `usage`, `sessions`,
+//! `attention`, `approvals`, `density`, `theme`, `palette_hint`, the editor's items, and the dock
+//! buttons `dock_left`, `dock_bottom`, `dock_right`. The built-in presets show `connection`,
+//! `workspace` and `attention` on the left and the editor's items, `usage.meters` and `working`
+//! on the right ([`StatusBarLayout`]; `palette_hint`, the palette's key, is off by default); an
+//! item with nothing to say draws nothing. `connection` always has
 //! something to say: the daemon's state is never only in a menu (FX-STATUSBAR).
 //!
 //! [`StatusBarLayout`]: crate::workbench::registry::StatusBarLayout
@@ -10,6 +11,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, AnyView, AppContext as _, InteractiveElement, IntoElement, ParentElement,
     SharedString, StatefulInteractiveElement, Styled, div, px,
@@ -17,6 +19,7 @@ use gpui::{
 use hutan_client::ConnectionState;
 
 use crate::icons::{Icon, glyph, icon};
+use crate::sessions::usage::{MeterView, Severity};
 use crate::theme::DensityExt as _;
 use crate::workbench::actions::{
     JumpToNextAttention, OpenJump, ReviewApprovals, ShowAgentsPage, ToggleBottomDock,
@@ -26,7 +29,13 @@ use crate::workbench::model::DockPosition;
 use crate::workbench::registry::{
     BarWidth, DockState, StatusContext, StatusItemRegistry, StatusItemSpec, StatusSide,
 };
+use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
+use crate::workbench::ui::ring;
+use crate::workbench::usage_card::UsageCard;
+use crate::workbench::view::Region;
+
+use super::harness_icon;
 
 /// Text and tone of the connection state as the popover's headline says it.
 pub fn connection_label(state: ConnectionState) -> (String, Tone) {
@@ -326,8 +335,9 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         }),
     });
     // The tightest limit any harness reported (USAGE-LIMITS): `Codex 72% · resets 3h`. Not in
-    // the built-in bar; `agents.usage_in_status_bar` (Settings → Agents) or a preset that names
-    // it shows it. Nothing reported, nothing drawn.
+    // the built-in bar, which has `usage.meters` instead; `status.usage.style = "text"`
+    // (Settings → Status bar) swaps it in, and a preset that names it shows it. Nothing
+    // reported, nothing drawn.
     registry.register(StatusItemSpec {
         id: "usage",
         default_side: StatusSide::Right,
@@ -348,6 +358,33 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                 )))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowAgentsPage), cx))
                 .child(SharedString::from(usage.text.clone()))
+                .into_any_element()
+        }),
+    });
+    // A ring per harness with a running limit window (STATUS-METERS): the harness's glyph inside,
+    // the arc the share of its tightest window used. Amber from 80 %, red from 95 %, and from
+    // 80 % the number beside it. Hover: the harness's card with every window; click: the Agents
+    // page, whose Usage section has the numbers. In the built-in bar; nothing drawn until a
+    // harness reported a limit.
+    registry.register(StatusItemSpec {
+        id: "usage.meters",
+        default_side: StatusSide::Right,
+        render: gives_way(|ctx: &StatusContext<'_>| {
+            if ctx.data.meters.is_empty() {
+                return div().id("status-usage-meters").into_any_element();
+            }
+            clickable("status-usage-meters", ctx)
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowAgentsPage), cx))
+                .children(
+                    ctx.data
+                        .meters
+                        .iter()
+                        .enumerate()
+                        .map(|(index, meter)| usage_meter(index, meter, ctx)),
+                )
                 .into_any_element()
         }),
     });
@@ -555,6 +592,55 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         || Box::new(ToggleRightDock),
     ));
     registry
+}
+
+/// One ring of `usage.meters`: the harness's glyph inside an arc of the share used (calm: the
+/// bar's `muted`; amber and red from 80 % and 95 %, and then the number beside it, so a colour is
+/// never all there is), and the harness's card as its hover.
+fn usage_meter(index: usize, meter: &MeterView, ctx: &StatusContext<'_>) -> AnyElement {
+    const SIZE: f32 = 18.0;
+    const STROKE: f32 = 2.0;
+    let theme = ctx.theme;
+    let color = match meter.severity {
+        Severity::Calm => theme.muted,
+        Severity::Warning => theme.warning,
+        Severity::Critical => theme.danger,
+    };
+    let card = meter.card.clone();
+    div()
+        .id(("status-usage-meter", index))
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(4.0))
+        .tooltip(move |_, cx| cx.new(|_| UsageCard::new(card.clone())).into())
+        .child(
+            div()
+                .relative()
+                .flex_none()
+                .size(px(SIZE))
+                .child(ring(SIZE, STROKE, meter.fraction, theme.border, color))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(harness_icon(&meter.harness), 10.0, color)),
+                ),
+        )
+        .when(meter.says_percent(), |s| {
+            s.child(
+                div()
+                    .text_color(color)
+                    .child(SharedString::from(meter.percent.clone())),
+            )
+        })
+        .child(probe(ctx.regions, Region::UsageMeter(index)))
+        .into_any_element()
 }
 
 /// The status item that toggles one dock: a small window glyph with the dock's side filled,
@@ -769,6 +855,7 @@ mod tests {
                 "editor.position",
                 "editor.wrap",
                 "editor.language",
+                "usage.meters",
                 "working"
             ]
         );
@@ -795,6 +882,58 @@ mod tests {
                 !bar.left.iter().chain(&bar.right).any(|shown| shown == id),
                 "{id} is not in the default bar"
             );
+        }
+    }
+
+    #[test]
+    fn the_usage_style_decides_which_usage_item_the_bar_draws() {
+        use crate::settings::UsageStyle;
+        use crate::workbench::registry::StatusBarLayout;
+        let built_in = StatusBarLayout::default();
+        let styled = |bar: &StatusBarLayout, style| {
+            let mut bar = bar.clone();
+            bar.with_usage_style(style);
+            bar
+        };
+        assert_eq!(
+            styled(&built_in, UsageStyle::Meters),
+            built_in,
+            "rings are the default"
+        );
+        // Words stand where the rings stood (same place, same neighbours).
+        let words = styled(&built_in, UsageStyle::Text);
+        let at = built_in
+            .right
+            .iter()
+            .position(|i| i == "usage.meters")
+            .unwrap();
+        assert_eq!(words.right[at], "usage");
+        assert_eq!(words.right.len(), built_in.right.len());
+        // Off takes both out, wherever they were put.
+        let mut both = built_in.clone();
+        both.left.push("usage".to_owned());
+        let off = styled(&both, UsageStyle::Off);
+        assert!(
+            !off.left
+                .iter()
+                .chain(&off.right)
+                .any(|i| i.starts_with("usage")),
+            "{off:?}"
+        );
+        // A bar that names the words already keeps one item, not two.
+        let words_too = styled(&both, UsageStyle::Text);
+        let count = words_too
+            .left
+            .iter()
+            .chain(&words_too.right)
+            .filter(|i| i.starts_with("usage"))
+            .count();
+        assert_eq!(count, 1, "{words_too:?}");
+        // A bar the user took the item out of is the same in every style.
+        let mut none = built_in.clone();
+        none.right.retain(|i| i != "usage.meters");
+        for style in UsageStyle::ALL {
+            assert_eq!(styled(&none, style), none);
         }
     }
 

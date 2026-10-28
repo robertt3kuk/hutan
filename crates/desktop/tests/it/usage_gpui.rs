@@ -9,9 +9,13 @@
 use crate::common;
 
 use common::{TestDaemon, draw, open_with, settle, wait_until};
-use gpui::{Entity, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+use hutan_desktop::sessions::usage::{MeterView, Severity};
+use hutan_desktop::workbench::model::ItemRef;
 use hutan_desktop::workbench::panels::AgentsRequest;
+use hutan_desktop::workbench::style::TooltipGate;
 use hutan_desktop::workbench::usage::USAGE_TOAST_TIME;
+use hutan_desktop::workbench::usage_card::UsageCard;
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::usage::{HarnessUsage, ProviderUsage, UsageLimit, UsageSummary, UsageTotals};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -119,10 +123,10 @@ fn give(view: &Entity<Workbench>, cx: &mut VisualTestContext, summary: UsageSumm
     draw(cx);
 }
 
-fn item_drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+fn item_drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext, id: &'static str) -> bool {
     draw(cx);
     view.read_with(cx, |wb, _| {
-        wb.region_bounds(Region::StatusItem("usage"))
+        wb.region_bounds(Region::StatusItem(id))
             .is_some_and(|b| b.size.width > gpui::px(8.0))
     })
 }
@@ -134,7 +138,7 @@ fn toast(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<String> {
 // ---- the status item -------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_usage_item_is_not_in_the_built_in_bar_and_agents_settings_turn_it_on(
+fn the_usage_words_are_not_in_the_built_in_bar_and_the_text_style_swaps_them_for_the_rings(
     cx: &mut TestAppContext,
 ) {
     let daemon = TestDaemon::start();
@@ -146,22 +150,31 @@ fn the_usage_item_is_not_in_the_built_in_bar_and_agents_settings_turn_it_on(
             .iter()
             .chain(&bar.right)
             .any(|item| item == "usage"),
-        "off by default in the built-in bar: {bar:?}"
+        "the words are off in the built-in bar: {bar:?}"
     );
-    assert!(!item_drawn(&view, cx), "so it is not drawn");
+    assert!(
+        bar.right.iter().any(|item| item == "usage.meters"),
+        "{bar:?}"
+    );
+    assert!(!item_drawn(&view, cx, "usage"), "so they are not drawn");
+    assert!(item_drawn(&view, cx, "usage.meters"), "the rings are");
     // What the item would say is known all the same: the tightest limit of any harness.
     let text = view.read_with(cx, |wb, cx| wb.status_data(cx).usage.unwrap());
     assert_eq!(text.text, "Codex 72% · resets 3h");
 
     drop(view);
     let daemon = TestDaemon::start();
-    let (view, cx) = open(cx, &daemon, "[agents]\nusage_in_status_bar = true\n");
-    assert!(!item_drawn(&view, cx), "nothing reported, nothing drawn");
+    let (view, cx) = open(cx, &daemon, "[status.usage]\nstyle = \"text\"\n");
+    assert!(
+        !item_drawn(&view, cx, "usage"),
+        "nothing reported, nothing drawn"
+    );
     give(&view, cx, summary(72.0, now() + 3 * HOUR));
     assert!(
-        item_drawn(&view, cx),
-        "Settings → Agents puts it in the bar"
+        item_drawn(&view, cx, "usage"),
+        "Settings → Status bar puts the words where the rings were"
     );
+    assert!(!item_drawn(&view, cx, "usage.meters"));
     let data = view.read_with(cx, |wb, cx| wb.status_data(cx).usage.unwrap());
     assert_eq!(data.text, "Codex 72% · resets 3h");
     assert!(
@@ -191,6 +204,228 @@ fn the_usage_item_is_not_in_the_built_in_bar_and_agents_settings_turn_it_on(
     give(&view, cx, summary(99.0, now() - 1));
     let data = view.read_with(cx, |wb, cx| wb.status_data(cx).usage.unwrap());
     assert_eq!(data.text, "Codex 31%", "the 5-hour window reset");
+}
+
+// ---- the rings (STATUS-METERS) ----------------------------------------------------------------
+
+fn meters(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<MeterView> {
+    view.read_with(cx, |wb, cx| wb.status_data(cx).meters)
+}
+
+fn ring_bounds(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    index: usize,
+) -> Option<gpui::Bounds<gpui::Pixels>> {
+    draw(cx);
+    view.read_with(cx, |wb, _| wb.region_bounds(Region::UsageMeter(index)))
+}
+
+#[gpui::test]
+fn the_rings_are_hidden_until_a_harness_reports_a_limit_and_follow_the_daemon_live(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon, "");
+    // On by default in the built-in bar, and silent while nothing is known.
+    assert!(view.read_with(cx, |wb, _| {
+        wb.status_bar().right.iter().any(|i| i == "usage.meters")
+    }));
+    assert!(meters(&view, cx).is_empty());
+    assert!(!item_drawn(&view, cx, "usage.meters"), "no limit, no rings");
+
+    // A harness reports: OMP at 7 % and Codex at 72 % are two rings, a direct chat none.
+    give(&view, cx, summary(72.0, now() + 3 * HOUR));
+    let rings = meters(&view, cx);
+    let who: Vec<_> = rings.iter().map(MeterView::summary).collect();
+    assert_eq!(who, ["OMP 5-hour (anthropic) 7%", "Codex 5-hour 72%"]);
+    assert!(item_drawn(&view, cx, "usage.meters"));
+    let (omp, codex) = (
+        ring_bounds(&view, cx, 0).expect("OMP's ring"),
+        ring_bounds(&view, cx, 1).expect("Codex's ring"),
+    );
+    assert!(
+        ring_bounds(&view, cx, 2).is_none(),
+        "a direct chat has none"
+    );
+    assert!(omp.origin.x < codex.origin.x, "in the daemon's order");
+
+    // `usage.changed` redraws it: the next number is the ring's.
+    give(&view, cx, summary(88.0, now() + 3 * HOUR));
+    assert_eq!(meters(&view, cx)[1].percent, "88%");
+    // Every window over: nothing is drawn again.
+    let over = |mut s: UsageSummary| {
+        for h in &mut s.harnesses {
+            for l in &mut h.limits {
+                l.resets_at_ms = Some(now() - 1);
+            }
+        }
+        s
+    };
+    give(&view, cx, over(summary(88.0, now() + 3 * HOUR)));
+    assert!(!item_drawn(&view, cx, "usage.meters"));
+
+    // Not shown is a setting too: the Agents page keeps the numbers.
+    give(&view, cx, summary(72.0, now() + 3 * HOUR));
+    assert!(item_drawn(&view, cx, "usage.meters"));
+    view.update(cx, |wb, cx| {
+        wb.settings_store()
+            .write_user("status.usage.style", toml::Value::String("off".into()))
+            .unwrap();
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(!item_drawn(&view, cx, "usage.meters"));
+    assert!(!item_drawn(&view, cx, "usage"));
+}
+
+#[gpui::test]
+fn a_ring_turns_amber_at_80_and_red_at_95_and_says_its_number_from_80(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon, "");
+    let ring_width = |view: &Entity<Workbench>, cx: &mut VisualTestContext| {
+        ring_bounds(view, cx, 1).map(|b| f32::from(b.size.width))
+    };
+    give(&view, cx, summary(79.0, now() + 3 * HOUR));
+    let calm = meters(&view, cx)[1].clone();
+    assert_eq!(
+        (calm.severity, calm.says_percent()),
+        (Severity::Calm, false)
+    );
+    let calm_width = ring_width(&view, cx).unwrap();
+    give(&view, cx, summary(80.0, now() + 3 * HOUR));
+    let amber = meters(&view, cx)[1].clone();
+    assert_eq!(
+        (amber.severity, amber.says_percent()),
+        (Severity::Warning, true)
+    );
+    let amber_width = ring_width(&view, cx).unwrap();
+    assert!(
+        amber_width > calm_width + 10.0,
+        "from 80 % the number is drawn beside the ring: {calm_width} → {amber_width}"
+    );
+    give(&view, cx, summary(95.0, now() + 3 * HOUR));
+    let red = meters(&view, cx)[1].clone();
+    assert_eq!(
+        (red.severity, red.percent.as_str()),
+        (Severity::Critical, "95%")
+    );
+    assert_eq!(
+        meters(&view, cx)[0].severity,
+        Severity::Calm,
+        "each ring has its own level: OMP is at 7 %"
+    );
+}
+
+#[gpui::test]
+fn the_hover_card_lists_every_window_of_the_harness_with_its_account_and_reset(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon, "");
+    give(&view, cx, summary(72.0, now() + 3 * HOUR));
+    let rings = meters(&view, cx);
+    let codex = UsageCard::lines(&rings[1].card);
+    assert_eq!(
+        codex,
+        [
+            "Codex",
+            "5-hour  72%  resets in 3h",
+            "weekly  31%",
+            "Today: 22k tokens",
+            "This week: 90k tokens",
+            "Click for the Agents page",
+        ]
+    );
+    // OMP names the provider of its window and says what its turns cost, as an estimate.
+    let omp = UsageCard::lines(&rings[0].card);
+    assert_eq!(omp[1], "5-hour (anthropic)  7%  resets in 2h");
+    assert_eq!(omp[2], "Today: 1.2k tokens · ≈ $0.42 (estimate)");
+
+    // The card is a tooltip view: it draws nothing once an overlay moved the gate on.
+    let card = cx.update(|_, app| app.new(|_| UsageCard::new(rings[1].card.clone())));
+    assert!(!cx.update(|_, app| card.read(app).stale(app)));
+    cx.update(|_, app| TooltipGate::bump(app));
+    assert!(cx.update(|_, app| card.read(app).stale(app)));
+}
+
+#[gpui::test]
+fn two_accounts_of_one_harness_are_one_ring_for_the_tightest_window_and_the_card_names_whose(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon, "");
+    let mut work = limit("anthropic", "5h", 82.0, Some(now() + HOUR));
+    work.account = Some("work".into());
+    work.account_label = Some("Work".into());
+    let own = limit("anthropic", "5h", 10.0, Some(now() + HOUR));
+    let usage = UsageSummary {
+        generated_at_ms: now(),
+        day_start_ms: now() - HOUR,
+        week_start_ms: now() - 24 * HOUR,
+        harnesses: vec![HarnessUsage {
+            harness: "claude".into(),
+            limits: vec![own, work],
+            today: totals(0, 0, None),
+            week: totals(0, 0, None),
+        }],
+        providers: vec![],
+    };
+    give(&view, cx, usage);
+    let rings = meters(&view, cx);
+    assert_eq!(rings.len(), 1, "one ring, not one per account");
+    assert_eq!(rings[0].summary(), "Claude Code 5-hour · Work 82%");
+    assert_eq!(rings[0].severity, Severity::Warning);
+    assert_eq!(
+        UsageCard::lines(&rings[0].card),
+        [
+            "Claude Code",
+            "5-hour  10%  resets in 1h",
+            "5-hour · Work  82%  resets in 1h",
+            "Click for the Agents page",
+        ]
+    );
+}
+
+#[gpui::test]
+fn a_click_on_a_ring_opens_the_agents_page_where_the_usage_section_is(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon, "");
+    give(&view, cx, summary(72.0, now() + 3 * HOUR));
+    let page = ItemRef::panel("agents-dashboard");
+    assert_ne!(
+        view.read_with(cx, |wb, _| wb.state().active_center_item()),
+        Some(page.clone()),
+        "the page is not showing yet"
+    );
+    let ring = ring_bounds(&view, cx, 1).expect("Codex's ring");
+    common::click_at(cx, ring.center());
+    wait_until(cx, "the Agents page", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.state().active_center_item() == Some(page.clone())
+        })
+    });
+    // Its Usage section is the first thing under the filter band.
+    settle(cx);
+    wait_until(cx, "the Usage section", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AgentsPage("usage")).is_some()
+        })
+    });
+}
+
+#[gpui::test]
+fn the_rings_give_way_in_a_narrow_window(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon, "");
+    give(&view, cx, summary(72.0, now() + 3 * HOUR));
+    assert!(item_drawn(&view, cx, "usage.meters"));
+    cx.simulate_resize(gpui::size(gpui::px(640.0), gpui::px(700.0)));
+    draw(cx);
+    assert!(
+        !item_drawn(&view, cx, "usage.meters"),
+        "below 700 px the bar keeps the daemon's dot and the requests"
+    );
 }
 
 // ---- the Agents page -------------------------------------------------------------------------

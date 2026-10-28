@@ -931,6 +931,8 @@ pub struct StatusSettings {
     pub workspace: StatusWorkspaceSettings,
     /// The `connection` item: the daemon's state.
     pub connection: StatusConnectionSettings,
+    /// The `usage.meters` item: the harnesses' limits.
+    pub usage: StatusUsageSettings,
 }
 
 /// `status.workspace`.
@@ -954,6 +956,42 @@ pub struct StatusConnectionSettings {
     /// Say which version of the daemon is running (`hutand 0.2.0`) while it is up; its
     /// tooltip has the version either way.
     pub show_version: bool,
+}
+
+/// How the usage limits show in the status bar (`status.usage.style`, STATUS-METERS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageStyle {
+    /// One ring per harness with a limit, in the tightest window's share (the `usage.meters`
+    /// item, in the built-in bar).
+    #[default]
+    Meters,
+    /// The old words, `Codex 72% · resets 3h`, for the tightest limit of all (the `usage` item).
+    Text,
+    /// Neither; the Agents page still has the numbers.
+    Off,
+}
+
+impl UsageStyle {
+    pub const ALL: [UsageStyle; 3] = [UsageStyle::Meters, UsageStyle::Text, UsageStyle::Off];
+
+    /// The value in `settings.toml`.
+    pub fn key(self) -> &'static str {
+        match self {
+            UsageStyle::Meters => "meters",
+            UsageStyle::Text => "text",
+            UsageStyle::Off => "off",
+        }
+    }
+}
+
+/// `status.usage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct StatusUsageSettings {
+    /// How the harnesses' limits show in the status bar once one has reported: `meters` (a
+    /// ring each), `text` (the tightest, in words) or `off`. Nothing is drawn before then.
+    pub style: UsageStyle,
 }
 
 impl Setting for StatusSettings {
@@ -1530,9 +1568,6 @@ pub struct AgentsSettings {
     /// Page: the Usage section — per harness its limit windows with reset times, and the tokens
     /// and cost of the turns Hutan ran today and this week.
     pub page_usage: bool,
-    /// Status bar: show the `usage` item — the tightest limit of any harness, `Codex 72% ·
-    /// resets 3h` — even when the layout's status bar does not name it.
-    pub usage_in_status_bar: bool,
 }
 
 impl Default for AgentsSettings {
@@ -1544,7 +1579,6 @@ impl Default for AgentsSettings {
             page_group_by_workspace: false,
             page_show_finished: false,
             page_usage: true,
-            usage_in_status_bar: false,
         }
     }
 }

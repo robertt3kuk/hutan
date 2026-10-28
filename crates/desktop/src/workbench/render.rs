@@ -2971,6 +2971,7 @@ impl Workbench {
             },
             editor: self.editor_status(cx),
             usage: self.env.usage.read(cx).status(),
+            meters: self.env.usage.read(cx).meters(),
         }
     }
 
@@ -3001,11 +3002,9 @@ impl Workbench {
             width: BarWidth::of(f32::from(window.viewport_size().width)),
             editor_items: &editor_items,
             height: tokens.status_bar,
+            regions: &self.regions,
         };
-        let mut status_bar = self.status_bar();
-        if self.usage_item_wanted() {
-            status_bar.with_item("usage");
-        }
+        let status_bar = self.status_bar_drawn();
         let render_side =
             |side: StatusSide, ids: &[String], cx: &mut Context<Self>| -> Vec<AnyElement> {
                 ids.iter()

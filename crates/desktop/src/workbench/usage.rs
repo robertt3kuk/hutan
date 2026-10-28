@@ -25,7 +25,7 @@ use super::ui::{Button, IconButton, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::sessions::usage::{self, StatusText, UsageWarning, UsageWarnings};
 use crate::sessions::{SessionsStore, StoreChanged, UsageSummaryChanged};
-use crate::settings::{AgentsSettings, NotificationsSettings};
+use crate::settings::{NotificationsSettings, StatusSettings};
 use crate::theme::DensityExt as _;
 
 /// How long a warning toast stays.
@@ -98,6 +98,14 @@ impl UsageDirectory {
     /// The words of the status item now.
     pub fn status(&self) -> Option<StatusText> {
         usage::status_text(self.summary.as_ref()?, now_ms())
+    }
+
+    /// The rings of the `usage.meters` item now: one per harness with a running limit window.
+    pub fn meters(&self) -> Vec<usage::MeterView> {
+        self.summary
+            .as_ref()
+            .map(|summary| usage::meters(summary, now_ms()))
+            .unwrap_or_default()
     }
 
     /// The warnings earned since the last call.
@@ -239,10 +247,12 @@ impl Workbench {
         }
     }
 
-    /// Whether the `usage` status item is added to a bar that does not name it
-    /// (`agents.usage_in_status_bar`, Settings → Agents).
-    pub(crate) fn usage_item_wanted(&self) -> bool {
-        self.settings.get::<AgentsSettings>().usage_in_status_bar
+    /// The status bar as it is drawn: the current preset's bar with the usage items as
+    /// `status.usage.style` says (Settings → Status bar).
+    pub fn status_bar_drawn(&self) -> super::registry::StatusBarLayout {
+        let mut bar = self.status_bar();
+        bar.with_usage_style(self.settings.get::<StatusSettings>().usage.style);
+        bar
     }
 
     pub(crate) fn render_usage_toast(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {

@@ -172,6 +172,8 @@ pub struct StatusContext<'a> {
     pub editor_items: &'a super::editor_status::EditorItems,
     /// Height of the status bar.
     pub height: f32,
+    /// Where parts of an item were painted, for tests (`probe`).
+    pub regions: &'a super::regions::Regions,
 }
 
 /// Live numbers the status items show.
@@ -199,6 +201,9 @@ pub struct StatusData {
     pub editor: Option<EditorStatus>,
     /// The `usage` item: the tightest limit of any harness; `None` until one reported.
     pub usage: Option<crate::sessions::usage::StatusText>,
+    /// The `usage.meters` item: a ring per harness with a running limit window; empty until
+    /// one reported.
+    pub meters: Vec<crate::sessions::usage::MeterView>,
 }
 
 /// What the editor items know of the focused file tab at the workbench's level. Its line and
@@ -287,27 +292,45 @@ pub struct StatusBarLayout {
 }
 
 impl StatusBarLayout {
-    /// Adds `id` on the right, before `working` or the palette's key, unless the bar names it.
-    pub fn with_item(&mut self, id: &str) {
-        if self.left.iter().chain(&self.right).any(|item| item == id) {
-            return;
+    /// The bar as `status.usage.style` draws it (STATUS-METERS): `meters` leaves it as it is;
+    /// `text` puts the `usage` words where `usage.meters` stands; `off` drops both. A bar that
+    /// names neither (the user took the item out) is the same in every style.
+    pub fn with_usage_style(&mut self, style: crate::settings::UsageStyle) {
+        use crate::settings::UsageStyle;
+        match style {
+            UsageStyle::Meters => {}
+            UsageStyle::Text => {
+                let words_named = self
+                    .left
+                    .iter()
+                    .chain(&self.right)
+                    .any(|item| item == "usage");
+                for side in [&mut self.left, &mut self.right] {
+                    if words_named {
+                        side.retain(|item| item != "usage.meters");
+                    } else if let Some(item) =
+                        side.iter_mut().find(|item| item.as_str() == "usage.meters")
+                    {
+                        "usage".clone_into(item);
+                    }
+                }
+            }
+            UsageStyle::Off => {
+                for side in [&mut self.left, &mut self.right] {
+                    side.retain(|item| item != "usage.meters" && item != "usage");
+                }
+            }
         }
-        let at = self
-            .right
-            .iter()
-            .position(|item| item == "working" || item == "palette_hint")
-            .unwrap_or(self.right.len());
-        self.right.insert(at, id.to_owned());
     }
 }
 
 impl Default for StatusBarLayout {
     /// The status bar of the built-in presets (FX-STATUSBAR): the daemon's state, the project
     /// and its branch and the requests that wait on the left; the editor's items while a file
-    /// tab has focus and the agents at work on the right. The other items (`sessions`,
-    /// `approvals`, `density`, `theme`, `palette_hint`, the dock buttons) stay registered for
-    /// presets that name them and for the bar's checklist; the palette's key is off by default
-    /// (⌘K and the menu open the palette).
+    /// tab has focus, the harnesses' limit rings (once one reported) and the agents at work on
+    /// the right. The other items (`sessions`, `usage`, `approvals`, `density`, `theme`,
+    /// `palette_hint`, the dock buttons) stay registered for presets that name them and for the
+    /// bar's checklist; the palette's key is off by default (⌘K and the menu open the palette).
     fn default() -> Self {
         Self {
             left: ["connection", "workspace", "attention"]
@@ -319,6 +342,7 @@ impl Default for StatusBarLayout {
                 "editor.position",
                 "editor.wrap",
                 "editor.language",
+                "usage.meters",
                 "working",
             ]
             .map(str::to_owned)
