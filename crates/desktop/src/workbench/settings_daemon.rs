@@ -436,20 +436,7 @@ fn strings_of(value: &Json) -> Vec<String> {
 }
 
 fn heading(title: &str, help: &str, theme: &Theme, tokens: &Tokens) -> AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .pt(px(tokens.spacing * 4.0))
-        .pb(px(tokens.spacing))
-        .child(
-            div()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(SharedString::from(title.to_owned())),
-        )
-        .when(!help.is_empty(), |s| {
-            s.child(note(help.to_owned(), theme, tokens))
-        })
-        .into_any_element()
+    super::ui::section_head(title.to_owned(), help.to_owned(), theme, tokens)
 }
 
 impl Workbench {
@@ -1474,6 +1461,7 @@ impl Workbench {
             &tokens,
         )
         .compact()
+        .min_width(super::ui::CONTROL_WIDTH)
         .selected(open)
         .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1536,11 +1524,11 @@ impl Workbench {
                     .id(SharedString::from(format!("dinput-{key}")))
                     .flex()
                     .items_center()
-                    .min_w(px(150.0))
+                    .min_w(px(super::ui::CONTROL_WIDTH))
                     .h(px(tokens.control_height))
                     .px(px(tokens.spacing * 2.0))
                     .rounded(px(tokens.radius))
-                    .bg(theme.bg)
+                    .bg(theme.surface)
                     .border_1()
                     .border_color(if failed { theme.danger } else { theme.border })
                     .focus_ring(active, &theme, &tokens)

@@ -1284,8 +1284,14 @@ impl Workbench {
             match selected {
                 "models" => vec![self.render_providers(cx)],
                 "accounts" => vec![self.render_accounts(cx)],
-                "data" => vec![self.render_data_page(cx)],
-                page => self.render_page_rows(page, cx),
+                "data" => {
+                    let page = self.render_data_page(cx);
+                    vec![super::ui::card_section(vec![page], &theme, &tokens)]
+                }
+                page => {
+                    let rows = self.render_page_rows(page, cx);
+                    super::ui::group_sections(rows, &theme, &tokens)
+                }
             }
         };
         let banner = self.render_restart_banner(cx);

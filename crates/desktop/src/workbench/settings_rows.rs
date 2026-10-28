@@ -14,7 +14,10 @@ use super::settings_schema::{Field, FieldKind, number_range, value_at};
 use super::settings_sheet::display_value;
 use super::style::TextTooltip;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{Button, FocusRingExt as _, IconButton, StyledExt as _};
+use super::ui::{
+    Button, CONTROL_WIDTH, FocusRingExt as _, IconButton, ROW_HEIGHT, StyledExt as _, row_fixed,
+    space,
+};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::macos::LoginItemStatus;
@@ -30,18 +33,15 @@ fn status_tone(status: LoginItemStatus, theme: Theme) -> gpui::Hsla {
     }
 }
 
-/// The narrowest the control column of a row is, in px: a dropdown, a field and a switch's cell
-/// all start at the same x, whatever their value says.
-pub(super) const CONTROL_MIN_WIDTH: f32 = 120.0;
-
-/// The height of a row of the sheet: 56 px comfortable, 52 px compact.
-pub(super) fn row_height(tokens: &Tokens) -> f32 {
-    tokens.sidebar_row + 26.0
-}
+/// A help longer than this many characters does not fit on one line of a row; the row says it
+/// in a tooltip as well.
+const HELP_TIP_CHARS: usize = 56;
 
 /// One row of a page of the sheet: the label (13 medium) with its chip, one line of help (12
-/// `muted`, wrapped whole: a row grows to its help instead of cutting it with "…"),
-/// and at the right the ghost ↺ and the control. A hairline under it.
+/// `muted`, cut with "…" when it does not fit, whole in the tooltip), and at the right the
+/// ghost ↺ and the control, in a column every control of the page shares: exactly
+/// [`ROW_HEIGHT`] tall unless something under the help or a tall control makes it grow. A
+/// hairline under it.
 pub(super) struct SheetRow {
     id: gpui::ElementId,
     title: SharedString,
@@ -52,6 +52,7 @@ pub(super) struct SheetRow {
     reset: Option<AnyElement>,
     top: bool,
     mark: Option<AnyElement>,
+    control_mark: Option<AnyElement>,
 }
 
 impl SheetRow {
@@ -71,6 +72,7 @@ impl SheetRow {
             reset: None,
             top: false,
             mark: None,
+            control_mark: None,
         }
     }
 
@@ -109,66 +111,73 @@ impl SheetRow {
         self
     }
 
+    /// An invisible probe child of the control's own box, to measure the control column in
+    /// tests.
+    #[must_use]
+    pub(super) fn control_marked(mut self, probe: impl IntoElement) -> Self {
+        self.control_mark = Some(probe.into_any_element());
+        self
+    }
+
     pub(super) fn build(self, theme: &Theme, tokens: &Tokens) -> AnyElement {
         let help_id = gpui::ElementId::from((self.id.clone(), "help"));
         let has_help = !self.help.is_empty();
-        let row = div()
-            .id(self.id)
+        // One line of help; what does not fit is the tooltip's.
+        let tip = (self.help.chars().count() > HELP_TIP_CHARS).then(|| self.help.clone());
+        // A row with something under its help, or a control taller than a line, grows; every
+        // other row is exactly `ROW_HEIGHT`.
+        let grows = self.top || !self.under.is_empty();
+        let label = div()
             .flex()
-            .relative()
-            .when(self.top, |s| s.items_start())
-            .when(!self.top, |s| s.items_center())
-            .justify_between()
-            .gap(px(tokens.spacing * 3.0))
-            .min_h(px(row_height(tokens)))
-            .py(px(tokens.spacing))
-            .border_b_1()
-            .border_color(theme.border)
-            .children(self.mark)
+            .flex_col()
+            .min_w_0()
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
+                    .items_center()
+                    .gap(px(space::SM))
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap(px(tokens.spacing * 2.0))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .child(self.title),
-                            )
-                            .children(self.chip),
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(self.title),
                     )
-                    .when(has_help, |s| {
-                        s.child(
-                            div()
-                                .id(help_id)
-                                .text_size(px(tokens.secondary_font_size))
-                                .text_color(theme.muted)
-                                .child(self.help),
-                        )
-                    })
-                    .children(self.under),
+                    .children(self.chip),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_end()
-                    // One column: the controls of a page start at the same x.
-                    .min_w(px(CONTROL_MIN_WIDTH))
-                    .gap(px(tokens.spacing))
-                    .children(self.reset)
-                    .child(self.control),
-            );
-        row.into_any_element()
+            .when(has_help, |s| {
+                s.child(
+                    div()
+                        .id(help_id)
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .when_some(tip, |s, tip| {
+                            s.tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
+                        })
+                        .child(self.help),
+                )
+            })
+            .children(self.under);
+        let control = match self.control_mark {
+            Some(mark) => div()
+                .relative()
+                .flex()
+                .items_center()
+                .child(self.control)
+                .child(mark)
+                .into_any_element(),
+            None => self.control,
+        };
+        let controls: Vec<AnyElement> = self.reset.into_iter().chain([control]).collect();
+        row_fixed(self.id, label, controls, theme)
+            .when(self.top, |s| s.items_start())
+            .when(grows, |s| {
+                s.h_auto().min_h(px(ROW_HEIGHT)).py(px(space::SM))
+            })
+            .children(self.mark)
+            .into_any_element()
     }
 }
 
@@ -475,7 +484,7 @@ impl Workbench {
                     &tokens,
                 )
                 .compact()
-                .min_width(CONTROL_MIN_WIDTH)
+                .min_width(CONTROL_WIDTH)
                 .selected(open)
                 .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -523,7 +532,7 @@ impl Workbench {
                             .id(SharedString::from(format!("input-{key}")))
                             .flex()
                             .items_center()
-                            .min_w(px(150.0))
+                            .min_w(px(CONTROL_WIDTH))
                             .h(px(tokens.control_height))
                             .px(px(tokens.spacing * 2.0))
                             .outlined(&theme, &tokens)
@@ -590,6 +599,10 @@ impl Workbench {
         .marked(probe(
             &self.regions,
             Region::SettingsItem("row", self.field_index(field)),
+        ))
+        .control_marked(probe(
+            &self.regions,
+            Region::SettingsItem("control", self.field_index(field)),
         ));
         if tall {
             row = row.top();

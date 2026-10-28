@@ -138,40 +138,64 @@ fn the_footer_is_there_only_for_problems_one_line_with_three_or_thirty_and_its_l
     assert!(!sheet_open(&view, cx));
 }
 
-// ---- CL-POLISH-4: help wraps, controls share a column ----------------------------------------------
+// ---- UI-RHYTHM: fixed rows, one-line help, one control column ----------------------------------------
+
+fn row_heights(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<f32> {
+    (0..40)
+        .map_while(|n| bounds(view, cx, Region::SettingsItem("row", n)))
+        .map(|b| f32::from(b.size.height))
+        .collect()
+}
 
 #[gpui::test]
-fn a_long_help_wraps_whole_and_every_dropdown_is_at_least_120_px_wide(cx: &mut TestAppContext) {
+fn every_row_is_52_pt_with_one_line_of_help_and_the_controls_share_a_column(
+    cx: &mut TestAppContext,
+) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
     open_page(&view, cx, "appearance");
-    // `Compact` is the shortest value of a dropdown (83 px before); the column is 120 px at least.
-    let head = bounds(&view, cx, Region::Settings("dropdown")).expect("a dropdown");
-    assert!(
-        f32::from(head.size.width) >= 118.0,
-        "the dropdown is {head:?} wide (the probe is inside the hairline)"
-    );
+    // The probes are inside the row's 1 px hairline: a 52 pt row measures 51.
+    let heights = row_heights(&view, cx);
+    assert!(heights.len() >= 3, "{heights:?}");
+    assert!(heights.iter().all(|h| *h == 51.0), "{heights:?}");
 
-    // The Hooks page has a help of several sentences: its row grows to the text, which is not
-    // cut with an ellipsis.
+    // The dropdowns (and boxes) of the page are as wide as each other and start at one x.
+    let controls: Vec<Bounds<Pixels>> = (0..heights.len())
+        .filter_map(|n| bounds(&view, cx, Region::SettingsItem("control", n)))
+        // Dropdowns and boxes: a switch is narrower, a line of text (a field with no control
+        // of its own) is not a box.
+        .filter(|b| f32::from(b.size.width) >= 100.0 && f32::from(b.size.height) >= 22.0)
+        .collect();
+    assert!(controls.len() >= 3, "{controls:?}");
+    let first = controls[0];
+    for control in &controls {
+        assert!(
+            (f32::from(control.left()) - f32::from(first.left())).abs() <= 0.5
+                && (f32::from(control.right()) - f32::from(first.right())).abs() <= 0.5,
+            "{control:?} is not in the column of {first:?}"
+        );
+    }
+    assert!(f32::from(first.size.width) >= 166.0, "{first:?}");
+    // The dropdown itself fills the column (the probe is inside its hairline).
+    let head = bounds(&view, cx, Region::Settings("dropdown")).expect("a dropdown");
+    assert!(f32::from(head.size.width) >= 164.0, "{head:?}");
+
+    // The Hooks page has a help of several sentences: it is cut to one line (the rest is the
+    // tooltip), so no plain row grows with its text.
     open_page(&view, cx, "integrations");
-    let tallest = (0..12)
-        .filter_map(|n| bounds(&view, cx, Region::SettingsItem("row", n)))
-        .map(|b| f32::from(b.size.height))
-        .fold(0.0_f32, f32::max);
+    let heights = row_heights(&view, cx);
+    assert!(!heights.is_empty(), "the page has fields");
     assert!(
-        tallest > 80.0,
-        "a long help takes the lines it needs; the tallest row is {tallest} px"
+        heights.iter().all(|h| *h <= 51.0),
+        "a long help takes one line; the rows are {heights:?} pt"
     );
 }
 
 // ---- rows ----------------------------------------------------------------------------------------
 
 #[gpui::test]
-fn a_row_is_56_px_with_a_chip_and_a_ghost_reset_only_while_a_file_sets_its_value(
-    cx: &mut TestAppContext,
-) {
-    // The probes are inside the row's 1 px hairline: a 56 px row measures 55.
+fn a_row_has_a_chip_and_a_ghost_reset_only_while_a_file_sets_its_value(cx: &mut TestAppContext) {
+    // The probes are inside the row's 1 px hairline: a 52 pt row measures 51.
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
     open_page(&view, cx, "appearance");
@@ -183,13 +207,14 @@ fn a_row_is_56_px_with_a_chip_and_a_ghost_reset_only_while_a_file_sets_its_value
                 .height,
         )
     };
-    // The page's first field, `density`, at its default (compact): a row of 52 px with neither
-    // chip nor ↺.
+    // The page's first field, `density`, at its default (compact): neither chip nor ↺.
     assert_eq!(height(&view, cx), 51.0);
     assert!(bounds(&view, cx, Region::SettingsItem("chip", 0)).is_none());
     assert!(bounds(&view, cx, Region::SettingsItem("reset", 0)).is_none());
+    let column = bounds(&view, cx, Region::SettingsItem("control", 0)).unwrap();
 
-    // Set in your file: the chip and ↺ appear, and the row is 56 px (comfortable).
+    // Set in your file: the chip and ↺ appear, the row keeps its height (comfortable rows are
+    // 52 pt too) and the control stays where it was: the ↺ stands to its left.
     view.update(cx, |wb, cx| {
         wb.sheet_write("density", toml::Value::String("comfortable".into()), cx);
     });
@@ -198,8 +223,11 @@ fn a_row_is_56_px_with_a_chip_and_a_ghost_reset_only_while_a_file_sets_its_value
             wb.region_bounds(Region::SettingsItem("chip", 0)).is_some()
         })
     });
-    assert!(bounds(&view, cx, Region::SettingsItem("reset", 0)).is_some());
-    assert_eq!(height(&view, cx), 55.0);
+    let reset = bounds(&view, cx, Region::SettingsItem("reset", 0)).unwrap();
+    assert_eq!(height(&view, cx), 51.0);
+    let moved = bounds(&view, cx, Region::SettingsItem("control", 0)).unwrap();
+    assert_eq!(moved.size.width, column.size.width, "the control keeps its width");
+    assert!(reset.right() <= moved.left(), "{reset:?} {moved:?}");
 
     // ↺ removes the key: both go.
     view.update(cx, |wb, cx| wb.sheet_reset("density", cx));
