@@ -2201,6 +2201,90 @@ impl FilesPanel {
     }
 }
 
+impl FilesPanel {
+    /// The root row (FX-WORK-2, F-05): the folder the tree shows, as the first row of the tree —
+    /// its name, its path in the tooltip, and the folder menu (right click, or ⋯): New File, New
+    /// Folder, Reveal in Finder, Open in Terminal, Find in Folder, Copy Path. A workspace's tree
+    /// has one such row per project in the tree itself (`Row::root`), so it has none here.
+    fn render_root_row(
+        &self,
+        theme: &crate::theme::Theme,
+        tokens: &crate::theme::Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let tree = self.tree.as_ref().filter(|tree| !tree.is_grouped())?;
+        let root = tree.root().to_owned();
+        let name: SharedString = root
+            .file_name()
+            .map_or_else(
+                || root.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            )
+            .into();
+        let tip: SharedString = root.display().to_string().into();
+        let (menu_path, button_path) = (root.display().to_string(), root.display().to_string());
+        let hover = theme.sidebar_hover;
+        let menu_button = ui::IconButton::new(
+            "files-root-menu",
+            Icon::ActionMore,
+            "Folder menu",
+            theme,
+            tokens,
+        )
+        .compact()
+        .on_click(move |event: &ClickEvent, window, cx| {
+            window.dispatch_action(
+                Box::new(ShowFilesMenu(FilesMenuAt {
+                    path: button_path.clone(),
+                    file: false,
+                    position: event.position(),
+                })),
+                cx,
+            );
+        })
+        .child(probe(&self.env.regions, Region::Files("root-row-menu")));
+        Some(
+            div()
+                .id("files-root-row")
+                .relative()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(4.0))
+                .h(px(tokens.sidebar_row - 4.0))
+                .pl(px(tokens.spacing * 3.0))
+                .pr(px(tokens.spacing * 2.0))
+                .text_size(px(tokens.font_size))
+                .text_color(theme.fg)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .hover(move |s| s.bg(hover))
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    cx.listener(move |_, event: &gpui::MouseDownEvent, window, cx| {
+                        window.dispatch_action(
+                            Box::new(ShowFilesMenu(FilesMenuAt {
+                                path: menu_path.clone(),
+                                file: false,
+                                position: event.position,
+                            })),
+                            cx,
+                        );
+                    }),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .child(icon(Icon::ItemFolder, 14.0, theme.muted)),
+                )
+                .child(div().flex_1().min_w_0().truncate().child(name))
+                .child(menu_button)
+                .child(probe(&self.env.regions, Region::Files("root-row")))
+                .into_any_element(),
+        )
+    }
+}
+
 impl Focusable for FilesPanel {
     fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
         self.focus.clone()
@@ -2298,9 +2382,6 @@ impl Render for FilesPanel {
                 .child(probe(&self.env.regions, Region::Files("root-chip")))
                 .into_any_element()
         });
-        // The chip names the project: the root's name is said under it only when there is no
-        // chip (a folder that is not a project), never twice.
-        let name_shown = chip.is_none();
         let lead: Vec<AnyElement> = chip.into_iter().collect();
         // The dock tab says Files: the header keeps the scope chip and the controls.
         let header = panel_toolbar(
@@ -2309,10 +2390,6 @@ impl Render for FilesPanel {
             vec![new_file, new_folder, refresh, collapse, more],
             cx,
         );
-        let name: Option<SharedString> = self.root().and_then(|root| {
-            root.file_name()
-                .map(|n| SharedString::from(n.to_string_lossy().into_owned()))
-        });
         let sections = self.render_sections(window, cx);
         let count = self.shown_rows().len() + usize::from(self.new_row_slot().is_some());
         let body: AnyElement = match (&self.tree, count) {
@@ -2421,18 +2498,9 @@ impl Render for FilesPanel {
                 }
             }))
             .child(header)
-            .children(name.filter(|_| name_shown).map(|name| {
-                div()
-                    .flex_none()
-                    .px(px(tokens.spacing * 3.0))
-                    .pb(px(tokens.spacing))
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .truncate()
-                    .child(name)
-            }))
             .children(self.tree.is_some().then(|| self.filter_row(window, cx)))
             .children(sections)
+            .children(self.render_root_row(&theme, &tokens, cx))
             .child(body)
     }
 }

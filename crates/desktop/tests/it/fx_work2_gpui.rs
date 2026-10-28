@@ -605,3 +605,54 @@ fn a_wheel_notch_moves_the_tree_three_rows(cx: &mut TestAppContext) {
     let more = panel.read_with(cx, |p, _| p.scrolled());
     assert!((more - moved - 10.0).abs() < 1.0, "{moved} → {more}");
 }
+
+#[gpui::test]
+fn the_tree_starts_with_a_root_row_that_names_the_folder_and_has_its_menu(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, base) = scratch();
+    let root = base.join("my-project");
+    for name in ["a.txt", "b.txt"] {
+        write(&root, name, name);
+    }
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_rows(&panel, cx, 2);
+    wait_until(cx, "the root row", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Files("root-row")).is_some()
+        })
+    });
+    let row = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Files("root-row")))
+        .unwrap();
+    let tree = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Files("tree")))
+        .unwrap();
+    // The first row of the tree area: right above the entries, not part of them.
+    assert!(
+        row.bottom() <= tree.top() + gpui::px(1.0),
+        "{row:?} / {tree:?}"
+    );
+    assert_eq!(panel.read_with(cx, |p, _| p.rows().len()), 2);
+
+    // Its menu is the folder's: right click, or the ⋯ at its end.
+    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    cx.simulate_mouse_down(row.center(), gpui::MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(row.center(), gpui::MouseButton::Right, Modifiers::none());
+    draw(cx);
+    let labels = view.read_with(cx, |wb, _| {
+        wb.context_menu_entries()
+            .expect("the folder menu is open")
+            .into_iter()
+            .map(|(label, _)| label.to_string())
+            .collect::<Vec<_>>()
+    });
+    for wanted in ["New File", "New Folder", "Reveal in Finder", "Copy Path"] {
+        assert!(
+            labels.iter().any(|l| l.starts_with(wanted)),
+            "{wanted} in {labels:?}"
+        );
+    }
+}

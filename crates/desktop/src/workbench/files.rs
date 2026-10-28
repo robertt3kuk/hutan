@@ -1153,6 +1153,20 @@ impl Workbench {
                 entry.checked = workspace;
                 entry.starting_group()
             },
+            {
+                // The explorer in the left sidebar (⌘⇧4) and back.
+                let left = self.state.preset == super::model::LayoutPreset::EXPLORER_LEFT;
+                let mut entry = Self::entry("Explorer Left", move |this, _, cx| {
+                    let name = if left {
+                        super::model::LayoutPreset::DEFAULT
+                    } else {
+                        super::model::LayoutPreset::EXPLORER_LEFT
+                    };
+                    this.apply_preset_named(name, cx);
+                });
+                entry.checked = left;
+                entry.starting_group()
+            },
             Self::entry("Expand All", move |_, window, cx| {
                 expand.update(cx, |panel, cx| panel.expand_all(window, cx));
             }),

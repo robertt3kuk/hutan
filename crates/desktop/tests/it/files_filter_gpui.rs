@@ -242,7 +242,7 @@ fn typing_shows_what_the_tree_has_listed_while_the_daemons_answer_is_held(cx: &m
     draw(cx);
     assert_eq!(
         names(&panel, cx),
-        ["src", "  main_util.rs", "main.rs"],
+        ["main.rs", "src", "  main_util.rs"],
         "frames do not wait for the daemon"
     );
     assert_eq!(status(&panel, cx), FilesFilterStatus::Searching);
@@ -254,11 +254,11 @@ fn typing_shows_what_the_tree_has_listed_while_the_daemons_answer_is_held(cx: &m
         &panel,
         cx,
         &[
+            "main.rs",
             "deep/a/b",
             "  main_deep.rs",
             "src",
             "  main_util.rs",
-            "main.rs",
         ],
     );
     assert_eq!(
