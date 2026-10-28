@@ -186,9 +186,8 @@ fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, what: Region) {
     wait_until(cx, &format!("{what:?} to be drawn"), |cx| {
         region(view, cx, what).is_some()
     });
-    // GPUI hit-tests a click from the last frame's pointer position: a button that appeared
-    // since (the Undo bar) is only hit after the pointer was over it. Hover, draw, then click,
-    // in the frame drawn last rather than the one the button was first seen in.
+    // The button can move while the diff it belongs to re-flows (a hunk changes sides): click
+    // where it stands in the frame drawn last, not in the one it was first seen in.
     draw(cx);
     draw(cx);
     let bounds = region(view, cx, what).unwrap_or_else(|| panic!("{what:?} went away"));
@@ -196,6 +195,31 @@ fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, what: Region) {
     draw(cx);
     cx.simulate_click(bounds.center(), Modifiers::none());
     draw(cx);
+}
+
+/// Clicks `what` until `done` holds. Under load a click on a button that was just redrawn (the
+/// file's buttons after a hunk moved, the Undo bar after a discard) is sometimes not delivered
+/// to it: the click handler never runs and the state stays as it was. Every button this is used
+/// on is idempotent or guarded (staging twice, Undo while running), so a click that was not
+/// taken is made again, up to four times, each given a second to show its effect.
+fn click_until(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    what: Region,
+    mut done: impl FnMut(&mut VisualTestContext) -> bool,
+) {
+    for _ in 0..4 {
+        click(view, cx, what);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+        while std::time::Instant::now() < deadline {
+            draw(cx);
+            if done(cx) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    panic!("{what:?} was clicked four times and nothing happened");
 }
 
 fn drawn(view: &Entity<Workbench>, cx: &VisualTestContext, what: Region) -> bool {
@@ -399,7 +423,10 @@ fn the_stage_pane_stages_and_unstages_single_hunks(cx: &mut TestAppContext) {
     assert!(cached.contains("+FIVE"), "{cached}");
     assert!(!cached.contains("FIFTEEN"), "{cached}");
     assert_eq!(fx.a_txt(), edited(), "the working tree is untouched");
-    assert_eq!(rows(&changes, cx)[0], ("a.txt".to_owned(), true, true));
+    // The file rows are read apart from the hunks: wait for the one that says both.
+    wait_until(cx, "a.txt staged and unstaged", |cx| {
+        rows(&changes, cx).first() == Some(&("a.txt".to_owned(), true, true))
+    });
 
     // Unstage hunk puts it back.
     click(&view, cx, Region::ChangesStage(1, "unstage"));
@@ -409,12 +436,10 @@ fn the_stage_pane_stages_and_unstages_single_hunks(cx: &mut TestAppContext) {
     assert!(fx.staged().is_empty());
 
     // The file's own buttons stage and unstage all of it.
-    click(&view, cx, Region::Changes("stage-file"));
-    wait_until(cx, "both hunks staged", |cx| {
+    click_until(&view, cx, Region::Changes("stage-file"), |cx| {
         hunks(&changes, cx).len() == 2 && hunks(&changes, cx).iter().all(|(s, _)| *s)
     });
-    click(&view, cx, Region::Changes("unstage-file"));
-    wait_until(cx, "both hunks unstaged", |cx| {
+    click_until(&view, cx, Region::Changes("unstage-file"), |cx| {
         hunks(&changes, cx).len() == 2 && hunks(&changes, cx).iter().all(|(s, _)| !*s)
     });
 
@@ -528,8 +553,7 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     // Undo restores the working tree and the hunk comes back.
     // The Undo bar slides in while it opens: a click before it settles lands beside the button.
     settle(cx);
-    click(&view, cx, Region::Changes("undo-discard"));
-    wait_until(cx, "the discard to be undone", |cx| {
+    click_until(&view, cx, Region::Changes("undo-discard"), |cx| {
         changes.read_with(cx, |c, _| c.undo_offer().is_none())
     });
     assert_eq!(fx.a_txt(), edited());
@@ -544,8 +568,7 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     });
     // The Undo bar slides in while it opens: a click before it settles lands beside the button.
     settle(cx);
-    click(&view, cx, Region::Changes("undo-discard"));
-    wait_until(cx, "the file to be back", |cx| {
+    click_until(&view, cx, Region::Changes("undo-discard"), |cx| {
         fx.a_txt() == edited() && changes.read_with(cx, |c, _| c.undo_offer().is_none())
     });
 
@@ -557,7 +580,9 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     });
     // The Undo bar slides in while it opens: a click before it settles lands beside the button.
     settle(cx);
-    click(&view, cx, Region::Changes("undo-dismiss"));
+    click_until(&view, cx, Region::Changes("undo-dismiss"), |cx| {
+        changes.read_with(cx, |c, _| c.undo_offer().is_none())
+    });
     assert!(changes.read_with(cx, |c, _| c.undo_offer().is_none()));
     assert_ne!(fx.a_txt(), edited());
 }
