@@ -4,6 +4,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+## 0.3.1 — 2026-10-28
+
 ### Added
 - File operations in the daemon (groundwork for the file explorer): create, rename, move, copy and **Trash** (never permanent delete) with undo tickets, confined to the project like writes; `hutan fs mkdir|touch|mv|cp|trash|restore`. An agent's Trash always asks, with no session-wide grant.
 - Soft wrap in the editor: Markdown and plain text wrap at the window by default, code doesn't (`editor.soft_wrap = auto|off|viewport|column`, `editor.wrap_column`, per language `languages.<name>.soft_wrap`); ⌥Z or View → Toggle Soft Wrap per tab, a *Wrap* status item; ↑/↓, Home/End and selections follow wrapped rows; Vim `j`/`k` stay on lines, `gj`/`gk`/`g0`/`g$` move by row.

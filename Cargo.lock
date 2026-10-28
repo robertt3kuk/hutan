@@ -2519,7 +2519,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hutan-agents"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-buffer"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crop",
  "proptest 1.12.0",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-chat-view"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "hutan-core",
  "serde_json",
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2586,7 +2586,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-client"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "futures",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-code-view"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "futures",
  "gpui",
@@ -2624,7 +2624,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-container"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "proptest 1.12.0",
  "serde",
@@ -2646,7 +2646,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-daemon"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2693,7 +2693,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-desktop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.22.1",
  "block2 0.6.2",
@@ -2736,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-gateway"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2760,7 +2760,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-index"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "libc",
  "notify",
@@ -2775,7 +2775,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-lsp-client"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "futures",
@@ -2794,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-protocol"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bitflags 2.13.2",
  "bytes",
@@ -2808,7 +2808,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-settings"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "hutan-syntax",
  "libc",
@@ -2831,7 +2831,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-storage"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "hutan-core",
  "parking_lot",
@@ -2846,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-syntax"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "hutan-buffer",
  "thiserror 2.0.21",
@@ -2870,7 +2870,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-terminal"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alacritty_terminal",
  "hutan-protocol",
@@ -2888,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-terminal-view"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "futures",
  "gpui",
@@ -2910,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-ui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "gpui",
  "hutan-settings",
@@ -2918,7 +2918,7 @@ dependencies = [
 
 [[package]]
 name = "hutan-vim"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "proptest 1.12.0",
  "regex",
@@ -7887,7 +7887,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
