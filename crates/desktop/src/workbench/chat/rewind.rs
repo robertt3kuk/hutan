@@ -35,7 +35,7 @@ enum Peek {
     Waiting,
     /// Nothing for this turn: off, unsupported, no files changed, no checkpoint.
     Nothing,
-    Found(CheckpointInfo, FooterAction),
+    Found(Box<CheckpointInfo>, FooterAction),
 }
 
 /// What a turn's footer offers for its checkpoint.
@@ -58,7 +58,7 @@ impl ChatView {
         cx: &mut Context<Self>,
     ) -> Option<(CheckpointInfo, FooterAction)> {
         match self.peek_checkpoint(turn, cx) {
-            Peek::Found(checkpoint, action) => Some((checkpoint, action)),
+            Peek::Found(checkpoint, action) => Some((*checkpoint, action)),
             Peek::Nothing => None,
             Peek::Waiting => {
                 // Not asked for yet (or on its way): the store tells this view when it lands.
@@ -78,7 +78,7 @@ impl ChatView {
         cx: &App,
     ) -> Option<(CheckpointInfo, FooterAction)> {
         match self.peek_checkpoint(turn, cx) {
-            Peek::Found(checkpoint, action) => Some((checkpoint, action)),
+            Peek::Found(checkpoint, action) => Some((*checkpoint, action)),
             Peek::Nothing | Peek::Waiting => None,
         }
     }
@@ -122,7 +122,7 @@ impl ChatView {
                 None => FooterAction::Rewind,
             }
         };
-        Peek::Found(checkpoint, action)
+        Peek::Found(Box::new(checkpoint), action)
     }
 
     /// The footer's line about the files the turn changed, with *Rewind…* or *Undo*, and the

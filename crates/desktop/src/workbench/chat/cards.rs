@@ -230,6 +230,7 @@ impl ChatView {
     /// The user's message. What the user typed is the message; the context the daemon appended
     /// (`docs/assistant.md`) is shown as one chip per attachment — kind, label, characters kept
     /// and whether the budget cut it — with the text itself folded away.
+    #[allow(clippy::too_many_arguments)]
     fn user_card(
         &mut self,
         index: usize,
