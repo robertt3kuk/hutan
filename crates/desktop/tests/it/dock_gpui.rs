@@ -373,6 +373,25 @@ fn hide_right_rail_is_a_full_hide_with_a_titlebar_recovery_button(cx: &mut TestA
     assert_eq!(chosen(&view, cx, Right), Expanded);
 }
 
+/// FX-DOCK-TOGGLES item 1, the state before the fix: the left titlebar button goes from the
+/// sidebar to nothing, the right one only to the 40 pt rail (the rail stays, with a second
+/// open/close button at its foot), so the right side never closes all the way from the title bar.
+#[gpui::test]
+fn before_the_fix_the_right_titlebar_button_stops_at_the_rail_and_the_rail_has_a_second_toggle(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx) = open(cx);
+    click(&view, cx, Region::DockToggle(Left));
+    assert_eq!(chosen(&view, cx, Left), Hidden);
+    click(&view, cx, Region::DockToggle(Right));
+    assert_eq!(chosen(&view, cx, Right), Compact, "the rail stays");
+    assert!(painted(&view, cx, Region::Rail(Right)));
+    assert!(
+        painted(&view, cx, Region::Toolbar("right-collapse")),
+        "the rail's own toggle: a second one"
+    );
+}
+
 #[gpui::test]
 fn opening_a_panel_by_command_expands_a_collapsed_right_panel(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
