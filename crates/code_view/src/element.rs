@@ -310,7 +310,8 @@ fn prepare(
     {
         let moved_up = f32::from(previous - bounds.top());
         if moved_up > 0.0 {
-            view.scroll_y -= moved_up.min(view.scroll_y.max(0.0));
+            view.inset += moved_up;
+            view.scroll_y -= moved_up;
         }
     }
     view.apply_reveal(cx);

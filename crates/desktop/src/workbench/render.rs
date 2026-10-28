@@ -253,13 +253,9 @@ impl Render for Workbench {
             .font_family(super::ui::ui_family())
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
-            .on_mouse_move(cx.listener(|this, event, window, cx| {
-                this.on_mouse_move(event, window, cx);
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.finish_resize(cx)),
-            );
+            // A drag of a dock edge or a divider is followed by `docks::resize_observer`, not by
+            // this element: the handle under the pointer occludes it.
+            ;
         let root = self.bind_actions(root, cx);
         let root = self.bind_rewind_actions(root, cx);
 
@@ -303,6 +299,7 @@ impl Render for Workbench {
         .child(status)
         .child(super::ui::keyboard_focus_observer())
         .child(super::style::tooltip_scroll_observer())
+        .child(super::docks::resize_observer(cx.entity()))
         // The dock handles come before every popover and menu: an overlay painted after them
         // takes the hit-test and the hover over a handle it covers (the daemon popover's
         // *Start* was dead where it crossed the bottom dock's edge).

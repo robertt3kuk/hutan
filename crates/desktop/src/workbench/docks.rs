@@ -21,6 +21,34 @@ use super::model::{
 };
 use super::view::{Resizing, Workbench};
 
+/// An invisible element whose paint registers window-level mouse observers for the frame: while a
+/// dock edge or a divider is dragged, every move and the release reach the workbench whatever is
+/// under the pointer. (The workbench root's own handlers need the pointer over the root, and the
+/// handle being dragged — which occludes it — is under the pointer: a slow drag stalled until the
+/// pointer left the handle.)
+pub fn resize_observer(view: gpui::Entity<Workbench>) -> impl gpui::IntoElement {
+    use gpui::{DispatchPhase, MouseButton, MouseMoveEvent, MouseUpEvent, Styled as _, canvas};
+    canvas(
+        |_, _, _| {},
+        move |_, _, window, _| {
+            let moved = view.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture {
+                    moved.update(cx, |this, cx| this.on_mouse_move(event, window, cx));
+                }
+            });
+            let released = view.clone();
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
+                    released.update(cx, |this, cx| this.finish_resize(cx));
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_0()
+}
+
 /// Dragging the edge of a side dock this far below its minimum width arms the collapse to its
 /// rail; releasing the mouse then commits it, Escape cancels.
 pub const COLLAPSE_DRAG: f32 = 24.0;

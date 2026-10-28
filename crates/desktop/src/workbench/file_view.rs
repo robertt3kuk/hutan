@@ -1742,7 +1742,10 @@ impl Render for FileView {
                 let path = self.buffer.read(cx).path().display().to_string();
                 super::lsp_bar::render(lsp, &path, &self.regions, &theme, &tokens, cx)
             });
-        let has_bar = conflict_bar.is_some() || agent_bar.is_some() || lsp_bar.is_some();
+        // A bar the user acts on (an agent's, a conflict's) going away must not move the text they
+        // look at; the language server's bar just gives its room back (N-08: it left a blank
+        // band above the first line).
+        let has_bar = conflict_bar.is_some() || agent_bar.is_some();
         if self.had_bar && !has_bar {
             self.code.update(cx, |code, _| code.keep_text_in_place());
         }
