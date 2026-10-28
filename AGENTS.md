@@ -38,6 +38,7 @@ macOS-first Rust agentic development environment: `hutand` (Tokio daemon, source
 - Permissions are enforced in the daemon; UI only collects decisions.
 - Secrets only in Keychain via the daemon; never in SQLite, logs, events, or fixtures (ADR 0008).
 - Subscription logins are used only through harnesses (Codex, Claude Code, OMP): Hutan lists accounts and starts the harness's own login, and never reads, stores or forwards their tokens (ADR 0015).
+- **The user's screenshots and pastes never enter the repository** (public): no commit, no copy of their text, names or paths into docs, briefs, fixtures or tests. Keep them under `~/hutan-scratch/private/` only while needed, describe what they show in your own words, and delete them when the work is done (user, 2026-10-28; after a 2026-10-27 slip).
 - Bounded everything: scrollback, event ring, per-client queues. No unbounded channels.
 - Protocol changes: additive = minor bump + capability; breaking = major bump + ADR (ADR 0002).
 - Hard-to-reverse decision → ADR first; missing evidence → spike outside the repo, report into `docs/spikes/`.
