@@ -972,12 +972,12 @@ pub struct TerminalSpec {
     pub contain: Option<hutan_core::Contain>,
     /// Protocol 0.57 (capability `session.dirs`, ADR 0023): further folders the session's
     /// program works in besides `cwd`: absolute, existing directories (made canonical), at most
-    /// [`crate::chat::SESSION_DIRS_MAX`], without duplicates and none equal to `cwd`. When the
-    /// program is a known agent (`claude`, `codex`, `omp`) the daemon starts it with
-    /// `--add-dir <path>` for each; for other programs (a shell) the list is only kept, readable
-    /// by the file service and, with `contain`, writable (`bad_request` otherwise). **User-only**:
-    /// an agent-originated connection that sends any gets `forbidden`. Kept by
-    /// `session.restart`.
+    /// [`crate::chat::SESSION_DIRS_MAX`], none twice and none equal to `cwd` (`bad_request` with
+    /// the reason otherwise). When the program is a known agent (`claude`, `codex`, `omp`) the
+    /// daemon starts it with `--add-dir=<path>` for each; with `contain` they are writable in
+    /// the boundary; for any other program (a shell) the list is only kept, and the file service
+    /// serves the folders while the session lives. **User-only**: an agent-originated
+    /// connection that sends any gets `forbidden`. Kept by `session.restart`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_dirs: Vec<PathBuf>,
 }

@@ -132,8 +132,9 @@ static TOOLS: &[Tool] = &[
     Tool {
         name: "session_list",
         description: "List Hutan's sessions (terminals and agent chats): id, title, state, \
-                      working directory, workspace, the agent reported in it. Start here to find \
-                      a session id.",
+                      working directory, workspace, the agent reported in it, and the extra \
+                      folders the user gave it (`chat.dirs`, `extra_dirs`; read-only: only the \
+                      user adds or removes them). Start here to find a session id.",
         read_only: true,
         call: request("session.list"),
         schema: || {

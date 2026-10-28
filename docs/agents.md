@@ -135,7 +135,7 @@ args = ["app-server", "-c", 'model_reasoning_effort="low"']   # default: ["app-s
 ## CLI
 
 ```text
-hutan chat new [--agent codex|omp|claude] [--account A] [--safety ask|contained|read_only|full] [--cwd DIR] [--model M] [--mode MODE] [--approval-policy untrusted|on-request|never] [--sandbox read-only|workspace-write|danger-full-access] [--ws W] [--title T]
+hutan chat new [--agent codex|omp|claude] [--account A] [--safety ask|contained|read_only|full] [--cwd DIR] [--dir PATH]… [--model M] [--mode MODE] [--approval-policy untrusted|on-request|never] [--sandbox read-only|workspace-write|danger-full-access] [--ws W] [--title T]
 hutan chat send <session> "<text>" [--wait]   # --wait streams the reply; tool calls are one line each; exit 1 if the turn fails or is cancelled
 hutan chat log <session>                      # the journal as text (--json: the history)
 hutan chat attach <session>                   # recent history, then live events until the session ends
@@ -143,6 +143,7 @@ hutan chat interrupt <session>
 hutan chat fork <session> [--turn N|ID] [--mode exact|head|summary] [--title T]   # a new chat with the conversation up to a turn (§ Fork)
 hutan chat models [--agent codex|omp|claude]
 hutan chat model <session> <model>             # switch the model of a direct or harness chat (next turn)
+hutan chat dirs list|add|remove <session> [PATH…]   # the session's extra folders (§ Folders in a session); `chat new --dir PATH`, `new --dir PATH` give them at creation
 hutan account list | login <omp|claude|codex> [provider] [--account A] [--attach] | logout <harness> | add <harness> <name> [--label L] [--no-login] | remove <harness> <name> [--yes] | default <harness> <name|system|--clear> [--project P]   # § Several accounts per harness
 hutan usage [--json] [--cached]   # limit windows per harness, tokens and cost today / this week; asks the harnesses unless --cached (§ Usage)
 hutan approvals                               # pending requests (--json)
@@ -346,6 +347,33 @@ The chat header's chip shows it in place of the mode chip: `Contained · workspa
 
 Tests: `crates/core/src/safety.rs` (the table, flags), `crates/daemon/src/safety.rs` and `crates/daemon/tests/it/safety.rs` (exact arguments, session modes, `_meta` and thread parameters per preset and harness through fixture harnesses; refusals with reasons; read-back, including a server that enforces something else and a Claude mode change), `crates/agents/tests/it/{acp,codex}.rs` (`_meta` on `session/new`/`session/load`, the reported sandbox), `crates/desktop/tests/it/launcher_gpui.rs` (the row, dimmed presets with reasons, the task and argv a start makes, the settings default), `workbench/chat/view.rs` (chip wording), `crates/cli/tests/it/{harness,mcp}.rs`, golden fixtures `request_chat_create_safety`, `request_task_create_chat_safety`, `event_session_updated_chat_safety*`. Fixtures: `acp-omp-18.11/claude-modes-*.jsonl` and `codex-0.162/safety-*.jsonl` are the recorded handshakes with the modes / `approvalPolicy` and `sandbox` of the answer edited by hand.
 
+## Folders in a session (protocol 0.57, capability `session.dirs`; SESSION-DIRS-A, ADR 0023)
+
+A session works in one folder, its `cwd`. You can give it more: a second repository, a shared library, the docs. They are **session folders**: not projects (nothing is added to the sidebar), kept with the session across stops, restarts and daemon restarts, at most 8, shown in `ChatInfo.dirs` / `SessionInfo.extra_dirs`. Only you can add or remove one: `chat.add_dir`, `chat.remove_dir` and creating a session with `extra_dirs` are user-only, because a folder widens what an agent may touch (an agent that asks gets `forbidden`, under every `[control]` policy). A folder must exist, may not be the session's own, and may not be Hutan's data folder or inside a `[sandbox] read_deny` folder (credentials).
+
+```text
+hutan chat new --agent claude --dir ~/src/api --dir ~/src/shared      # at creation
+hutan new --dir ~/src/api -- claude                                   # a terminal agent: started with --add-dir=…
+hutan chat dirs list <session>      # primary, then extras: path (now | next turn | after a restart | …)
+hutan chat dirs add <session> ~/src/docs
+hutan chat dirs remove <session> ~/src/docs
+```
+
+How each agent takes a folder, and what `applied` says (the daemon reports what it knows, never what was asked):
+
+| Agent | Given at start | Added while it runs | `applied` |
+|---|---|---|---|
+| **Claude Code** chat | `additionalDirectories` on `session/new`, `load`, `resume` (resent every time: ACP drops what is omitted) | not possible in ACP | `now` for folders it started with, `restart` for later ones |
+| **OMP** chat | the local command `/add-dir <path>` right after the session opens (OMP ignores the ACP field; the command costs no model call and stays out of the journal) | the same command between turns; during a turn it waits and goes before the next message | `now`, or `next_turn` while it waits |
+| **Codex** chat | — | `sandboxPolicy.writableRoots` on the next `turn/start` (only in a `workspace-write` sandbox; a read-only chat is never widened, full access needs nothing) | `next_turn` until a turn carried it, then `now`; `unsupported` when read-only |
+| **Terminal** `claude`, `codex`, `omp` | `--add-dir=<path>` per folder after the program name | a running OMP or Claude Code at its prompt is **typed** `/add-dir <path>` without Enter, for you to confirm; Codex's terminal needs a restart | `now`, `paste`, `restart` |
+| Other terminals | the list is kept | — | `now` (the file service has it at once) |
+| Direct chat, assistant | refused: no tools to give folders to | | |
+
+A running session whose agent is stopped says `restart` for every extra folder: they are given at its next start. A folder that was deleted meanwhile is left out of the start. On a resumed OMP chat Hutan asks OMP's `/dirs` and makes its list equal to the chat's (OMP keeps added folders in its session header), so a folder you took out while OMP was not running does not come back.
+
+**Contain.** The folders are writable roots of the boundary (`extra_write`), planned at every start; the profile is fixed when the process starts, so a folder added to a contained OMP chat or terminal reports `restart` and OMP is not told of it (it could not write there); stop and restart the session to give it. **File service.** While a session lives, its extra folders are roots of the file service (the Files panel, `hutan fs`, editors): you can open files there; after `remove_dir`, or when the session ends, they are refused again. **Tests:** `crates/daemon/tests/it/session_dirs.rs` (what each harness receives, user-only, refusals, file-service roots, terminals), `contain.rs` (the boundary), `crates/agents/tests/it/{acp,codex}.rs` and the `dirs-*.jsonl` transcripts (built from the handshakes and OMP 18.12.3's answers: `Added …`, `Already in the workspace …`, `Removed …`, `Not a workspace directory …`).
+
 ## Contain (protocol 0.52, capability `sandbox`; SANDBOX-2, ADR 0021)
 
 For the sessions whose harness has no OS sandbox — a **plain terminal**, a **command**, a **terminal agent**, an **OMP chat** — the daemon puts a Seatbelt boundary of its own around the process: `sandbox-exec -p <profile> -- <argv>`. `sandbox-exec` executes the target in place, so the process keeps its pid, process group and PTY (signals, `hutan ps` and the resource manager see no wrapper). It is asked for with `contain?: {network?, extra_write?}` on `session.create`'s terminal spec, `chat.create` and the `run` of `task.create`; clients offer it as the Start sheet's **Contain** row, `hutan new --contain [--network on|off] [--write PATH]`, and OMP's *Contained* safety preset (`hutan chat new --agent omp --safety contained`), which is `--approval-mode yolo` inside this boundary — no prompts, because the boundary contains what the agent does.
@@ -354,7 +382,7 @@ For the sessions whose harness has no OS sandbox — a **plain terminal**, a **c
 
 | | |
 |---|---|
-| **Writes** | the session's checkout (the git top level above its `cwd`), the repository's git directory so that a linked worktree can commit (`hooks` and `config` stay read-only), the temp folders (`$TMPDIR`, `/tmp`, `/var/tmp`), `[sandbox] extra_write`, the request's `extra_write`, and for OMP its home (`~/.omp`, the account's `PI_CODING_AGENT_DIR`) — except OMP's `config.yml`, `extensions`, `hooks`, `skills` and `commands`, which would let the agent change what the next *uncontained* launch runs. Every root is canonicalised (Seatbelt matches real paths). Anything else fails with `Operation not permitted`, grandchildren included. |
+| **Writes** | the session's checkout (the git top level above its `cwd`), the repository's git directory so that a linked worktree can commit (`hooks` and `config` stay read-only), the temp folders (`$TMPDIR`, `/tmp`, `/var/tmp`), `[sandbox] extra_write`, the request's `extra_write`, the session's extra folders (§ Folders in a session), and for OMP its home (`~/.omp`, the account's `PI_CODING_AGENT_DIR`) — except OMP's `config.yml`, `extensions`, `hooks`, `skills` and `commands`, which would let the agent change what the next *uncontained* launch runs. Every root is canonicalised (Seatbelt matches real paths). Anything else fails with `Operation not permitted`, grandchildren included. |
 | **Reads** | open — this is damage containment, not confidentiality. Denied: `[sandbox] read_deny` (default `~/Library/Keychains`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.netrc`) and Hutan's own data folder, with `shell-integration/`, the write roots and OMP's home carved out. |
 | **Keychain** | `securityd` is out of reach (`deny default` has no `mach-lookup` for it, and it is denied again after the import): `security list-keychains` fails. |
 | **Network** | all on or all off (`network`, default `[sandbox] network = true`). *Off* closes every unix socket too — DNS leaks through them. *On* refuses connections to Hutan's own sockets (the data folder, the daemon socket), so a contained agent cannot act as the user through `hutan`; its own restricted socket is SANDBOX-2B. Hooks that call `hutan agent report` from inside therefore do not reach the daemon yet. |
