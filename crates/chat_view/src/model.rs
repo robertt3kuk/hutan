@@ -346,7 +346,7 @@ pub struct TurnUsage {
 /// reported a total (what the turn footers' `context X / Y` read too).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContextUse {
-    /// Tokens the conversation has used so far.
+    /// Tokens in the context now (see [`Transcript::context_use`]).
     pub used: u64,
     /// The model's context window, when the harness reported one.
     pub window: Option<u64>,
@@ -420,7 +420,9 @@ pub struct Transcript {
     active_turn: bool,
     /// Index of the first entry of the turn in progress.
     turn_start: usize,
-    usage: Option<(TokenCounts, Option<u64>)>,
+    /// The latest cumulative counts, the model's window, and the tokens now in the context
+    /// (`last` when the harness reports both, else the total: see [`Transcript::context_use`]).
+    usage: Option<(TokenCounts, Option<u64>, Option<u64>)>,
     usage_at_turn_start: TokenCounts,
     /// The usage before the turn is not known (an older page of the journal is being read
     /// and the one before it is not): the footer then reports no per-turn figures.
@@ -478,10 +480,17 @@ impl Transcript {
 
     /// The context use the latest usage event reported; `None` while no event reported a total
     /// (a harness that reports none never gets a meter, a zero would be a lie).
+    ///
+    /// What fills the context depends on what the harness counts. A harness that reports the
+    /// conversation's cumulative `total` together with the latest request's `last` (Codex,
+    /// direct chats) fills the context with `last`: the next request resends the history, so
+    /// the cumulative figure grows past the window while the context does not. A harness that
+    /// reports only a `total` (an ACP `usage_update`'s `used`) says how full the context is
+    /// with it.
     pub fn context_use(&self) -> Option<ContextUse> {
-        let (counts, window) = self.usage?;
+        let (counts, window, context) = self.usage?;
         Some(ContextUse {
-            used: counts.total_tokens?,
+            used: context?,
             window: window.filter(|window| *window > 0),
             counts,
         })
@@ -654,7 +663,7 @@ impl Transcript {
             AgentEventKind::TurnStarted => {
                 self.active_turn = true;
                 self.turn_start = self.entries.len();
-                self.usage_at_turn_start = self.usage.map(|(total, _)| total).unwrap_or_default();
+                self.usage_at_turn_start = self.usage.map(|(total, ..)| total).unwrap_or_default();
                 self.usage_baseline_unknown = self.blind_start && self.usage.is_none();
             }
             AgentEventKind::MessageStart { role, phase } => {
@@ -918,11 +927,16 @@ impl Transcript {
             }
             AgentEventKind::Usage {
                 total,
+                last,
                 context_window,
-                ..
             } => match (total, &mut self.usage) {
-                (Some(total), _) => self.usage = Some((*total, *context_window)),
-                (None, Some((_, window))) => *window = context_window.or(*window),
+                (Some(total), _) => {
+                    let context = total
+                        .total_tokens
+                        .map(|cumulative| last.and_then(|l| l.total_tokens).unwrap_or(cumulative));
+                    self.usage = Some((*total, *context_window, context));
+                }
+                (None, Some((_, window, _))) => *window = context_window.or(*window),
                 (None, None) => {}
             },
             AgentEventKind::TurnCompleted { duration_ms } => {
@@ -1252,7 +1266,7 @@ impl Transcript {
     }
 
     fn turn_usage(&self) -> Option<TurnUsage> {
-        let (now, window) = self.usage?;
+        let (now, window, _) = self.usage?;
         if self.usage_baseline_unknown {
             return Some(TurnUsage {
                 conversation_tokens: now.total_tokens,
@@ -1761,6 +1775,91 @@ mod tests {
         assert_eq!(
             (seen.used, seen.window, seen.percent()),
             (130_000, None, None)
+        );
+    }
+
+    #[test]
+    fn the_context_is_the_latest_request_when_the_total_is_cumulative() {
+        let mut s = Script::new();
+        let mut t = Transcript::new();
+        let usage = |total: u64, last: u64| AgentEventKind::Usage {
+            total: Some(TokenCounts {
+                total_tokens: Some(total),
+                ..TokenCounts::default()
+            }),
+            last: Some(TokenCounts {
+                total_tokens: Some(last),
+                ..TokenCounts::default()
+            }),
+            context_window: Some(200_000),
+        };
+        t.apply(&s.event(None, usage(50_000, 50_000)));
+        t.apply(&s.event(None, usage(110_000, 60_000)));
+        let seen = t.context_use().unwrap();
+        assert_eq!(
+            (seen.used, seen.percent()),
+            (60_000, Some(30)),
+            "the history is resent: the cumulative 110k is not what fills the window"
+        );
+        assert_eq!(
+            seen.counts.total_tokens,
+            Some(110_000),
+            "the tooltip keeps the cumulative counts"
+        );
+        // A `last` that carries no total (an ACP prompt's own counts) falls back to the total.
+        let no_total_in_last = AgentEventKind::Usage {
+            total: Some(TokenCounts {
+                total_tokens: Some(70_000),
+                ..TokenCounts::default()
+            }),
+            last: Some(TokenCounts::default()),
+            context_window: Some(200_000),
+        };
+        t.apply(&s.event(None, no_total_in_last));
+        assert_eq!(t.context_use().unwrap().used, 70_000);
+    }
+
+    /// The recorded Codex 0.162.1 turn of `approval-decline.jsonl`: its second request reports
+    /// `total 41 290` (cumulative) and `last 20 672` on a 475 000 window. The meter says 4 %,
+    /// as Codex's own status does, not the 8 % of the cumulative figure.
+    #[test]
+    fn the_recorded_codex_context_is_last_not_the_cumulative_total() {
+        let fixture =
+            include_str!("../../agents/tests/fixtures/codex-0.162/approval-decline.jsonl");
+        let counts = |v: &serde_json::Value| TokenCounts {
+            total_tokens: v["totalTokens"].as_u64(),
+            input_tokens: v["inputTokens"].as_u64(),
+            cached_input_tokens: v["cachedInputTokens"].as_u64(),
+            output_tokens: v["outputTokens"].as_u64(),
+            reasoning_output_tokens: v["reasoningOutputTokens"].as_u64(),
+        };
+        let mut s = Script::new();
+        let mut t = Transcript::new();
+        let mut seen = Vec::new();
+        for line in fixture.lines() {
+            let line: serde_json::Value = serde_json::from_str(line).unwrap();
+            let msg = &line["msg"];
+            if msg["method"] != "thread/tokenUsage/updated" {
+                continue;
+            }
+            let usage = &msg["params"]["tokenUsage"];
+            t.apply(&s.event(
+                None,
+                AgentEventKind::Usage {
+                    total: Some(counts(&usage["total"])),
+                    last: Some(counts(&usage["last"])),
+                    context_window: usage["modelContextWindow"].as_u64(),
+                },
+            ));
+            let context = t.context_use().unwrap();
+            seen.push((context.used, context.window, context.percent()));
+        }
+        assert_eq!(
+            seen,
+            vec![
+                (20_618, Some(475_000), Some(4)),
+                (20_672, Some(475_000), Some(4)),
+            ]
         );
     }
 
