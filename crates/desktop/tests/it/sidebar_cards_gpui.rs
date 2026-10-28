@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use common::{TestDaemon, draw, open_with, wait_until};
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_core::SessionId;
 use hutan_desktop::sessions::Unread;
 use hutan_desktop::sessions::card::NewsKind;
