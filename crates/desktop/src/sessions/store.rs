@@ -463,6 +463,8 @@ pub struct SessionsStore {
     state: Arc<StoreState>,
     attention: AttentionTracker,
     focused: Option<SessionId>,
+    /// The session of the active pane's active tab, focused or not (`set_shown_session`).
+    shown_session: Option<SessionId>,
     /// The session that had focus most recently; the inspector keeps showing it while a dock or
     /// panel has focus (clicking inside the inspector must not empty it).
     last_focused: Option<SessionId>,
@@ -664,6 +666,7 @@ impl SessionsStore {
             }),
             attention: AttentionTracker::new(),
             focused: None,
+            shown_session: None,
             last_focused: None,
             active_workspace: None,
             active_project: None,
@@ -3287,6 +3290,75 @@ impl SessionsStore {
         self.run(
             Request::SessionRestart(SessionRef {
                 session_id: session,
+            }),
+            cx,
+        )
+    }
+
+    /// Whether the daemon can give sessions extra folders (capability `session.dirs`).
+    pub fn supports_session_dirs(&self) -> bool {
+        self.connection.supports_session_dirs()
+    }
+
+    /// The folders of `session` as the desktop says them; `None` for a session that holds none
+    /// (a direct chat, an assistant, an older daemon).
+    pub fn session_folders(&self, session: SessionId) -> Option<super::folders::SessionFolders> {
+        super::folders::folders_of(self.session(session)?)
+    }
+
+    /// The session whose tab is the active one of the active pane, focused or not (the Files
+    /// panel having the keyboard does not hide it): its extra folders are roots of the Files
+    /// tree (ADR 0023).
+    pub fn set_shown_session(&mut self, session: Option<SessionId>, cx: &mut Context<Self>) {
+        if self.shown_session != session {
+            self.shown_session = session;
+            self.changed(StoreChanged::OTHER, cx);
+        }
+    }
+
+    /// The session of the active pane's active tab.
+    pub fn shown_session(&self) -> Option<SessionId> {
+        self.shown_session
+    }
+
+    /// The extra folders of the shown session, in order; empty when none is shown or it holds
+    /// none.
+    pub fn shown_session_dirs(&self) -> Vec<PathBuf> {
+        self.shown_session
+            .and_then(|session| self.session_folders(session))
+            .map(|folders| folders.extra_paths())
+            .unwrap_or_default()
+    }
+
+    /// `chat.add_dir` (user-only): `path` joins the folders of `session`; the answer is the
+    /// session as the daemon has it (for a running terminal agent the daemon types
+    /// `/add-dir <path>` at its prompt, without Enter). The session's own events follow.
+    pub fn add_session_dir(
+        &mut self,
+        session: SessionId,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<SessionInfo, String>> {
+        self.run(
+            Request::ChatAddDir(hutan_protocol::chat::ChatAddDir {
+                session_id: session,
+                path,
+            }),
+            cx,
+        )
+    }
+
+    /// `chat.remove_dir` (user-only): an extra folder leaves `session`.
+    pub fn remove_session_dir(
+        &mut self,
+        session: SessionId,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<SessionInfo, String>> {
+        self.run(
+            Request::ChatRemoveDir(hutan_protocol::chat::ChatRemoveDir {
+                session_id: session,
+                path,
             }),
             cx,
         )

@@ -1223,6 +1223,14 @@ impl Connection {
             .is_some_and(|client| client.supports_sandbox())
     }
 
+    /// True while connected to a daemon that advertised capability `session.dirs` (protocol
+    /// 0.57): a session can hold extra folders.
+    pub fn supports_session_dirs(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_session_dirs())
+    }
+
     /// True while connected to a daemon that advertised capability `worktree.stage` (protocol
     /// 0.53): files and hunks can be staged, unstaged and discarded, and the staged ones
     /// committed alone.
