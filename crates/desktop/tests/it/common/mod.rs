@@ -746,53 +746,6 @@ pub fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
-/// Clicks at `at` as the frame drawn last shows it: the move, the press and the release are
-/// dispatched in one go, with no frame, no task and so no late answer of the daemon between
-/// them.
-///
-/// Why not [`VisualTestContext::simulate_click`]: it runs every ready task after the press and
-/// again after the release, and the test platform draws a window as soon as the tasks that
-/// changed it are done. Under load the daemon's answers (the file rows of a Changes view, the
-/// state of an Undo bar) land in those gaps and re-flow the page: the button the point was
-/// taken from moves, the release lands beside it and GPUI drops the click without running its
-/// handler (it clears a pending press when the pointer is released over something else, so a
-/// button that moved right after being pressed is not "dragged" into a click; zed issue
-/// 24600). That is GPUI doing what it should — mouse events are hit-tested against the frame
-/// on screen, never against an older one — so the harness, not the product, had to change:
-/// aim with the bounds of the frame on screen and fire in the same instant.
-pub fn click_at(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>) {
-    use gpui::{InputEvent as _, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-    let modifiers = gpui::Modifiers::none();
-    cx.update(|window, app| {
-        for event in [
-            MouseMoveEvent {
-                position: at,
-                pressed_button: None,
-                modifiers,
-            }
-            .to_platform_input(),
-            MouseDownEvent {
-                position: at,
-                modifiers,
-                button: MouseButton::Left,
-                click_count: 1,
-                first_mouse: false,
-            }
-            .to_platform_input(),
-            MouseUpEvent {
-                position: at,
-                modifiers,
-                button: MouseButton::Left,
-                click_count: 1,
-            }
-            .to_platform_input(),
-        ] {
-            window.dispatch_event(event, app);
-        }
-    });
-    cx.run_until_parked();
-}
-
 /// Lets every motion run out (the longest is 250 ms, `ui::motion`) and draws: for a test that
 /// measures geometry right after something opened, which slides in while it opens.
 pub fn settle(cx: &mut VisualTestContext) {
