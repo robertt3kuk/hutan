@@ -11,8 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{TestDaemon, draw, open_with, settle, wait_until};
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use common::{TestDaemon, draw, open_with, wait_until};
+use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_core::WorkspaceId;
 use hutan_desktop::workbench::{ChangesView, DeliveryForm, Region, Workbench};
 use hutan_protocol::messages::Request;
@@ -182,44 +182,16 @@ fn region(
     view.read_with(cx, |wb, _| wb.region_bounds(region))
 }
 
+/// Clicks `what` where the frame on screen has it, and returns without waiting for the effect:
+/// the caller waits on the state the click changes (see [`common::click_at`] for why the press
+/// and the release go in together).
 fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, what: Region) {
     wait_until(cx, &format!("{what:?} to be drawn"), |cx| {
         region(view, cx, what).is_some()
     });
-    // The button can move while the diff it belongs to re-flows (a hunk changes sides): click
-    // where it stands in the frame drawn last, not in the one it was first seen in.
-    draw(cx);
-    draw(cx);
     let bounds = region(view, cx, what).unwrap_or_else(|| panic!("{what:?} went away"));
-    cx.simulate_mouse_move(bounds.center(), None, Modifiers::none());
+    common::click_at(cx, bounds.center());
     draw(cx);
-    cx.simulate_click(bounds.center(), Modifiers::none());
-    draw(cx);
-}
-
-/// Clicks `what` until `done` holds. Under load a click on a button that was just redrawn (the
-/// file's buttons after a hunk moved, the Undo bar after a discard) is sometimes not delivered
-/// to it: the click handler never runs and the state stays as it was. Every button this is used
-/// on is idempotent or guarded (staging twice, Undo while running), so a click that was not
-/// taken is made again, up to four times, each given a second to show its effect.
-fn click_until(
-    view: &Entity<Workbench>,
-    cx: &mut VisualTestContext,
-    what: Region,
-    mut done: impl FnMut(&mut VisualTestContext) -> bool,
-) {
-    for _ in 0..4 {
-        click(view, cx, what);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
-        while std::time::Instant::now() < deadline {
-            draw(cx);
-            if done(cx) {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-    panic!("{what:?} was clicked four times and nothing happened");
 }
 
 fn drawn(view: &Entity<Workbench>, cx: &VisualTestContext, what: Region) -> bool {
@@ -434,13 +406,24 @@ fn the_stage_pane_stages_and_unstages_single_hunks(cx: &mut TestAppContext) {
         hunks(&changes, cx).iter().all(|(s, _)| !*s) && hunks(&changes, cx).len() == 2
     });
     assert!(fx.staged().is_empty());
+    // The file rows are read apart from the hunks, and the file's buttons are drawn from the
+    // rows: wait until they say "unstaged only" before aiming at them.
+    wait_until(cx, "a.txt unstaged only", |cx| {
+        rows(&changes, cx).first() == Some(&("a.txt".to_owned(), false, true))
+    });
 
     // The file's own buttons stage and unstage all of it.
-    click_until(&view, cx, Region::Changes("stage-file"), |cx| {
-        hunks(&changes, cx).len() == 2 && hunks(&changes, cx).iter().all(|(s, _)| *s)
+    click(&view, cx, Region::Changes("stage-file"));
+    wait_until(cx, "every hunk staged", |cx| {
+        hunks(&changes, cx).len() == 2
+            && hunks(&changes, cx).iter().all(|(s, _)| *s)
+            && rows(&changes, cx).first() == Some(&("a.txt".to_owned(), true, false))
     });
-    click_until(&view, cx, Region::Changes("unstage-file"), |cx| {
-        hunks(&changes, cx).len() == 2 && hunks(&changes, cx).iter().all(|(s, _)| !*s)
+    click(&view, cx, Region::Changes("unstage-file"));
+    wait_until(cx, "no hunk staged", |cx| {
+        hunks(&changes, cx).len() == 2
+            && hunks(&changes, cx).iter().all(|(s, _)| !*s)
+            && rows(&changes, cx).first() == Some(&("a.txt".to_owned(), false, true))
     });
 
     // Review gives the branch diff back.
@@ -551,9 +534,8 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     assert!(offer.starts_with("Discarded"), "{offer}");
 
     // Undo restores the working tree and the hunk comes back.
-    // The Undo bar slides in while it opens: a click before it settles lands beside the button.
-    settle(cx);
-    click_until(&view, cx, Region::Changes("undo-discard"), |cx| {
+    click(&view, cx, Region::Changes("undo-discard"));
+    wait_until(cx, "the offer to be taken", |cx| {
         changes.read_with(cx, |c, _| c.undo_offer().is_none())
     });
     assert_eq!(fx.a_txt(), edited());
@@ -566,9 +548,8 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     wait_until(cx, "the file to be discarded", |cx| {
         changes.read_with(cx, |c, _| c.undo_offer().is_some()) && fx.a_txt() == committed()
     });
-    // The Undo bar slides in while it opens: a click before it settles lands beside the button.
-    settle(cx);
-    click_until(&view, cx, Region::Changes("undo-discard"), |cx| {
+    click(&view, cx, Region::Changes("undo-discard"));
+    wait_until(cx, "the file to be restored", |cx| {
         fx.a_txt() == edited() && changes.read_with(cx, |c, _| c.undo_offer().is_none())
     });
 
@@ -578,9 +559,8 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     wait_until(cx, "the offer", |cx| {
         changes.read_with(cx, |c, _| c.undo_offer().is_some())
     });
-    // The Undo bar slides in while it opens: a click before it settles lands beside the button.
-    settle(cx);
-    click_until(&view, cx, Region::Changes("undo-dismiss"), |cx| {
+    click(&view, cx, Region::Changes("undo-dismiss"));
+    wait_until(cx, "the offer to be dismissed", |cx| {
         changes.read_with(cx, |c, _| c.undo_offer().is_none())
     });
     assert!(changes.read_with(cx, |c, _| c.undo_offer().is_none()));

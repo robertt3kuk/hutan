@@ -49,6 +49,7 @@ mod harness_gpui;
 mod history_catalog_gpui;
 mod history_gpui;
 mod history_panel_gpui;
+mod hit_test_gpui;
 mod hooks_gpui;
 mod icons_gpui;
 mod instructions_gpui;
