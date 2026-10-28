@@ -186,7 +186,14 @@ fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, what: Region) {
     wait_until(cx, &format!("{what:?} to be drawn"), |cx| {
         region(view, cx, what).is_some()
     });
-    let bounds = region(view, cx, what).unwrap();
+    // GPUI hit-tests a click from the last frame's pointer position: a button that appeared
+    // since (the Undo bar) is only hit after the pointer was over it. Hover, draw, then click,
+    // in the frame drawn last rather than the one the button was first seen in.
+    draw(cx);
+    draw(cx);
+    let bounds = region(view, cx, what).unwrap_or_else(|| panic!("{what:?} went away"));
+    cx.simulate_mouse_move(bounds.center(), None, Modifiers::none());
+    draw(cx);
     cx.simulate_click(bounds.center(), Modifiers::none());
     draw(cx);
 }
@@ -519,6 +526,8 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     assert!(offer.starts_with("Discarded"), "{offer}");
 
     // Undo restores the working tree and the hunk comes back.
+    // The Undo bar slides in while it opens: a click before it settles lands beside the button.
+    settle(cx);
     click(&view, cx, Region::Changes("undo-discard"));
     wait_until(cx, "the discard to be undone", |cx| {
         changes.read_with(cx, |c, _| c.undo_offer().is_none())
@@ -546,6 +555,8 @@ fn discarding_a_hunk_asks_first_and_undo_puts_it_back(cx: &mut TestAppContext) {
     wait_until(cx, "the offer", |cx| {
         changes.read_with(cx, |c, _| c.undo_offer().is_some())
     });
+    // The Undo bar slides in while it opens: a click before it settles lands beside the button.
+    settle(cx);
     click(&view, cx, Region::Changes("undo-dismiss"));
     assert!(changes.read_with(cx, |c, _| c.undo_offer().is_none()));
     assert_ne!(fx.a_txt(), edited());
