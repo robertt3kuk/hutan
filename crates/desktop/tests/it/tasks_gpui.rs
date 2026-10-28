@@ -1195,7 +1195,14 @@ fn a_task_row_session_badge_and_the_palette_open_the_changes_view(cx: &mut TestA
         });
     });
 
-    // 3. The placement badge of the session's row.
+    // 3. The placement badge of the session's row. Under its worktree row the badge would only
+    // repeat the branch, so it shows where the row is away from its checkout: a flat list.
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user(
+            "panels.sessions.group_by",
+            toml::Value::String("none".into()),
+        )
+        .unwrap();
     cx.dispatch_action(actions::OpenPanel("sessions".into()));
     let badge =
         Region::PlacementBadge(hutan_desktop::workbench::BadgeSite::Row, started.session.id);
@@ -1203,9 +1210,9 @@ fn a_task_row_session_badge_and_the_palette_open_the_changes_view(cx: &mut TestA
     // The badge is wider than the dock; the sidebar list clips to its own width, so click the
     // part that shows.
     let bounds = region(&view, cx, badge).unwrap();
-    cx.simulate_click(
+    common::click_at(
+        cx,
         gpui::point(bounds.origin.x + gpui::px(8.0), bounds.center().y),
-        Modifiers::none(),
     );
     draw(cx);
     let entries: Vec<String> = view
