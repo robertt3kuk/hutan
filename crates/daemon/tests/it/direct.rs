@@ -1675,6 +1675,9 @@ fn fork_request(session: SessionId, turn: Option<TurnId>, mode: ForkMode) -> Req
         mode,
         title: None,
         where_: ForkWhere::ThisFolder,
+        branch: None,
+        restore_files: false,
+        archive_parent: false,
     })
 }
 
@@ -1718,6 +1721,9 @@ async fn a_direct_chat_forks_after_any_turn_and_the_two_chats_go_on_apart() {
             mode: ForkMode::Exact,
             title: Some("Try it again".into()),
             where_: ForkWhere::ThisFolder,
+            branch: None,
+            restore_files: false,
+            archive_parent: false,
         }))
         .await;
     let child = forked.session;

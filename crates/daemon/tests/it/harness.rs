@@ -1812,6 +1812,9 @@ fn fork_request(session: hutan_core::SessionId, turn: Option<TurnId>, mode: Fork
         mode,
         title: None,
         where_: ForkWhere::ThisFolder,
+        branch: None,
+        restore_files: false,
+        archive_parent: false,
     })
 }
 
@@ -2107,5 +2110,190 @@ async fn a_fork_the_agent_refuses_leaves_no_session_behind() {
         .unwrap();
     assert_eq!(listed.sessions.len(), 1, "no half-made fork");
     assert_eq!(answers(&t.history(parent.id).await), ["one", "two"]);
+    t.stop().await;
+}
+
+// Fork into a new worktree (protocol 0.58). The chats work in a git repository of their own
+// inside the work directory; their turns change no file, so the worktree holds the base.
+
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// A daemon whose harness `agent` replays `names`, and a chat of it in a repository with a
+/// workspace, after two answered turns.
+async fn forking_in_a_repository(
+    agent: &str,
+    names: &'static [&'static str],
+) -> (H, SessionInfo, Vec<TurnId>, PathBuf) {
+    let agent_name = agent.to_owned();
+    let mut t = H::with(
+        move |work| {
+            let scripted = script(work, names);
+            harness_toml(&agent_name, &scripted, &work.join("received.jsonl"))
+        },
+        |c| c.checkpoints.git_env = crate::checkpoint_restore::git_env(),
+    )
+    .await;
+    let repo = std::fs::canonicalize(t.work.path()).unwrap().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git_in(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "alpha\n").unwrap();
+    git_in(&repo, &["add", "."]);
+    git_in(&repo, &["commit", "-q", "-m", "init"]);
+    let workspace = t
+        .client
+        .call::<hutan_protocol::messages::WorkspaceOpened>(Request::WorkspaceOpen(
+            hutan_protocol::messages::WorkspaceOpen {
+                path: repo.clone(),
+                created_by: None,
+            },
+        ))
+        .await
+        .unwrap()
+        .workspace
+        .id;
+    let created = t
+        .try_create(ChatCreate {
+            cwd: repo.clone(),
+            workspace_id: Some(workspace),
+            ..t.request(agent)
+        })
+        .await
+        .unwrap();
+    for text in ["first", "second"] {
+        t.send(created.id, text).await;
+        chat_event(&mut t.events, "the turn to end", |e| e.kind.ends_turn()).await;
+        t.wait_state(created.id, SessionState::Idle).await;
+    }
+    let turns = t
+        .history(created.id)
+        .await
+        .events
+        .iter()
+        .filter(|e| matches!(e.kind, AgentEventKind::TurnStarted))
+        .filter_map(|e| e.turn_id)
+        .collect();
+    (t, created, turns, repo)
+}
+
+fn into_worktree(session: hutan_core::SessionId, turn: Option<TurnId>, mode: ForkMode) -> Request {
+    Request::ChatFork(ChatFork {
+        session_id: session,
+        turn_id: turn,
+        mode,
+        title: None,
+        where_: ForkWhere::NewWorktree,
+        branch: Some("fork/moved".to_owned()),
+        restore_files: false,
+        archive_parent: false,
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_omp_fork_into_a_worktree_is_made_in_the_old_folder_and_then_moved() {
+    let (t, parent, _, repo) = forking_in_a_repository("omp", &["two-turns", "fork-move"]).await;
+    let forked: ChatForked = t
+        .client
+        .call(into_worktree(parent.id, None, ForkMode::Head))
+        .await
+        .unwrap();
+    let worktree = forked.fork.worktree.clone().unwrap();
+    assert_eq!(worktree.branch, "fork/moved");
+    assert_eq!(forked.session.cwd.as_deref(), Some(worktree.path.as_path()));
+    assert_ne!(worktree.path, repo);
+    // OMP refuses another `cwd` on `session/fork`: it forked where the parent is, then moved.
+    let fork = &t.received_of("session/fork")[0]["params"];
+    assert_eq!(fork["cwd"], repo.display().to_string());
+    let prompts: Vec<String> = t
+        .received_of("session/prompt")
+        .iter()
+        .filter_map(|m| m["params"]["prompt"][0]["text"].as_str().map(str::to_owned))
+        .filter(|text| text.starts_with('/'))
+        .collect();
+    assert_eq!(prompts, [format!("/move {}", worktree.path.display())]);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claude_chat_is_forked_into_a_worktree_only_with_a_summary() {
+    let (t, parent, turns, repo) =
+        forking_in_a_repository("claude", &["claude-two-turns", "claude-two-turns"]).await;
+    let sessions = t
+        .client
+        .call::<SessionList>(Request::SessionList(SessionListFilter::default()))
+        .await
+        .unwrap()
+        .sessions
+        .len();
+    let worktrees = git_in(&repo, &["worktree", "list", "--porcelain"]);
+    // Its transcript belongs to the folder it ran in: no exact fork, no head fork.
+    for mode in [ForkMode::Exact, ForkMode::Head] {
+        let error = t
+            .client
+            .call::<ChatForked>(into_worktree(parent.id, Some(turns[1]), mode))
+            .await
+            .unwrap_err();
+        let hutan_client::ClientError::Remote(error) = error else {
+            panic!("{error:?}")
+        };
+        assert_eq!(error.code, ErrorCode::Unsupported, "{mode:?}");
+        assert_eq!(
+            error.data.as_ref().unwrap()["alternatives"],
+            serde_json::json!(["summary"])
+        );
+    }
+    assert!(t.received_of("session/fork").is_empty());
+    assert_eq!(
+        git_in(&repo, &["worktree", "list", "--porcelain"]),
+        worktrees
+    );
+    assert_eq!(
+        t.client
+            .call::<SessionList>(Request::SessionList(SessionListFilter::default()))
+            .await
+            .unwrap()
+            .sessions
+            .len(),
+        sessions
+    );
+
+    // A summary starts a new conversation in the worktree.
+    let forked: ChatForked = t
+        .client
+        .call(into_worktree(parent.id, Some(turns[0]), ForkMode::Summary))
+        .await
+        .unwrap();
+    let worktree = forked.fork.worktree.clone().unwrap();
+    assert_eq!(forked.fork.mode, ForkMode::Summary);
+    assert!(
+        t.received_of("session/fork").is_empty(),
+        "a fresh conversation"
+    );
+    let started = t.received_of("session/new");
+    assert_eq!(
+        started.last().unwrap()["params"]["cwd"],
+        worktree.path.display().to_string()
+    );
     t.stop().await;
 }

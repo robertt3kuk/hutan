@@ -10,10 +10,11 @@ use hutan_core::{
 use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::{
     ApprovalInfo, ApprovalList, ChatCreate, ChatDirApplied, ChatDirRole, ChatFork, ChatHistory,
-    ChatSentNow, ForkWhere, QuestionInfo, QuestionList,
+    ChatSentNow, ForkFiles, ForkWhere, QuestionInfo, QuestionList,
 };
 use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, SessionResult, Subscribed};
 use hutan_protocol::provider::AGENT_DIRECT;
+use hutan_protocol::worktree::WorktreeSetupState;
 use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -524,13 +525,31 @@ impl Ctx {
             None => None,
             Some(turn) => Some(self.resolve_turn(&client, session.id, turn).await?),
         };
+        let (where_, branch) = match args.worktree.as_deref() {
+            None => (ForkWhere::ThisFolder, None),
+            Some("") => (ForkWhere::NewWorktree, None),
+            Some(branch) => (ForkWhere::NewWorktree, Some(branch.to_owned())),
+        };
+        if (where_ == ForkWhere::NewWorktree || args.files || args.archive_parent)
+            && !client.supports_chat_fork_worktree()
+        {
+            return Err(CliError::Failed(
+                "this daemon cannot fork into a worktree, restore files or close the original \
+                 (it predates protocol 0.58); restart it with `hutan daemon stop` and run the \
+                 command again"
+                    .to_owned(),
+            ));
+        }
         let forked = client
             .chat_fork(ChatFork {
                 session_id: session.id,
                 turn_id,
                 mode,
                 title: args.title,
-                where_: ForkWhere::ThisFolder,
+                where_,
+                branch,
+                restore_files: args.files,
+                archive_parent: args.archive_parent,
             })
             .await
             .map_err(|error| self.fork_failure(error))?;
@@ -541,13 +560,57 @@ impl Ctx {
                 ForkMode::Head => format!("at the latest turn ({})", fork.ordinal),
                 ForkMode::Summary => format!("with a summary of turns 1-{}", fork.ordinal),
             };
-            format!(
+            let mut out = format!(
                 "session {} forked from {} {how} ({}, {} events copied)",
                 forked.session.id,
                 session.id,
                 fork.mode.as_str(),
                 fork.copied_events
-            )
+            );
+            if let Some(worktree) = &fork.worktree {
+                let files = match worktree.files {
+                    ForkFiles::Turn => "the files of the turn",
+                    ForkFiles::Earlier => {
+                        "the files of the latest earlier turn that changed some (this one changed none)"
+                    }
+                    ForkFiles::Base => "the files of the base (no turn so far changed a file)",
+                };
+                out.push_str(&format!(
+                    "\nworktree {} on branch {} (from {}): {files}",
+                    worktree.path.display(),
+                    worktree.branch,
+                    worktree.base.get(..12).unwrap_or(&worktree.base)
+                ));
+                for skipped in &worktree.skipped {
+                    out.push_str(&format!("\n  not in the worktree: {}", skipped.path));
+                }
+                if let Some(setup) = &worktree.setup {
+                    let state = match setup.state {
+                        WorktreeSetupState::Running => "running",
+                        WorktreeSetupState::NeedsTrust => {
+                            "its commands need your confirmation (`hutan wt setup <branch>`)"
+                        }
+                        WorktreeSetupState::Failed => "failed",
+                        WorktreeSetupState::Done => "done",
+                    };
+                    out.push_str(&format!("\n  setup: {state}"));
+                }
+            }
+            if let Some(restored) = &fork.restored {
+                out.push_str(&format!(
+                    "\nfiles put back: {} written, {} deleted (undo: `hutan checkpoint undo {}`)",
+                    restored.written.len(),
+                    restored.deleted.len(),
+                    session.id
+                ));
+            }
+            if fork.parent_archived {
+                out.push_str("\nthe original chat was closed");
+            }
+            for note in &fork.notes {
+                out.push_str(&format!("\nnote: {note}"));
+            }
+            out
         })
     }
 

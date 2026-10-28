@@ -1152,6 +1152,27 @@ pub struct ChatForkArgs {
     /// Name the new chat (default: the parent's name with " (fork)")
     #[arg(long)]
     pub title: Option<String>,
+    /// Work in a new git worktree on a new branch whose files are the checkpoint of the turn
+    /// (modified, deleted and untracked files, as uncommitted changes); the branch is taken
+    /// from the checkpoint's commit. Without a name: fork/<title>-t<N>. Not for Claude Code
+    /// chats unless --mode summary
+    #[arg(
+        long,
+        value_name = "BRANCH",
+        num_args = 0..=1,
+        default_missing_value = "",
+        conflicts_with = "files"
+    )]
+    pub worktree: Option<String>,
+    /// First put the files of the chat's folder back to how the turn left them (the restore of
+    /// `hutan checkpoint restore`, with its Undo); refused when a file changed in a way the
+    /// turns do not explain
+    #[arg(long)]
+    pub files: bool,
+    /// Close the original chat once the fork is up (`hutan chat reopen`-able like any closed
+    /// session)
+    #[arg(long)]
+    pub archive_parent: bool,
 }
 
 #[derive(Debug, Args)]

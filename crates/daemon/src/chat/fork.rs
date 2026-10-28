@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use hutan_agents::{ForkFrom, ForkMessage, ForkPoint};
 use hutan_core::agent::MessageRole;
 use hutan_core::{ForkMode, ForkOrigin, ForkSupport};
-use hutan_protocol::chat::ChatFork;
+use hutan_protocol::chat::{ChatFork, ForkWhere};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 
@@ -82,6 +82,9 @@ pub struct JournalCopy {
 pub(crate) struct ForkParent {
     pub id: SessionId,
     pub title: String,
+    pub workspace_id: hutan_core::WorkspaceId,
+    /// The folder the chat works in.
+    pub cwd: PathBuf,
     pub spec: ChatSpec,
     /// A turn is in progress, as the session's `ChatInfo` says.
     pub turn_active: bool,
@@ -238,6 +241,32 @@ impl ChatManager {
             )));
         }
         let mode = req.mode;
+        match req.where_ {
+            ForkWhere::ThisFolder if req.branch.is_some() => {
+                return Err(ErrorBody::new(
+                    ErrorCode::BadRequest,
+                    "`branch` names the branch of a new worktree: it needs `where: new_worktree`",
+                ));
+            }
+            ForkWhere::NewWorktree if req.restore_files => {
+                return Err(ErrorBody::new(
+                    ErrorCode::BadRequest,
+                    "a new worktree already has the files of the turn: `restore_files` is for a \
+                     fork in this folder",
+                ));
+            }
+            // Claude Code keeps its transcript with the folder it ran in: nothing can carry it
+            // to a worktree, only a new conversation that is told the old one's gist.
+            ForkWhere::NewWorktree if spec.agent == AGENT_CLAUDE && mode != ForkMode::Summary => {
+                return Err(unsupported(
+                    "Claude Code keeps a conversation with the folder it ran in: a fork in a new \
+                     worktree is a new conversation given a summary of the turns (`summary`)",
+                    ForkSupport::Summary,
+                    at_head,
+                ));
+            }
+            _ => {}
+        }
         if mode == ForkMode::Head && req.turn_id.is_some() && !at_head {
             return Err(ErrorBody::new(
                 ErrorCode::BadRequest,
@@ -311,7 +340,13 @@ impl ChatManager {
             let point = self
                 .fork_point(parent, &turns[index], through, mode, at_head)
                 .await?;
-            Some(ForkFrom { thread_id, point })
+            // A fork that works in another folder says where its parent's conversation is.
+            let source_cwd = (req.where_ == ForkWhere::NewWorktree).then(|| parent.cwd.clone());
+            Some(ForkFrom {
+                thread_id,
+                point,
+                source_cwd,
+            })
         };
         let seed = if mode == ForkMode::Summary {
             Some(self.digest_of(parent, &turns, index, through).await?)

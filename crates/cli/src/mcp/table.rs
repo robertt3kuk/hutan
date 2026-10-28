@@ -379,7 +379,14 @@ static TOOLS: &[Tool] = &[
              the latest turn), `head` forks the conversation as it is now, `summary` starts a \
              fresh conversation given a digest of the turns up to `turn_id`. A cut the agent \
              cannot make fails with `unsupported` and names the modes that work; nothing is \
-             substituted. Fails while a turn is running."
+             substituted. `where: new_worktree` works in a new git worktree on a new branch \
+             (`branch`, default `fork/<name>-t<N>`) whose files are the checkpoint of the turn \
+             (modified, deleted and untracked files as uncommitted changes; paths the checkpoint \
+             skipped are listed); the worktree's setup rules apply, a Claude Code chat then needs \
+             `mode: summary`, and a turn without a checkpoint is `unsupported`. \
+             `archive_parent` closes the original chat once the fork is up. Putting the files of \
+             the original's own folder back (`restore_files`) is for the user only. Fails while \
+             a turn is running."
         ),
         read_only: false,
         call: request("chat.fork"),
@@ -390,6 +397,9 @@ static TOOLS: &[Tool] = &[
                     "turn_id": id("The turn to keep through (an id from `chat_log`'s `turn_id`); default: the latest turn."),
                     "mode": {"type": "string", "enum": ["exact", "head", "summary"], "default": "exact", "description": "How to cut the conversation."},
                     "title": text("Name of the new session (default: the original's with \" (fork)\")."),
+                    "where": {"type": "string", "enum": ["this_folder", "new_worktree"], "default": "this_folder", "description": "Where the fork works: the original's folder, or a new git worktree with the files of the turn."},
+                    "branch": text("`new_worktree`: the branch to create (default `fork/<name>-t<N>`; an existing branch is a conflict)."),
+                    "archive_parent": {"type": "boolean", "default": false, "description": "Close the original chat once the fork is up."},
                 }),
                 &["session_id"],
             )

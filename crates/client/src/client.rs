@@ -232,6 +232,9 @@ pub(crate) const WORKTREE_STAGE_CAPABILITY: &str = "worktree.stage";
 pub(crate) const FS_OPS_CAPABILITY: &str = "fs.ops";
 /// Capability for `chat.fork` (protocol 0.56).
 pub(crate) const CHAT_FORK_CAPABILITY: &str = "chat.fork";
+/// Capability for `chat.fork`'s `where: new_worktree`, `restore_files` and `archive_parent`
+/// (protocol 0.58).
+pub(crate) const CHAT_FORK_WORKTREE_CAPABILITY: &str = "chat.fork.worktree";
 /// Capability for session folders: `extra_dirs`, `chat.add_dir|remove_dir`, `ChatInfo.dirs`
 /// (protocol 0.57).
 pub(crate) const SESSION_DIRS_CAPABILITY: &str = "session.dirs";
@@ -295,6 +298,7 @@ const CAPABILITIES: &[&str] = &[
     FS_OPS_CAPABILITY,
     CHAT_FORK_CAPABILITY,
     SESSION_DIRS_CAPABILITY,
+    CHAT_FORK_WORKTREE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -976,6 +980,16 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == CHAT_FORK_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `chat.fork.worktree` (protocol 0.58): a fork
+    /// can work in a new worktree with the files of the turn, restore the folder's files, and
+    /// close the original.
+    pub fn supports_chat_fork_worktree(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CHAT_FORK_WORKTREE_CAPABILITY)
     }
 
     /// `chat.fork`: a new chat that starts with the chat's conversation up to a turn (ADR

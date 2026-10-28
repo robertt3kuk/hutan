@@ -17,13 +17,10 @@ use tokio::time::{Instant, sleep_until};
 
 use hutan_agents::{CodexConfig, ExitInfo, SessionMode, Started};
 use hutan_core::{
-    AgentNode, Contain, ContainKind, Containment, ForkSupport, NodeOutcome, NodeUpdate,
-    ObservationTree, Patch, SessionEvent, SessionId, SessionKind, SessionState, TerminalId,
-    WorkspaceId,
+    AgentNode, Contain, ContainKind, Containment, NodeOutcome, NodeUpdate, ObservationTree, Patch,
+    SessionEvent, SessionId, SessionKind, SessionState, TerminalId, WorkspaceId,
 };
-use hutan_protocol::chat::{
-    ChatCreate, ChatDirApplied, ChatFork, ChatForkSupport, ChatForked, ChatInfo, ChatMode, ForkDone,
-};
+use hutan_protocol::chat::{ChatCreate, ChatDirApplied, ChatForkSupport, ChatInfo, ChatMode};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, AgentState, CreatedBy, Event,
@@ -756,50 +753,41 @@ impl RegistryHandle {
             .await
     }
 
-    /// `chat.fork` (protocol 0.56, ADR 0023): a new chat session that starts with the
-    /// conversation of `req.session_id` up to a turn. Everything is decided before a session
-    /// exists, so a refusal leaves nothing behind; answered once the new session's agent is up.
-    pub async fn fork_chat(&self, req: ChatFork) -> Result<ChatForked, ErrorBody> {
-        let parent = self.ask(|r| Command::ForkParent(req.session_id, r)).await?;
-        let plan = self.chats.plan_fork(&parent, &req).await?;
-        let (origin, copied_events, support) =
-            (plan.origin.clone(), plan.copied_events, plan.support);
-        let title = req
-            .title
+    /// What the registry knows of a chat that is going to be forked (`chat.fork`), or why it
+    /// cannot be: `not_found`, `bad_request` for a session that is not a chat, `unsupported`
+    /// for an assistant.
+    pub(crate) async fn fork_parent(&self, id: SessionId) -> Result<ForkParent, ErrorBody> {
+        self.ask(|r| Command::ForkParent(id, r)).await
+    }
+
+    /// `chat.fork`'s second half (protocol 0.56, ADR 0023): adds the session of a fork that
+    /// `ChatManager::plan_fork` decided, next to its parent's, and answers once its agent is up.
+    /// It works in `cwd` (the folder of a new worktree, protocol 0.58), else in the parent's.
+    /// A start that fails leaves nothing behind.
+    pub(crate) async fn start_fork(
+        &self,
+        parent: SessionId,
+        title: Option<String>,
+        plan: ForkPlan,
+        cwd: Option<PathBuf>,
+    ) -> Result<SessionInfo, ErrorBody> {
+        let title = title
             .as_deref()
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .map(str::to_owned);
-        let session = self
-            .ask(|r| {
-                Command::ForkChat(
-                    Box::new(ForkChat {
-                        parent: parent.id,
-                        title,
-                        plan,
-                    }),
-                    r,
-                )
-            })
-            .await?;
-        // What the new agent said it can do, else what the parent's did.
-        let support = session
-            .chat
-            .as_ref()
-            .and_then(|chat| chat.fork.as_ref())
-            .map(|fork| fork.support)
-            .or(support)
-            .unwrap_or(ForkSupport::None);
-        Ok(ChatForked {
-            session,
-            fork: ForkDone {
-                mode: origin.mode,
-                support,
-                turn_id: origin.turn_id,
-                ordinal: origin.ordinal,
-                copied_events,
-            },
+        self.ask(|r| {
+            Command::ForkChat(
+                Box::new(ForkChat {
+                    parent,
+                    title,
+                    plan,
+                    cwd,
+                }),
+                r,
+            )
         })
+        .await
     }
 
     /// Whether `id` is a chat session (else an error), and whether it is live.
@@ -871,6 +859,8 @@ struct SessionEntry {
 #[derive(Debug)]
 struct ForkChat {
     parent: SessionId,
+    /// Where the fork works; the parent's folder when absent.
+    cwd: Option<PathBuf>,
     /// The name the user gave; else the parent's with " (fork)".
     title: Option<String>,
     plan: ForkPlan,
@@ -4734,6 +4724,8 @@ impl SessionRegistry {
         Ok(ForkParent {
             id,
             title: session.info.title.clone(),
+            workspace_id: session.info.workspace_id,
+            cwd: session.info.cwd.clone().unwrap_or_default(),
             spec: spec.clone(),
             turn_active: chat.is_some_and(|chat| chat.turn_active),
             support: chat
@@ -4750,6 +4742,7 @@ impl SessionRegistry {
             parent,
             title,
             plan,
+            cwd,
         } = fork;
         let Ok(parent_index) = self.session_index(parent) else {
             let _ = reply.send(Err(ErrorBody::new(
@@ -4760,7 +4753,7 @@ impl SessionRegistry {
         };
         let source = &self.sessions[parent_index];
         let workspace_id = source.info.workspace_id;
-        let cwd = source.info.cwd.clone().unwrap_or_default();
+        let cwd = cwd.unwrap_or_else(|| source.info.cwd.clone().unwrap_or_default());
         let name = title.unwrap_or_else(|| format!("{} (fork)", source.info.title));
         match self.add_chat_session(workspace_id, cwd, plan.spec, name.clone(), Some(name)) {
             Ok(index) => self.spawn_chat_start(index, Some(reply), false),

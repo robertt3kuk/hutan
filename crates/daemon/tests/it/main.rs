@@ -5,6 +5,7 @@ mod assistant_backend;
 mod assistant_sleep;
 mod blocks;
 mod chat;
+mod chat_fork_worktree;
 mod checkpoint_restore;
 mod checkpoint_turns;
 mod checkpoints;

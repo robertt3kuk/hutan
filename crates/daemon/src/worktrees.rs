@@ -39,12 +39,15 @@ use crate::registry::{RegistryHandle, log_write, now_ms};
 
 mod cleanup;
 mod finish;
+mod fork;
 mod history;
 mod init;
 mod review;
 mod setup;
 pub mod setup_file;
 mod staging;
+
+pub use fork::{ForkWorktreeMade, ForkWorktreeSpec};
 
 /// Reads (list, status, rev-parse) finish well within this, even in a large repository.
 const READ_TIMEOUT: Duration = Duration::from_secs(20);

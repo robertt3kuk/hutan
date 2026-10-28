@@ -155,7 +155,7 @@ fn internal(message: impl Into<String>) -> ErrorBody {
 }
 
 /// Orders checkpoints the way they were made.
-fn order(row: &CheckpointRow) -> (u64, CheckpointId) {
+pub(super) fn order(row: &CheckpointRow) -> (u64, CheckpointId) {
     (row.created_ms, row.id)
 }
 

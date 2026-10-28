@@ -898,6 +898,14 @@ impl Connection {
             .is_some_and(|client| client.supports_chat_fork())
     }
 
+    /// True while connected to a daemon that advertised capability `chat.fork.worktree`
+    /// ([`Client::supports_chat_fork_worktree`]); false when disconnected.
+    pub fn supports_chat_fork_worktree(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_chat_fork_worktree())
+    }
+
     /// `chat.fork` ([`Client::chat_fork`]).
     pub async fn chat_fork(&self, fork: ChatFork) -> Result<ChatForked, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;

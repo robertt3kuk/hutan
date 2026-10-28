@@ -106,13 +106,25 @@ impl Repo {
         git(&root, &["add", "."]);
         git(&root, &["commit", "-q", "-m", "init"]);
         let gates: Vec<PathBuf> = (0..turns).map(|n| base.join(format!("gate-{n}"))).collect();
+        // One transcript per spawn: the chat's agent first, then three forks of it.
+        let scripted = base.join("script");
+        fs::create_dir_all(&scripted).unwrap();
+        fs::copy(held_turns(&base, &gates), scripted.join("00-held.jsonl")).unwrap();
+        for n in 1..=3 {
+            fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../agents/tests/fixtures/codex-0.162/fork-turn.jsonl"),
+                scripted.join(format!("{n:02}-fork.jsonl")),
+            )
+            .unwrap();
+        }
         let codex = CodexConfig {
             program: codex_fixture_bin(),
             args: vec![
                 "replay".to_owned(),
                 "--received".to_owned(),
                 base.join("received.jsonl").display().to_string(),
-                held_turns(&base, &gates).display().to_string(),
+                scripted.display().to_string(),
                 "app-server".to_owned(),
             ],
             env: Vec::new(),
@@ -402,4 +414,116 @@ async fn restore_previews_asks_and_undo_flips_it_back_and_forth() {
             .stdout;
     assert!(nothing.contains("nothing to restore"), "{nothing}");
     r.t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_fork_into_a_worktree_puts_the_files_back_and_archives_the_parent() {
+    let r = Repo::start(2).await;
+    let root = r.root.display().to_string();
+    let created =
+        r.t.hutan(&["chat", "new", "--json", "--cwd", &root])
+            .await
+            .ok()
+            .json();
+    let session = created["session"]["id"].as_str().unwrap().to_owned();
+    r.t.hutan(&["chat", "send", &session, "turn 0"]).await.ok();
+    fs::write(r.root.join("a.txt"), "edited by the agent\n").unwrap();
+    fs::write(r.gate(0), "").unwrap();
+    r.listed(&session, 1).await;
+    r.t.hutan(&["chat", "send", &session, "turn 1"]).await.ok();
+    fs::write(r.root.join("new.txt"), "one\ntwo\n").unwrap();
+    fs::write(r.gate(1), "").unwrap();
+    r.listed(&session, 2).await;
+
+    // The flags that exclude each other are refused before anything happens.
+    let both =
+        r.t.hutan(&["chat", "fork", &session, "--worktree", "--files"])
+            .await;
+    assert_ne!(both.code, 0);
+    assert!(both.stderr.contains("cannot be used with"), "{both:?}");
+
+    // A worktree at the files of turn 1, on a branch of the daemon's choosing.
+    let text =
+        r.t.hutan(&["chat", "fork", &session, "--turn", "1", "--worktree"])
+            .await
+            .ok()
+            .stdout;
+    assert!(
+        text.contains("forked from") && text.contains("after turn 1"),
+        "{text}"
+    );
+    assert!(text.contains("on branch fork/"), "{text}");
+    assert!(text.contains("the files of the turn"), "{text}");
+    let path = text
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))
+        .and_then(|rest| rest.split(" on branch ").next())
+        .unwrap()
+        .to_owned();
+    let worktree = PathBuf::from(&path);
+    assert_eq!(
+        fs::read_to_string(worktree.join("a.txt")).unwrap(),
+        "edited by the agent\n"
+    );
+    assert!(
+        !worktree.join("new.txt").exists(),
+        "turn 2's file is not there"
+    );
+    assert!(git(&worktree, &["status", "--porcelain"]).contains(" M a.txt"));
+    assert_eq!(
+        fs::read_to_string(r.root.join("new.txt")).unwrap(),
+        "one\ntwo\n",
+        "the source folder is untouched"
+    );
+
+    // The files of this folder back to turn 1, and Undo.
+    let text =
+        r.t.hutan(&["chat", "fork", &session, "--turn", "1", "--files"])
+            .await
+            .ok()
+            .stdout;
+    assert!(
+        text.contains("files put back: 0 written, 1 deleted"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("hutan checkpoint undo {session}")),
+        "{text}"
+    );
+    assert!(!r.root.join("new.txt").exists());
+    r.t.hutan(&["checkpoint", "undo", &session, "--yes"])
+        .await
+        .ok();
+    assert_eq!(
+        fs::read_to_string(r.root.join("new.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+
+    // Named branch, and the original closed.
+    let forked =
+        r.t.hutan(&[
+            "--json",
+            "chat",
+            "fork",
+            &session,
+            "--turn",
+            "1",
+            "--worktree",
+            "fork/by-name",
+            "--archive-parent",
+        ])
+        .await
+        .ok()
+        .json();
+    assert_eq!(forked["fork"]["worktree"]["branch"], "fork/by-name");
+    assert_eq!(forked["fork"]["worktree"]["files"], "turn");
+    assert_eq!(forked["fork"]["parent_archived"], true);
+    let listed = r.t.hutan(&["ls", "--json"]).await.ok().json();
+    let ids: Vec<&str> = listed["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert!(!ids.contains(&session.as_str()), "closed: {ids:?}");
 }

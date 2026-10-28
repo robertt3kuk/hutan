@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 use futures::future::BoxFuture;
 use hutan_core::agent::{DecidedBy, PermissionKind, PermissionOption, PermissionOptionKind};
 use hutan_core::{ApprovalId, SessionId, SessionKind, TurnId, WorkspaceId};
-use hutan_protocol::chat::ApprovalInfo;
+use hutan_protocol::chat::{ApprovalInfo, ForkWhere};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::grants::{ControlGrant, OPTION_ALLOW_CHAT, OPTION_ALLOW_WORKSPACE};
 use hutan_protocol::messages::{ClientKind, Event, Request, SessionInfo, SessionListFilter};
@@ -1148,10 +1148,20 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
             session(r.session_id)
         ),
         Request::ChatFork(r) => format!(
-            "start a new chat with the conversation of {} up to {}",
+            "start a new chat with the conversation of {} up to {}{}{}",
             session(r.session_id),
             r.turn_id
-                .map_or_else(|| "its latest turn".to_owned(), |t| format!("turn {t}"))
+                .map_or_else(|| "its latest turn".to_owned(), |t| format!("turn {t}")),
+            if r.where_ == ForkWhere::NewWorktree {
+                ", in a new git worktree with the files of that turn"
+            } else {
+                ""
+            },
+            if r.archive_parent {
+                " and close the original chat"
+            } else {
+                ""
+            }
         ),
         Request::ChatInterrupt(r) => format!(
             "interrupt the turn of {}{}",

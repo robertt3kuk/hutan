@@ -2466,6 +2466,9 @@ async fn a_codex_chat_forks_after_a_turn_with_thread_fork_and_a_copy_of_its_jour
             mode: hutan_core::ForkMode::Exact,
             title: None,
             where_: ForkWhere::ThisFolder,
+            branch: None,
+            restore_files: false,
+            archive_parent: false,
         }))
         .await
         .unwrap();

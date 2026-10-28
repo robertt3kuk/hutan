@@ -45,6 +45,8 @@ use crate::usage::UsageService;
 use crate::worktrees::WorktreeService;
 use hutan_protocol::ui::{SessionSendText, SessionTextSent};
 
+mod fork;
+
 /// The services a router hands requests to besides the registry and the terminal hub.
 #[derive(Debug)]
 pub struct Services {
@@ -385,7 +387,7 @@ impl Router {
                 }
                 ok(&ChatSent { turn_id })
             }
-            Request::ChatFork(req) => ok(&self.registry.fork_chat(req).await?),
+            Request::ChatFork(req) => ok(&self.fork_chat(conn, req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
                 self.registry
@@ -1266,6 +1268,8 @@ pub fn classify(request: &Request) -> Access {
         // Creating a session with folders of its own is the same widening as adding them
         // (ADR 0023 decision 4); without folders the request keeps its class.
         Request::ChatCreate(req) if !req.extra_dirs.is_empty() => Access::UserOnly,
+        // Putting the files of a folder back to a turn is `checkpoint.restore`: user-only.
+        Request::ChatFork(req) if req.restore_files => Access::UserOnly,
         Request::SessionCreate(SessionCreate {
             spec: SessionSpec::Terminal(spec),
             ..

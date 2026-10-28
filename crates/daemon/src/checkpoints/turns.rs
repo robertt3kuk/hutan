@@ -38,9 +38,11 @@
 //! of turns through `restore` (protocol 0.38, capability `checkpoint.restore`); a file the user
 //! saves while a turn runs ([`TurnCheckpoints::saved`]) is a conflict of that turn's restore.
 
+mod fork;
 mod requests;
 mod restore;
 
+pub use fork::TurnFiles;
 pub use requests::LISTED;
 pub use restore::{Announce, RestoreContext};
 
