@@ -904,12 +904,13 @@ pub fn chat_items_of_kind_through(
     Ok(items)
 }
 
-/// How many events the session's journal holds with `seq <= through_seq` (what a fork would
-/// copy, resume locators aside).
+/// How many events a fork through `through_seq` copies: the session's journal with `seq <=
+/// through_seq`, resume locators aside.
 pub fn chat_events_through(conn: &Connection, session: SessionId, through_seq: u64) -> Result<u64> {
     let count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM chat_items WHERE session_id = ?1 AND seq <= ?2",
+            "SELECT COUNT(*) FROM chat_items \
+             WHERE session_id = ?1 AND seq <= ?2 AND kind <> 'resume_locator'",
             params![session.to_string(), ms(through_seq)],
             |row| row.get(0),
         )

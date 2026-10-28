@@ -1821,7 +1821,7 @@ async fn a_direct_chat_forks_after_any_turn_and_the_two_chats_go_on_apart() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn head_forks_the_whole_conversation_and_a_fork_of_a_fork_is_a_fork() {
-    let (_mock, mut t, parent) = three_turns(&[]).await;
+    let (_mock, t, parent) = three_turns(&[]).await;
     let turns = turn_ids(&t.history(parent.id).await.events);
     let head: ChatForked = t.call(fork_request(parent.id, None, ForkMode::Head)).await;
     assert_eq!(head.fork.ordinal, 3);

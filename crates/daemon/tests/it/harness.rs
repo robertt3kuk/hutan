@@ -1928,6 +1928,26 @@ async fn an_omp_chat_forks_at_its_latest_turn_and_says_why_an_earlier_one_cannot
     let copied = t.history(child.id).await;
     assert_eq!(users(&copied), ["first", "second"]);
     assert_eq!(answers(&copied), ["one", "two"]);
+    // What `copied_events` says is what precedes the notice: the parent's resume locator was not
+    // copied, and the one the fork's own agent wrote comes after it.
+    let notice_at = copied
+        .events
+        .iter()
+        .position(|e| matches!(&e.kind, AgentEventKind::Notice { .. }))
+        .unwrap();
+    assert_eq!(notice_at as u64, forked.fork.copied_events);
+    let parent_events = t.history(parent.id).await.events;
+    assert!(
+        parent_events
+            .iter()
+            .any(|e| matches!(e.kind, AgentEventKind::ResumeLocator { .. })),
+        "the parent has a locator the copy left out"
+    );
+    assert!(
+        copied.events[..notice_at]
+            .iter()
+            .all(|e| !matches!(e.kind, AgentEventKind::ResumeLocator { .. }))
+    );
 
     // The fork takes turns; the parent does not hear of them.
     t.send(child.id, "hi").await;
