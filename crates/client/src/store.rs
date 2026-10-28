@@ -591,6 +591,7 @@ mod tests {
     ) -> SessionInfo {
         SessionInfo {
             containment: None,
+            terminal_agent: None,
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Terminal,

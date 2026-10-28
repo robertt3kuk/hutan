@@ -92,6 +92,7 @@ pub const CAPABILITIES: &[&str] = &[
     "sandbox",
     "worktree.stage",
     "fs.ops",
+    "terminal.agent",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

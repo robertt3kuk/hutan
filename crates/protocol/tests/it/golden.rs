@@ -192,6 +192,7 @@ fn size() -> TerminalSize {
 fn session_info() -> SessionInfo {
     SessionInfo {
         containment: None,
+        terminal_agent: None,
         id: sid(),
         workspace_id: ws(),
         kind: SessionKind::Terminal,
@@ -5087,6 +5088,40 @@ fn events() -> Vec<(&'static str, Event)> {
             "usage_changed",
             Event::UsageChanged {
                 summary: Box::new(usage_summary_fixture()),
+            },
+        ),
+        (
+            "session_updated_terminal_agent_blocked",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    terminal_agent: Some(hutan_protocol::messages::TerminalAgent {
+                        app: "omp".into(),
+                        state: hutan_protocol::messages::TerminalAgentState::Blocked,
+                        kind: Some("permission".into()),
+                        message: Some("Run the tests?".into()),
+                        since_ms: 1_791_894_170_000,
+                        title: Some("Fix the build".into()),
+                        source: hutan_protocol::messages::TerminalAgentSource::Osc,
+                    }),
+                    ..session_info()
+                },
+            },
+        ),
+        (
+            "session_updated_terminal_agent_process",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    terminal_agent: Some(hutan_protocol::messages::TerminalAgent {
+                        app: "claude".into(),
+                        state: hutan_protocol::messages::TerminalAgentState::Unknown,
+                        kind: None,
+                        message: None,
+                        since_ms: 1_791_894_165_000,
+                        title: None,
+                        source: hutan_protocol::messages::TerminalAgentSource::Process,
+                    }),
+                    ..session_info()
+                },
             },
         ),
     ]

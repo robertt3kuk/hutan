@@ -338,6 +338,7 @@ mod tests {
     fn session(title: &str, state: SessionState, kind: Option<RecoveryKind>) -> SessionInfo {
         SessionInfo {
             containment: None,
+            terminal_agent: None,
             id: SessionId::new(),
             workspace_id: WorkspaceId::new(),
             kind: SessionKind::Terminal,

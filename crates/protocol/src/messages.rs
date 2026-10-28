@@ -1290,6 +1290,65 @@ pub struct SessionInfo {
     /// daemon **applied** it. Absent for sessions started without `contain`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub containment: Option<hutan_core::Containment>,
+    /// Protocol 0.55 (capability `terminal.agent`): the coding agent recognised in this terminal
+    /// session — from its own OSC 7501 reports or from the program in the foreground — with
+    /// what it says it is doing. Absent while no agent is known to run. Unlike `agent` (what an
+    /// installed hook reported) it needs no installation; when both exist the hook's report is
+    /// the richer one and this one names the harness and the agent's own title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_agent: Option<TerminalAgent>,
+}
+
+/// What a terminal session's coding agent is, and does (protocol 0.55, capability
+/// `terminal.agent`). `message` is redacted and bounded by the daemon.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalAgent {
+    /// The harness, as it names itself or as its program is known: `omp`, `claude`, `codex`, …
+    pub app: String,
+    pub state: TerminalAgentState,
+    /// What a `blocked` agent waits for, in the agent's words (`permission`, `question`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The question a `blocked` agent asks, or the message of an `error`: one short text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// When `state` last changed.
+    pub since_ms: u64,
+    /// The agent's own name for its session: the terminal title without the program's mark and
+    /// spinner (OMP: `π ⠋ Fix the build` → `Fix the build`). Absent while it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// How the daemon knows.
+    pub source: TerminalAgentSource,
+}
+
+/// What a terminal agent is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalAgentState {
+    /// The agent runs but says nothing about what it does (its program was recognised; it
+    /// reports no status and no hook speaks for it).
+    Unknown,
+    /// Waiting for the next prompt.
+    Idle,
+    /// A turn is in progress.
+    Working,
+    /// Waiting for the user (`kind`, `message`).
+    Blocked,
+    /// The last turn ended well.
+    Done,
+    /// The last turn ended in an error (`message`).
+    Error,
+}
+
+/// How the daemon came to know the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalAgentSource {
+    /// The agent reported itself with OSC 7501.
+    Osc,
+    /// The program in the terminal's foreground is a known harness.
+    Process,
 }
 
 /// The latest report of a coding agent running in a session: the main agent, with the state

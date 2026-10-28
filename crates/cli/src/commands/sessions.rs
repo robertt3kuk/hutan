@@ -663,6 +663,7 @@ mod tests {
     fn session(id: &str, terminal: u64, title: &str) -> SessionInfo {
         SessionInfo {
             containment: None,
+            terminal_agent: None,
             id: id.parse().unwrap(),
             workspace_id: WorkspaceId::new(),
             kind: hutan_core::SessionKind::Terminal,

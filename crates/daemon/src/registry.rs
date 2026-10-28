@@ -2188,6 +2188,7 @@ impl SessionRegistry {
             recovery: None,
             muted: false,
             containment: None,
+            terminal_agent: None,
         };
         self.publish(&Event::SessionUpdated {
             session: info.clone(),
@@ -3372,6 +3373,7 @@ impl SessionRegistry {
             recovery: None,
             muted: false,
             containment: None,
+            terminal_agent: None,
         };
         self.publish(&Event::SessionUpdated {
             session: info.clone(),
@@ -4180,6 +4182,7 @@ impl SessionRegistry {
                 // `restore_mutes` / `reopen_session` set it.
                 muted: false,
                 containment: None,
+                terminal_agent: None,
             },
             spec: TerminalSpec {
                 command: vec![spec.agent.clone()],
@@ -4407,6 +4410,7 @@ impl SessionRegistry {
                     recovery,
                     muted: false,
                     containment: None,
+                    terminal_agent: None,
                 },
                 spec,
                 default_title,

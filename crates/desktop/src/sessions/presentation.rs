@@ -1313,6 +1313,7 @@ mod tests {
     fn session(workspace: WorkspaceId, title: &str) -> SessionInfo {
         SessionInfo {
             containment: None,
+            terminal_agent: None,
             id: SessionId::new(),
             workspace_id: workspace,
             kind: SessionKind::Terminal,

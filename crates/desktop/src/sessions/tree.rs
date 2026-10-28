@@ -361,6 +361,7 @@ mod tests {
     fn session(title: &str, of: &WorkspaceInfo) -> SessionInfo {
         SessionInfo {
             containment: None,
+            terminal_agent: None,
             id: hutan_core::SessionId::new(),
             workspace_id: of.id,
             kind: hutan_core::SessionKind::Terminal,
