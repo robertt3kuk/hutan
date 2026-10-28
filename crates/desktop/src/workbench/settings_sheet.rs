@@ -25,7 +25,7 @@ use super::actions::sheet as sheet_actions;
 use super::modal::PromptSpec;
 use super::render::probe;
 use super::settings_keys::SheetFocus;
-use super::settings_labels::{namespace_title, words};
+use super::settings_labels::{namespace_description, namespace_title, words};
 use super::settings_pages::{preset_name, valid_env_name};
 use super::settings_schema::{
     CatalogEntry, Field, FieldKind, NavGroup, catalog, number_range, page_fields, refine_kind,
@@ -34,10 +34,24 @@ use super::settings_schema::{
 use super::style::TextTooltip;
 use super::ui::motion::{self, PresentExt as _};
 use super::ui::scroll::ScrollExt as _;
-use super::ui::{FocusRingExt as _, StyledExt as _};
+use super::ui::{FocusRingExt as _, StyledExt as _, space};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::settings::LayoutSettings;
+
+/// The sheet's size: 880 × 620 pt, the page list 224 wide (UI-RHYTHM, `docs/design.md`
+/// § Settings sheet look).
+const SHEET_WIDTH: f32 = 880.0;
+const SHEET_HEIGHT: f32 = 620.0;
+const NAV_WIDTH: f32 = 224.0;
+/// A page of the list: 28 pt, a 16 pt icon, [`space::MD`] before the name.
+const NAV_ROW: f32 = 28.0;
+const NAV_ICON: f32 = 16.0;
+/// The page title (20 semibold) and the line it takes beside the header's action.
+const PAGE_TITLE_SIZE: f32 = 20.0;
+const PAGE_TITLE_LINE: f32 = 28.0;
+/// The Problems line at the foot: 36 pt.
+const SHEET_FOOTER: f32 = 36.0;
 
 /// A text box being edited.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1200,6 +1214,12 @@ impl Workbench {
 
         // The page list: group labels over the pages, Advanced behind its own header.
         let mut nav: Vec<AnyElement> = Vec::new();
+        let mut nav_index = 0;
+        let description = if no_match {
+            String::new()
+        } else {
+            namespace_description(selected)
+        };
         for (index, (group, open, own)) in self.sheet_nav().into_iter().enumerate() {
             let forced = group == NavGroup::Advanced
                 && (!query.trim().is_empty() || NavGroup::of(selected) == group);
@@ -1233,15 +1253,26 @@ impl Workbench {
             let pages: Vec<AnyElement> = own
                 .into_iter()
                 .map(|ns| {
+                    let icon_index = nav_index;
+                    nav_index += 1;
                     div()
                         .id(SharedString::from(format!("ns-{ns}")))
                         .flex()
                         .items_center()
-                        .h(px(tokens.sidebar_row))
-                        .px(px(tokens.spacing * 2.0))
+                        .gap(px(space::MD))
+                        .h(px(NAV_ROW))
+                        .px(px(space::MD))
                         .rounded(px(tokens.radius))
                         .cursor_pointer()
-                        .when(ns == selected, |s| s.bg(theme.sidebar_accent))
+                        .text_color(if ns == selected {
+                            theme.fg
+                        } else {
+                            theme.muted
+                        })
+                        .when(ns == selected, |s| {
+                            s.bg(theme.sidebar_accent)
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                        })
                         .when(ns != selected, |s| {
                             s.hover(move |s| s.bg(theme.sidebar_hover))
                         })
@@ -1254,7 +1285,25 @@ impl Workbench {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.select_settings_namespace(ns, cx);
                         }))
-                        .child(SharedString::from(namespace_title(ns)))
+                        .child(
+                            div()
+                                .relative()
+                                .flex_none()
+                                .child(crate::icons::sized(
+                                    crate::icons::Icon::for_settings_page(ns),
+                                    NAV_ICON,
+                                ))
+                                .child(probe(
+                                    &self.regions,
+                                    Region::SettingsItem("nav-icon", icon_index),
+                                )),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .child(SharedString::from(namespace_title(ns))),
+                        )
                         .into_any_element()
                 })
                 .collect();
@@ -1365,8 +1414,8 @@ impl Workbench {
             .flex()
             .flex_none()
             .items_center()
-            .h(px(32.0))
-            .px(px(tokens.spacing * 4.0))
+            .h(px(SHEET_FOOTER))
+            .px(px(space::XXL))
             .border_t_1()
             .border_color(theme.border)
             .text_size(px(tokens.secondary_font_size))
@@ -1408,8 +1457,8 @@ impl Workbench {
                         ))
                         .when(wanted, |s| s.track_focus(&self.sheet_focus))
                         .relative()
-                        .w(px(880.0))
-                        .h(px(600.0))
+                        .w(px(SHEET_WIDTH))
+                        .h(px(SHEET_HEIGHT))
                         .flex()
                         .flex_col()
                         .popover(&theme, &tokens)
@@ -1442,8 +1491,8 @@ impl Workbench {
                                         .flex()
                                         .flex_col()
                                         .flex_none()
-                                        .w(px(200.0))
-                                        .pt(px(tokens.spacing * 3.0))
+                                        .w(px(NAV_WIDTH))
+                                        .pt(px(space::MD))
                                         .bg(theme.sidebar)
                                         .border_r_1()
                                         .border_color(theme.border)
@@ -1468,23 +1517,64 @@ impl Workbench {
                                             div()
                                                 .flex()
                                                 .flex_none()
-                                                .items_center()
+                                                .items_start()
                                                 .justify_between()
-                                                .h(px(tokens.sidebar_row + 18.0))
-                                                .px(px(tokens.spacing * 4.0))
-                                                .border_b_1()
-                                                .border_color(theme.border)
+                                                .gap(px(space::LG))
+                                                .px(px(space::XXL))
+                                                .pt(px(space::XL))
+                                                .pb(px(space::LG))
                                                 .child(
                                                     div()
-                                                        .text_size(px(15.0))
-                                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                                        .child(SharedString::from(if no_match {
-                                                            "Search".to_owned()
-                                                        } else {
-                                                            namespace_title(selected)
-                                                        })),
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap(px(space::XS))
+                                                        .min_w_0()
+                                                        .child(
+                                                            div()
+                                                                .relative()
+                                                                .text_size(px(PAGE_TITLE_SIZE))
+                                                                .font_weight(
+                                                                    gpui::FontWeight::SEMIBOLD,
+                                                                )
+                                                                .child(SharedString::from(
+                                                                    if no_match {
+                                                                        "Search".to_owned()
+                                                                    } else {
+                                                                        namespace_title(selected)
+                                                                    },
+                                                                ))
+                                                                .child(probe(
+                                                                    &self.regions,
+                                                                    Region::Settings("page-title"),
+                                                                )),
+                                                        )
+                                                        .when(!description.is_empty(), |s| {
+                                                            s.child(
+                                                                div()
+                                                                    .relative()
+                                                                    .min_w_0()
+                                                                    .truncate()
+                                                                    .text_color(theme.muted)
+                                                                    .child(SharedString::from(
+                                                                        description,
+                                                                    ))
+                                                                    .child(probe(
+                                                                        &self.regions,
+                                                                        Region::Settings(
+                                                                            "page-description",
+                                                                        ),
+                                                                    )),
+                                                            )
+                                                        }),
                                                 )
-                                                .child(actions),
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_none()
+                                                        .items_center()
+                                                        .h(px(PAGE_TITLE_LINE))
+                                                        .child(actions),
+                                                ),
                                         )
                                         .children(banner)
                                         .child(
@@ -1494,7 +1584,8 @@ impl Workbench {
                                                     .id("sheet-fields")
                                                     .flex_1()
                                                     .min_h_0()
-                                                    .px(px(tokens.spacing * 4.0))
+                                                    .px(px(space::XXL))
+                                                    .pb(px(space::XL))
                                                     .when(rows.is_empty(), |s| {
                                                         s.child(
                                                             div()
@@ -1510,8 +1601,8 @@ impl Workbench {
                                         .when_some(message, |s, message| {
                                             s.child(
                                                 div()
-                                                    .px(px(tokens.spacing * 4.0))
-                                                    .py(px(tokens.spacing))
+                                                    .px(px(space::XXL))
+                                                    .py(px(space::SM))
                                                     .text_color(theme.danger)
                                                     .child(SharedString::from(message)),
                                             )
@@ -1531,11 +1622,11 @@ impl Workbench {
                                         .absolute()
                                         .left_0()
                                         .right_0()
-                                        .bottom(px(32.0))
+                                        .bottom(px(SHEET_FOOTER))
                                         .max_h(px(220.0))
                                         .occlude()
-                                        .px(px(tokens.spacing * 4.0))
-                                        .py(px(tokens.spacing * 2.0))
+                                        .px(px(space::XXL))
+                                        .py(px(space::SM))
                                         .bg(theme.surface)
                                         .border_t_1()
                                         .border_color(theme.border)

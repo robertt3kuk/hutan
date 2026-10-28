@@ -34,6 +34,46 @@ impl IconId {
             _ => Self::StateInfo,
         }
     }
+
+    /// The icon of a page of the Settings sheet, by its page id (`appearance`,
+    /// `panels.sessions`, `sessions_restore`, …); the gear for a page the catalog does not name.
+    pub fn for_settings_page(page: &str) -> Self {
+        match page {
+            "appearance" => Self::SettingsAppearance,
+            "app" => Self::SettingsApp,
+            "data" => Self::SettingsData,
+            "keymap" => Self::SettingsKeymap,
+            "terminal" => Self::SettingsTerminal,
+            "layout" => Self::SettingsLayout,
+            "panels.sessions" => Self::SettingsPanelsSessions,
+            "panels.inspector" => Self::SettingsPanelsInspector,
+            "panels.files" => Self::SettingsPanelsFiles,
+            "panels.problems" => Self::SettingsPanelsProblems,
+            "panels.instructions" => Self::SettingsPanelsInstructions,
+            "panels.search" => Self::SettingsPanelsSearch,
+            "status" => Self::SettingsStatus,
+            "workspaces" => Self::SettingsWorkspaces,
+            "history" => Self::SettingsHistory,
+            "chat" => Self::SettingsChat,
+            "editor" => Self::SettingsEditor,
+            "agents" => Self::SettingsAgents,
+            "resources" => Self::SettingsResources,
+            "tasks" => Self::SettingsTasks,
+            "changes" => Self::SettingsChanges,
+            "assistant" => Self::SettingsAssistant,
+            "integrations" => Self::SettingsIntegrations,
+            "automation" => Self::SettingsAutomation,
+            "launcher" => Self::SettingsLauncher,
+            "accounts" => Self::SettingsAccounts,
+            "models" => Self::SettingsModels,
+            "notifications" => Self::SettingsNotifications,
+            "sessions_restore" => Self::SettingsSessionsRestore,
+            "control" => Self::SettingsControl,
+            "agents_tools" => Self::SettingsAgentsTools,
+            "experimental" => Self::SettingsExperimental,
+            _ => Self::ActionSettings,
+        }
+    }
 }
 
 catalog! {
@@ -172,6 +212,38 @@ catalog! {
     ActionCollapseAll => ("action.collapse-all", "arrows-in-line-vertical.svg"),
     ActionNewFile => ("action.new-file", "file-plus.svg"),
     ActionNewFolder => ("action.new-folder", "folder-plus.svg"),
+    SettingsAppearance => ("settings.appearance", "palette.svg"),
+    SettingsApp => ("settings.app", "gear-six.svg"),
+    SettingsData => ("settings.data", "database.svg"),
+    SettingsKeymap => ("settings.keymap", "keyboard.svg"),
+    SettingsTerminal => ("settings.terminal", "terminal.svg"),
+    SettingsLayout => ("settings.layout", "layout.svg"),
+    SettingsPanelsSessions => ("settings.panels.sessions", "folders.svg"),
+    SettingsPanelsInspector => ("settings.panels.inspector", "hand-palm.svg"),
+    SettingsPanelsFiles => ("settings.panels.files", "file-code.svg"),
+    SettingsPanelsProblems => ("settings.panels.problems", "warning.svg"),
+    SettingsPanelsInstructions => ("settings.panels.instructions", "file-text.svg"),
+    SettingsPanelsSearch => ("settings.panels.search", "magnifying-glass.svg"),
+    SettingsStatus => ("settings.status", "rows.svg"),
+    SettingsWorkspaces => ("settings.workspaces", "stack.svg"),
+    SettingsHistory => ("settings.history", "clock-counter-clockwise.svg"),
+    SettingsChat => ("settings.chat", "chat-circle.svg"),
+    SettingsEditor => ("settings.editor", "pencil.svg"),
+    SettingsAgents => ("settings.agents", "robot.svg"),
+    SettingsResources => ("settings.resources", "gauge.svg"),
+    SettingsTasks => ("settings.tasks", "list-checks.svg"),
+    SettingsChanges => ("settings.changes", "git-diff.svg"),
+    SettingsAssistant => ("settings.assistant", "sparkle.svg"),
+    SettingsIntegrations => ("settings.integrations", "plug.svg"),
+    SettingsAutomation => ("settings.automation", "lightning.svg"),
+    SettingsLauncher => ("settings.launcher", "play.svg"),
+    SettingsAccounts => ("settings.accounts", "user.svg"),
+    SettingsModels => ("settings.models", "cpu.svg"),
+    SettingsNotifications => ("settings.notifications", "bell.svg"),
+    SettingsSessionsRestore => ("settings.sessions-restore", "arrow-clockwise.svg"),
+    SettingsControl => ("settings.control", "shield-check.svg"),
+    SettingsAgentsTools => ("settings.agents-tools", "wrench.svg"),
+    SettingsExperimental => ("settings.experimental", "flask.svg"),
 }
 
 pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
@@ -418,6 +490,33 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
         )),
         "x.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/x.svg"
+        )),
+        "palette.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/palette.svg"
+        )),
+        "database.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/database.svg"
+        )),
+        "keyboard.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/keyboard.svg"
+        )),
+        "layout.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/layout.svg"
+        )),
+        "user.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/user.svg"
+        )),
+        "cpu.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/cpu.svg"
+        )),
+        "shield-check.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/shield-check.svg"
+        )),
+        "wrench.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/wrench.svg"
+        )),
+        "flask.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/flask.svg"
         )),
         _ => None,
     }

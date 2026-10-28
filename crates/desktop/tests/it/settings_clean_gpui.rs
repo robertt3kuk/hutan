@@ -82,14 +82,14 @@ fn the_footer_is_there_only_for_problems_one_line_with_three_or_thirty_and_its_l
     view.update(cx, |wb, cx| wb.sheet_toggle_problems(cx));
     assert!(!problems_open(&view, cx));
 
-    // One problem: the footer is there, 32 px (the probe is inside the footer's hairline: 31).
+    // One problem: the footer is there, 36 pt (the probe is inside the footer's hairline: 35).
     std::fs::write(daemon.home().join("settings.toml"), "[unknown_0]\nx = 1\n").unwrap();
     wait_until(cx, "the problem of the file", |cx| {
         view.read_with(cx, |wb, _| !wb.sheet_problems().is_empty())
     });
     let footer = bounds(&view, cx, Region::Settings("sheet-footer")).expect("the footer");
     let body = bounds(&view, cx, Region::Settings("sheet-body")).unwrap();
-    assert_eq!(f32::from(footer.size.height), 31.0);
+    assert_eq!(f32::from(footer.size.height), 35.0);
 
     for count in [3_usize, 30] {
         let text: String = (0..count)
@@ -226,7 +226,10 @@ fn a_row_has_a_chip_and_a_ghost_reset_only_while_a_file_sets_its_value(cx: &mut 
     let reset = bounds(&view, cx, Region::SettingsItem("reset", 0)).unwrap();
     assert_eq!(height(&view, cx), 51.0);
     let moved = bounds(&view, cx, Region::SettingsItem("control", 0)).unwrap();
-    assert_eq!(moved.size.width, column.size.width, "the control keeps its width");
+    assert_eq!(
+        moved.size.width, column.size.width,
+        "the control keeps its width"
+    );
     assert!(reset.right() <= moved.left(), "{reset:?} {moved:?}");
 
     // ↺ removes the key: both go.
@@ -419,4 +422,143 @@ fn the_page_list_is_in_groups_and_advanced_opens_on_demand_by_search_or_by_its_p
         .find(|(g, _, _)| *g == NavGroup::Advanced)
         .unwrap();
     assert!(advanced.1 && advanced.2.contains(&"control"), "{found:?}");
+}
+
+// ---- UI-RHYTHM: page list icons, page header, cards ------------------------------------------------------
+
+/// The ids of the pages of the sheet: pages move into other groups later (SETTINGS-IA), but
+/// no id, deep link, ⌘K entry or `hutan ui set` path is renamed or removed.
+const PAGE_IDS: [&str; 32] = [
+    "accounts",
+    "agents",
+    "agents_tools",
+    "app",
+    "appearance",
+    "assistant",
+    "automation",
+    "changes",
+    "chat",
+    "control",
+    "data",
+    "editor",
+    "experimental",
+    "history",
+    "integrations",
+    "keymap",
+    "launcher",
+    "layout",
+    "models",
+    "notifications",
+    "panels.files",
+    "panels.inspector",
+    "panels.instructions",
+    "panels.problems",
+    "panels.search",
+    "panels.sessions",
+    "resources",
+    "sessions_restore",
+    "status",
+    "tasks",
+    "terminal",
+    "workspaces",
+];
+
+#[gpui::test]
+fn every_page_keeps_its_id_and_has_an_icon_of_its_own_in_the_list(cx: &mut TestAppContext) {
+    use hutan_settings::themes::icons::IconId;
+
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    open_page(&view, cx, "appearance");
+    let mut pages = view.read_with(cx, |wb, _| wb.sheet_pages());
+    pages.sort_unstable();
+    assert_eq!(pages, PAGE_IDS, "no page id was added, renamed or removed");
+
+    // One catalog icon per page, none shared, none the fallback gear but General's own.
+    let ids: std::collections::BTreeSet<_> = PAGE_IDS
+        .iter()
+        .map(|page| IconId::for_settings_page(page))
+        .collect();
+    assert_eq!(ids.len(), PAGE_IDS.len(), "every page has its own icon id");
+    for page in PAGE_IDS {
+        let icon = IconId::for_settings_page(page);
+        assert_eq!(
+            icon.id(),
+            format!("settings.{}", page.replace('_', "-")),
+            "the icon of {page}"
+        );
+    }
+    assert_eq!(
+        IconId::for_settings_page("a-page-from-the-future"),
+        IconId::ActionSettings
+    );
+
+    // The list draws a 16 pt icon before every page of an open group.
+    let shown: usize = view.read_with(cx, |wb, _| {
+        wb.sheet_nav()
+            .iter()
+            .filter(|(_, open, _)| *open)
+            .map(|(_, _, pages)| pages.len())
+            .sum()
+    });
+    assert!(shown >= 20, "{shown}");
+    for index in 0..shown {
+        let icon = bounds(&view, cx, Region::SettingsItem("nav-icon", index))
+            .unwrap_or_else(|| panic!("page {index} of the list has no icon"));
+        assert_eq!(
+            (f32::from(icon.size.width), f32::from(icon.size.height)),
+            (16.0, 16.0),
+            "page {index}"
+        );
+    }
+}
+
+#[gpui::test]
+fn a_page_has_a_20_pt_title_a_description_line_and_cards_inset_by_the_page_padding(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    open_page(&view, cx, "appearance");
+    let body = bounds(&view, cx, Region::Settings("sheet-body")).unwrap();
+    let title = bounds(&view, cx, Region::Settings("page-title")).unwrap();
+    let description = bounds(&view, cx, Region::Settings("page-description"))
+        .expect("the page says what it is for");
+    // The page list is 224 pt wide and the page is padded 32 pt: the title starts at 256.
+    assert_eq!(
+        f32::from(title.left()) - f32::from(body.left()),
+        224.0 + 32.0,
+        "{title:?} in {body:?}"
+    );
+    assert!(f32::from(title.size.height) >= 20.0, "{title:?}");
+    assert_eq!(description.left(), title.left());
+    assert!(
+        description.top() >= title.bottom() - gpui::px(1.0),
+        "the description is under the title"
+    );
+
+    // The rows stand in a card, inset 16 pt from its edges; the card is the page's width.
+    let row = bounds(&view, cx, Region::SettingsItem("row", 0)).unwrap();
+    assert_eq!(
+        f32::from(row.left()) - f32::from(title.left()),
+        16.0,
+        "{row:?}"
+    );
+    let width = f32::from(row.size.width);
+    assert!(
+        (540.0..=560.0).contains(&width),
+        "the card is 592 pt wide less a scroll bar; its rows are {width} wide"
+    );
+    assert!(
+        f32::from(row.top()) >= f32::from(description.bottom()),
+        "rows come below the header"
+    );
+
+    // A search that finds nothing has a title and no description.
+    view.update(cx, |wb, cx| {
+        wb.set_settings_query("zzzzzz-no-such-page", cx)
+    });
+    draw(cx);
+    assert!(bounds(&view, cx, Region::Settings("page-title")).is_some());
+    assert!(bounds(&view, cx, Region::Settings("page-description")).is_none());
 }

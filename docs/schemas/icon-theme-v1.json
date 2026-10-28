@@ -748,6 +748,166 @@
           "type": "string",
           "description": "Pack-root-relative monochrome SVG path",
           "maxLength": 1024
+        },
+        "settings.appearance": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.app": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.data": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.keymap": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.terminal": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.layout": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.panels.sessions": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.panels.inspector": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.panels.files": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.panels.problems": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.panels.instructions": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.panels.search": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.status": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.workspaces": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.history": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.chat": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.editor": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.agents": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.resources": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.tasks": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.changes": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.assistant": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.integrations": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.automation": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.launcher": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.accounts": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.models": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.notifications": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.sessions-restore": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.control": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.agents-tools": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "settings.experimental": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
         }
       },
       "additionalProperties": true

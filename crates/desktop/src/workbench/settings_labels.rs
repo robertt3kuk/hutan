@@ -85,6 +85,110 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("experimental", "Experimental features"),
 ];
 
+/// What each page is for, one line under its title (13 pt muted; 80 characters at most so it
+/// stays one line in the 592 pt column).
+const NAMESPACE_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "appearance",
+        "How Hutan looks: density, color mode, themes and icons.",
+    ),
+    (
+        "app",
+        "The daemon, the login item, notifications and what closing the window does.",
+    ),
+    (
+        "data",
+        "Where Hutan keeps its files and logs, and how to open them.",
+    ),
+    (
+        "keymap",
+        "Keyboard shortcuts, the keymap file and Vim keys.",
+    ),
+    (
+        "terminal",
+        "Shell, fonts, scrollback and how terminals behave.",
+    ),
+    ("layout", "Docks, panels and saved layouts."),
+    (
+        "panels.sessions",
+        "How projects and sessions are listed in the sidebar.",
+    ),
+    ("sidebar", "How the sidebar groups and sorts sessions."),
+    (
+        "panels.inspector",
+        "Approvals and questions that wait for you.",
+    ),
+    (
+        "panels.files",
+        "The Files panel: what it shows and how it behaves.",
+    ),
+    (
+        "panels.problems",
+        "Errors and warnings from language servers.",
+    ),
+    (
+        "panels.instructions",
+        "The Instructions panel and the files it lists.",
+    ),
+    ("panels.search", "Search options and limits."),
+    ("status", "What the status bar shows."),
+    (
+        "workspaces",
+        "How projects are sorted and which ones the sidebar hides.",
+    ),
+    ("history", "Searchable history of your agent sessions."),
+    ("chat", "Sending messages and attachments in agent chats."),
+    (
+        "editor",
+        "The code editor: indentation, wrapping and saving.",
+    ),
+    (
+        "agents",
+        "The Agents page: what it lists and how it groups.",
+    ),
+    (
+        "resources",
+        "The process monitor: refresh rate and sorting.",
+    ),
+    ("tasks", "The Tasks panel and what it shows."),
+    ("changes", "Reviewing changes: diffs, comments and merging."),
+    (
+        "assistant",
+        "Mawas, the assistant: models, memory and what it may do.",
+    ),
+    (
+        "integrations",
+        "Connect Codex, Claude Code and OMP to Hutan.",
+    ),
+    ("automation", "Commands that run when something happens."),
+    (
+        "launcher",
+        "The Start sheet: confirmations and safety for new agent sessions.",
+    ),
+    (
+        "accounts",
+        "Sign in to agent harnesses and see which accounts they use.",
+    ),
+    ("models", "Model providers and their credentials."),
+    ("notifications", "When Hutan tells you something needs you."),
+    (
+        "sessions_restore",
+        "What comes back when the daemon restarts.",
+    ),
+    (
+        "control",
+        "What agents may ask Hutan to do, containment and finishing a task.",
+    ),
+    (
+        "agents_tools",
+        "Agent programs, MCP servers and checkpoints.",
+    ),
+    (
+        "experimental",
+        "Features that ship switched off, at your own risk.",
+    ),
+];
+
 const FIELDS: &[FieldText] = &[
     // ---- appearance ----
     choice(
@@ -1646,6 +1750,14 @@ pub fn namespace_title(namespace: &str) -> String {
         .map_or_else(|| humanize(namespace), |(_, title)| (*title).to_owned())
 }
 
+/// The line under a page's title in the sheet: what the page is for.
+pub fn namespace_description(namespace: &str) -> String {
+    NAMESPACE_DESCRIPTIONS
+        .iter()
+        .find(|(ns, _)| *ns == namespace)
+        .map_or_else(String::new, |(_, text)| (*text).to_owned())
+}
+
 /// The title of a field; `key` is its dotted path inside the namespace.
 pub fn field_title(namespace: &str, key: &str) -> String {
     entry(namespace, key).map_or_else(|| humanize(key), |f| f.title.to_owned())
@@ -2354,6 +2466,16 @@ mod tests {
                 "namespace {ns} has no title"
             );
             assert_user_facing(&format!("namespace {ns}"), &namespace_title(ns));
+            assert!(
+                NAMESPACE_DESCRIPTIONS.iter().any(|(n, _)| *n == ns),
+                "namespace {ns} has no description"
+            );
+            let description = namespace_description(ns);
+            assert_user_facing(&format!("namespace {ns} description"), &description);
+            assert!(
+                description.chars().count() <= 80,
+                "namespace {ns}: the description is one line under the title: `{description}`"
+            );
             let Some(namespace_schema) = namespace_schema(&schema, ns) else {
                 continue;
             };

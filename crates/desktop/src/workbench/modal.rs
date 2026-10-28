@@ -81,6 +81,9 @@ pub struct ModalRow {
     pub status: SharedString,
 }
 
+/// The height of one line of a dialog's list.
+const MODAL_ROW_HEIGHT: f32 = 28.0;
+
 /// How many [`ModalRow`]s a dialog draws before it says "and N more".
 pub const MODAL_ROWS_SHOWN: usize = 6;
 
@@ -607,7 +610,7 @@ impl Workbench {
         } else {
             (MODAL_ROWS_SHOWN - 1, rows.len() - (MODAL_ROWS_SHOWN - 1))
         };
-        let line = tokens.sidebar_row + ui::space::XS;
+        let line = MODAL_ROW_HEIGHT;
         Some(
             div()
                 .relative()
