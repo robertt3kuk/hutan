@@ -716,3 +716,134 @@ async fn chat_fork_keeps_the_turns_up_to_the_one_named_and_says_what_it_did() {
     assert_ne!(refused.code, 0);
     assert!(refused.stderr.contains("terminal session"), "{refused:?}");
 }
+
+// Session folders (protocol 0.57, capability `session.dirs`, ADR 0023) -----------------------------
+
+fn dirs_json(out: &Out) -> Vec<(String, String, String)> {
+    out.json()["dirs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|dir| {
+            (
+                dir["path"].as_str().unwrap().to_owned(),
+                dir["role"].as_str().unwrap().to_owned(),
+                dir["applied"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn folder(parent: &Path, name: &str) -> String {
+    let dir = parent.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.canonicalize().unwrap().display().to_string()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_dirs_lists_adds_and_removes_the_extra_folders_of_a_chat() {
+    let c = Chat::with_fixture("plain-turn").await;
+    let a = folder(c.work.path(), "a");
+    let b = folder(c.work.path(), "b");
+
+    // `chat new --dir`: the folder is given to the agent with its next turn.
+    let id = c.new_chat(&["--dir", &a]).await;
+    let listed =
+        c.t.hutan(&["chat", "dirs", "list", &id, "--json"])
+            .await
+            .ok();
+    let cwd = std::fs::canonicalize(c.work.path())
+        .unwrap()
+        .display()
+        .to_string();
+    assert_eq!(
+        dirs_json(&listed),
+        [
+            (cwd.clone(), "primary".into(), "now".into()),
+            (a.clone(), "extra".into(), "next_turn".into())
+        ]
+    );
+    let text = c.t.hutan(&["chat", "dirs", "list", &id]).await.ok();
+    assert!(
+        text.stdout.contains(&format!("extra    {a}  (next turn)")),
+        "{text:?}"
+    );
+
+    // Several at once, in order; the answer is the list as it is now.
+    let c2 = folder(c.work.path(), "c");
+    let added =
+        c.t.hutan(&["chat", "dirs", "add", &id, &b, &c2, "--json"])
+            .await
+            .ok();
+    assert_eq!(
+        dirs_json(&added)
+            .iter()
+            .map(|d| d.0.clone())
+            .collect::<Vec<_>>(),
+        [cwd.clone(), a.clone(), b.clone(), c2.clone()]
+    );
+    let removed =
+        c.t.hutan(&["chat", "dirs", "rm", &id, &a, "--json"])
+            .await
+            .ok();
+    assert_eq!(
+        dirs_json(&removed)
+            .iter()
+            .map(|d| d.0.clone())
+            .collect::<Vec<_>>(),
+        [cwd.clone(), b.clone(), c2.clone()]
+    );
+
+    // Refusals name the reason and fail the command.
+    let missing =
+        c.t.hutan(&["chat", "dirs", "add", &id, &format!("{b}/nope")])
+            .await;
+    assert_ne!(missing.code, 0, "{missing:?}");
+    assert!(
+        missing.stderr.contains("not an existing directory"),
+        "{missing:?}"
+    );
+    let own = c.t.hutan(&["chat", "dirs", "add", &id, &cwd]).await;
+    assert_ne!(own.code, 0);
+    assert!(own.stderr.contains("the session's own folder"), "{own:?}");
+    let gone = c.t.hutan(&["chat", "dirs", "remove", &id, &a]).await;
+    assert_ne!(gone.code, 0);
+    assert!(gone.stderr.contains("not an extra folder"), "{gone:?}");
+
+    // `--dir` makes no sense for a direct chat.
+    let direct =
+        c.t.hutan(&["chat", "new", "--direct", "--provider", "p", "--dir", &a])
+            .await;
+    assert_ne!(direct.code, 0);
+    assert!(direct.stderr.contains("--dir"), "{direct:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_session_takes_dir_and_chat_dirs_too() {
+    let t = TestDaemon::start().await;
+    let work = tempfile::tempdir().unwrap();
+    let project = folder(work.path(), "project");
+    let a = folder(work.path(), "a");
+    let b = folder(work.path(), "b");
+    let id = t
+        .new_session(&["--cwd", &project, "--dir", &a], &["sleep", "60"])
+        .await;
+    let listed = t.hutan(&["chat", "dirs", "list", &id, "--json"]).await.ok();
+    // A plain program outside a boundary: the file service has the folder at once.
+    assert_eq!(
+        dirs_json(&listed),
+        [(a.clone(), "extra".to_owned(), "now".to_owned())]
+    );
+    let added = t
+        .hutan(&["chat", "dirs", "add", &id, &b, "--json"])
+        .await
+        .ok();
+    assert_eq!(dirs_json(&added).len(), 2);
+    let removed = t
+        .hutan(&["chat", "dirs", "remove", &id, &a, &b, "--json"])
+        .await
+        .ok();
+    assert!(dirs_json(&removed).is_empty());
+    let text = t.hutan(&["chat", "dirs", "list", &id]).await.ok();
+    assert!(text.stdout.contains("has no extra folders"), "{text:?}");
+}
