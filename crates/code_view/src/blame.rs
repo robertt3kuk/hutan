@@ -10,10 +10,13 @@
 //! because the match is made against the text, not accumulated from the edits.
 //!
 //! The view draws the result in a column of the gutter (the first line of each run of one
-//! commit says *author · date · subject* in short form, the rest are blank), and for the caret's
-//! line after its end (`inline`, in full). The column is as wide as that text needs but never
-//! more than [`COLUMN_MAX_CELLS`] cells or 30 % of the view (EDITOR-POLISH, F-09); the hover
-//! has the whole commit.
+//! commit says *author · date · subject* in short form, every other line of the run repeats
+//! *author · date* fainter, so no row of the column is blank — FX-WORK-2, F-09), and for the
+//! caret's line after its end (`inline`, in full). The column is as wide as that text needs but
+//! never more than [`COLUMN_MAX_CELLS`] cells or 30 % of the view (EDITOR-POLISH, F-09); the
+//! hover has the whole commit. An author's name is shown whole while it fits
+//! ([`AUTHOR_CHARS`]), else as the first name and the initial of the last (`Robert T.`), else the
+//! initials.
 
 use std::sync::Arc;
 
@@ -145,8 +148,8 @@ pub const COLUMN_MAX_SHARE: f32 = 0.30;
 pub const COLUMN_USEFUL_CELLS: usize = 10;
 /// The most of a subject the column makes room for.
 const SUBJECT_CHARS: usize = 40;
-/// A name longer than this is cut to initials (or an ellipsis, for a single word).
-const AUTHOR_CHARS: usize = 12;
+/// A name longer than this is shortened ([`short_author`]).
+pub const AUTHOR_CHARS: usize = 14;
 /// Cells the column keeps for the marks beside the text (the agent's bar and the glyph, the gap).
 pub const COLUMN_PAD: usize = 3;
 
@@ -181,15 +184,24 @@ pub fn column_cells_in(needed: usize, view_cells: usize) -> Option<usize> {
 /// The longest [`short_date`].
 const SHORT_DATE_CHARS: usize = 4;
 
-/// An author's name as the column shows it: kept up to [`AUTHOR_CHARS`] characters, else the
-/// initials of its words (`Robert Tkachenko` → `RT`), else the start of its one long word.
+/// An author's name as the column shows it: whole up to [`AUTHOR_CHARS`] characters, else the
+/// first name with the initial of the last (`Robert Tkachenko` → `Robert T.`), else the first
+/// name alone, else the initials of its words, else the start of its one long word.
 pub fn short_author(name: &str) -> String {
     let name = name.trim();
     if name.chars().count() <= AUTHOR_CHARS {
         return name.to_owned();
     }
     let words: Vec<&str> = name.split_whitespace().collect();
-    if words.len() > 1 {
+    if let [first, .., last] = words.as_slice() {
+        let initial: String = last.chars().take(1).flat_map(char::to_uppercase).collect();
+        let with_initial = format!("{first} {initial}.");
+        if with_initial.chars().count() <= AUTHOR_CHARS {
+            return with_initial;
+        }
+        if first.chars().count() <= AUTHOR_CHARS {
+            return (*first).to_owned();
+        }
         return words
             .iter()
             .filter_map(|w| w.chars().next())
@@ -223,6 +235,19 @@ pub fn column_label(line: BlameLine<'_>, now: i64) -> String {
             short_author(&commit.author),
             short_date(commit.time, now),
             commit.subject
+        ),
+    }
+}
+
+/// What the other lines of a run say: `Ada · 3d` (or `Uncommitted`), the head line having said
+/// the subject already.
+pub fn continuation_label(line: BlameLine<'_>, now: i64) -> String {
+    match line {
+        BlameLine::Uncommitted => "Uncommitted".to_owned(),
+        BlameLine::Commit(commit) => format!(
+            "{} · {}",
+            short_author(&commit.author),
+            short_date(commit.time, now)
         ),
     }
 }
@@ -330,7 +355,8 @@ mod tests {
             "a subject that goes on and on and on and on and on and on",
         )];
         assert_eq!(column_cells(&long), COLUMN_MAX_CELLS);
-        // A long name is initials: most of the column is the message.
+        // A long name is its first name and the initial of the last: most of the column is the
+        // message.
         let line = column_label(
             BlameLine::Commit(&BlameCommit {
                 time: 0,
@@ -340,12 +366,12 @@ mod tests {
         );
         assert_eq!(
             line,
-            "RT · 1y · a subject that goes on and on and on and on and on and on"
+            "Robert T. · 1y · a subject that goes on and on and on and on and on and on"
         );
         let shown = fit(&line, COLUMN_MAX_CELLS - COLUMN_PAD);
         assert!(shown.chars().count() <= 29);
         let subject_shown = shown.split(" · ").last().unwrap().chars().count();
-        assert!(subject_shown >= 18, "{shown:?}");
+        assert!(subject_shown >= 10, "{shown:?}");
         // Uncommitted lines say `Uncommitted` and widen nothing.
         let mut pending = commit("0000000", "Not Committed Yet", "x".repeat(80).as_str());
         pending.uncommitted = true;
@@ -392,9 +418,18 @@ mod tests {
     #[test]
     fn names_and_dates_are_short() {
         assert_eq!(short_author("Ada"), "Ada");
-        assert_eq!(short_author("Robert Tkachenko"), "RT");
-        assert_eq!(short_author("Maria de la Cruz Hernandez"), "MDL");
-        assert_eq!(short_author("Wolfeschlegelsteinhausen"), "Wolfeschleg…");
+        assert_eq!(short_author("Robert Tkachenko"), "Robert T.");
+        assert_eq!(short_author("Maria de la Cruz Hernandez"), "Maria H.");
+        assert_eq!(
+            short_author("Bartholomew Featherstonehaugh"),
+            "Bartholomew F."
+        );
+        assert_eq!(
+            short_author("Bartholomewmaximus Featherstonehaugh Smythe"),
+            "BFS",
+            "a first name that does not fit either: the initials"
+        );
+        assert_eq!(short_author("Wolfeschlegelsteinhausen"), "Wolfeschlegel…");
         assert_eq!(short_date(100, 130), "now");
         assert_eq!(short_date(0, 5 * 60 + 1), "5m");
         assert_eq!(short_date(0, 3 * 3_600), "3h");
@@ -403,6 +438,16 @@ mod tests {
         assert_eq!(short_date(0, 4 * 2_629_800), "4mo");
         assert_eq!(short_date(0, 12 * 2_629_800 + 1), "1y");
         assert_eq!(short_date(500, 100), "now");
+    }
+
+    #[test]
+    fn the_other_lines_of_a_run_say_who_and_when_without_the_subject() {
+        let line = BlameLine::Commit(&commit("c0ffee1234", "Robert Tkachenko", "fix it"));
+        assert_eq!(
+            continuation_label(line, 1_000_000 + 3 * 86_400),
+            "Robert T. · 3d"
+        );
+        assert_eq!(continuation_label(BlameLine::Uncommitted, 0), "Uncommitted");
     }
 
     #[test]

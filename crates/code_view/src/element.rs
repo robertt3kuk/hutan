@@ -741,11 +741,12 @@ fn prepare(
             _ => None,
         };
 
-        // Blame: the first line of a run of one commit says who, when and what; the caret line
-        // may also say it after its end (unless it has a diagnostic's message there).
+        // Blame: the first line of a run of one commit says who, when and what, the others of
+        // the run who and when, fainter; the caret line may also say it after its end (unless it
+        // has a diagnostic's message there).
         let blame_text = |view: &CodeView,
                           cx: &gpui::Context<CodeView>|
-         -> (Option<String>, Option<String>) {
+         -> (Option<(String, bool)>, Option<String>) {
             let buffer = view.buffer().read(cx);
             let Some(this) = buffer.blame_line(line) else {
                 return (None, None);
@@ -757,11 +758,19 @@ fn prepare(
                 || buffer
                     .blame_line(line - 1)
                     .is_none_or(|before| !before.same_run(this));
-            let column = (blame_column && starts_run && geom.first).then(|| {
-                crate::blame::fit(
-                    &crate::blame::column_label(this, now),
-                    blame_cells.saturating_sub(crate::blame::COLUMN_PAD),
-                )
+            let room = blame_cells.saturating_sub(crate::blame::COLUMN_PAD);
+            let column = (blame_column && geom.first).then(|| {
+                if starts_run {
+                    (
+                        crate::blame::fit(&crate::blame::column_label(this, now), room),
+                        true,
+                    )
+                } else {
+                    (
+                        crate::blame::fit(&crate::blame::continuation_label(this, now), room),
+                        false,
+                    )
+                }
             });
             let inline = (blame_inline && head_line == Some(line) && geom.last)
                 .then(|| crate::blame::fit(&crate::blame::label(this, now), INLINE_BLAME_CHARS));
@@ -772,12 +781,17 @@ fn prepare(
         } else {
             (None, None)
         };
-        let blame = column_label.map(|label| {
+        let blame_head = column_label.as_ref().is_some_and(|(_, head)| *head);
+        let blame = column_label.map(|(label, head)| {
             shape_muted(
                 &mut view.numbers,
                 &text_system,
                 &style,
-                (label, "blame", view.style_generation),
+                (
+                    label,
+                    if head { "blame" } else { "blame-run" },
+                    view.style_generation,
+                ),
             )
         });
         let hint = hint.or_else(|| {
@@ -812,6 +826,7 @@ fn prepare(
             carets: carets.len(),
             selected_cells,
             blame: blame.is_some(),
+            blame_head,
             git_bar: git.bar.is_some(),
             git_removed_above: git.removed_above.is_some(),
         });
@@ -876,7 +891,14 @@ fn shape_muted(
     let run = TextRun {
         len: text.len(),
         font: style.font(None),
-        color: rgba(style.theme.gutter_foreground),
+        color: {
+            let mut color: Hsla = rgba(style.theme.gutter_foreground).into();
+            // The lines of a run after its head, which only repeat who and when.
+            if tag == "blame-run" {
+                color.a *= 0.6;
+            }
+            color
+        },
         background_color: None,
         underline: None,
         strikethrough: None,

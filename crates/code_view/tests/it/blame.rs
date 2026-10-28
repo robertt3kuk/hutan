@@ -258,15 +258,26 @@ fn a_run_that_began_above_the_view_still_says_who_in_the_first_row_in_view(
             v.stats()
                 .last_rows
                 .iter()
-                .filter(|r| r.blame)
+                .filter(|r| r.blame_head)
                 .map(|r| r.line)
                 .collect()
         })
     };
+    let blank = |cx: &gpui::VisualTestContext| -> usize {
+        view.read_with(cx, |v, _| {
+            v.stats()
+                .last_rows
+                .iter()
+                .filter(|r| r.sub == 0 && !r.blame)
+                .count()
+        })
+    };
     assert_eq!(labelled(cx), [0], "the run's first line");
+    assert_eq!(blank(cx), 0, "no row inside a run is blank (F-09)");
     // Scrolled down: the run began above the view; its label is on the first line in view.
     let line_h = view.read_with(cx, |v, _| f32::from(v.layout().unwrap().line_height));
     view.update(cx, |v, cx| v.scroll_to(30.0 * line_h, cx));
     draw(cx);
     assert_eq!(labelled(cx), [30]);
+    assert_eq!(blank(cx), 0);
 }

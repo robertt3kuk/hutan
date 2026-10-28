@@ -181,6 +181,9 @@ pub struct DrawnRow {
     pub selected_cells: usize,
     /// The gutter's blame column has text on this row.
     pub blame: bool,
+    /// ... and it is the full line (author, date, subject) of the head of a run, not the fainter
+    /// `author · date` the other lines of a run repeat.
+    pub blame_head: bool,
     /// The gutter draws a git change bar on this row (a wrapped line has one on every row).
     pub git_bar: bool,
     /// The gutter draws the mark of removed lines on this row's top edge.
