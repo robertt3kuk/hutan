@@ -178,7 +178,7 @@ fn rows_and_tabs_show_main_and_worktree_badges(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn two_agents_in_one_checkout_put_a_warning_glyph_on_both_rows(cx: &mut TestAppContext) {
+fn two_agents_in_one_checkout_put_one_warning_chip_on_the_project_row(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (_keep, root, _wt) = repo_with_worktree();
     let workspace = daemon.create_workspace("proj", &[&root]).id;
@@ -214,25 +214,33 @@ fn two_agents_in_one_checkout_put_a_warning_glyph_on_both_rows(cx: &mut TestAppC
         tip.contains("⚠ Another live agent works in this checkout"),
         "{tip}"
     );
-    // On the rows it is a 16 px glyph in the trailing slot, not a badge on a second line.
-    let marker = |view: &Entity<Workbench>, cx: &VisualTestContext, id: SessionId| {
-        view.read_with(cx, |wb, _| wb.region_bounds(Region::SharedCheckout(id)))
+    // On screen it is one chip on the project row of the checkout, said once; the session rows
+    // do not repeat it and stay one line.
+    let root = view.read_with(cx, |wb, cx| {
+        wb.sessions()
+            .read(cx)
+            .session(first)
+            .and_then(|s| s.placement.as_ref().map(|p| p.root.clone()))
+            .expect("a placement")
+    });
+    let chip = |view: &Entity<Workbench>, cx: &VisualTestContext| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::shared_checkout(&root)))
     };
-    wait_until(cx, "the warning on the rows", |cx| {
-        marker(&view, cx, first).is_some() && marker(&view, cx, second).is_some()
+    wait_until(cx, "the chip on the project row", |cx| {
+        chip(&view, cx).is_some()
     });
     assert!(
         !drawn(&view, cx, first, BadgeSite::Row),
         "no second line for a shared main checkout"
     );
 
-    // One agent leaves: the warning goes with it, and the row is one line again.
+    // One agent leaves: the warning goes with it.
     claude.release(&daemon, None, None);
     wait_until(cx, "the warning to clear", |cx| {
         badge_text(&view, cx, first) == Some(("main".into(), false))
     });
-    wait_until(cx, "the marker to leave the row", |cx| {
-        marker(&view, cx, first).is_none()
+    wait_until(cx, "the chip to leave the project row", |cx| {
+        chip(&view, cx).is_none()
     });
 }
 

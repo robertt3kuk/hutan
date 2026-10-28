@@ -349,8 +349,12 @@ pub enum Region {
     SessionMuted(hutan_core::SessionId),
     /// The unread dot of a session's row (6 px of amber inside its ring).
     SessionUnread(hutan_core::SessionId),
-    /// The warning glyph of a session's row: another live agent works in the same checkout.
-    SharedCheckout(hutan_core::SessionId),
+    /// The shared-checkout chip of a project or worktree row: another live agent works in the
+    /// same checkout (keyed by the checkout's folder, [`Region::shared_checkout`]).
+    SharedCheckout(u64),
+    /// The line under the first agent card no hook speaks for: what installing hooks adds, and
+    /// the link to *Agent integrations…*.
+    HooksHint(hutan_core::SessionId),
     /// The *Changes to review* link of a session's row (its seen work waits for review).
     SessionReview(hutan_core::SessionId),
     /// A control of the "Closed … · Undo" toast (`undo`).
@@ -574,6 +578,14 @@ impl Region {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         path.hash(&mut hasher);
         Self::WorktreeRow(hasher.finish())
+    }
+
+    /// The region of the shared-checkout chip of the checkout at `path`.
+    pub fn shared_checkout(path: &std::path::Path) -> Self {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        path.hash(&mut hasher);
+        Self::SharedCheckout(hasher.finish())
     }
 }
 

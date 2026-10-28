@@ -161,7 +161,7 @@ pub fn agent_badge(
 
 /// The placement badge of a session row's second line: `wt <branch>` (a worktree is news; the
 /// main checkout every row would repeat), neutral text, never a tinted pill. A checkout another
-/// live agent works in is the row's [`shared_checkout_marker`] glyph, not a colour here; the
+/// live agent works in is the project or worktree row's [`shared_checkout_chip`], not a colour here; the
 /// tooltip names the checkout.
 pub fn placement_badge(
     theme: &Theme,
@@ -201,27 +201,39 @@ pub fn placement_badge(
         .into_any_element()
 }
 
-/// The 16 px `warning` glyph a row wears while another live agent works in the same checkout;
-/// the tooltip says who and where. The one place the warning colour marks this: a row keeps its
-/// one-line height.
-pub fn shared_checkout_marker(
+/// The chip a project or worktree row wears while another live agent works in the same
+/// checkout: a `warning` glyph and the word *Shared*, on a quiet fill. It is said once, on the
+/// row of the checkout; the session rows below it do not repeat it. The tooltip says who and
+/// where.
+pub fn shared_checkout_chip(
     theme: &Theme,
+    tokens: &Tokens,
     badge: &PlacementBadge,
-    session: SessionId,
+    root: &std::path::Path,
     regions: &crate::workbench::regions::Regions,
 ) -> AnyElement {
     let tip = SharedString::from(badge.tooltip.clone());
     div()
-        .id(SharedString::from(format!("shared-checkout-{session}")))
+        .id(SharedString::from(format!(
+            "shared-checkout-{}",
+            root.display()
+        )))
         .relative()
         .flex_none()
         .flex()
         .items_center()
-        .justify_center()
-        .size(px(16.0))
+        .gap(px(2.0))
+        .px(px(tokens.spacing))
+        .h(px(16.0))
+        .rounded(px(4.0))
+        .bg(theme.warning.opacity(0.14))
+        .text_size(px(tokens.chip_font_size + 1.0))
+        .font_weight(gpui::FontWeight::NORMAL)
+        .text_color(theme.muted)
         .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
-        .child(icon(Icon::VcsSharedWarning, 14.0, theme.warning))
-        .child(probe(regions, Region::SharedCheckout(session)))
+        .child(icon(Icon::VcsSharedWarning, 12.0, theme.warning))
+        .child("Shared")
+        .child(probe(regions, Region::shared_checkout(root)))
         .into_any_element()
 }
 

@@ -50,7 +50,7 @@ pub use changes::{
 };
 pub use common::{
     age_label, agent_badge, harness_icon, placement_badge, recovery_chip, session_icon,
-    shared_checkout_marker, state_dot, time_tooltip, tone_color,
+    shared_checkout_chip, state_dot, time_tooltip, tone_color,
 };
 pub(crate) use common::{edit_text, field_box};
 pub use files::{

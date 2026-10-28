@@ -1,11 +1,18 @@
 //! The `sessions` panel ("Projects"): user workspaces → their projects → sessions, the projects
 //! in no workspace, then Home (or a flat list of projects, `sidebar.organize`); sorted, pinned,
-//! filtered and searched; the groups of attention (Requests, Failed, Ready for review) on top. A session row is one line (state lane, kind icon,
-//! title, age, hover ×); a second line exists only when it says something new: the placement
-//! badge off the main checkout, the project of a row away from its project row, a folder the
-//! session left its checkout for. Workspaces and projects are managed here: the "+" menu, drag a project onto a
-//! workspace (or out, to "No workspace"), ⌘-click / ⇧-click to select projects, inline rename,
-//! context menus (`workbench/projects.rs` holds the verbs).
+//! filtered and searched; the groups of attention (Requests, Failed, Ready for review) on top.
+//!
+//! A shell is one line: lane, name, age. A coding agent is a *card* (SIDEBAR-CARDS): the lane
+//! carries its harness glyph with the state's badge on it, the session's name comes first, the
+//! age is the only datum on the right (the pointer swaps it for the actions, × close), and a
+//! second *news line* exists only when something is going on — a question waits, it failed,
+//! the tool it runs, the first line of a reply nobody has read (`sessions::card`). The first
+//! agent card no hook speaks for says once what installing the hooks adds. Where a session is
+//! (a worktree, a folder it left its checkout for) is muted text after the name; the warning
+//! that another live agent works in the same checkout is one chip on the project or worktree row
+//! of that checkout, never on the session rows. Workspaces and projects are managed here: the
+//! "+" menu, drag a project onto a workspace (or out, to "No workspace"), ⌘-click / ⇧-click to
+//! select projects, inline rename, context menus (`workbench/projects.rs` holds the verbs).
 
 use crate::theme::DensityExt as _;
 use std::cell::{Cell, RefCell};
@@ -23,16 +30,19 @@ use gpui::{
 };
 use hutan_core::{SessionId, WorkspaceId};
 use hutan_protocol::messages::{SessionInfo, WorkspaceInfo, WorkspaceKind};
+use hutan_protocol::worktree::{Placement, PlacementKind};
 
 use super::common::{
     age_label, agent_badge, panel_header_controls, placement, placement_badge, recovery_chip,
-    session_icon, shared_checkout_marker, state_dot, time_tooltip,
+    session_icon, shared_checkout_chip, time_tooltip,
 };
 use crate::icons::{Icon, icon};
+use crate::sessions::PlacementBadge;
+use crate::sessions::card::{self, News, NewsKind};
 use crate::sessions::tree::{
     self, Node, ProjectNode, Subtitle, SubtitleInputs, folder_label, session_folder,
 };
-use crate::sessions::{Attention, StoreChanged, Tone, agent_note, agent_subtitle};
+use crate::sessions::{Attention, StoreChanged};
 use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
 };
@@ -43,12 +53,13 @@ use crate::workbench::actions::{
     SessionMenuAt, SessionRenameTo, ShowPlusMenu, ShowProjectMenu, ShowSessionMenu, ShowSortMenu,
     ShowWorkspaceMenu, WorkspaceDrop, WorkspaceMenuAt,
 };
-use crate::workbench::actions::{LauncherOpen, OpenLauncher};
+use crate::workbench::actions::{LauncherOpen, OpenLauncher, OpenSettingsFor};
 use crate::workbench::chat::vim::Outcome;
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::text_field::FieldRef;
+use crate::workbench::ui::BadgeState;
 use crate::workbench::ui::{self, FocusRingExt as _, StyledExt as _};
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 use crate::workbench::{BadgeSite, DragPreview, Region};
@@ -60,8 +71,8 @@ use crate::workbench::{BadgeSite, DragPreview, Region};
 const ROW_ESTIMATE: f32 = 34.0;
 const AGE_REFRESH: Duration = Duration::from_secs(30);
 
-/// The unread dot, ring included: 6 px of amber inside a 1 px ring.
-const UNREAD_DOT: f32 = 8.0;
+/// What the actions of a card (× close) take on the right: the age shrinks into the same place.
+const CARD_ACTIONS: f32 = 20.0;
 
 /// Hover fill of a card: the foreground at 4 % in light, the left sidebar's accent at 40 % in
 /// dark (Orca's workspace hover).
@@ -114,10 +125,10 @@ pub struct SidebarRow {
     /// A project's root folder; for a session the live folder (last two path parts), only when
     /// it has left the checkout the session belongs to.
     pub folder: Option<String>,
-    /// A session's placement badge text (`wt <branch>`), only off the main checkout (or while
-    /// the main checkout is shared).
+    /// A session's placement badge text (`wt <branch>`), only off the main checkout.
     pub badge: Option<String>,
-    /// The badge is drawn as a warning: another live agent works in the same checkout.
+    /// The project or worktree row wears the shared-checkout chip: another live agent works in
+    /// that checkout. Said once, there; session rows are never `shared`.
     pub shared: bool,
     pub pinned: bool,
     /// `3` or `1/3` (live/total) on a workspace, project or Home row.
@@ -143,6 +154,12 @@ pub struct SidebarRow {
     /// A repository row's main-checkout branch, a worktree row's branch; `None` for a folder
     /// outside git (never an empty label) and for a detached HEAD.
     pub branch: Option<String>,
+    /// A session's lane badge ([`BadgeState::Idle`] draws none).
+    pub lane: BadgeState,
+    /// A session's second line; `None` is a one-line row (shells always are).
+    pub news: Option<News>,
+    /// `+12 −3` on a project or worktree row, only with `panels.sessions.show_diffstat`.
+    pub diffstat: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -165,9 +182,21 @@ struct ContainerRow {
     /// Files its checkouts have uncommitted, as last counted; only for a project the window is
     /// not working in (the Changes panel says it for the active one).
     changed: usize,
+    /// The lines those files added and removed, with `panels.sessions.show_diffstat`.
+    diffstat: Option<(u64, u64)>,
+    /// Another live agent works in the project's main checkout.
+    shared: Option<SharedChip>,
     /// Its sessions are listed under it: the container the window shows, or whatever the user
     /// opened with the chevron; every container with `sidebar.show_all_sessions`.
     expanded: bool,
+}
+
+/// Another live agent works in the checkout at `root`: what the project or worktree row says
+/// once, instead of every session row repeating it.
+#[derive(Debug, Clone, PartialEq)]
+struct SharedChip {
+    root: PathBuf,
+    badge: PlacementBadge,
 }
 
 /// A linked worktree listed under its project.
@@ -181,14 +210,21 @@ struct WorktreeRow {
     working: usize,
     /// The worktree the user picked: Files and Search follow it.
     active: bool,
+    /// Files it has uncommitted, and the lines they added and removed, with
+    /// `panels.sessions.show_diffstat`.
+    diffstat: Option<(u64, u64)>,
+    /// Another live agent works in this worktree.
+    shared: Option<SharedChip>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct SessionRow {
     info: SessionInfo,
     depth: usize,
-    /// The row's second line, `None` for the one-line row.
+    /// What follows the title: the project of a row away from its project row, the placement.
     subtitle: Option<Subtitle>,
+    /// The card's second line, `None` for the one-line row.
+    news: Option<News>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -318,6 +354,9 @@ impl SidebarRow {
             muted: false,
             working: 0,
             branch: None,
+            lane: BadgeState::Idle,
+            news: None,
+            diffstat: None,
         }
     }
 }
@@ -491,6 +530,8 @@ impl SessionsPanel {
                             needs: row.needs,
                             working: row.working,
                             branch: row.branch.clone(),
+                            shared: row.shared.is_some(),
+                            diffstat: row.diffstat.map(diffstat_text),
                             active: current,
                             selected,
                             filled: selected || (current && !child_selected),
@@ -511,6 +552,8 @@ impl SessionsPanel {
                         needs: row.needs,
                         working: row.working,
                         branch: row.branch.clone(),
+                        shared: row.shared.is_some(),
+                        diffstat: row.diffstat.map(diffstat_text),
                         active: row.active,
                         filled: row.active && !focus_listed,
                         ..SidebarRow::blank(
@@ -523,18 +566,20 @@ impl SessionsPanel {
                     },
                     Entry::Session(row) => {
                         let badge = row.subtitle.as_ref().and_then(|s| s.badge.as_ref());
+                        let presentation = store.presentation(&row.info);
                         SidebarRow {
                             folder: row.subtitle.as_ref().and_then(|s| s.folder.clone()),
-                            shared: row
-                                .info
-                                .placement
-                                .as_ref()
-                                .is_some_and(|p| !p.shared_with.is_empty()),
                             badge: badge.map(|b| b.text.clone()),
                             selected: focused == Some(row.info.id),
                             filled: focused == Some(row.info.id),
                             subtitle: row.subtitle.clone(),
-                            state: lane_word(&store.presentation(&row.info)),
+                            state: lane_word(&presentation),
+                            lane: card::badge_state(
+                                &row.info,
+                                &presentation,
+                                store.unread(row.info.id),
+                            ),
+                            news: row.news.clone(),
                             muted: row.info.muted,
                             ..SidebarRow::blank(RowKind::Session, row.depth, row.info.title.clone())
                         }
@@ -914,6 +959,7 @@ impl SessionsPanel {
                     subtitle: subtitle_of(info, true),
                     info: info.clone(),
                     depth: 0,
+                    news: None,
                 }))
             }));
         }
@@ -929,6 +975,7 @@ impl SessionsPanel {
                             subtitle: subtitle_of(info, true),
                             info: info.clone(),
                             depth: 0,
+                            news: None,
                         }))
                     }));
                 }
@@ -955,6 +1002,7 @@ impl SessionsPanel {
                             subtitle: subtitle_of(info, true),
                             info: (*info).clone(),
                             depth: 0,
+                            news: None,
                         }))
                     }));
                 }
@@ -974,6 +1022,31 @@ impl SessionsPanel {
                     session_matches: &by_itself,
                 });
                 self.flatten(&built.nodes, &subtitle_of, &mut entries, cx);
+            }
+        }
+        // The cards' second lines are decided here, with the entries, so that a row whose line
+        // changes is a different entry and the list measures it again. The first agent no hook
+        // speaks for says what installing the hooks adds, when it has no news of its own.
+        let agents = store.agent_presentation();
+        let mut hinted = false;
+        for entry in &mut entries {
+            let Entry::Session(row) = entry else {
+                continue;
+            };
+            row.news = card::news(
+                &row.info,
+                &store.presentation(&row.info),
+                agents.get(row.info.id),
+                store.unread(row.info.id),
+                store.reply_line(row.info.id),
+            );
+            if !hinted && card::without_hooks(&row.info) {
+                hinted = true;
+                row.news.get_or_insert_with(|| News {
+                    kind: NewsKind::HooksHint,
+                    text: card::HOOKS_HINT.to_owned(),
+                    model: None,
+                });
             }
         }
         let only_home = store.sessions().is_empty()
@@ -1036,6 +1109,11 @@ impl SessionsPanel {
         let store = self.env.sessions.read(cx);
         let (active, active_project) = (store.active_workspace_id(), store.active_project_id());
         let active_checkout = store.active_checkout();
+        let diffstat_on = self
+            .env
+            .settings
+            .get::<SessionsPanelSettings>()
+            .show_diffstat;
         let everything = self.env.settings.get::<SidebarSettings>().show_all_sessions
             || !self.query.trim().is_empty();
         let working = store.working_by_workspace();
@@ -1059,6 +1137,7 @@ impl SessionsPanel {
                     subtitle: subtitle_of(info, false),
                     info: (*info).clone(),
                     depth,
+                    news: None,
                 }))
             }));
         };
@@ -1080,6 +1159,20 @@ impl SessionsPanel {
                 } else {
                     0
                 },
+                diffstat: (diffstat_on && is_project)
+                    .then(|| store.diffstat_of(info))
+                    .flatten(),
+                shared: is_project
+                    .then(|| {
+                        shared_chip(
+                            store
+                                .sessions()
+                                .iter()
+                                .filter(|s| s.workspace_id == info.id),
+                            |p| p.kind == PlacementKind::Main,
+                        )
+                    })
+                    .flatten(),
                 expanded: is_expanded,
             }));
             if !is_expanded {
@@ -1131,6 +1224,16 @@ impl SessionsPanel {
                     needs,
                     working: busy,
                     active: active_checkout.as_ref() == Some(&checkout.path),
+                    diffstat: diffstat_on
+                        .then(|| store.diffstat_at(&checkout.path))
+                        .flatten(),
+                    shared: shared_chip(
+                        store
+                            .sessions()
+                            .iter()
+                            .filter(|s| s.workspace_id == info.id),
+                        |p| p.root == checkout.path,
+                    ),
                 }));
                 session(entries, &listed, depth + 2);
             }
@@ -1147,6 +1250,8 @@ impl SessionsPanel {
                         working: rolled(&workspace.info),
                         branch: None,
                         changed: 0,
+                        diffstat: None,
+                        shared: None,
                         expanded: is_expanded,
                     }));
                     if is_expanded {
@@ -1254,6 +1359,54 @@ fn selected_session_below(
             Entry::Worktree(worktree) => worktree.active,
             _ => false,
         })
+}
+
+/// The chip of the checkout of the first of `sessions` that works in a checkout `here` accepts
+/// and shares it with another live agent; `None` when no session there does.
+fn shared_chip<'a>(
+    mut sessions: impl Iterator<Item = &'a SessionInfo>,
+    here: impl Fn(&Placement) -> bool,
+) -> Option<SharedChip> {
+    sessions.find_map(|session| {
+        let placement = session
+            .placement
+            .as_ref()
+            .filter(|p| !p.shared_with.is_empty() && here(p))?;
+        Some(SharedChip {
+            root: placement.root.clone(),
+            badge: crate::sessions::placement_badge(session)?,
+        })
+    })
+}
+
+/// `+12 −3`: the lines a checkout's changed files added and removed.
+fn diffstat_text((added, removed): (u64, u64)) -> String {
+    format!("+{added} −{removed}")
+}
+
+/// `+12 −3` in the diff colours, muted in size: the lines a checkout's changed files added and
+/// removed (`panels.sessions.show_diffstat`).
+fn diffstat_view(
+    (added, removed): (u64, u64),
+    theme: &crate::theme::Theme,
+    tokens: &crate::theme::Tokens,
+) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .gap(px(tokens.spacing))
+        .text_size(px(tokens.secondary_font_size))
+        .font_weight(gpui::FontWeight::NORMAL)
+        .child(
+            div()
+                .text_color(theme.diff_added)
+                .child(SharedString::from(format!("+{added}"))),
+        )
+        .child(
+            div()
+                .text_color(theme.diff_removed)
+                .child(SharedString::from(format!("−{removed}"))),
+        )
 }
 
 /// The word of a session's state when its lane draws a glyph; an idle session draws nothing
@@ -1879,6 +2032,13 @@ impl SessionsPanel {
                         .child(probe(&self.env.regions, Region::ProjectChanged(id))),
                 )
             })
+            .children(
+                row.diffstat
+                    .map(|stat| diffstat_view(stat, &theme, &tokens)),
+            )
+            .children(row.shared.as_ref().map(|chip| {
+                shared_checkout_chip(&theme, &tokens, &chip.badge, &chip.root, &self.env.regions)
+            }))
             .children(count_text(info).map(|count| ui::counter(count, &theme, &tokens)))
             .when(
                 matches!(kind, WorkspaceKind::Project | WorkspaceKind::Home),
@@ -1979,6 +2139,13 @@ impl SessionsPanel {
                     .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                     .child(SharedString::from(label))
             })
+            .children(
+                row.diffstat
+                    .map(|stat| diffstat_view(stat, &theme, &tokens)),
+            )
+            .children(row.shared.as_ref().map(|chip| {
+                shared_checkout_chip(&theme, &tokens, &chip.badge, &chip.root, &self.env.regions)
+            }))
             .when(row.needs > 0, |s| {
                 s.child(
                     div()
@@ -2022,12 +2189,9 @@ impl SessionsPanel {
         let (theme, tokens) = (style.theme, style.density.ui());
         let presentation = self.env.sessions.read(cx).presentation(info);
         // A failure the user has looked at stays listed but no longer wears the unread dot.
-        let unread = self
-            .env
-            .sessions
-            .read(cx)
-            .unread(info.id)
-            .is_some_and(crate::sessions::Unread::is_unseen);
+        let unread_state = self.env.sessions.read(cx).unread(info.id);
+        let unread = unread_state.is_some_and(crate::sessions::Unread::is_unseen);
+        let live = info.state.is_live();
         let hover = card_hover(&theme);
         let id = info.id.to_string();
         let open_id = id.clone();
@@ -2058,15 +2222,6 @@ impl SessionsPanel {
                 cx,
             )
         });
-        // Another live agent in the same checkout: a 16 px warning glyph in the row's trailing
-        // slot (its tooltip has the sentence), never a pill that makes a second line.
-        let mut shared = (info
-            .placement
-            .as_ref()
-            .is_some_and(|p| !p.shared_with.is_empty()))
-        .then(|| crate::sessions::placement_badge(info))
-        .flatten()
-        .map(|badge| shared_checkout_marker(&theme, &badge, info.id, &self.env.regions));
         // The marker of a session whose notifications are muted (`notify.mute`).
         let mut muted = info.muted.then(|| {
             div()
@@ -2112,7 +2267,44 @@ impl SessionsPanel {
             .as_ref()
             .filter(|r| r.target == RenameTarget::Session(info.id))
             .map(|r| r.text.clone());
-        let lane = lane_word(&presentation);
+        // The lane: the harness glyph (a shell's prompt, an agent's monogram) with the state's
+        // badge on it. An idle or read session has no badge; the room stays, it is the spine
+        // the names align to.
+        let lane_state = card::badge_state(info, &presentation, unread_state);
+        let lane_tip = lane_word(&presentation)
+            .or_else(|| lane_state.word().map(str::to_owned))
+            .map(|word| {
+                SharedString::from(if presentation.detail.is_empty() {
+                    word
+                } else {
+                    format!("{word} · {}", presentation.detail)
+                })
+            });
+        let ground = if selected {
+            theme.sidebar_accent
+        } else {
+            theme.sidebar
+        };
+        let mut lane = Some(
+            div()
+                .id(SharedString::from(format!("row-state-{id}")))
+                .relative()
+                .flex_none()
+                .when_some(lane_tip, |s, tip| {
+                    s.tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
+                })
+                .child(ui::row_lane(
+                    SharedString::from(format!("row-lane-{id}")),
+                    session_icon(info),
+                    lane_state,
+                    ground,
+                    selected,
+                    &theme,
+                ))
+                .when(unread, |s| {
+                    s.child(probe(&self.env.regions, Region::SessionUnread(info.id)))
+                }),
+        );
         let gap = tokens.spacing * 1.5;
         // The width of the row's lead lane (a pack metric).
         let lane_width = crate::theme::metrics().sidebar_lane;
@@ -2151,150 +2343,121 @@ impl SessionsPanel {
             .h(px(tokens.sidebar_row))
             .w_full()
             .min_w_0();
-        for field in &settings.row {
-            line = match field.as_str() {
-                "state" => {
-                    let word = lane.clone().unwrap_or_else(|| presentation.label.clone());
-                    let tip: SharedString = if presentation.detail.is_empty() {
-                        word.into()
-                    } else {
-                        format!("{word} · {}", presentation.detail).into()
-                    };
-                    line.child(
-                        // The 16 px state lane: the state's glyph in its tone, nothing for an
-                        // idle session (the room stays: it is the spine titles align to), and
-                        // for an unread session an amber dot ringed in the sidebar color: in
-                        // the middle of the lane (the middle of the text line) when nothing
-                        // else is there, on the glyph's corner otherwise.
-                        div()
-                            .id(SharedString::from(format!("row-state-{id}")))
-                            .relative()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(lane_width))
-                            .when(lane.is_some(), |s| {
-                                s.tooltip(move |_, cx| {
-                                    cx.new(|_| TextTooltip::new(tip.clone())).into()
-                                })
-                                .child(state_dot(&theme, &presentation))
-                            })
-                            .when(unread, |s| {
-                                let dot = div()
-                                    .size(px(UNREAD_DOT))
-                                    .flex_none()
-                                    .rounded_full()
-                                    .bg(theme.warning)
-                                    .border_1()
-                                    .border_color(theme.sidebar)
-                                    .child(probe(
-                                        &self.env.regions,
-                                        Region::SessionUnread(info.id),
-                                    ));
-                                s.child(if lane.is_some() {
-                                    dot.absolute().top(px(-2.0)).right(px(-2.0))
-                                } else {
-                                    dot
-                                })
-                            }),
+        // The pointer swaps the age for the actions (× close; ⑂ fork joins it with CHAT-FORK-B).
+        let row_group = SharedString::from(format!("session-group-{id}"));
+        let mut actions = self.env.sessions.read(cx).supports_close().then(|| {
+            let close_id = id.clone();
+            let session = info.id;
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .opacity(0.0)
+                .group_hover(row_group.clone(), |s| s.opacity(1.0))
+                .child(
+                    ui::IconButton::new(
+                        SharedString::from(format!("session-close-{id}")),
+                        Icon::ActionClose,
+                        "Close session",
+                        &theme,
+                        &tokens,
                     )
-                }
-                "kind" => line.child(
-                    div()
-                        .flex_none()
-                        .text_color(theme.muted)
-                        .child(crate::icons::glyph(session_icon(info))),
-                ),
-                "title" => line
-                    .child(match renaming.as_deref() {
-                        Some(text) => self.rename_editor(&id, text, cx),
-                        None => {
-                            let title = div()
-                                .id(SharedString::from(format!("session-title-{id}")))
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(tokens.row_font_size))
-                                .when(unread, |s| s.font_weight(gpui::FontWeight::MEDIUM))
-                                .child(SharedString::from(info.title.clone()));
-                            // The name says what the session is; the prompt behind a short title
-                            // and where the session is, in full, are one hover away.
-                            let prompt = self
-                                .env
-                                .sessions
-                                .read(cx)
-                                .tasks()
-                                .prompt_of(info.id, &info.title);
-                            let tip = match (prompt, session_folder(info)) {
-                                (Some(prompt), Some(path)) => {
-                                    Some(format!("{prompt}\n{}", path.display()))
-                                }
-                                (Some(prompt), None) => Some(prompt),
-                                (None, Some(path)) => Some(path.display().to_string()),
-                                (None, None) => None,
-                            };
-                            match tip.map(SharedString::from) {
-                                Some(tip) => title
-                                    .tooltip(move |_, cx| {
-                                        cx.new(|_| TextTooltip::new(tip.clone())).into()
-                                    })
-                                    .into_any_element(),
-                                None => title.into_any_element(),
-                            }
-                        }
+                    .compact()
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
+                        cx.stop_propagation();
                     })
-                    .children(std::mem::take(&mut whose))
-                    .children(badge.take())
-                    .children(recovery.take())
-                    .children(shared.take())
-                    .children(review.take())
-                    .children(muted.take()),
-                "age" => {
-                    // Since something last happened in it, not since it was made.
-                    let active_ms = self.env.sessions.read(cx).last_activity_ms(info);
-                    line.child(
-                        div()
+                    .child(probe(&self.env.regions, Region::SessionClose(session))),
+                )
+        });
+        for field in &settings.row {
+            line =
+                match field.as_str() {
+                    "state" | "kind" => line.children(lane.take()),
+                    "title" => line
+                        .child(match renaming.as_deref() {
+                            Some(text) => self.rename_editor(&id, text, cx),
+                            None => {
+                                let title = div()
+                                    .id(SharedString::from(format!("session-title-{id}")))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(tokens.row_font_size))
+                                    .when(unread, |s| s.font_weight(gpui::FontWeight::SEMIBOLD))
+                                    .when(!live, |s| s.text_color(theme.faint))
+                                    .child(SharedString::from(info.title.clone()));
+                                // The name says what the session is; the prompt behind a short title
+                                // and where the session is, in full, are one hover away.
+                                let prompt = self
+                                    .env
+                                    .sessions
+                                    .read(cx)
+                                    .tasks()
+                                    .prompt_of(info.id, &info.title);
+                                let tip = match (prompt, session_folder(info)) {
+                                    (Some(prompt), Some(path)) => {
+                                        Some(format!("{prompt}\n{}", path.display()))
+                                    }
+                                    (Some(prompt), None) => Some(prompt),
+                                    (None, Some(path)) => Some(path.display().to_string()),
+                                    (None, None) => None,
+                                };
+                                match tip.map(SharedString::from) {
+                                    Some(tip) => title
+                                        .tooltip(move |_, cx| {
+                                            cx.new(|_| TextTooltip::new(tip.clone())).into()
+                                        })
+                                        .into_any_element(),
+                                    None => title.into_any_element(),
+                                }
+                            }
+                        })
+                        .children(std::mem::take(&mut whose))
+                        .children(badge.take())
+                        .children(recovery.take())
+                        .children(review.take())
+                        .children(muted.take()),
+                    "age" => {
+                        // Since something last happened in it, not since it was made.
+                        let active_ms = self.env.sessions.read(cx).last_activity_ms(info);
+                        let swaps = actions.is_some();
+                        let age = div()
                             .id(SharedString::from(format!("row-age-{}", info.id)))
                             .flex_none()
                             .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.muted)
+                            .text_color(theme.faint)
+                            .when(swaps, |s| {
+                                s.group_hover(row_group.clone(), |s| s.opacity(0.0))
+                            })
                             .tooltip(time_tooltip(active_ms))
-                            .child(SharedString::from(age_label(active_ms))),
-                    )
-                }
-                _ => line,
-            };
-        }
-        // The hover × closes the session (needs a daemon with `session.close`).
-        let row_group = SharedString::from(format!("session-group-{id}"));
-        if self.env.sessions.read(cx).supports_close() {
-            let close_id = id.clone();
-            let session = info.id;
-            line = line.child(
-                div()
-                    .flex_none()
-                    .opacity(0.0)
-                    .group_hover(row_group.clone(), |s| s.opacity(1.0))
-                    .child(
-                        ui::IconButton::new(
-                            SharedString::from(format!("session-close-{id}")),
-                            Icon::ActionClose,
-                            "Close session",
-                            &theme,
-                            &tokens,
+                            .child(SharedString::from(age_label(active_ms)));
+                        line.child(
+                            div()
+                                .relative()
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .when(swaps, |s| s.min_w(px(CARD_ACTIONS)))
+                                .child(age)
+                                .children(actions.take().map(|actions| {
+                                    actions.absolute().top_0().bottom_0().right_0()
+                                })),
                         )
-                        .compact()
-                        .on_click(move |_, window, cx| {
-                            window
-                                .dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
-                            cx.stop_propagation();
-                        })
-                        .child(probe(&self.env.regions, Region::SessionClose(session))),
-                    ),
-            );
+                    }
+                    _ => line,
+                };
+        }
+        // A row without an age field still has its actions, at its end.
+        if let Some(actions) = actions.take() {
+            line = line.child(actions);
         }
 
+        let news = row
+            .news
+            .as_ref()
+            .map(|news| self.news_line(info, news, selected, gap + lane_width, cx));
         div()
             .id(SharedString::from(format!("session-row-{id}")))
             .group(row_group)
@@ -2326,29 +2489,84 @@ impl SessionsPanel {
                 }),
             )
             .child(line)
-            // What a waiting or failed agent says, under its title: one muted line, the only
-            // second line a row ever has.
-            .children(
-                agent_note(info)
-                    .or_else(|| agent_subtitle(info))
-                    .map(|note| {
-                        div()
-                            .id(SharedString::from(format!("session-note-{}", info.id)))
-                            .pl(px(lane_width + 14.0 + gap * 2.0))
-                            .pb(px(tokens.spacing))
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(if presentation.label == "failed" {
-                                super::common::tone_color(&theme, Tone::Error)
-                            } else {
-                                theme.muted
-                            })
-                            .child(SharedString::from(note))
-                            .child(probe(&self.env.regions, Region::SessionNote(info.id)))
-                    }),
-            )
+            .children(news)
             .child(probe(&self.env.regions, Region::SessionRow(info.id)))
+            .into_any_element()
+    }
+
+    /// The second line of an agent card, under its name: what is going on, one line, and the
+    /// model as a mono chip at its end. A request is `warning` and a failure `danger` (the
+    /// selected row keeps both in its ink: state colours are not AA on that fill); the tool it
+    /// runs, the unread reply and the agent's own title are muted. The first card no hook speaks
+    /// for has what hooks add and the link to *Agent integrations…* here instead.
+    fn news_line(
+        &self,
+        info: &SessionInfo,
+        news: &News,
+        selected: bool,
+        indent: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let style = UiStyle::get(cx);
+        let (theme, tokens) = (style.theme, style.density.ui());
+        let color = super::common::state_word_color(&theme, news.kind.tone(), selected);
+        let hint = news.kind == NewsKind::HooksHint;
+        let region = if hint {
+            Region::HooksHint(info.id)
+        } else {
+            Region::SessionNote(info.id)
+        };
+        let text = SharedString::from(news.text.clone());
+        let tip = if hint {
+            SharedString::from(card::HOOKS_HINT_TIP)
+        } else {
+            text.clone()
+        };
+        div()
+            .id(SharedString::from(format!("session-note-{}", info.id)))
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .h(px(tokens.sidebar_card - tokens.sidebar_row))
+            .pl(px(indent))
+            .min_w_0()
+            .text_size(px(tokens.secondary_font_size))
+            .text_color(color)
+            .child(
+                div()
+                    .id(SharedString::from(format!("session-note-text-{}", info.id)))
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
+                    .child(text),
+            )
+            .when(hint, |s| {
+                s.child(
+                    div()
+                        .id(SharedString::from(format!("hooks-hint-link-{}", info.id)))
+                        .flex_none()
+                        .cursor_pointer()
+                        .text_color(theme.link)
+                        .hover(move |s| s.text_color(theme.fg))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(OpenSettingsFor("integrations".to_owned())),
+                                cx,
+                            );
+                            cx.stop_propagation();
+                        })
+                        .child("Agent integrations…"),
+                )
+            })
+            .children(
+                news.model
+                    .as_ref()
+                    .map(|model| ui::chip_mono(SharedString::from(model.clone()), &theme, &tokens)),
+            )
+            .child(probe(&self.env.regions, region))
             .into_any_element()
     }
 }

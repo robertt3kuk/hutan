@@ -449,10 +449,52 @@ async fn last_user_message(connection: &Connection, session: SessionId) -> Resul
     Err("There is no message of yours in this chat to send again".to_owned())
 }
 
+/// The first line of the newest assistant reply in the chat's journal (what a card says about a
+/// turn nobody has read yet); `None` while the journal has none.
+async fn last_reply_line(connection: &Connection, session: SessionId) -> Option<String> {
+    use hutan_core::AgentEventKind;
+    use hutan_core::agent::MessageRole;
+    let mut before = None;
+    for _ in 0..3 {
+        let page = connection
+            .chat_history(session, before, hutan_protocol::chat::HISTORY_DEFAULT_LIMIT)
+            .await
+            .ok()?;
+        let found = page
+            .events
+            .iter()
+            .rev()
+            .find_map(|event| match &event.kind {
+                AgentEventKind::MessageEnd {
+                    role: MessageRole::Assistant,
+                    text,
+                    ..
+                } => super::card::first_line(text),
+                _ => None,
+            });
+        if found.is_some() {
+            return found;
+        }
+        match page.events.first() {
+            Some(first) if page.has_more => before = Some(first.seq),
+            _ => return None,
+        }
+    }
+    None
+}
+
 fn unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// What a dirty checkout has uncommitted: the files and the lines added and removed in them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ChangeCount {
+    files: usize,
+    added: u64,
+    removed: u64,
 }
 
 /// From this many sessions on, restart chips are icons and the restart summary is one row.
@@ -485,10 +527,14 @@ pub struct SessionsStore {
     fs_recount: Option<Task<()>>,
     /// More files changed while it ran: it counts once more when it is done.
     fs_recount_again: bool,
-    /// How many files each dirty checkout has uncommitted (`worktree.diff`, the file list only),
-    /// for the sidebar's badges. Read after a checkout listing, never while drawing; a checkout
-    /// that is clean or could not be counted has no entry.
-    changed_files: HashMap<PathBuf, usize>,
+    /// How many files each dirty checkout has uncommitted, and the lines added and removed in
+    /// them (`worktree.diff`, the file list only), for the sidebar's badges. Read after a
+    /// checkout listing, never while drawing; a checkout that is clean or could not be counted
+    /// has no entry.
+    changed_files: HashMap<PathBuf, ChangeCount>,
+    /// The first line of the last reply of each chat whose turn nobody has read yet, for the
+    /// news line of its card. `None` while it is being read; an entry goes with the unread mark.
+    replies: HashMap<SessionId, Option<String>>,
     changed_in_flight: bool,
     /// Worktree roots a session worked in that a listing was asked for (never asked again for
     /// the same root: a root the listing does not know must not loop).
@@ -677,6 +723,7 @@ impl SessionsStore {
             fs_recount: None,
             fs_recount_again: false,
             changed_files: HashMap::new(),
+            replies: HashMap::new(),
             changed_in_flight: false,
             checkouts_tried: HashSet::new(),
             chosen_checkout: HashMap::new(),
@@ -765,6 +812,7 @@ impl SessionsStore {
                 changed |= StoreChanged::ATTENTION;
             }
             self.observe_blocked_nodes(cx);
+            self.observe_replies(cx);
             if self.observe_calls() {
                 changed |= StoreChanged::ATTENTION;
             }
@@ -919,6 +967,45 @@ impl SessionsStore {
                 .map(|_| ())
                 .map_err(|e| e.to_string())
         })
+    }
+
+    /// Reads the first line of the reply of every chat with a turn nobody has read yet, once,
+    /// for its card's news line; forgets the lines of the turns that were read.
+    fn observe_replies(&mut self, cx: &mut Context<Self>) {
+        let unread = self.attention.unread_map();
+        self.replies
+            .retain(|id, _| unread.get(id) == Some(&Unread::Turn));
+        let wanted: Vec<SessionId> = self
+            .state
+            .sessions
+            .iter()
+            .filter(|s| s.chat.as_ref().is_some_and(|chat| !chat.is_assistant()))
+            .filter(|s| unread.get(&s.id) == Some(&Unread::Turn))
+            .filter(|s| !self.replies.contains_key(&s.id))
+            .map(|s| s.id)
+            .collect();
+        for id in wanted {
+            self.replies.insert(id, None);
+            let connection = self.connection.clone();
+            let read = cx.background_spawn(async move { last_reply_line(&connection, id).await });
+            cx.spawn(async move |this, cx| {
+                let line = read.await;
+                this.update(cx, |store, cx| {
+                    if let (Some(slot), Some(line)) = (store.replies.get_mut(&id), line) {
+                        *slot = Some(line);
+                        store.changed(StoreChanged::ATTENTION, cx);
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    /// The first line of the reply of the chat `session`, while its turn is unread: the news
+    /// line of its card.
+    pub fn reply_line(&self, session: SessionId) -> Option<&str> {
+        self.replies.get(&session)?.as_deref()
     }
 
     /// Emits [`CheckoutActivity`] for every session whose agent stopped working since `before`.
@@ -1817,12 +1904,38 @@ impl SessionsStore {
             .iter()
             .filter(|c| c.repo_root == info.root && !c.prunable)
             .filter_map(|c| self.changed_files.get(&c.path))
+            .map(|count| count.files)
             .sum()
+    }
+
+    /// The lines added and removed in the uncommitted files of `project`'s checkouts, as last
+    /// counted (`panels.sessions.show_diffstat`); `None` while none is dirty.
+    pub fn diffstat_of(&self, project: &WorkspaceInfo) -> Option<(u64, u64)> {
+        let info = project
+            .project
+            .as_ref()
+            .filter(|p| p.common_dir.is_some())?;
+        let sum = self
+            .checkouts
+            .iter()
+            .filter(|c| c.repo_root == info.root && !c.prunable)
+            .filter_map(|c| self.changed_files.get(&c.path))
+            .fold((0, 0), |(a, r), c| (a + c.added, r + c.removed));
+        (sum != (0, 0)).then_some(sum)
+    }
+
+    /// The lines added and removed in the uncommitted files of the checkout at `path`, as last
+    /// counted.
+    pub fn diffstat_at(&self, path: &std::path::Path) -> Option<(u64, u64)> {
+        self.changed_files
+            .get(path)
+            .map(|c| (c.added, c.removed))
+            .filter(|stat| *stat != (0, 0))
     }
 
     /// How many files the checkout at `path` has uncommitted, as last counted.
     pub fn changed_files_at(&self, path: &std::path::Path) -> Option<usize> {
-        self.changed_files.get(path).copied()
+        self.changed_files.get(path).map(|count| count.files)
     }
 
     /// Counts the uncommitted files of every dirty checkout (`worktree.diff`, the file list
@@ -1862,12 +1975,17 @@ impl SessionsStore {
             })
             .collect();
         cx.spawn(async move |this, cx| {
-            let mut counted: HashMap<PathBuf, usize> = HashMap::new();
+            let mut counted: HashMap<PathBuf, ChangeCount> = HashMap::new();
             for (path, read) in reads {
                 if let Ok(diff) = read.await {
-                    let files = diff.files.iter().filter(|f| f.uncommitted).count();
-                    if files > 0 {
-                        counted.insert(path, files);
+                    let mut count = ChangeCount::default();
+                    for file in diff.files.iter().filter(|f| f.uncommitted) {
+                        count.files += 1;
+                        count.added += u64::from(file.additions);
+                        count.removed += u64::from(file.deletions);
+                    }
+                    if count.files > 0 {
+                        counted.insert(path, count);
                     }
                 }
             }

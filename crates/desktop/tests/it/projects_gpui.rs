@@ -660,7 +660,8 @@ fn session_rows_are_one_line_and_only_a_checkout_that_is_news_adds_a_second(
         }));
     }
 
-    // Two agents in one checkout: the badge turns into a warning.
+    // Two agents in one checkout: the warning is one chip on the project row of that checkout,
+    // said once; the session rows below it do not repeat it.
     let omp = Reporter::new(w.s_main.id, "omp-extension", "omp");
     let claude = Reporter::new(w.s_main.id, "claude-hooks", "claude");
     let other = session_at(&w.daemon, "s-other", &w.folders.api);
@@ -668,34 +669,50 @@ fn session_rows_are_one_line_and_only_a_checkout_that_is_news_adds_a_second(
     omp.report(&w.daemon, Node::main("root").working().name("omp"));
     second.report(&w.daemon, Node::main("root").working().name("claude"));
     let _ = claude;
-    wait_until(cx, "the warning", |cx| {
+    wait_until(cx, "the warning on the project row", |cx| {
         rows(&panel, cx)
             .iter()
-            .filter(|r| r.kind == RowKind::Session && r.title.starts_with("s-"))
-            .any(|r| r.title == "s-main" && r.shared)
+            .any(|r| r.kind == RowKind::Project && r.title == "api" && r.shared)
     });
     let listed = rows(&panel, cx);
-    assert!(row(&listed, "s-other").shared);
-    // Sharing is a 16 px warning glyph in the row's trailing slot, not a pill on a second line:
-    // the row keeps its one-line height.
+    assert_eq!(
+        listed.iter().filter(|r| r.shared).count(),
+        1,
+        "one warning, on one row: {listed:?}"
+    );
     for title in ["s-main", "s-other"] {
         let shared = row(&listed, title);
         assert!(
-            shared.badge.is_none() && shared.subtitle.is_none(),
-            "{title} stays one line: {shared:?}"
+            !shared.shared && shared.badge.is_none() && shared.subtitle.is_none(),
+            "{title} stays one line and says nothing about it: {shared:?}"
         );
     }
-    wait_until(cx, "the warning glyph", |cx| {
+    let root = view.read_with(cx, |wb, cx| {
+        wb.sessions()
+            .read(cx)
+            .session(w.s_main.id)
+            .and_then(|s| s.placement.as_ref().map(|p| p.root.clone()))
+            .expect("a placement")
+    });
+    wait_until(cx, "the chip", |cx| {
         view.read_with(cx, |wb, _| {
-            wb.region_bounds(Region::SharedCheckout(w.s_main.id))
-                .is_some_and(|b| (f32::from(b.size.width) - 16.0).abs() <= 1.0)
+            wb.region_bounds(Region::shared_checkout(&root))
+                .is_some_and(|b| f32::from(b.size.height) - 16.0 < 1.0)
         })
+    });
+    // The worktree has one agent: no chip there, and no row grew a line.
+    let wt_root = view.read_with(cx, |wb, cx| {
+        wb.sessions()
+            .read(cx)
+            .session(w.s_wt.id)
+            .and_then(|s| s.placement.as_ref().map(|p| p.root.clone()))
+            .expect("a placement")
     });
     assert!(
         view.read_with(cx, |wb, _| wb
-            .region_bounds(Region::SharedCheckout(w.s_wt.id))
+            .region_bounds(Region::shared_checkout(&wt_root))
             .is_none()),
-        "a session alone in its worktree has no marker"
+        "a session alone in its worktree has no chip"
     );
     let one_line = view.read_with(cx, |wb, _| {
         wb.region_bounds(Region::SessionRow(w.s_main.id))

@@ -7,6 +7,7 @@ pub mod agents_list;
 pub mod agents_text;
 pub mod attention;
 pub mod calls;
+pub mod card;
 pub mod checkpoints;
 pub mod folders;
 pub mod launch;
