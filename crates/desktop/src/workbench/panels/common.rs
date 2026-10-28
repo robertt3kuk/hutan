@@ -176,7 +176,7 @@ pub fn placement_badge(
     div()
         .id(SharedString::from(format!("placement-badge-{session}")))
         .relative()
-        .flex_none()
+        .min_w_0()
         .flex()
         .items_center()
         .max_w(px(130.0))
@@ -202,12 +202,11 @@ pub fn placement_badge(
 }
 
 /// The chip a project or worktree row wears while another live agent works in the same
-/// checkout: a `warning` glyph and the word *Shared*, on a quiet fill. It is said once, on the
-/// row of the checkout; the session rows below it do not repeat it. The tooltip says who and
-/// where.
+/// checkout: the `warning` glyph on a quiet `warning` fill, 16 pt (the row has no room for a
+/// word: the name keeps it). It is said once, on the row of the checkout; the session rows
+/// below it do not repeat it. The tooltip says what it is, who and where.
 pub fn shared_checkout_chip(
     theme: &Theme,
-    tokens: &Tokens,
     badge: &PlacementBadge,
     root: &std::path::Path,
     regions: &crate::workbench::regions::Regions,
@@ -222,17 +221,12 @@ pub fn shared_checkout_chip(
         .flex_none()
         .flex()
         .items_center()
-        .gap(px(2.0))
-        .px(px(tokens.spacing))
-        .h(px(16.0))
+        .justify_center()
+        .size(px(16.0))
         .rounded(px(4.0))
         .bg(theme.warning.opacity(0.14))
-        .text_size(px(tokens.chip_font_size + 1.0))
-        .font_weight(gpui::FontWeight::NORMAL)
-        .text_color(theme.muted)
         .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
         .child(icon(Icon::VcsSharedWarning, 12.0, theme.warning))
-        .child("Shared")
         .child(probe(regions, Region::shared_checkout(root)))
         .into_any_element()
 }

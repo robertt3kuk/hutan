@@ -12,8 +12,8 @@
 //! 5. the agent's own name for a session the user renamed — muted.
 //!
 //! Plain shells never have one: a shell is one line whatever happens in it. A row with nothing
-//! to say stays one line, and the first agent that no hook speaks for says once what installing
-//! the hooks would add.
+//! to say stays one line, and the first agent that no hook speaks for (and has no news of its
+//! own) says once what installing the hooks would add.
 
 use hutan_protocol::messages::SessionInfo;
 

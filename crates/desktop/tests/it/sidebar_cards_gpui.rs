@@ -410,7 +410,6 @@ fn plus_and_minus_counts_show_on_project_rows_and_in_the_changes_panel_only_when
                 .is_some_and(|w| store.changed_files_of(w) == 2)
         })
     });
-    let _ = workspace;
     draw(cx);
     let listed = rows(&sidebar, cx);
     assert_eq!(

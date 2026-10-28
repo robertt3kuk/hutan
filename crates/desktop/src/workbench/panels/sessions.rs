@@ -1040,7 +1040,7 @@ impl SessionsPanel {
                 store.unread(row.info.id),
                 store.reply_line(row.info.id),
             );
-            if !hinted && card::without_hooks(&row.info) {
+            if !hinted && row.news.is_none() && card::without_hooks(&row.info) {
                 hinted = true;
                 row.news.get_or_insert_with(|| News {
                     kind: NewsKind::HooksHint,
@@ -1803,7 +1803,7 @@ impl SessionsPanel {
             Some(text) => self.rename_editor(&id_text, &text, cx),
             None => div()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(48.0))
                 .truncate()
                 .child(SharedString::from(info.name.clone()))
                 .into_any_element(),
@@ -1970,7 +1970,7 @@ impl SessionsPanel {
             .child(name)
             .children(row.branch.clone().map(|branch| {
                 div()
-                    .flex_none()
+                    .min_w_0()
                     .max_w(px(96.0))
                     .flex()
                     .items_center()
@@ -2037,7 +2037,7 @@ impl SessionsPanel {
                     .map(|stat| diffstat_view(stat, &theme, &tokens)),
             )
             .children(row.shared.as_ref().map(|chip| {
-                shared_checkout_chip(&theme, &tokens, &chip.badge, &chip.root, &self.env.regions)
+                shared_checkout_chip(&theme, &chip.badge, &chip.root, &self.env.regions)
             }))
             .children(count_text(info).map(|count| ui::counter(count, &theme, &tokens)))
             .when(
@@ -2144,7 +2144,7 @@ impl SessionsPanel {
                     .map(|stat| diffstat_view(stat, &theme, &tokens)),
             )
             .children(row.shared.as_ref().map(|chip| {
-                shared_checkout_chip(&theme, &tokens, &chip.badge, &chip.root, &self.env.regions)
+                shared_checkout_chip(&theme, &chip.badge, &chip.root, &self.env.regions)
             }))
             .when(row.needs > 0, |s| {
                 s.child(
@@ -2317,7 +2317,7 @@ impl SessionsPanel {
             whose.extend(sub.container.clone().map(|container| {
                 div()
                     .id(SharedString::from(format!("session-project-{id}")))
-                    .flex_none()
+                    .min_w_0()
                     .max_w(px(96.0))
                     .truncate()
                     .text_size(px(tokens.secondary_font_size))
@@ -2381,7 +2381,7 @@ impl SessionsPanel {
                                 let title = div()
                                     .id(SharedString::from(format!("session-title-{id}")))
                                     .flex_1()
-                                    .min_w_0()
+                                    .min_w(px(72.0))
                                     .truncate()
                                     .text_size(px(tokens.row_font_size))
                                     .when(unread, |s| s.font_weight(gpui::FontWeight::SEMIBOLD))
