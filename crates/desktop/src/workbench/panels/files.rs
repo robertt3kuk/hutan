@@ -105,7 +105,7 @@ pub use filter::{DEBOUNCE as FILTER_DEBOUNCE, FilterStatus};
 pub use marks::{DIAGNOSTICS_READ_EVERY, DiagCounts, DiagMarks};
 pub use ops::FilesCommand;
 use ops::{PathClipboard, error_message};
-pub use sections::{AgentFile, ExplorerFeed, MAX_AGENT_ROWS, OpenEditor, Section};
+pub use sections::{AgentFile, ExplorerFeed, MAX_AGENT_ROWS, MAX_OPEN_ROWS, OpenEditor, Section};
 
 /// Open folders watched at once; folders opened beyond it are listed again on the root's
 /// `fs.generation` instead (the connection may watch 256 paths, open files included).

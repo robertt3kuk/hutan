@@ -118,7 +118,11 @@ fn a_new_home_gets_the_clean_default_and_saves_it_as_the_golden(cx: &mut TestApp
         "a new home's right body opens on Files"
     );
     assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
-    assert_eq!(s.docks.right.mode(), DockMode::Compact, "the rail only");
+    assert_eq!(
+        s.docks.right.mode(),
+        DockMode::Expanded,
+        "a new home's right side is open on Files (FX-WORK-2)"
+    );
     assert!(!offered(&view, cx), "a new home is not offered what it has");
 
     // The rail: four icons (Files first, SB-ATTACH) and ⋯, nothing for Requests or Resources.

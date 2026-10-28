@@ -278,6 +278,10 @@ impl Workbench {
                 s.set_active_item(pane, index)?;
                 s.focus_pane(pane)
             });
+            // Opened on purpose (not by a click that only looks): no longer a preview.
+            if place != FilePlace::Preview {
+                self.keep_open(&key, cx);
+            }
         } else {
             let pane = self.state.active_pane_id();
             let placeholder = self
@@ -287,7 +291,25 @@ impl Workbench {
                     [only @ ItemRef::Placeholder { .. }] => Some(only.clone()),
                     _ => None,
                 });
+            // A look takes the place of the last look, in the pane it was in.
+            let previewing = place == FilePlace::Preview && self.preview_tabs_on();
+            let old = self
+                .preview_file()
+                .map(str::to_owned)
+                .and_then(|old| {
+                    self.state
+                        .find_item(&ItemRef::file(old.clone()))
+                        .filter(|(p, _)| *p == pane)
+                        .map(|(_, index)| (ItemRef::file(old), index))
+                })
+                .filter(|_| previewing);
             self.try_mutate(cx, |s| {
+                if let Some((old, index)) = &old
+                    && s.replace_item(old, item.clone())
+                {
+                    s.set_active_item(pane, *index)?;
+                    return s.focus_pane(pane);
+                }
                 if let Some(placeholder) = &placeholder
                     && s.replace_item(placeholder, item.clone())
                 {
@@ -295,6 +317,10 @@ impl Workbench {
                 }
                 s.add_item(pane, item.clone()).map(|_| ())
             });
+            if previewing {
+                self.preview_tab = Some(key.clone());
+                self.sync_explorer_open(cx);
+            }
         }
         if let Some((pane, _)) = self.state.find_item(&item) {
             let view = self.file_view(pane, &key, window, cx);
@@ -604,6 +630,7 @@ impl Workbench {
         let disk = stored.disk;
         let ready = buffer.read(cx).is_ready();
         self.buffers.buffers.insert(to.to_owned(), stored);
+        self.rekey_preview(from, to);
         for slot in &mut self.buffers.recent {
             if slot.as_deref() == Some(from) {
                 *slot = Some(to.to_owned());
@@ -625,6 +652,7 @@ impl Workbench {
     /// Agents overview's stash keeps its files' buffers); keeps a syntax tree only for the files
     /// a pane shows.
     pub(crate) fn sync_files(&mut self, cx: &mut Context<Self>) {
+        self.prune_preview();
         let items = self.open_file_items();
         let mut wanted: HashSet<String> = items.iter().map(|(_, path)| path.clone()).collect();
         if let Some(saved) = &self.state.stashed {
@@ -870,7 +898,15 @@ impl Workbench {
         let copy = path.to_owned();
         let reveal = path.to_owned();
         let blame = path.to_owned();
-        vec![
+        let keep = path.to_owned();
+        let preview = self.is_preview(path);
+        let mut entries = Vec::new();
+        if preview {
+            entries.push(Self::entry("Keep Open", move |this, _, cx| {
+                this.keep_open(&keep, cx);
+            }));
+        }
+        entries.extend([
             split("Open in Split Right", Edge::Right, path.to_owned()),
             split("Open in Split Down", Edge::Bottom, path.to_owned()),
             Self::entry("Reveal in Files Panel", move |this, window, cx| {
@@ -884,7 +920,8 @@ impl Workbench {
                 cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
                 this.set_notice("Copied the file's path", cx);
             }),
-        ]
+        ]);
+        entries
     }
 
     // ---- the Files panel (E-13a) -----------------------------------------------------------

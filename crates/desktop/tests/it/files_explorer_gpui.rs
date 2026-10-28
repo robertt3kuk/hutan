@@ -600,10 +600,9 @@ fn a_root_the_window_comes_back_to_has_its_tree_and_the_open_folders_are_saved(
     // Another root, and back: the first one's tree is there again at once.
     project(&view, cx, &b);
     wait_names(&panel, cx, &["other.txt"]);
-    assert_eq!(
-        panel.read_with(cx, |p, _| p.cached_roots()),
-        std::slice::from_ref(&a)
-    );
+    // (The panel is on screen from the first frame, so the home's default folder may be cached
+    // too.)
+    assert!(panel.read_with(cx, |p, _| p.cached_roots()).contains(&a));
     project(&view, cx, &a);
     panel.read_with(cx, |p, _| {
         let tree = p.tree().unwrap();
@@ -615,10 +614,7 @@ fn a_root_the_window_comes_back_to_has_its_tree_and_the_open_folders_are_saved(
         );
     });
     wait_names(&panel, cx, &["pkg", "  one.txt", "  two.txt", "top.txt"]);
-    assert_eq!(
-        panel.read_with(cx, |p, _| p.cached_roots()),
-        std::slice::from_ref(&b)
-    );
+    assert!(panel.read_with(cx, |p, _| p.cached_roots()).contains(&b));
 }
 
 #[gpui::test]

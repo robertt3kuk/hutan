@@ -865,6 +865,10 @@ pub struct Workbench {
     pub(crate) lsp: Entity<super::lsp::LspStore>,
     /// The view of every file tab, by pane and path.
     pub(crate) file_views: HashMap<(PaneId, String), Entity<super::file_view::FileView>>,
+    /// The file whose tab is the preview tab (`preview_tab.rs`).
+    pub(crate) preview_tab: Option<String>,
+    /// The hint at the right rail's Files icon was drawn and is not used up (`rail_hint.rs`).
+    pub(crate) rail_hint_seen: std::cell::Cell<bool>,
     pub(crate) file_subscriptions: HashMap<(PaneId, String), Subscription>,
     pub(crate) rendered_files: std::collections::HashSet<(PaneId, String)>,
     pub(crate) pruned_files: Vec<Entity<super::file_view::FileView>>,
@@ -1501,6 +1505,8 @@ impl Workbench {
             agent_ledger: super::agent_edits::AgentLedger::for_state(options.state_path.as_deref()),
             lsp,
             file_views: HashMap::new(),
+            preview_tab: None,
+            rail_hint_seen: std::cell::Cell::new(false),
             editor_items: None,
             file_subscriptions: HashMap::new(),
             rendered_files: std::collections::HashSet::new(),

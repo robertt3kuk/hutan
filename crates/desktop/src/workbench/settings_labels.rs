@@ -825,6 +825,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "editor",
+        "preview_tabs",
+        "Preview tabs",
+        "A single click on a file in the Files tree shows it in a preview tab (its title is in italics) that the next file you click replaces. A double click, an edit or Keep Open in the tab's menu makes it a regular tab. Off, every file you open keeps its own tab.",
+    ),
+    field(
+        "editor",
         "scroll_beyond_last_line",
         "Scroll past the last line",
         "How far a file scrolls past its last line, as a fraction of the window's height: 0 stops with the last line at the bottom, 0.5 leaves half a screen of room, 1 a whole one. A file is never scrolled to a blank view.",

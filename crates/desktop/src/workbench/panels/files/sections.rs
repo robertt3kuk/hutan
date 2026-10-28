@@ -35,6 +35,9 @@ use crate::workbench::ui::scroll::ScrollAreaExt as _;
 
 /// Rows *Changed by agents* lists; the rest is "N more".
 pub const MAX_AGENT_ROWS: usize = 50;
+/// *Open Editors* shows this many rows and scrolls inside itself beyond them (and scrolls the
+/// active file into view), so thirty tabs never push the tree off the panel.
+pub const MAX_OPEN_ROWS: usize = 6;
 /// The sections never take more than this share of the window's height (they scroll inside).
 const MAX_SHARE: f32 = 0.4;
 
@@ -75,6 +78,8 @@ pub struct OpenEditor {
     pub path: PathBuf,
     /// The buffer has unsaved changes.
     pub dirty: bool,
+    /// The tab is the preview tab (its title is in italics).
+    pub preview: bool,
 }
 
 /// A file an agent changed and nobody accepted yet.
@@ -362,18 +367,44 @@ impl FilesPanel {
                 cx,
             ));
             if !folded {
-                for (index, editor) in open.iter().enumerate() {
-                    blocks.push(open_row(
-                        index,
-                        editor,
-                        active.as_deref() == Some(editor.path.as_path()),
-                        self.folder_label(&editor.path),
-                        &regions,
-                        &theme,
-                        &tokens,
-                        cx,
-                    ));
+                let rows: Vec<AnyElement> = open
+                    .iter()
+                    .enumerate()
+                    .map(|(index, editor)| {
+                        open_row(
+                            index,
+                            editor,
+                            active.as_deref() == Some(editor.path.as_path()),
+                            self.folder_label(&editor.path),
+                            &regions,
+                            &theme,
+                            &tokens,
+                            cx,
+                        )
+                    })
+                    .collect();
+                // The row of the focused tab is in view whenever it changes.
+                if self.sections.open_active != active {
+                    self.sections.open_active.clone_from(&active);
+                    if let Some(at) = open
+                        .iter()
+                        .position(|e| active.as_deref() == Some(e.path.as_path()))
+                    {
+                        self.sections.open_scroll.scroll_to_item(at);
+                    }
                 }
+                blocks.push(
+                    div()
+                        .id("files-open-rows")
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .max_h(px(MAX_OPEN_ROWS as f32 * (tokens.sidebar_row - 4.0)))
+                        .scroll_y_contained(&self.sections.open_scroll)
+                        .children(rows)
+                        .child(probe(&regions, Region::FilesSection("open-rows", 0)))
+                        .into_any_element(),
+                );
             }
         }
         if !agents.is_empty() {
@@ -481,6 +512,10 @@ impl FilesPanel {
 pub(super) struct Sections {
     pub(super) folded: HashSet<Section>,
     pub(super) scroll: ScrollHandle,
+    /// *Open Editors* scrolls inside itself past [`MAX_OPEN_ROWS`] rows.
+    pub(super) open_scroll: ScrollHandle,
+    /// The file the section last scrolled to.
+    pub(super) open_active: Option<PathBuf>,
 }
 
 #[allow(clippy::too_many_arguments)] // one row of one list; a struct would only rename them
@@ -521,6 +556,7 @@ fn open_row(
                     s.bg(theme.sidebar_accent)
                         .font_weight(gpui::FontWeight::MEDIUM)
                 })
+                .when(editor.preview, |s| s.italic())
                 .when(!is_active, move |s| s.hover(move |s| s.bg(hover)))
                 .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
                 .on_click(cx.listener(move |_, event: &ClickEvent, window, cx| {

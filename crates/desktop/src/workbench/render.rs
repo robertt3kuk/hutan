@@ -2499,6 +2499,7 @@ impl Workbench {
             .iter()
             .any(|id| self.sessions.read(cx).is_called(*id));
         let split_badge = self.split_count_badge(pane_id, index, item);
+        let preview = item.as_file().is_some_and(|path| self.is_preview(path));
         let dragged = DraggedItem {
             source: ItemSource::Pane {
                 pane: pane_id,
@@ -2529,7 +2530,18 @@ impl Workbench {
                     s.focus_pane(pane_id)
                 });
                 if event.click_count() == 2 {
-                    this.mutate(cx, |s| s.toggle_zoom());
+                    // A double click on a preview tab keeps it; on any other it zooms the pane.
+                    let preview = this
+                        .state
+                        .pane(pane_id)
+                        .and_then(|p| p.items.get(index))
+                        .and_then(|item| item.as_file())
+                        .filter(|path| this.is_preview(path))
+                        .map(str::to_owned);
+                    match preview {
+                        Some(path) => this.keep_open(&path, cx),
+                        None => this.mutate(cx, |s| s.toggle_zoom()),
+                    }
                 }
                 this.focus_root(window, cx);
             }))
@@ -2566,7 +2578,13 @@ impl Workbench {
                 );
             }))
             .child(crate::icons::glyph(icon))
-            .child(div().max_w(px(TAB_TITLE_MAX)).truncate().child(title))
+            .child(
+                div()
+                    .max_w(px(TAB_TITLE_MAX))
+                    .truncate()
+                    .when(preview, |s| s.italic())
+                    .child(title),
+            )
             .children(split_badge)
             .children(badge)
             // A request called for this session while it was not on screen and nobody has

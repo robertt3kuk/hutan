@@ -71,6 +71,8 @@ impl Workbench {
         let key = path.to_owned();
         let edits = cx.subscribe(buffer, move |this, _, event: &BufferEdited, cx| {
             if event.kind != EditKind::Reload {
+                // An edit makes a preview tab a regular one.
+                this.keep_open(&key, cx);
                 this.schedule_autosave(&key, cx);
             }
             // The daemon's mirror follows every edit, a reload too (E-12a).

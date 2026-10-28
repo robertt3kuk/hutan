@@ -60,8 +60,9 @@ pub use files::{
     FILTER_DEBOUNCE as FILES_FILTER_DEBOUNCE, FilesCommand, FilesMemory, FilesPanel,
     FilterStatus as FilesFilterStatus, GIT_READ_EVERY as FILES_GIT_READ_EVERY,
     MAX_AGENT_ROWS as FILES_MAX_AGENT_ROWS, MAX_CACHED_ROOTS as FILES_MAX_CACHED_ROOTS,
-    MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS, NameEditView as FilesNameEdit, OpenEditor,
-    RELIST_EVERY as FILES_RELIST_EVERY, Section as FilesSection,
+    MAX_OPEN_ROWS as FILES_MAX_OPEN_ROWS, MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS,
+    NameEditView as FilesNameEdit, OpenEditor, RELIST_EVERY as FILES_RELIST_EVERY,
+    Section as FilesSection,
 };
 pub use files_git::{GitMark as FileGitMark, GitStatus as FileGitStatus};
 pub use files_names::{

@@ -41,6 +41,7 @@ mod fx_e2e4_gpui;
 mod fx_polish1_gpui;
 mod fx_tabs_res_gpui;
 mod fx_work1_gpui;
+mod fx_work2_gpui;
 mod git_gutter_gpui;
 mod git_history_gpui;
 mod harness_gpui;

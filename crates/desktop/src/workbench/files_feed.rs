@@ -44,6 +44,7 @@ impl Workbench {
                     .get(&path)
                     .is_some_and(|buffer| buffer.read(cx).is_dirty());
                 OpenEditor {
+                    preview: self.is_preview(&path),
                     path: PathBuf::from(path),
                     dirty,
                 }

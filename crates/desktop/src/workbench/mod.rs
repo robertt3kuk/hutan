@@ -53,6 +53,7 @@ pub mod palette;
 pub mod panels;
 mod paste_toast;
 pub mod persistence;
+mod preview_tab;
 mod projects;
 mod providers;
 pub mod quick_open;

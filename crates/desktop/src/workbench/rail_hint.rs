@@ -14,7 +14,7 @@ use gpui::{
 
 use super::model::{DockMode, DockPosition, PanelId};
 use super::render::probe;
-use super::ui::IconButton;
+use super::ui::{Button, ButtonKind, IconButton};
 use super::view::{Region, Workbench};
 use crate::icons::Icon;
 use crate::settings::LayoutSettings;
@@ -39,15 +39,17 @@ impl Workbench {
             && !self.files_body_shown()
     }
 
-    /// Files was shown (a body, a peek, the hint's own click): the hint has done its work.
+    /// Files is shown after the hint was drawn (a body, a peek, a key): the hint has done its
+    /// work. A window that opens on Files at once never drew it and writes nothing.
     pub(crate) fn retire_rail_hint(&mut self) {
-        if self.files_body_shown() {
+        if self.rail_hint_seen.get() && self.files_body_shown() {
             self.end_rail_hint();
         }
     }
 
     /// Ends the hint for good (`layout.files_hint` off).
     pub(crate) fn end_rail_hint(&self) {
+        self.rail_hint_seen.set(false);
         if self.settings.get::<LayoutSettings>().files_hint
             && let Err(error) = self
                 .settings
@@ -57,12 +59,13 @@ impl Workbench {
         }
     }
 
-    /// The label beside the rail's Files icon, `slot` buttons down the rail; `None` when it is
-    /// not to be shown.
+    /// The label beside the rail's Files icon, `top` points down the rail; `None` when it is not
+    /// to be shown. Drawing it is what makes it count as seen.
     pub(crate) fn render_rail_hint(&self, top: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.rail_hint_visible() {
             return None;
         }
+        self.rail_hint_seen.set(true);
         let theme = self.theme;
         let tokens = self.density.ui();
         Some(
@@ -74,7 +77,7 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .gap(px(tokens.spacing))
-                .pl(px(tokens.spacing * 2.0))
+                .pl(px(tokens.spacing * 3.0))
                 .pr(px(tokens.spacing))
                 .py(px(tokens.spacing))
                 .rounded(px(tokens.radius + 2.0))
@@ -82,14 +85,24 @@ impl Workbench {
                 .border_1()
                 .border_color(theme.border)
                 .shadow_md()
-                .cursor_pointer()
                 .text_size(px(tokens.secondary_font_size))
                 .text_color(theme.fg)
-                .child(SharedString::from("Files → your project's tree"))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.end_rail_hint();
-                    this.click_rail_icon(DockPosition::Right, &PanelId::new(FILES), window, cx);
-                }))
+                .child(div().flex_none().child("Your project's files"))
+                .child(
+                    Button::new("rail-hint-open", "Show Files", &theme, &tokens)
+                        .kind(ButtonKind::Secondary)
+                        .compact()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.end_rail_hint();
+                            this.click_rail_icon(
+                                DockPosition::Right,
+                                &PanelId::new(FILES),
+                                window,
+                                cx,
+                            );
+                        }))
+                        .child(probe(&self.regions, Region::Offer("rail-hint-open"))),
+                )
                 .child(
                     IconButton::new(
                         "rail-hint-dismiss",
@@ -101,9 +114,9 @@ impl Workbench {
                     .compact()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.end_rail_hint();
-                        cx.stop_propagation();
                         cx.notify();
-                    })),
+                    }))
+                    .child(probe(&self.regions, Region::Offer("rail-hint-dismiss"))),
                 )
                 .child(probe(&self.regions, Region::Offer("rail-hint")))
                 .into_any_element(),

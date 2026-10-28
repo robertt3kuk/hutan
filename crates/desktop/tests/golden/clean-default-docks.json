@@ -21,7 +21,7 @@
     "active": "files",
     "size": 350.0,
     "visible": true,
-    "collapsed": true,
+    "collapsed": false,
     "more": [
       "inspector",
       "resources"
