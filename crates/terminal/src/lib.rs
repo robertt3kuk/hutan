@@ -6,6 +6,7 @@
 //! recorder, benchmarks). Engine types never appear in this crate's public API. [`procs`] reads
 //! and signals single processes for the resource manager.
 
+mod agent_status;
 #[cfg(test)]
 mod behavior;
 #[cfg(test)]
@@ -28,6 +29,7 @@ mod sniffer;
 mod sys;
 mod terminal;
 
+pub use agent_status::{AgentPhase, AgentStatus, MAX_APP_LEN, MAX_KIND_LEN, MAX_MESSAGE_CHARS};
 pub use blocks::{BlockText, BlockTextError};
 pub use emulator::{
     DefaultColors, Emulator, LineScope, LogicalLine, LogicalLines, ScanFlow, ScanProgress,

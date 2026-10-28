@@ -424,3 +424,29 @@ fn recorded_agent_startups_get_their_color_queries_answered() {
         }
     }
 }
+
+#[test]
+fn a_real_omp_start_reports_its_status_and_a_title_through_osc_7501() {
+    // OMP 18.12 says `state=idle:app=omp` once its prompt is up, and names the terminal `π >`.
+    let recorded = corpus_dir().join("recorded");
+    let raw = fs::read(recorded.join("omp_startup.raw")).expect("read .raw");
+    for chunk in [usize::MAX, 4096, 1] {
+        let outcome = replay(
+            &raw,
+            recorded_size(&recorded.join("omp_startup.raw")),
+            chunk,
+        );
+        let status: Vec<&String> = outcome
+            .meta
+            .iter()
+            .filter(|m| m.starts_with("AgentStatus"))
+            .collect();
+        assert_eq!(
+            status,
+            [
+                r#"AgentStatus(AgentStatus { phase: Idle, app: Some("omp"), kind: None, message: None })"#
+            ],
+            "chunk {chunk}"
+        );
+    }
+}

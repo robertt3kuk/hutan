@@ -1,0 +1,18 @@
+{
+  "size": [
+    20,
+    5
+  ],
+  "title": "π > fix the build",
+  "meta": [
+    "Title(\"π >\")",
+    "AgentStatus(AgentStatus { phase: Idle, app: Some(\"omp\"), kind: None, message: None })",
+    "Title(\"π ⠋ fix the build\")",
+    "AgentStatus(AgentStatus { phase: Working, app: Some(\"omp\"), kind: None, message: None })",
+    "AgentStatus(AgentStatus { phase: Blocked, app: Some(\"omp\"), kind: Some(\"permission\"), message: Some(\"Run the tests?\") })",
+    "AgentStatus(AgentStatus { phase: Error, app: Some(\"omp\"), kind: None, message: Some(\"ok\") })",
+    "Title(\"π > fix the build\")",
+    "AgentStatus(AgentStatus { phase: Done, app: Some(\"omp\"), kind: None, message: None })",
+    "AgentCleared"
+  ]
+}

@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use hutan_protocol::blocks::Block;
 
+use crate::agent_status::{self, AgentStatus, Parsed};
 use crate::queries::is_color_query;
 
 /// Longest OSC payload that is buffered; longer strings are discarded when they end.
@@ -42,6 +43,10 @@ pub enum TerminalMeta {
     Cwd(PathBuf),
     /// OSC 133 A/B/C/D.
     PromptMark(PromptMark),
+    /// OSC 7501: the coding agent in the terminal reports what it is doing (OMP 18.12+).
+    AgentStatus(AgentStatus),
+    /// OSC 7501 `state=clear`: the agent left the terminal.
+    AgentCleared,
     /// A block of the block index changed (`terminal.block` event, protocol 0.5): the whole
     /// block as it is now, in the order the changes happened.
     Block(Block),
@@ -369,6 +374,10 @@ fn parse_osc(payload: &[u8]) -> Option<TerminalMeta> {
         None => (payload, &payload[payload.len()..]),
     };
     match ps {
+        b"7501" => Some(match agent_status::parse(pt)? {
+            Parsed::Status(status) => TerminalMeta::AgentStatus(status),
+            Parsed::Cleared => TerminalMeta::AgentCleared,
+        }),
         b"0" | b"2" => Some(TerminalMeta::Title(
             String::from_utf8_lossy(pt).into_owned(),
         )),
@@ -511,6 +520,49 @@ mod tests {
         assert!(
             sniff(&[b"\x1b]9;4;1;50\x07\x1b]52;c;aGk=\x07\x1b]4;1;rgb:00/00/00\x07"]).is_empty()
         );
+    }
+
+    #[test]
+    fn omp_program_status_in_its_own_format() {
+        use crate::agent_status::AgentPhase;
+        let status = |phase, kind: Option<&str>, message: Option<&str>| {
+            TerminalMeta::AgentStatus(AgentStatus {
+                phase,
+                app: Some("omp".into()),
+                kind: kind.map(str::to_owned),
+                message: message.map(str::to_owned),
+            })
+        };
+        // ST-terminated, as OMP writes it; one report of each state, the question as base64.
+        let stream: &[u8] = b"\x1b]7501;state=idle:app=omp\x1b\\\
+            \x1b]7501;state=working:app=omp\x1b\\\
+            \x1b]7501;state=blocked:kind=permission:app=omp:msg=UnVuIHRoZSB0ZXN0cz8=\x1b\\\
+            \x1b]7501;state=error:app=omp:msg=b2s=\x07\
+            \x1b]7501;state=done:app=omp\x1b\\\
+            \x1b]7501;state=clear\x1b\\";
+        let whole = sniff(&[stream]);
+        assert_eq!(
+            whole,
+            [
+                status(AgentPhase::Idle, None, None),
+                status(AgentPhase::Working, None, None),
+                status(
+                    AgentPhase::Blocked,
+                    Some("permission"),
+                    Some("Run the tests?")
+                ),
+                status(AgentPhase::Error, None, Some("ok")),
+                status(AgentPhase::Done, None, None),
+                TerminalMeta::AgentCleared,
+            ]
+        );
+        let split: Vec<&[u8]> = stream.chunks(1).collect();
+        assert_eq!(sniff(&split), whole);
+    }
+
+    #[test]
+    fn a_program_status_that_is_not_one_is_ignored() {
+        assert!(sniff(&[b"\x1b]7501;\x07\x1b]7501;state=sleeping\x07\x1b]7501\x07"]).is_empty());
     }
 
     #[test]

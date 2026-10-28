@@ -1,0 +1,8 @@
+// What OMP 18.12 writes around a turn (state, app, optional kind and message), then the end.
+\e]0;π >\a\e]7501;state=idle:app=omp\e\\
+\e]0;π ⠋ fix the build\a\e]7501;state=working:app=omp\e\\
+\e]7501;state=blocked:kind=permission:app=omp:msg=UnVuIHRoZSB0ZXN0cz8=\e\\
+\e]7501;state=error:app=omp:msg=b2s\e\\
+\e]0;π > fix the build\a\e]7501;state=done:app=omp\e\\
+\e]7501;state=clear\e\\
+\e]7501;state=sleeping:app=omp\e\\

@@ -2873,6 +2873,7 @@ name = "hutan-terminal"
 version = "0.3.1"
 dependencies = [
  "alacritty_terminal",
+ "base64 0.22.1",
  "hutan-protocol",
  "libc",
  "parking_lot",
