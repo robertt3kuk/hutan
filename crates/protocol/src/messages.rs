@@ -18,10 +18,10 @@ use crate::account::{AccountAdd, AccountDefaultSet, AccountLogin, AccountLogout,
 use crate::assistant::{AssistantConfigure, AssistantListRequest, AssistantOpen, AssistantReset};
 use crate::blocks::{Block, TerminalBlockText, TerminalBlocks};
 use crate::chat::{
-    ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistoryRequest, ChatInfo,
-    ChatInterrupt, ChatModelsRequest, ChatQueue, ChatQueueAdd, ChatQueueEdit, ChatQueueItemRef,
-    ChatRetry, ChatSend, ChatSendNow, QuestionAnswer, QuestionInfo, QuestionListRequest,
-    QueueChange,
+    ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatFork, ChatHistoryRequest,
+    ChatInfo, ChatInterrupt, ChatModelsRequest, ChatQueue, ChatQueueAdd, ChatQueueEdit,
+    ChatQueueItemRef, ChatRetry, ChatSend, ChatSendNow, QuestionAnswer, QuestionInfo,
+    QuestionListRequest, QueueChange,
 };
 use crate::checkpoint::{
     CheckpointDiffRequest, CheckpointListRequest, CheckpointPreviewRequest, CheckpointRemove,
@@ -220,6 +220,10 @@ pub enum Request {
     /// journaling it again; answered with `ChatSent`.
     #[serde(rename = "chat.retry")]
     ChatRetry(ChatRetry),
+    /// Capability `chat.fork` (protocol 0.56, ADR 0023): a new chat that starts with this chat's
+    /// conversation up to a turn; answered with `ChatForked`.
+    #[serde(rename = "chat.fork")]
+    ChatFork(ChatFork),
     /// Capability `chat.codex`: stop the turn in progress. Protocol 0.36 (capability
     /// `chat.queue`): also clears the queue unless `keep_queue`.
     #[serde(rename = "chat.interrupt")]
@@ -1297,6 +1301,11 @@ pub struct SessionInfo {
     /// the richer one and this one names the harness and the agent's own title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_agent: Option<TerminalAgent>,
+    /// Protocol 0.56 (capability `chat.fork`, ADR 0023): the chat this one was forked from —
+    /// the parent, the turn the conversation was cut after, how (`exact`, `head`, `summary`)
+    /// and when. Absent for chats that are not forks; stays when the parent is deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<hutan_core::ForkOrigin>,
 }
 
 /// What a terminal session's coding agent is, and does (protocol 0.55, capability

@@ -2,6 +2,9 @@
 //!
 //! - [`messages`] also carries `SessionInfo.terminal_agent` — the coding agent recognised in a
 //!   terminal session, from OSC 7501 or its program (protocol 0.55, capability `terminal.agent`).
+//! - [`chat`] also carries `chat.fork` — a new chat that starts with a chat's conversation up to
+//!   a turn (`exact`, `head` or `summary`; journal copied, parent untouched), `ChatInfo.fork`
+//!   and `SessionInfo.forked_from` (protocol 0.56, capability `chat.fork`, ADR 0023).
 //! - [`fs`] also carries file operations — `fs.create`, `fs.rename`, `fs.move`, `fs.copy`,
 //!   `fs.trash` (undo tickets) and `fs.restore` (protocol 0.54, capability `fs.ops`, ADR 0012
 //!   amendment 2026-10-27).
@@ -131,7 +134,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 55,
+    minor: 56,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

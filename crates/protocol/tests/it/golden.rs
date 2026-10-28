@@ -191,6 +191,7 @@ fn size() -> TerminalSize {
 
 fn session_info() -> SessionInfo {
     SessionInfo {
+        forked_from: None,
         containment: None,
         terminal_agent: None,
         id: sid(),
@@ -270,6 +271,7 @@ fn approval() -> ApprovalId {
 
 fn chat_info() -> ChatInfo {
     ChatInfo {
+        fork: None,
         agent: "codex".into(),
         model: "gpt-6.1-sol".into(),
         approval_policy: ApprovalPolicy::Untrusted,
@@ -294,6 +296,7 @@ fn harness_chat_session_info() -> SessionInfo {
         state: SessionState::Running,
         command: vec!["omp".into()],
         chat: Some(ChatInfo {
+            fork: None,
             agent: "omp".into(),
             model: "anthropic/claude-sonnet-4-5".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -320,6 +323,7 @@ fn harness_assistant_session_info() -> SessionInfo {
         state: SessionState::Idle,
         command: vec!["omp".into()],
         chat: Some(ChatInfo {
+            fork: None,
             agent: "omp".into(),
             model: "anthropic/claude-sonnet-4-5".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -346,6 +350,7 @@ fn direct_chat_session_info() -> SessionInfo {
         state: SessionState::Running,
         command: vec!["direct".into()],
         chat: Some(ChatInfo {
+            fork: None,
             agent: "direct".into(),
             model: "meta-llama/llama-3.3-70b-instruct".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -434,6 +439,7 @@ fn assistant_session_info() -> SessionInfo {
         state: SessionState::Idle,
         command: vec!["assistant".into()],
         chat: Some(ChatInfo {
+            fork: None,
             agent: AGENT_ASSISTANT.into(),
             model: "llama3.3:70b".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -3799,6 +3805,26 @@ fn requests() -> Vec<(&'static str, Request)> {
                 ticket: "01K7F3B5N2Q9W8E4R6T1Y0V3TK".into(),
             }),
         ),
+        (
+            "chat_fork",
+            Request::ChatFork(ChatFork {
+                session_id: sid(),
+                turn_id: None,
+                mode: hutan_core::ForkMode::Exact,
+                title: None,
+                where_: ForkWhere::ThisFolder,
+            }),
+        ),
+        (
+            "chat_fork_turn_summary",
+            Request::ChatFork(ChatFork {
+                session_id: sid(),
+                turn_id: Some(turn()),
+                mode: hutan_core::ForkMode::Summary,
+                title: Some("Try the other approach".into()),
+                where_: ForkWhere::ThisFolder,
+            }),
+        ),
     ]
 }
 
@@ -5847,6 +5873,56 @@ fn responses_match_fixtures() {
         (
             "chat_sent",
             ControlMessage::ok(13, &ChatSent { turn_id: turn() }).unwrap(),
+        ),
+        (
+            "chat_forked",
+            ControlMessage::ok(
+                74,
+                &ChatForked {
+                    session: SessionInfo {
+                        title: "omp · repo (fork)".into(),
+                        chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                            fork: Some(ChatForkSupport {
+                                support: hutan_core::ForkSupport::Head,
+                                note: Some(
+                                    "OMP forks only at its newest turn over ACP".into(),
+                                ),
+                            }),
+                            ..chat
+                        }),
+                        forked_from: Some(hutan_core::ForkOrigin {
+                            session_id: sid(),
+                            turn_id: turn(),
+                            ordinal: 2,
+                            mode: hutan_core::ForkMode::Head,
+                            at_ms: 1_791_894_400_000,
+                        }),
+                        ..harness_chat_session_info()
+                    },
+                    fork: ForkDone {
+                        mode: hutan_core::ForkMode::Head,
+                        support: hutan_core::ForkSupport::Head,
+                        turn_id: turn(),
+                        ordinal: 2,
+                        copied_events: 41,
+                    },
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "error_unsupported_fork_head_only",
+            ControlMessage::err(75, {
+                let mut error = ErrorBody::new(
+                    ErrorCode::Unsupported,
+                    "OMP forks only at its newest turn: fork at the latest turn or with a summary",
+                );
+                error.data = Some(serde_json::json!({
+                    "support": "head",
+                    "alternatives": ["head", "summary"],
+                }));
+                error
+            }),
         ),
         (
             "chat_history",

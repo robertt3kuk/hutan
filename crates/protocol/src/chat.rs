@@ -7,13 +7,14 @@ use std::path::PathBuf;
 
 use hutan_core::agent::{PermissionKind, PermissionOption};
 use hutan_core::{
-    AgentEvent, ApprovalId, ApprovalPolicy, ModelInfo, QuestionId, QuestionResponse, QuestionSpec,
-    SandboxMode, SessionId, TurnId, WorkspaceId,
+    AgentEvent, ApprovalId, ApprovalPolicy, ForkMode, ForkSupport, ModelInfo, QuestionId,
+    QuestionResponse, QuestionSpec, SandboxMode, SessionId, TurnId, WorkspaceId,
 };
 use hutan_core::{SafetyEnforcer, SafetyPreset};
 use serde::{Deserialize, Serialize};
 
 use crate::assistant::Attachment;
+use crate::messages::SessionInfo;
 
 /// Most events one `chat.history` returns, whatever `limit` asks for.
 pub const HISTORY_MAX_LIMIT: u32 = 1000;
@@ -122,6 +123,82 @@ pub struct ChatSend {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatRetry {
     pub session_id: SessionId,
+}
+
+/// `chat.fork` (protocol 0.56, capability `chat.fork`, ADR 0023): a new chat that starts with
+/// the conversation of `session_id` up to a turn. The parent is never changed; the journal
+/// through that turn is **copied** into the new session, so either can be deleted on its own.
+/// Answered with [`ChatForked`].
+///
+/// - `mode` says how the cut is made and is never substituted: `exact` (the default) cuts after
+///   `turn_id` where the chat's harness can (direct chats, Codex, Claude Code whose adapter takes
+///   a fork point; OMP only when `turn_id` is the newest turn); `head` forks the conversation as
+///   it is now (`turn_id` must be absent or the newest turn); `summary` starts a fresh
+///   conversation that is given a bounded digest of the turns up to `turn_id`, which the
+///   journal says. A harness that cannot make the cut asked for refuses with `unsupported`,
+///   whose `data` names `support` ([`ChatForkSupport`]) and the `alternatives` that would work.
+/// - `turn_id` defaults to the newest turn. It must be a turn of the chat that has ended:
+///   `invalid_state` for an unknown turn and for one that is still running; `invalid_state` too
+///   while the chat has a turn in progress and when it has no turn to fork at yet.
+/// - The fork inherits the parent's agent, model, safety preset, account and folder. It is
+///   created like `chat.create`: the session is answered `idle` once its agent is ready; it
+///   follows `[control]` for an agent-originated caller. `bad_request` for a session that is
+///   not a chat, `unsupported` for an assistant, `not_found` for an unknown session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatFork {
+    pub session_id: SessionId,
+    /// The turn the new conversation ends with (inclusive); default: the newest turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    #[serde(default)]
+    pub mode: ForkMode,
+    /// The new session's name; default: the parent's, marked as a fork.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Where the fork works: `this_folder`, the parent's folder (the only place today).
+    #[serde(default, rename = "where")]
+    pub where_: ForkWhere,
+}
+
+/// Where a fork works (`chat.fork`'s `where`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkWhere {
+    /// The parent's folder: no file is touched.
+    #[default]
+    ThisFolder,
+}
+
+/// Result of `chat.fork`: the new session, and what was done.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatForked {
+    pub session: SessionInfo,
+    pub fork: ForkDone,
+}
+
+/// What a `chat.fork` did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkDone {
+    /// How the cut was made.
+    pub mode: ForkMode,
+    /// What the parent's harness can do.
+    pub support: ForkSupport,
+    /// The parent's turn the conversation ends with, and its place among the parent's turns
+    /// (counted from 1).
+    pub turn_id: TurnId,
+    pub ordinal: u32,
+    /// Events of the parent's journal copied into the new session.
+    pub copied_events: u64,
+}
+
+/// What a chat's harness can do for a fork (`ChatInfo.fork`, protocol 0.56).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatForkSupport {
+    pub support: ForkSupport,
+    /// Why the support is not `exact`, in a sentence (OMP: only at its newest turn; an adapter
+    /// that takes no fork point; an assistant). Absent for `exact`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Result of `chat.send`.
@@ -461,6 +538,11 @@ pub struct ChatInfo {
     /// assistant chats, and until the agent first started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety: Option<ChatSafety>,
+    /// Protocol 0.56 (capability `chat.fork`): what the chat's agent can do for `chat.fork`,
+    /// from what it advertised when it started. Absent until the agent first started (it keeps
+    /// the last answer once the agent stopped) and for chats that cannot be forked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<ChatForkSupport>,
 }
 
 /// What a chat's safety preset amounts to, **as the harness reported it** (protocol 0.51,

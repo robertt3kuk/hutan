@@ -1,10 +1,11 @@
 //! Hutan domain types: identifiers, session lifecycle, the agent event model, the agent
-//! observation tree, tasks with dependencies, checkpoints and the plan of a restore. No I/O
-//! lives here.
+//! observation tree, tasks with dependencies, checkpoints, the plan of a restore and where a
+//! forked chat came from. No I/O lives here.
 
 pub mod agent;
 pub mod checkpoint;
 pub mod contain;
+pub mod fork;
 pub mod ids;
 pub mod observation;
 pub mod question;
@@ -22,6 +23,7 @@ pub use checkpoint::{
     SkipReason, SkippedFile,
 };
 pub use contain::{Contain, ContainKind, Containment, summary_line};
+pub use fork::{ForkMode, ForkOrigin, ForkSupport};
 pub use ids::{
     ApprovalId, CheckpointId, Epoch, ItemId, ParseIdError, QuestionId, Seq, SessionId, TaskId,
     TerminalId, TurnId, WorkspaceId,
