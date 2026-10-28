@@ -295,7 +295,17 @@ impl ChatView {
                 n => format!("Forked · turn {n}"),
             }
         } else {
-            chip_text(title.as_deref(), origin.ordinal)
+            // The turn is what the chip is for: a long title gives way, not the turn.
+            let short = title.as_deref().map(|title| {
+                let mut chars = title.chars();
+                let head: String = chars.by_ref().take(24).collect();
+                if chars.next().is_some() {
+                    format!("{}…", head.trim_end())
+                } else {
+                    head
+                }
+            });
+            chip_text(short.as_deref(), origin.ordinal)
         };
         let tip = match &title {
             Some(title) => format!("Open the original, “{title}”"),
