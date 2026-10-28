@@ -982,6 +982,22 @@ impl ChatView {
                     .tooltip(tooltip(tip))
                     .child(probe(&self.regions, Region::Chat("mode")))
             }))
+            .children(
+                crate::sessions::folders::folders_of(info)
+                    .filter(|folders| folders.has_chip())
+                    .map(|folders| {
+                        crate::workbench::folders::chip(
+                            "chat-folders",
+                            &folders,
+                            session,
+                            Region::Folders("chip"),
+                            &self.regions,
+                            narrow,
+                            theme,
+                            tokens,
+                        )
+                    }),
+            )
             .children(context.map(|context| {
                 let tip = SharedString::from(context_tooltip(&context));
                 div()

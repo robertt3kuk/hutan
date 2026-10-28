@@ -261,6 +261,13 @@ pub enum Region {
     /// A control of the chat view, by name (`composer`, `send`, `interrupt`, `restart`,
     /// `header`, `banner`, `context`, `jump-latest`).
     Chat(&'static str),
+    /// A control of the session folders popover (SESSION-DIRS-B): `popover`, `add`, `restart`,
+    /// `problem`, `how`, and the chips that open it (`chip` in a chat header, `terminal-chip`
+    /// on a terminal agent).
+    Folders(&'static str),
+    /// Row `index` of the session folders popover (`row`: 0 is the working folder, the extra
+    /// folders follow) or the remove button of extra folder `index` (`remove`).
+    FolderRow(&'static str, usize),
     /// Entry `index` of a chat's transcript.
     ChatEntry(usize),
     /// A button of a permission request that waits for an answer: `request * 8 + option`, the
@@ -807,6 +814,8 @@ pub struct Workbench {
     pub(crate) modal_focus: FocusHandle,
     pub(crate) sheet_focus: FocusHandle,
     pub(crate) daemon_focus: FocusHandle,
+    /// The session folders popover (`folders.rs`).
+    pub(crate) folders: super::folders::FoldersControl,
     pub(crate) daemon: DaemonControl,
     /// The branch of the active project, for the `workspace` status item.
     pub(crate) status_branch: super::status_branch::StatusBranch,
@@ -1477,6 +1486,7 @@ impl Workbench {
             modal_focus,
             sheet_focus,
             daemon_focus,
+            folders: super::folders::FoldersControl::new(cx.focus_handle()),
             daemon: DaemonControl::new(options.own_daemon),
             status_branch: super::status_branch::StatusBranch::default(),
             mac,

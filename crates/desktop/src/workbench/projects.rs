@@ -674,8 +674,8 @@ impl Workbench {
         entries
     }
 
-    /// The "+" menu of the sidebar header: New Workspace…, Open Folder…, and Open Folder into
-    /// Workspace.
+    /// The "+" menu of the sidebar header: New Workspace…, Open Folder…, Open Folder into
+    /// Workspace, and the two that add a folder: to this workspace, to the focused session.
     pub(crate) fn plus_menu(
         &self,
         position: gpui::Point<gpui::Pixels>,
@@ -712,6 +712,8 @@ impl Workbench {
                 },
             ));
         }
+        entries.push(self.add_folder_to_workspace_entry(cx));
+        entries.push(self.add_folder_to_session_entry(cx));
         entries
     }
 
@@ -763,26 +765,73 @@ impl Workbench {
         self.open_menu(position, entries, window, cx);
     }
 
-    /// What "Add Folder to Active Workspace…" does for the container on screen.
+    /// The *Add Folder to This Workspace…* entry of the ＋ menu: greyed, with the reason, at
+    /// Home (one folder) or while no container is known.
+    fn add_folder_to_workspace_entry(&self, cx: &gpui::App) -> MenuEntry {
+        const LABEL: &str = "Add Folder to This Workspace…";
+        match self.active_workspace_info(cx) {
+            Some(info) if info.kind == WorkspaceKind::Home => {
+                Self::disabled_entry(format!("{LABEL} (Home has one folder)"))
+            }
+            Some(_) => Self::entry(LABEL, |this, window, cx| {
+                this.add_folder_to_active(window, cx);
+            }),
+            None => Self::disabled_entry(format!("{LABEL} (nothing is open)")),
+        }
+    }
+
+    /// What "Add Folder to This Workspace…" does for the container on screen: in a workspace
+    /// the folder joins it (`workspace.add_root`); in a project alone a workspace is made
+    /// around the project and the folder (`workspace.create`), and the window's layout moves
+    /// into it as it does when a project joins a workspace; Home has one folder.
     pub(crate) fn add_folder_to_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.active_workspace_info(cx) {
             Some(info) if info.kind == WorkspaceKind::Workspace => {
                 self.add_workspace_folder(info.id, window, cx);
             }
+            Some(info) if info.kind == WorkspaceKind::Project => {
+                self.add_folder_beside_project(info, window, cx);
+            }
             Some(info) => {
                 self.set_notice(
                     format!(
-                        "{} is {}; add folders to a workspace (+ → New Workspace…)",
-                        info.name,
-                        match info.kind {
-                            WorkspaceKind::Home => "Home, which has one folder (see daemon.toml)",
-                            _ => "a project",
-                        }
+                        "{} is Home, which has one folder (see daemon.toml)",
+                        info.name
                     ),
                     cx,
                 );
             }
             None => {}
         }
+    }
+
+    /// The folder panel, then a workspace named for the project and the folder that holds both.
+    /// The workspace is not switched to: the project's layout is handed to it when the daemon's
+    /// events arrive (`resolve_active_workspace`), so the window stays as it was.
+    fn add_folder_beside_project(
+        &mut self,
+        project: WorkspaceInfo,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (id, name) = (project.id, project.name);
+        self.choose_folder(
+            "Add",
+            move |this, path, window, cx| {
+                let folder = path
+                    .file_name()
+                    .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+                this.create_workspace(
+                    format!("{name} + {folder}"),
+                    vec![path],
+                    vec![id],
+                    false,
+                    window,
+                    cx,
+                );
+            },
+            window,
+            cx,
+        );
     }
 }

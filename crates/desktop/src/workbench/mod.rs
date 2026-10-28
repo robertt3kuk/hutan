@@ -27,6 +27,7 @@ pub mod files;
 mod files_feed;
 mod files_menu;
 mod first_run;
+pub(crate) mod folders;
 mod git_gutter;
 mod harness_install;
 pub(crate) mod harnesses;

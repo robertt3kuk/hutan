@@ -120,6 +120,7 @@ actions!(
         PinActiveWorkspace,
         RenameActiveWorkspace,
         AddFolderToWorkspace,
+        AddFolderToSession,
         CloseActiveWorkspace,
         NewWorkspace,
         RevealWorkspace,
@@ -423,6 +424,9 @@ data_actions! {
     CopySessionIdOf(String);
     /// Show the session's context menu (Open in split, Rename, Restart, Stop, Copy id).
     ShowSessionMenu(SessionMenuAt);
+    /// Open the folders popover of this session (the chip of a chat header or of a terminal
+    /// agent, the session menu's *Folders…*), hanging below the position.
+    ShowSessionFolders(SessionMenuAt);
     /// Leave the Agents overview (restoring the layout it replaced) and focus this session.
     OpenSessionFromOverview(String);
     /// Open the settings sheet at a namespace (`terminal`, `panels.sessions`, …).
@@ -768,6 +772,10 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Session: Close…", CloseSession),
         command("Session: Copy Session ID", CopySessionId),
         command("Session: Jump to Next Attention", JumpToNextAttention),
+        command(
+            "Session: Add Folder to the Focused Session…",
+            AddFolderToSession,
+        ),
         command("Session: Review Request", ReviewRequest),
         command("Layout: Split Right", SplitRight),
         command("Layout: Split Down", SplitDown),
@@ -1274,6 +1282,7 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<modal::Cancel>("escape", Some("Modal")),
         bind::<sheet::Dismiss>("escape", Some("SettingsSheet")),
         bind::<palette::Dismiss>("escape", Some("DaemonPopover")),
+        bind::<palette::Dismiss>("escape", Some("FoldersPopover")),
         // The quick terminal's panel (`quick_terminal.rs`): ⎋ hides it unless the program in the
         // terminal has the alternate screen; ⌘⇧↩ (a split zoom in the terminal) moves the tab
         // into the main window. ⌘T, ⌘W and the tab keys are the main window's own.
@@ -1805,6 +1814,7 @@ mod tests {
             "escape | modal::Cancel | Modal",
             "escape | settings_sheet::Dismiss | SettingsSheet",
             "escape | palette::Dismiss | DaemonPopover",
+            "escape | palette::Dismiss | FoldersPopover",
             "escape | quick_terminal::HideOnEscape | QuickTerminal",
             "shift-cmd-enter | quick_terminal::MoveToMain | QuickTerminal",
             "cmd-enter | chat::SendMessage | HutanChat",

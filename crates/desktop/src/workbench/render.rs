@@ -204,6 +204,7 @@ impl Render for Workbench {
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);
         let daemon_popover = self.render_daemon_popover(cx);
+        let folders_popover = self.render_folders_popover(window, cx);
         let recovery = self.render_recovery_summary(cx);
         let sheet = self.render_settings_sheet(cx);
         let setup = self.render_setup(window, cx);
@@ -219,6 +220,7 @@ impl Render for Workbench {
             setup.is_some(),
             checkpoints_list.is_some(),
             rewind_sheet.is_some(),
+            folders_popover.is_some(),
         ]
         .contains(&true);
         if overlay && !self.overlay_open {
@@ -310,6 +312,7 @@ impl Render for Workbench {
         .children(handles)
         .children(collapse_preview)
         .children(daemon_popover)
+        .children(folders_popover)
         .children(recovery)
         .children(palette)
         .children(picker)
@@ -1065,9 +1068,28 @@ impl Workbench {
         .on_action(
             cx.listener(|this, a: &actions::ShowSessionMenu, window, cx| {
                 if let Ok(id) = a.0.session.parse() {
-                    let entries = this.session_menu(id, cx);
+                    let mut entries = this.session_menu(id, cx);
+                    if let Some(folders) = this.folders_menu_entry(id, a.0.position, cx) {
+                        let after_rename = entries
+                            .iter()
+                            .position(|entry| entry.label.starts_with("Rename"))
+                            .map_or(entries.len(), |at| at + 1);
+                        entries.insert(after_rename, folders);
+                    }
                     this.open_menu(a.0.position, entries, window, cx);
                 }
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowSessionFolders, window, cx| {
+                if let Ok(id) = a.0.session.parse() {
+                    this.show_session_folders(id, a.0.position, window, cx);
+                }
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::AddFolderToSession, window, cx| {
+                this.add_folder_to_shown_session(window, cx);
             }),
         )
         .on_action(
@@ -1102,6 +1124,7 @@ impl Workbench {
             this.close_picker(window, cx);
             this.close_agent_picker(window, cx);
             this.close_daemon_popover(window, cx);
+            this.close_folders_popover(window, cx);
         }))
         .on_action(cx.listener(|this, _: &actions::Quit, window, cx| {
             this.request_quit(window, cx);

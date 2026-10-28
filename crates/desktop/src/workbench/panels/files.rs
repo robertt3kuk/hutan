@@ -699,22 +699,34 @@ impl FilesPanel {
 
     /// The roots the tree shows: the folder the root switcher picked, else with
     /// `panels.files.roots = workspace` every project of the workspace the window shows, else
-    /// the project the window works in.
+    /// the project the window works in — and, below them, the extra folders of the session
+    /// shown in the active tab (ADR 0023: a session folder is no project, so it is a root of
+    /// that session's view only, and leaves with it).
     fn wanted_roots(&mut self, cx: &mut Context<Self>) -> Option<RootSet> {
         let root = self.wanted_root(cx)?;
-        if self.pin.is_none()
+        let mut set = if self.pin.is_none()
             && self.env.settings.get::<FilesPanelSettings>().roots == FilesRoots::Workspace
             && let Some(roots) = self.env.sessions.read(cx).files_workspace_roots()
         {
-            return Some(RootSet {
+            RootSet {
                 roots,
                 grouped: true,
-            });
+            }
+        } else {
+            RootSet {
+                roots: vec![root],
+                grouped: false,
+            }
+        };
+        if self.pin.is_none() {
+            for dir in self.env.sessions.read(cx).shown_session_dirs() {
+                if !set.roots.contains(&dir) {
+                    set.roots.push(dir);
+                    set.grouped = true;
+                }
+            }
         }
-        Some(RootSet {
-            roots: vec![root],
-            grouped: false,
-        })
+        Some(set)
     }
 
     /// Follows the project the window works in: a new root starts a tree (or brings its kept

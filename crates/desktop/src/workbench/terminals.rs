@@ -1112,6 +1112,7 @@ impl Workbench {
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
+        let shown = self.shown_session();
         self.note_focused_chat(cx);
         self.sessions.update(cx, |store, cx| {
             if !self.window_active {
@@ -1119,6 +1120,7 @@ impl Workbench {
                 store.set_assistant_focused(None, cx);
             }
             store.set_focused(focused, cx);
+            store.set_shown_session(shown, cx);
             if let Some(session) = focused {
                 store.mark_looked_at(session, cx);
             }
@@ -1348,7 +1350,50 @@ impl Workbench {
         if let Some(chip) = self.render_terminal_containment(id, cx) {
             root = root.child(chip);
         }
+        if let Some(chip) = self.render_terminal_folders(id, cx) {
+            root = root.child(chip);
+        }
         root.into_any_element()
+    }
+
+    /// The folders chip of a terminal with a coding agent (or with folders), at the foot of the
+    /// pane on the right: the working folder, `+N`, and the popover that adds one (the agent
+    /// is typed `/add-dir <path>` for the user to confirm).
+    fn render_terminal_folders(
+        &mut self,
+        id: SessionId,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let folders = self
+            .sessions
+            .read(cx)
+            .session_folders(id)
+            .filter(|folders| folders.has_chip())?;
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        Some(
+            div()
+                .absolute()
+                .bottom(px(tokens.spacing * 2.0))
+                .right(px(tokens.spacing * 5.0))
+                .px(px(tokens.spacing))
+                .py(px(tokens.spacing / 2.0))
+                .rounded(px(tokens.radius))
+                .bg(theme.surface)
+                .border_1()
+                .border_color(theme.border)
+                .child(super::folders::chip(
+                    "terminal-folders",
+                    &folders,
+                    id,
+                    Region::Folders("terminal-chip"),
+                    &self.regions,
+                    false,
+                    &theme,
+                    &tokens,
+                ))
+                .into_any_element(),
+        )
     }
 
     /// What the boundary around this terminal holds back and what it leaves open, at the foot
