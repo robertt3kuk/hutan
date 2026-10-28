@@ -473,15 +473,11 @@ pub fn panel_header_controls(title: &str, controls: Vec<AnyElement>, cx: &App) -
         .justify_between()
         .h(px(32.0))
         .px(px(tokens.spacing * 3.0))
-        .child(
-            div()
-                .flex_none()
-                .whitespace_nowrap()
-                .text_size(px(12.0))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(style.theme.muted)
-                .child(SharedString::from(title.to_owned())),
-        )
+        .child(crate::workbench::ui::group_label(
+            title,
+            &style.theme,
+            &tokens,
+        ))
         .child(
             div()
                 .flex()
