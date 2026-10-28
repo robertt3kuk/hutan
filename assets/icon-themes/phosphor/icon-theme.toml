@@ -1,6 +1,7 @@
 schema_version = 1
 id = "phosphor"
-name = "Phosphor Regular"
+name = "Phosphor"
+description = "Phosphor Regular, with Bold for icons drawn at 14 px or less."
 authors = ["Phosphor Icons", "Hutan contributors"]
 license = "MIT"
 license_file = "LICENSE"

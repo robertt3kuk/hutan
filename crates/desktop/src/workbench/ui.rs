@@ -458,7 +458,7 @@ pub fn group_header(
             div()
                 .flex_none()
                 .text_size(px(tokens.group_font_size))
-                .text_color(theme.faint)
+                .text_color(theme.muted)
                 .child(count)
         }))
 }

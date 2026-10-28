@@ -499,7 +499,7 @@ impl FilesPanel {
             .child(
                 div()
                     .text_size(px(tokens.group_font_size))
-                    .text_color(theme.faint)
+                    .text_color(theme.muted)
                     .child(SharedString::from(count.to_string())),
             )
             .child(probe(

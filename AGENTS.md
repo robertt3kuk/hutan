@@ -11,7 +11,7 @@ macOS-first Rust agentic development environment: `hutand` (Tokio daemon, source
 ## Document map
 - `docs/vision.md` — target scope, principles, non-goals, performance budgets
 - `docs/perf.md` — how budgets are measured (`just bench`), latest numbers, misses and fixes
-- `docs/themes.md` — color and icon packs: where they live, `theme.toml` / `icon-theme.toml`, every token and semantic icon id, selection (`appearance.light_theme` / `dark_theme` / `icon_theme`, `terminal.theme`), the Settings pickers and their reversible preview, the local `hutan theme ls|validate|new|export`, overrides, hot reload, SVG security, limits, diagnostics
+- `docs/themes.md` — color and icon packs: where they live, `theme.toml` / `icon-theme.toml`, every token and semantic icon id, icon weights by size (`[small]`, Phosphor Bold at 14 px and below), selection (`appearance.light_theme` / `dark_theme` / `icon_theme`, `terminal.theme`), the Settings pickers and their reversible preview, the local `hutan theme ls|validate|new|export`, overrides, hot reload, SVG security, limits, diagnostics
 - `docs/architecture.md` — components, crates, data flows, state ownership
 - `docs/protocol.md` — IPC framing, handshake, sequencing, message catalog (incl. § Files: the daemon's file service, `hutan fs`)
 - `docs/roadmap.md` — milestones, slices (checkboxes), risk register

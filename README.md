@@ -206,6 +206,6 @@ at your option.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Hutan by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
-The desktop's default in-window icon pack is [Phosphor Regular](https://github.com/phosphor-icons/core) (MIT), pinned and vendored as only the SVGs Hutan uses in `assets/icon-themes/phosphor/` with its license and provenance. Users can override individual semantic icons with data-only packs (`docs/themes.md`).
+The desktop's default in-window icon pack is [Phosphor](https://github.com/phosphor-icons/core) (MIT; Regular, and Bold for icons of 14 px or less), pinned and vendored as only the SVGs Hutan uses in `assets/icon-themes/phosphor/` with its license and provenance. Users can override individual semantic icons with data-only packs (`docs/themes.md`).
 
 Hutan links no GPL code: Zed's GPL editor crates are not used, and cargo-deny checks the dependency licenses on every gate. The embedded editor (M11) is built on permissively licensed parts ([ADR 0012](docs/adr/0012-embedded-editor.md)).
