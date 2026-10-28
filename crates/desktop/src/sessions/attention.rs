@@ -1497,7 +1497,7 @@ mod tests {
         let base = info(id, SessionState::Running);
         let mut tracker = AttentionTracker::new();
         let names = ModelNames::default();
-        let mut step = |tracker: &mut AttentionTracker, state, message| {
+        let step = |tracker: &mut AttentionTracker, state, message| {
             let session = with_agent(base.clone(), state, message);
             tracker.observe(epoch, std::slice::from_ref(&session));
             session
@@ -1532,7 +1532,7 @@ mod tests {
         step(&mut tracker, Working, None);
         assert_eq!(tracker.unread(id), None);
         step(&mut tracker, Error, Some("x"));
-        tracker.observe(epoch, &[base.clone()]);
+        tracker.observe(epoch, std::slice::from_ref(&base));
         assert_eq!(
             tracker.unread(id),
             None,
