@@ -41,7 +41,8 @@ async fn new_then_ls_json_shows_a_running_session() {
     assert_eq!(
         header,
         [
-            "ID", "TERMINAL", "STATE", "RECOVERY", "PROJECT", "PLACE", "TITLE", "FOLDER", "AGE"
+            "ID", "TERMINAL", "STATE", "AGENT", "RECOVERY", "PROJECT", "PLACE", "TITLE", "FOLDER",
+            "AGE"
         ]
     );
     let row = lines.next().unwrap();
@@ -530,5 +531,34 @@ async fn new_contain_flags_go_together_and_a_boundary_that_cannot_be_applied_ref
     );
     assert!(t.sessions().await.is_empty());
     assert!(!work.path().join("started").exists());
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ls_shows_the_agent_of_a_terminal_and_what_it_does() {
+    let t = TestDaemon::start().await;
+    // What OMP writes while it works, then a question; the session itself is a shell.
+    let question = "UnVuIHRoZSB0ZXN0cz8="; // "Run the tests?"
+    let script = format!(
+        "printf '\\033]7501;state=working:app=omp\\033\\\\'; \
+         printf '\\033]7501;state=blocked:kind=permission:app=omp:msg={question}\\033\\\\'; \
+         exec sleep 600"
+    );
+    let id = t.new_session(&[], &["sh", "-c", &script]).await;
+    let table = timeout(WAIT, async {
+        loop {
+            let table = t.hutan(&["ls"]).await.ok().stdout;
+            if table.contains("omp blocked: Run the tests?") {
+                return table;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the agent column names the blocked agent and its question");
+    assert!(table.lines().next().unwrap().contains("AGENT"), "{table}");
+    let session = t.session(&id).await;
+    assert_eq!(session["terminal_agent"]["app"], "omp");
+    assert_eq!(session["terminal_agent"]["state"], "blocked");
     t.stop().await;
 }

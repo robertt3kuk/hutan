@@ -171,7 +171,8 @@ async fn sessions_of_a_repository_and_its_worktree_share_one_project_in_ls() {
     assert_eq!(
         header,
         [
-            "ID", "TERMINAL", "STATE", "RECOVERY", "PROJECT", "PLACE", "TITLE", "FOLDER", "AGE"
+            "ID", "TERMINAL", "STATE", "AGENT", "RECOVERY", "PROJECT", "PLACE", "TITLE", "FOLDER",
+            "AGE"
         ]
     );
     let row = |id: &str| {

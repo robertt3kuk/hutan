@@ -111,6 +111,38 @@ The terminal knows which agent runs in it from the integration state above (`Ses
 
 What was not verified: Hutan did not drive any of the three with a pasted path. The tests prove what reaches the terminal (`crates/terminal_view/tests/it/view.rs`, `crates/desktop/tests/it/term_image_paste_gpui.rs`: a real `cat` in a PTY echoes the path), not what an agent does with it. Another agent is a plain shell for this purpose: its path is quoted; `hutan agent report --agent <name>` with one of the three names above is how a script or hook makes a terminal count as that agent.
 
+## Agents that report in the terminal (AGENT-TERM-1, protocol 0.55)
+
+A coding agent in a terminal session needs no installed hook to be seen. The daemon recognises it from three things and publishes the result as `SessionInfo.terminal_agent` (`docs/protocol.md` § Terminal agents): `{app, state, kind?, message?, since_ms, title?, source}`.
+
+**OSC 7501, the program status** (what OMP 18.12 writes about itself; the bytes were read from its binary and checked against a real `omp` in a PTY — the recorded start is in the terminal corpus, `crates/terminal/tests/corpus/recorded/omp_startup.raw`):
+
+```
+ESC ] 7501 ; state=<working|blocked|done|error|idle> [:kind=<kind>] :app=<name> [:msg=<base64>] ESC \
+ESC ] 7501 ; state=clear ESC \
+```
+
+| `state` | meaning | what Hutan does |
+|---|---|---|
+| `idle` | the prompt is up | agent known, waiting |
+| `working` | a turn runs | working; the tab shows a spinner |
+| `blocked` | it waits for you; `kind` says for what, `msg` is the question | a **request**: *Requests* in the sidebar, the tab's bell, the question under the row, `agent_blocked` notification with the question as its text |
+| `error` | the turn failed; `msg` says why | **Failed**: the failure glyph on the tab, the message under the row |
+| `done` | the turn ended well | idle; a mark on the tab and the row until the session is looked at; a task running in the session finishes |
+| `clear` | the agent exited | the agent is forgotten |
+
+The parser is bounded (the whole OSC string at most 8 KiB, `app` 64 and `kind` 32 characters of `A-Za-z0-9._-`, a message 2048 decoded characters, control characters removed) and tolerant (unknown keys and fields in any order; a bad field loses only itself, an unknown `state` loses the report). The message is redacted like every agent text (`hutan_index::redact`) and cut to 512 characters by the daemon.
+
+**The program in the foreground.** Shortly after a terminal starts and after every command the shell starts (OSC 133 `C`, three looks: 0.4 s, 1.6 s, 4 s) the daemon looks at the terminal's process tree for a known harness — `omp`, `claude`, `codex`, `gemini`, `opencode`, `aider` — by executable or by the script a runtime runs (`node …/claude-code/cli.js`, `npx claude`, `env X=1 omp`). So the icon shows before the first report, and for harnesses that report nothing in the terminal. Such an agent has `state: unknown` — Hutan does not invent a state — except that a braille spinner at the start of its terminal title reads as `working` and the first plain title after one as `idle` (Claude Code's and Codex's titles behave that way).
+
+**The title.** Agents put their session's name in the terminal title behind their own mark and a spinner (OMP: `π ⠋ Fix the build`). The daemon strips them (`π`, braille patterns, `✳`-like asterisks, `>`/`-` separators); what is left is `terminal_agent.title`. A title that only names the program (`Claude Code`) or a directory gives none.
+
+**Naming.** A session nobody named is called by its agent's title (`docs/design.md` § Session names); the raw title never is, since its spinner changes every frame. A name the user chose stays, and the sidebar shows the agent's title under it. When the agent leaves (`clear`, the shell prompts again, the process ends) the title it set goes with it.
+
+**`hutan ls`** has an `AGENT` column: `omp working`, `omp blocked: Run the tests?`, `claude` (known by its program only), `-` for none; `hutan ls --json` has the whole `terminal_agent`.
+
+**Hooks and OSC together.** OSC reports are folded into the session's agent tree as the main agent of source `osc7501`, so the summary older clients read (`SessionInfo.agent`), tasks and notification intents follow without a second mechanism: `working`/`blocked` set the node's state, `idle` and `done` leave it idle, `error` finishes it `failed` (the next `working` revives it). When an installed hook already reports the main agent (another source, not finished) the tree is left to it and only `terminal_agent` changes — nothing is counted twice — and the desktop shows the hook's state.
+
 ## Observation tree
 
 Every session has a tree of agents: the main agent and the subagents it spawned, as the daemon observes them (`hutan agents [--json] [--watch]`, protocol `agent.tree`, `docs/protocol.md` § Agent observation tree). Reporters name a node with `hutan agent report --node ID [--parent ID --kind sub --name N --agent-type T --model M --activity A --usage-json '{"kind":"omp.tokens","input":1200}' --outcome completed|failed|interrupted|disconnected]`, and end one with `hutan agent release --node ID [--outcome O]`; without `--node` a report is about the main agent, as before. Sequence numbers count per session, source and node; reports are ordered by `seq`, not arrival. A reporter that runs as a process of the session adds `--pid PID` (protocol 0.18): `hutan ps` marks that process and `hutan agent interrupt SESSION NODE` can signal it (`docs/resources.md`).

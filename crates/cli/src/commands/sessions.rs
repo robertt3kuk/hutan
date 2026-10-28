@@ -9,8 +9,8 @@ use hutan_client::Client;
 use hutan_core::{SessionId, SessionState, TerminalId};
 use hutan_protocol::messages::{
     AgentState, DaemonStatusInfo, Empty, Request, SessionCreate, SessionInfo, SessionList,
-    SessionListFilter, SessionRef, SessionRename, SessionResult, SessionSpec, TerminalSize,
-    TerminalSpec,
+    SessionListFilter, SessionRef, SessionRename, SessionResult, SessionSpec, TerminalAgentState,
+    TerminalSize, TerminalSpec,
 };
 use hutan_protocol::worktree::PlacementKind;
 
@@ -543,6 +543,53 @@ fn listed_state_text(session: &SessionInfo) -> String {
     }
 }
 
+/// The agent column of `hutan ls`: the coding agent in a live terminal and what it does,
+/// `omp working`, `claude` (known by its program, no state said), `omp blocked: Run the tests?`;
+/// from OSC 7501 or the program (`terminal_agent`), else from an installed hook's report;
+/// `-` when no agent is known.
+fn agent_text(session: &SessionInfo) -> String {
+    if !session.state.is_live() {
+        return "-".to_owned();
+    }
+    if let Some(agent) = &session.terminal_agent {
+        let state = match agent.state {
+            TerminalAgentState::Unknown => None,
+            TerminalAgentState::Idle => Some("idle"),
+            TerminalAgentState::Working => Some("working"),
+            TerminalAgentState::Blocked => Some("blocked"),
+            TerminalAgentState::Done => Some("done"),
+            TerminalAgentState::Error => Some("error"),
+        };
+        let mut text = agent.app.clone();
+        if let Some(state) = state {
+            text.push(' ');
+            text.push_str(state);
+        }
+        if let Some(message) = &agent.message {
+            let one_line = message.split_whitespace().collect::<Vec<_>>().join(" ");
+            let short: String = one_line.chars().take(40).collect();
+            text.push_str(": ");
+            text.push_str(&short);
+            if short.len() < one_line.len() {
+                text.push('…');
+            }
+        }
+        return text;
+    }
+    match &session.agent {
+        Some(report) => format!(
+            "{} {}",
+            report.agent,
+            match report.state {
+                AgentState::Idle => "idle",
+                AgentState::Working => "working",
+                AgentState::Blocked => "blocked",
+            }
+        ),
+        None => "-".to_owned(),
+    }
+}
+
 /// The recovery column of `hutan ls`: what the last daemon restart did to the session
 /// (`respawned`, `resumed`, `interrupted`, `not restarted`, `ended before`); `-` when it did
 /// nothing worth saying or the user dismissed it.
@@ -592,13 +639,14 @@ fn session_table(
     if sessions.is_empty() {
         return "no sessions".to_owned();
     }
-    let rows: Vec<[String; 9]> = sessions
+    let rows: Vec<[String; 10]> = sessions
         .iter()
         .map(|s| {
             [
                 s.id.to_string(),
                 terminal_text(s),
                 listed_state_text(s),
+                agent_text(s),
                 recovery_text(s),
                 projects
                     .get(&s.workspace_id)
@@ -612,10 +660,11 @@ fn session_table(
         })
         .collect();
     let header = [
-        "ID", "TERMINAL", "STATE", "RECOVERY", "PROJECT", "PLACE", "TITLE", "FOLDER", "AGE",
+        "ID", "TERMINAL", "STATE", "AGENT", "RECOVERY", "PROJECT", "PLACE", "TITLE", "FOLDER",
+        "AGE",
     ]
     .map(str::to_owned);
-    let mut widths = [0; 9];
+    let mut widths = [0; 10];
     for row in std::iter::once(&header).chain(&rows) {
         for (width, cell) in widths.iter_mut().zip(row) {
             *width = (*width).max(cell.chars().count());
@@ -627,10 +676,10 @@ fn session_table(
             table.push('\n');
         }
         let mut line = String::new();
-        for (cell, width) in row.iter().zip(widths).take(8) {
+        for (cell, width) in row.iter().zip(widths).take(9) {
             line.push_str(&format!("{cell:<width$}  "));
         }
-        line.push_str(&row[8]);
+        line.push_str(&row[9]);
         table.push_str(&line);
     }
     table
