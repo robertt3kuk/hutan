@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Folders: open another folder, add it to the session</title>
+<desc>Mock: the session's folders chip and popover, the workspace menu that opens another folder into the workspace, and how each harness applies an extra folder. Invented data.</desc>
+<rect x="0.00" y="0.00" width="1200.00" height="820.00" fill="#141413" />
+<text x="24.00" y="32.00" font-size="15" fill="#F5F4EF" font-weight="600" text-anchor="start">More than one folder: workspace roots vs. session folders</text>
+<rect x="24.00" y="52.00" width="640.00" height="560.00" rx="10" fill="#262624" />
+<clipPath id="c1"><rect x="24" y="52" width="640" height="560" rx="10"/></clipPath><g clip-path="url(#c1)">
+<rect x="24.00" y="52.00" width="640.00" height="34.00" fill="#1F1E1D" />
+<rect x="30.00" y="56.00" width="222.25" height="30.00" fill="#262624" />
+<g transform="translate(40.00,64.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<text x="60.00" y="73.50" font-size="12.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Wire the docs build to the API</text>
+<g transform="translate(230.25,64.00) scale(0.04297)" fill="#AEACA4"><path d="M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"/></g>
+<rect x="24.00" y="86.00" width="640.00" height="30.00" fill="#262624" />
+<line x1="24.00" y1="116.00" x2="664.00" y2="116.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<circle cx="41.00" cy="101.00" r="3.2" fill="#6BBF85"/>
+<text x="52.00" y="105.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">idle</text>
+<text x="82.00" y="105.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">claude · sonnet-5.5 · ask first</text>
+<g transform="translate(252.24,94.00) scale(0.05078)" fill="#AEACA4"><path d="M216,68H132L105.33,48a20.12,20.12,0,0,0-12-4H40A20,20,0,0,0,20,64V200a20,20,0,0,0,20,20H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68Zm-4,128H44V68H92l28.8,21.6A12,12,0,0,0,128,92h84Z"/></g>
+<text x="270.24" y="105.50" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">acme-web</text>
+<rect x="331.21" y="93.00" width="23.65" height="16.00" rx="8" fill="#3E2C23" />
+<text x="337.21" y="104.60" font-size="10" fill="#EA7A43" font-weight="600" text-anchor="start">+2</text>
+<text x="624.00" y="105.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">22% · 44k / 200k</text>
+<rect x="630.00" y="99.00" width="20.00" height="3.00" fill="none" />
+<g transform="translate(638.00,94.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<rect x="246.24" y="90.00" width="120.00" height="22.00" rx="6" fill="none" stroke="#EA7A43" stroke-width="1.2" />
+<circle cx="382.24" cy="101.00" r="9" fill="#EA7A43"/>
+<text x="382.24" y="104.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">1</text>
+<rect x="241.62" y="164.00" width="382.38" height="34.00" rx="10" fill="#30302E" />
+<text x="255.62" y="185.50" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Link acme-docs/README.md to the new /auth/refresh route</text>
+<text x="64.00" y="230.00" font-size="13.5" fill="#F5F4EF" font-weight="400" text-anchor="start">I can read both folders. Updating the route table in acme-docs and the</text>
+<text x="64.00" y="250.00" font-size="13.5" fill="#F5F4EF" font-weight="400" text-anchor="start">handler comments in acme-web together.</text>
+<rect x="64.00" y="272.00" width="560.00" height="30.00" rx="10" fill="#30302E" />
+<g transform="translate(76.00,280.00) scale(0.05469)" fill="#AEACA4"><path d="M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Zm112-80a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,132Zm0,40a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,172Z"/></g>
+<text x="98.00" y="291.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">edit ../acme-docs/api/routes.md</text>
+<text x="612.00" y="291.50" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">done · 0.5 s</text>
+<rect x="224.24" y="128.00" width="410.00" height="432.00" rx="12" fill="#000000" opacity="0.35" />
+<rect x="222.24" y="122.00" width="410.00" height="432.00" rx="12" fill="#30302E" />
+<path d="M276.2399999999999 122 L283.2399999999999 114 L290.2399999999999 122 Z" fill="#30302E"/>
+<text x="240.24" y="150.00" font-size="13.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Folders in this session</text>
+<text x="240.24" y="167.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">The agent can read and edit these. Relative paths resolve in the first.</text>
+<circle cx="612.24" cy="146.00" r="9" fill="#EA7A43"/>
+<text x="612.24" y="149.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">2</text>
+<rect x="232.24" y="182.00" width="390.00" height="38.00" rx="8" fill="#2E2D2B" />
+<g transform="translate(242.24,193.00) scale(0.05859)" fill="#AEACA4"><path d="M208,76H180V56A52,52,0,0,0,76,56V76H48A20,20,0,0,0,28,96V208a20,20,0,0,0,20,20H208a20,20,0,0,0,20-20V96A20,20,0,0,0,208,76ZM100,56a28,28,0,0,1,56,0V76H100ZM204,204H52V100H204Z"/></g>
+<text x="266.24" y="198.00" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">acme-web</text>
+<text x="266.24" y="212.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">~/proj/acme-web · main</text>
+<rect x="518.54" y="192.00" width="93.70" height="17.00" rx="8" fill="#3A3936" />
+<text x="525.54" y="204.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start">working directory</text>
+<rect x="232.24" y="224.00" width="390.00" height="38.00" rx="8" fill="none" />
+<g transform="translate(242.24,235.00) scale(0.05859)" fill="#AEACA4"><path d="M216,68H132L105.33,48a20.12,20.12,0,0,0-12-4H40A20,20,0,0,0,20,64V200a20,20,0,0,0,20,20H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68Zm-4,128H44V68H92l28.8,21.6A12,12,0,0,0,128,92h84Z"/></g>
+<text x="266.24" y="240.00" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">acme-docs</text>
+<text x="266.24" y="254.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">~/proj/acme-docs · main</text>
+<g transform="translate(598.24,236.00) scale(0.05078)" fill="#AEACA4"><path d="M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"/></g>
+<rect x="232.24" y="266.00" width="390.00" height="38.00" rx="8" fill="none" />
+<g transform="translate(242.24,277.00) scale(0.05859)" fill="#AEACA4"><path d="M216,68H132L105.33,48a20.12,20.12,0,0,0-12-4H40A20,20,0,0,0,20,64V200a20,20,0,0,0,20,20H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68Zm-4,128H44V68H92l28.8,21.6A12,12,0,0,0,128,92h84Z"/></g>
+<text x="266.24" y="282.00" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">shared-ui</text>
+<text x="266.24" y="296.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">~/proj/shared-ui · feature/button (worktree)</text>
+<g transform="translate(598.24,278.00) scale(0.05078)" fill="#AEACA4"><path d="M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"/></g>
+<line x1="232.24" y1="314.00" x2="622.24" y2="314.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<text x="240.24" y="330.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">ADD</text>
+<text x="240.24" y="354.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">In this workspace</text>
+<g transform="translate(242.24,366.00) scale(0.05469)" fill="#AEACA4"><path d="M236,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H96a27.8,27.8,0,0,0-4,.29V97.94a36,36,0,1,0-24,0v60.12a36,36,0,1,0,24,0V144a4,4,0,0,1,4-4h88a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,236,64ZM80,52A12,12,0,1,1,68,64,12,12,0,0,1,80,52Zm0,152a12,12,0,1,1,12-12A12,12,0,0,1,80,204ZM200,76a12,12,0,1,1,12-12A12,12,0,0,1,200,76Z"/></g>
+<text x="266.24" y="374.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">acme-api</text>
+<text x="266.24" y="387.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">project · main</text>
+<g transform="translate(598.24,369.00) scale(0.05078)" fill="#AEACA4"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></g>
+<g transform="translate(242.24,400.00) scale(0.05469)" fill="#AEACA4"><path d="M160,116h48a20,20,0,0,0,20-20V48a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20V60H128a28,28,0,0,0-28,28v28H76v-4A20,20,0,0,0,56,92H24A20,20,0,0,0,4,112v32a20,20,0,0,0,20,20H56a20,20,0,0,0,20-20v-4h24v28a28,28,0,0,0,28,28h12v12a20,20,0,0,0,20,20h48a20,20,0,0,0,20-20V160a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20v12H128a4,4,0,0,1-4-4V88a4,4,0,0,1,4-4h12V96A20,20,0,0,0,160,116ZM52,140H28V116H52Zm112,24h40v40H164Zm0-112h40V92H164Z"/></g>
+<text x="266.24" y="408.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">acme-api · feature/v2</text>
+<text x="266.24" y="421.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">worktree of acme-api</text>
+<g transform="translate(598.24,403.00) scale(0.05078)" fill="#AEACA4"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></g>
+<text x="240.24" y="440.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Elsewhere</text>
+<g transform="translate(242.24,452.00) scale(0.05469)" fill="#AEACA4"><path d="M248.23,112.31A20,20,0,0,0,232,104H220V88a20,20,0,0,0-20-20H132L105.34,48a20.12,20.12,0,0,0-12-4H40A20,20,0,0,0,20,64V208a12,12,0,0,0,12,12H211.1a12,12,0,0,0,11.33-8l28.49-81.47.06-.17A20,20,0,0,0,248.23,112.31ZM92,68l28.8,21.6A12,12,0,0,0,128,92h68v12H69.77a20,20,0,0,0-18.94,13.58L44,137.15V68ZM202.59,196H48.89l23.72-68H226.37Z"/></g>
+<text x="266.24" y="464.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Choose folder…</text>
+<text x="612.24" y="464.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end" font-family="'SF Mono', Menlo, Monaco, monospace">⌘O</text>
+<line x1="232.24" y1="482.00" x2="622.24" y2="482.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<g transform="translate(240.24,497.00) scale(0.05078)" fill="#6BBF85"><path d="M176.49,95.51a12,12,0,0,1,0,17l-56,56a12,12,0,0,1-17,0l-24-24a12,12,0,1,1,17-17L112,143l47.51-47.52A12,12,0,0,1,176.49,95.51ZM236,128A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128Z"/></g>
+<text x="260.24" y="508.00" font-size="10.5" fill="#6BBF85" font-weight="400" text-anchor="start">Claude Code: applied through ACP additionalDirectories</text>
+<text x="260.24" y="522.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">Added folders are readable without prompts; edits follow the permission mode.</text>
+</g>
+<text x="24.00" y="640.00" font-size="11.5" fill="#AEACA4" font-weight="500" text-anchor="start">The popover's last line says how the harness applies it:</text>
+<g transform="translate(24.00,658.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<text x="46.00" y="669.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Claude Code chat</text>
+<circle cx="180.00" cy="665.50" r="3" fill="#6BBF85"/>
+<text x="190.00" y="669.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">applied now: ACP additionalDirectories on session/new, load, resume, fork (adapter 0.98 advertises it)</text>
+<g transform="translate(24.00,682.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<text x="46.00" y="693.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">OMP chat</text>
+<circle cx="180.00" cy="689.50" r="3" fill="#6BBF85"/>
+<text x="190.00" y="693.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">applied now: /add-dir &lt;path&gt; as a local command (no model call, not in the transcript)</text>
+<g transform="translate(24.00,706.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<text x="46.00" y="717.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Codex chat</text>
+<circle cx="180.00" cy="713.50" r="3" fill="#E2AE45"/>
+<text x="190.00" y="717.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">applies to the next turn: sandboxPolicy workspaceWrite.writableRoots on turn/start</text>
+<g transform="translate(24.00,730.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.6 L7.4 8 L3 11.4"/><path d="M8.8 12 H13"/></g>
+<text x="46.00" y="741.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Terminal agent</text>
+<circle cx="180.00" cy="737.50" r="3" fill="#E2AE45"/>
+<text x="190.00" y="741.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">OMP and Claude Code: Hutan pastes `/add-dir &lt;path&gt;` at the prompt; Codex: restart with --add-dir</text>
+<g transform="translate(24.00,754.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.6 L7.4 8 L3 11.4"/><path d="M8.8 12 H13"/></g>
+<text x="46.00" y="765.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Contain (OMP, shells)</text>
+<circle cx="180.00" cy="761.50" r="3" fill="#E2AE45"/>
+<text x="190.00" y="765.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">needs a restart: the Seatbelt profile is fixed at spawn, extra_write gains the folder</text>
+<text x="24.00" y="794.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">green: takes effect immediately · amber: next turn, a paste, or a restart (the popover names which)</text>
+<text x="700.00" y="56.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Open another folder in the workspace</text>
+<rect x="700.00" y="68.00" width="476.00" height="232.00" rx="10" fill="#1F1E1D" />
+<text x="716.00" y="92.50" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">WORKSPACES</text>
+<g transform="translate(1132.00,81.00) scale(0.05469)" fill="#EA7A43"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></g>
+<g transform="translate(1150.00,81.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<g transform="translate(712.00,112.00) scale(0.04688)" fill="#AEACA4"><path d="M216.49,104.49l-80,80a12,12,0,0,1-17,0l-80-80a12,12,0,0,1,17-17L128,159l71.51-71.52a12,12,0,0,1,17,17Z"/></g>
+<g transform="translate(730.00,110.00) scale(0.06250)" fill="#AEACA4"><path d="M230.91,172A8,8,0,0,1,228,182.91l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,36,169.09l92,53.65,92-53.65A8,8,0,0,1,230.91,172ZM220,121.09l-92,53.65L36,121.09A8,8,0,0,0,28,134.91l96,56a8,8,0,0,0,8.06,0l96-56A8,8,0,1,0,220,121.09ZM24,80a8,8,0,0,1,4-6.91l96-56a8,8,0,0,1,8.06,0l96,56a8,8,0,0,1,0,13.82l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,24,80Zm23.88,0L128,126.74,208.12,80,128,33.26Z"/></g>
+<text x="754.00" y="122.20" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">acme</text>
+<text x="1160.00" y="122.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">3 folders</text>
+<g transform="translate(746.00,138.00) scale(0.05859)" fill="#AEACA4"><path d="M232,64a32,32,0,1,0-40,31v17a8,8,0,0,1-8,8H96a23.84,23.84,0,0,0-8,1.38V95a32,32,0,1,0-16,0v66a32,32,0,1,0,16,0V144a8,8,0,0,1,8-8h88a24,24,0,0,0,24-24V95A32.06,32.06,0,0,0,232,64ZM64,64A16,16,0,1,1,80,80,16,16,0,0,1,64,64ZM96,192a16,16,0,1,1-16-16A16,16,0,0,1,96,192ZM200,80a16,16,0,1,1,16-16A16,16,0,0,1,200,80Z"/></g>
+<text x="770.00" y="150.20" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">acme-web</text>
+<text x="1160.00" y="150.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end" font-family="'SF Mono', Menlo, Monaco, monospace">main</text>
+<g transform="translate(746.00,166.00) scale(0.05859)" fill="#AEACA4"><path d="M232,64a32,32,0,1,0-40,31v17a8,8,0,0,1-8,8H96a23.84,23.84,0,0,0-8,1.38V95a32,32,0,1,0-16,0v66a32,32,0,1,0,16,0V144a8,8,0,0,1,8-8h88a24,24,0,0,0,24-24V95A32.06,32.06,0,0,0,232,64ZM64,64A16,16,0,1,1,80,80,16,16,0,0,1,64,64ZM96,192a16,16,0,1,1-16-16A16,16,0,0,1,96,192ZM200,80a16,16,0,1,1,16-16A16,16,0,0,1,200,80Z"/></g>
+<text x="770.00" y="178.20" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">acme-docs</text>
+<text x="1160.00" y="178.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end" font-family="'SF Mono', Menlo, Monaco, monospace">main</text>
+<g transform="translate(746.00,194.00) scale(0.05859)" fill="#AEACA4"><path d="M232,64a32,32,0,1,0-40,31v17a8,8,0,0,1-8,8H96a23.84,23.84,0,0,0-8,1.38V95a32,32,0,1,0-16,0v66a32,32,0,1,0,16,0V144a8,8,0,0,1,8-8h88a24,24,0,0,0,24-24V95A32.06,32.06,0,0,0,232,64ZM64,64A16,16,0,1,1,80,80,16,16,0,0,1,64,64ZM96,192a16,16,0,1,1-16-16A16,16,0,0,1,96,192ZM200,80a16,16,0,1,1,16-16A16,16,0,0,1,200,80Z"/></g>
+<text x="770.00" y="206.20" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">shared-ui</text>
+<text x="1160.00" y="206.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end" font-family="'SF Mono', Menlo, Monaco, monospace">main</text>
+<rect x="852.00" y="88.00" width="310.00" height="196.00" rx="10" fill="#000000" opacity="0.35" />
+<rect x="850.00" y="82.00" width="310.00" height="196.00" rx="10" fill="#30302E" />
+<text x="866.00" y="108.50" font-size="12.5" fill="#F5F4EF" font-weight="500" text-anchor="start">New Workspace…</text>
+<text x="866.00" y="136.50" font-size="12.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Open Folder…</text>
+<text x="1144.00" y="136.50" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">⌘O</text>
+<text x="866.00" y="164.50" font-size="12.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Open Folder into Workspace ▸</text>
+<rect x="856.00" y="174.00" width="298.00" height="28.00" rx="6" fill="#3A3936" />
+<text x="866.00" y="192.50" font-size="12.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Add Folder to This Workspace…</text>
+<rect x="1112.00" y="180.00" width="31.17" height="16.00" rx="8" fill="#3E2C23" />
+<text x="1118.00" y="191.42" font-size="9.5" fill="#EA7A43" font-weight="600" text-anchor="start">new</text>
+<line x1="858.00" y1="206.00" x2="1152.00" y2="206.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<text x="866.00" y="230.50" font-size="12.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Add Folder to the Focused Session…</text>
+<rect x="1112.00" y="218.00" width="31.17" height="16.00" rx="8" fill="#3E2C23" />
+<text x="1118.00" y="229.42" font-size="9.5" fill="#EA7A43" font-weight="600" text-anchor="start">new</text>
+<circle cx="1172.00" cy="180.00" r="9" fill="#EA7A43"/>
+<text x="1172.00" y="183.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">A</text>
+<circle cx="709.00" cy="318.00" r="9" fill="#EA7A43"/>
+<text x="709.00" y="321.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">A</text>
+<text x="726.00" y="322.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Add Folder to This Workspace… is always there. In a workspace it is</text>
+<text x="726.00" y="336.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">`workspace.add_root`; in a lone project it first makes a workspace around the project</text>
+<text x="726.00" y="350.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">(`workspace.create {name, project_ids}`) and moves the layout with it, as joining</text>
+<text x="726.00" y="364.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">already does. No protocol change.</text>
+<circle cx="709.00" cy="382.00" r="9" fill="#EA7A43"/>
+<text x="709.00" y="385.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">B</text>
+<text x="726.00" y="386.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">A session folder is not a project: adding one never adds a sidebar row. The daemon's file</text>
+<text x="726.00" y="400.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">service already accepts every folder of a session (docs/protocol.md § Paths and</text>
+<text x="726.00" y="414.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">confinement); the extra folders join that set while the session lives.</text>
+<text x="726.00" y="436.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Adding a folder widens what an agent can touch, so it is user-only like</text>
+<text x="726.00" y="450.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">`checkpoint.restore`: an agent-originated connection gets `forbidden` (ADR 0016: a</text>
+<text x="726.00" y="464.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">request never raises its caller's privileges).</text>
+<text x="726.00" y="486.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Prior art: Zed multi-root projects (agents read and write across all folders), Cursor</text>
+<text x="726.00" y="500.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">multi-root workspaces in the Agents Window, Claude Desktop “+ → Add folder” while a</text>
+<text x="726.00" y="514.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">session runs, Conductor `/add-dir` linking other workspaces.</text>
+</svg>

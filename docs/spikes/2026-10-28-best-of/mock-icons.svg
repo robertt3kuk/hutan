@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="640" viewBox="0 0 980 640" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Icons: harness monograms and state marks</title>
+<desc>Mock: our own monochrome harness monograms (replaceable by an icon pack), the 8 pt state badge in six states at real size and at 6x, and the weight-by-size rule. Invented data.</desc>
+<rect x="0.00" y="0.00" width="980.00" height="640.00" fill="#141413" />
+<text x="24.00" y="34.00" font-size="15" fill="#F5F4EF" font-weight="600" text-anchor="start">Harness monograms and state marks (own artwork; vendor logos are trademarks and are not used)</text>
+<rect x="12.00" y="52.00" width="956.00" height="150.00" rx="10" fill="#1F1E1D" />
+<text x="28.00" y="78.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">HARNESS GLYPH</text>
+<rect x="32.00" y="92.00" width="168.00" height="100.00" rx="8" fill="#262624" />
+<g transform="translate(48.00,106.00) scale(3.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<g transform="translate(116.00,124.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<g transform="translate(140.00,124.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<g transform="translate(164.00,124.00) scale(0.7500)" fill="none" stroke="#6F6D66" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<text x="40.00" y="176.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">OMP</text>
+<text x="40.00" y="189.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">π: the harness's own prompt glyph</text>
+<rect x="216.00" y="92.00" width="168.00" height="100.00" rx="8" fill="#262624" />
+<g transform="translate(232.00,106.00) scale(3.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<g transform="translate(300.00,124.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<g transform="translate(324.00,124.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<g transform="translate(348.00,124.00) scale(0.7500)" fill="none" stroke="#6F6D66" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<text x="224.00" y="176.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Claude Code</text>
+<text x="224.00" y="189.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">six-spoke asterisk</text>
+<rect x="400.00" y="92.00" width="168.00" height="100.00" rx="8" fill="#262624" />
+<g transform="translate(416.00,106.00) scale(3.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<g transform="translate(484.00,124.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<g transform="translate(508.00,124.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<g transform="translate(532.00,124.00) scale(0.7500)" fill="none" stroke="#6F6D66" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<text x="408.00" y="176.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Codex</text>
+<text x="408.00" y="189.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">hexagon + prompt</text>
+<rect x="584.00" y="92.00" width="168.00" height="100.00" rx="8" fill="#262624" />
+<g transform="translate(600.00,106.00) scale(3.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.4 8 a5.6 5.4 0 1 1 2.2 4.3 L2.4 13.2 Z"/></g>
+<g transform="translate(668.00,124.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.4 8 a5.6 5.4 0 1 1 2.2 4.3 L2.4 13.2 Z"/></g>
+<g transform="translate(692.00,124.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.4 8 a5.6 5.4 0 1 1 2.2 4.3 L2.4 13.2 Z"/></g>
+<g transform="translate(716.00,124.00) scale(0.7500)" fill="none" stroke="#6F6D66" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.4 8 a5.6 5.4 0 1 1 2.2 4.3 L2.4 13.2 Z"/></g>
+<text x="592.00" y="176.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Direct chat</text>
+<text x="592.00" y="189.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">speech bubble</text>
+<rect x="768.00" y="92.00" width="168.00" height="100.00" rx="8" fill="#262624" />
+<g transform="translate(784.00,106.00) scale(3.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.6 L7.4 8 L3 11.4"/><path d="M8.8 12 H13"/></g>
+<g transform="translate(852.00,124.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.6 L7.4 8 L3 11.4"/><path d="M8.8 12 H13"/></g>
+<g transform="translate(876.00,124.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.6 L7.4 8 L3 11.4"/><path d="M8.8 12 H13"/></g>
+<g transform="translate(900.00,124.00) scale(0.7500)" fill="none" stroke="#6F6D66" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.6 L7.4 8 L3 11.4"/><path d="M8.8 12 H13"/></g>
+<text x="776.00" y="176.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Shell</text>
+<text x="776.00" y="189.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">prompt, no ring</text>
+<rect x="12.00" y="214.00" width="956.00" height="214.00" rx="10" fill="#1F1E1D" />
+<text x="28.00" y="240.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">STATE BADGE — 8 PT, TOP-RIGHT OF THE GLYPH, SHAPE + COLOUR (NEVER COLOUR ALONE)</text>
+<g transform="translate(50,268) scale(5)">
+<rect x="-1.00" y="-1.00" width="16.00" height="16.00" fill="none" />
+<g transform="translate(0.00,0.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<circle cx="13.00" cy="2.00" r="5.2" fill="#1F1E1D"/>
+<path d="M9.8 2.0 A3.2 3.2 0 1 1 13.0 5.2" fill="none" stroke="#EA7A43" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<rect x="36.00" y="352.00" width="132.00" height="28.00" rx="8" fill="#262624" />
+<g transform="translate(46.00,359.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="59.00" cy="361.00" r="5.2" fill="#262624"/>
+<path d="M55.8 361.0 A3.2 3.2 0 1 1 59.0 364.2" fill="none" stroke="#EA7A43" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="68.00" y="370.50" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix crash</text>
+<text x="44.00" y="398.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Working</text>
+<text x="44.00" y="412.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">accent arc, spins; Reduce</text>
+<text x="44.00" y="423.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">Motion: static arc</text>
+<g transform="translate(200,268) scale(5)">
+<rect x="-1.00" y="-1.00" width="16.00" height="16.00" fill="none" />
+<g transform="translate(0.00,0.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<circle cx="13.00" cy="2.00" r="5.2" fill="#1F1E1D"/>
+<circle cx="13.00" cy="2.00" r="3.5" fill="#E2AE45"/>
+<line x1="13.00" y1="0.40" x2="13.00" y2="2.40" stroke="#2B2417" stroke-width="1.2" stroke-linecap="round"/>
+<circle cx="13.00" cy="3.90" r="0.6" fill="#2B2417"/>
+</g>
+<rect x="186.00" y="352.00" width="132.00" height="28.00" rx="8" fill="#262624" />
+<g transform="translate(196.00,359.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="209.00" cy="361.00" r="5.2" fill="#262624"/>
+<circle cx="209.00" cy="361.00" r="3.5" fill="#E2AE45"/>
+<line x1="209.00" y1="359.40" x2="209.00" y2="361.40" stroke="#2B2417" stroke-width="1.2" stroke-linecap="round"/>
+<circle cx="209.00" cy="362.90" r="0.6" fill="#2B2417"/>
+<text x="218.00" y="370.50" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix crash</text>
+<text x="194.00" y="398.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Needs you</text>
+<text x="194.00" y="412.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">`warn` disc with “!”</text>
+<g transform="translate(350,268) scale(5)">
+<rect x="-1.00" y="-1.00" width="16.00" height="16.00" fill="none" />
+<g transform="translate(0.00,0.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<circle cx="13.00" cy="2.00" r="5.2" fill="#1F1E1D"/>
+<circle cx="13.00" cy="2.00" r="3.5" fill="#F08C7A"/>
+<path d="M11.7 0.7 L14.3 3.3 M14.3 0.7 L11.7 3.3" fill="none" stroke="#2B1512" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<rect x="336.00" y="352.00" width="132.00" height="28.00" rx="8" fill="#262624" />
+<g transform="translate(346.00,359.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="359.00" cy="361.00" r="5.2" fill="#262624"/>
+<circle cx="359.00" cy="361.00" r="3.5" fill="#F08C7A"/>
+<path d="M357.7 359.7 L360.3 362.3 M360.3 359.7 L357.7 362.3" fill="none" stroke="#2B1512" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="368.00" y="370.50" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix crash</text>
+<text x="344.00" y="398.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Failed</text>
+<text x="344.00" y="412.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">`danger` disc with ×</text>
+<g transform="translate(500,268) scale(5)">
+<rect x="-1.00" y="-1.00" width="16.00" height="16.00" fill="none" />
+<g transform="translate(0.00,0.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<circle cx="13.00" cy="2.00" r="5.2" fill="#1F1E1D"/>
+<circle cx="13.00" cy="2.00" r="3.5" fill="#6BBF85"/>
+<path d="M11.5 2.1 L12.6 3.2 L14.6 0.7" fill="none" stroke="#10241A" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<rect x="486.00" y="352.00" width="132.00" height="28.00" rx="8" fill="#262624" />
+<g transform="translate(496.00,359.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="509.00" cy="361.00" r="5.2" fill="#262624"/>
+<circle cx="509.00" cy="361.00" r="3.5" fill="#6BBF85"/>
+<path d="M507.5 361.1 L508.6 362.2 L510.6 359.7" fill="none" stroke="#10241A" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="518.00" y="370.50" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix crash</text>
+<text x="494.00" y="398.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Done, unread</text>
+<text x="494.00" y="412.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">`success` disc with ✓; clears</text>
+<text x="494.00" y="423.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">when shown</text>
+<g transform="translate(650,268) scale(5)">
+<rect x="-1.00" y="-1.00" width="16.00" height="16.00" fill="none" />
+<g transform="translate(0.00,0.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+</g>
+<rect x="636.00" y="352.00" width="132.00" height="28.00" rx="8" fill="#262624" />
+<g transform="translate(646.00,359.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<text x="668.00" y="370.50" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix crash</text>
+<text x="644.00" y="398.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Idle / read</text>
+<text x="644.00" y="412.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">no badge: the quiet state</text>
+<g transform="translate(800,268) scale(5)">
+<rect x="-1.00" y="-1.00" width="16.00" height="16.00" fill="none" />
+<g transform="translate(0.00,0.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<circle cx="13.00" cy="2.00" r="5.2" fill="#1F1E1D"/>
+<circle cx="13.00" cy="2.00" r="3.2" fill="none" stroke="#6F6D66" stroke-width="1.1"/>
+</g>
+<rect x="786.00" y="352.00" width="132.00" height="28.00" rx="8" fill="#262624" />
+<g transform="translate(796.00,359.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="809.00" cy="361.00" r="5.2" fill="#262624"/>
+<circle cx="809.00" cy="361.00" r="3.2" fill="none" stroke="#6F6D66" stroke-width="1.1"/>
+<text x="818.00" y="370.50" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix crash</text>
+<text x="794.00" y="398.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Ended</text>
+<text x="794.00" y="412.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">hollow ring, name `faint`</text>
+<rect x="12.00" y="440.00" width="956.00" height="188.00" rx="10" fill="#1F1E1D" />
+<text x="28.00" y="466.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">ICON PACK RULES</text>
+<circle cx="34.00" cy="485.00" r="2" fill="#EA7A43"/>
+<text x="46.00" y="488.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Family stays Phosphor (MIT, pinned, every semantic id already mapped). It is a pack choice, so a user pack can still replace it.</text>
+<circle cx="34.00" cy="506.00" r="2" fill="#EA7A43"/>
+<text x="46.00" y="509.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Weight by size: Regular at 16 px and up (nav, panel headers, buttons); Bold at 12–14 px (row glyphs, tab icons, badges). See mock-icons-weight.svg for the measurement.</text>
+<circle cx="34.00" cy="527.00" r="2" fill="#EA7A43"/>
+<text x="46.00" y="530.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Row glyph 14 px in a 16 px lane; tab icon 14 px; chip and badge 8–12 px; nav and header 16 px. Colour is always `muted`, `fg` on the selected row; state colour only on the</text>
+<text x="46.00" y="545.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">badge.</text>
+<circle cx="34.00" cy="563.00" r="2" fill="#EA7A43"/>
+<text x="46.00" y="566.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Harness ids `harness.omp|claude|codex|direct|shell` stop pointing at `terminal.svg`, `chat-circle.svg`, `robot.svg` (ids.rs:83-86) and get the monograms above; the user's</text>
+<text x="46.00" y="581.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">pack wins per id.</text>
+<circle cx="34.00" cy="599.00" r="2" fill="#EA7A43"/>
+<text x="46.00" y="602.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">A second weight is a second set of files under the same ids: `icon-theme.toml` gains an optional `[small]` table (≤ 14 px) that falls back to the Regular file when absent; no</text>
+<text x="46.00" y="617.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">breaking change for packs.</text>
+</svg>

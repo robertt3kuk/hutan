@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="860" viewBox="0 0 1200 860" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Fork from any turn</title>
+<desc>Mock: hover action bar on a turn, the fork popover (folder or new worktree, restore files to the checkpoint), the forked session in the sidebar with its lineage, and per-harness support. Invented data.</desc>
+<rect x="0.00" y="0.00" width="1200.00" height="860.00" fill="#141413" />
+<text x="24.00" y="32.00" font-size="15" fill="#F5F4EF" font-weight="600" text-anchor="start">Fork from any turn: hover, popover, result</text>
+<rect x="24.00" y="52.00" width="640.00" height="780.00" rx="10" fill="#262624" />
+<clipPath id="c1"><rect x="24" y="52" width="640" height="780" rx="10"/></clipPath><g clip-path="url(#c1)">
+<rect x="24.00" y="52.00" width="640.00" height="34.00" fill="#1F1E1D" />
+<rect x="30.00" y="56.00" width="227.62" height="30.00" fill="#262624" />
+<g transform="translate(40.00,64.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<text x="60.00" y="73.50" font-size="12.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Migrate auth to refresh tokens</text>
+<g transform="translate(235.62,64.00) scale(0.04297)" fill="#AEACA4"><path d="M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"/></g>
+<rect x="24.00" y="86.00" width="640.00" height="30.00" fill="#262624" />
+<line x1="24.00" y1="116.00" x2="664.00" y2="116.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<circle cx="41.00" cy="101.00" r="3.2" fill="#6BBF85"/>
+<text x="52.00" y="105.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">idle</text>
+<text x="82.00" y="105.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">codex · gpt-6.1 · ask first</text>
+<g transform="translate(230.50,94.00) scale(0.05078)" fill="#AEACA4"><path d="M216,68H132L105.33,48a20.12,20.12,0,0,0-12-4H40A20,20,0,0,0,20,64V200a20,20,0,0,0,20,20H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68Zm-4,128H44V68H92l28.8,21.6A12,12,0,0,0,128,92h84Z"/></g>
+<text x="248.50" y="105.50" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">acme-web</text>
+<rect x="309.47" y="93.00" width="23.65" height="16.00" rx="8" fill="#3E2C23" />
+<text x="315.47" y="104.60" font-size="10" fill="#EA7A43" font-weight="600" text-anchor="start">+2</text>
+<text x="624.00" y="105.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">17% · 82k / 475k</text>
+<rect x="630.00" y="99.00" width="20.00" height="3.00" fill="none" />
+<g transform="translate(638.00,94.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<rect x="422.58" y="152.00" width="201.42" height="34.00" rx="10" fill="#30302E" />
+<text x="436.58" y="173.50" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Read the session middleware</text>
+<text x="64.00" y="212.00" font-size="13.5" fill="#AEACA4" font-weight="400" text-anchor="start">It validates the cookie, then loads the user. The refresh route is excluded.</text>
+<text x="64.00" y="238.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">T3 · done · 19 s</text>
+<rect x="52.00" y="256.00" width="584.00" height="178.00" rx="10" fill="#2A2A28" />
+<rect x="320.01" y="298.00" width="303.99" height="34.00" rx="10" fill="#30302E" />
+<text x="334.01" y="319.50" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Why does /auth/refresh return 401 after a day?</text>
+<rect x="512.00" y="266.00" width="112.00" height="26.00" rx="8" fill="#3A3936" stroke="#38373A" stroke-width="1" />
+<g transform="translate(522.00,272.00) scale(0.05469)" fill="#AEACA4"><path d="M216,28H88A12,12,0,0,0,76,40V76H40A12,12,0,0,0,28,88V216a12,12,0,0,0,12,12H168a12,12,0,0,0,12-12V180h36a12,12,0,0,0,12-12V40A12,12,0,0,0,216,28ZM156,204H52V100H156Zm48-48H180V88a12,12,0,0,0-12-12H100V52H204Z"/></g>
+<rect x="546.00" y="269.00" width="34.00" height="20.00" rx="6" fill="#3E2C23" />
+<g transform="translate(556.00,272.00) scale(0.05469)" fill="#EA7A43"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<g transform="translate(594.00,272.00) scale(0.05469)" fill="#AEACA4"><path d="M228,128a100,100,0,0,1-98.66,100H128a99.39,99.39,0,0,1-68.62-27.29,12,12,0,0,1,16.48-17.45,76,76,0,1,0-1.57-109c-.13.13-.25.25-.39.37L54.89,92H72a12,12,0,0,1,0,24H24a12,12,0,0,1-12-12V56a12,12,0,0,1,24,0V76.72L57.48,57.06A100,100,0,0,1,228,128Z"/></g>
+<circle cx="640.00" cy="279.00" r="9" fill="#EA7A43"/>
+<text x="640.00" y="282.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">1</text>
+<text x="64.00" y="360.00" font-size="13.5" fill="#F5F4EF" font-weight="400" text-anchor="start">The expiry is compared in seconds against a millisecond clock, so it</text>
+<text x="64.00" y="380.00" font-size="13.5" fill="#F5F4EF" font-weight="400" text-anchor="start">lapses after 24 h. Fixing the unit.</text>
+<g transform="translate(64.00,408.00) scale(0.05078)" fill="#6BBF85"><path d="M176.49,95.51a12,12,0,0,1,0,17l-56,56a12,12,0,0,1-17,0l-24-24a12,12,0,1,1,17-17L112,143l47.51-47.52A12,12,0,0,1,176.49,95.51ZM236,128A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128Z"/></g>
+<text x="82.00" y="419.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">T4 · done · 52 s · 17.6k tokens · 1 file</text>
+<rect x="454.00" y="404.00" width="74.00" height="20.00" rx="6" fill="#3A3936" />
+<g transform="translate(461.00,407.00) scale(0.05078)" fill="#AEACA4"><path d="M228,128a100,100,0,0,1-98.66,100H128a99.39,99.39,0,0,1-68.62-27.29,12,12,0,0,1,16.48-17.45,76,76,0,1,0-1.57-109c-.13.13-.25.25-.39.37L54.89,92H72a12,12,0,0,1,0,24H24a12,12,0,0,1-12-12V56a12,12,0,0,1,24,0V76.72L57.48,57.06A100,100,0,0,1,228,128Z"/></g>
+<text x="479.00" y="419.00" font-size="11" fill="#AEACA4" font-weight="500" text-anchor="start">Rewind…</text>
+<rect x="534.00" y="404.00" width="74.00" height="20.00" rx="6" fill="#3E2C23" stroke="#EA7A43" stroke-width="1" />
+<g transform="translate(541.00,407.00) scale(0.05078)" fill="#EA7A43"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<text x="559.00" y="419.00" font-size="11" fill="#EA7A43" font-weight="500" text-anchor="start">Fork…</text>
+<circle cx="626.00" cy="414.00" r="9" fill="#EA7A43"/>
+<text x="626.00" y="417.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">3</text>
+<rect x="246.00" y="456.00" width="392.00" height="300.00" rx="12" fill="#000000" opacity="0.35" />
+<rect x="244.00" y="450.00" width="392.00" height="300.00" rx="12" fill="#30302E" />
+<path d="M564 450 L571 442 L578 450 Z" fill="#30302E"/>
+<text x="262.00" y="478.00" font-size="13.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Fork from turn 4</text>
+<text x="262.00" y="495.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">“Why does /auth/refresh return 401 after a day?”</text>
+<circle cx="616.00" cy="474.00" r="9" fill="#EA7A43"/>
+<text x="616.00" y="477.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">2</text>
+<text x="262.00" y="522.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">WHERE</text>
+<rect x="262.00" y="530.00" width="356.00" height="30.00" rx="8" fill="#1F1E1D" />
+<rect x="440.00" y="532.00" width="176.00" height="26.00" rx="6" fill="#3A3936" />
+<text x="351.00" y="549.50" font-size="12" fill="#AEACA4" font-weight="500" text-anchor="middle">This folder</text>
+<g transform="translate(479.00,538.00) scale(0.05469)" fill="#F5F4EF"><path d="M160,116h48a20,20,0,0,0,20-20V48a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20V60H128a28,28,0,0,0-28,28v28H76v-4A20,20,0,0,0,56,92H24A20,20,0,0,0,4,112v32a20,20,0,0,0,20,20H56a20,20,0,0,0,20-20v-4h24v28a28,28,0,0,0,28,28h12v12a20,20,0,0,0,20,20h48a20,20,0,0,0,20-20V160a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20v12H128a4,4,0,0,1-4-4V88a4,4,0,0,1,4-4h12V96A20,20,0,0,0,160,116ZM52,140H28V116H52Zm112,24h40v40H164Zm0-112h40V92H164Z"/></g>
+<text x="535.00" y="549.50" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="middle">New worktree</text>
+<rect x="262.00" y="570.00" width="356.00" height="28.00" rx="8" fill="#1F1E1D" />
+<text x="272.00" y="588.00" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">fork/auth-refresh-t4</text>
+<text x="608.00" y="588.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">from main · 61a616d</text>
+<rect x="262.00" y="611.00" width="30.00" height="18.00" rx="9" fill="#EA7A43" />
+<circle cx="283.00" cy="620.00" r="7" fill="#1F1E1D"/>
+<text x="302.00" y="624.00" font-size="12" fill="#F5F4EF" font-weight="500" text-anchor="start">Restore files to the end of turn 4</text>
+<text x="302.00" y="640.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Checkpoint t4: the exact tree, uncommitted in the new worktree.</text>
+<text x="302.00" y="654.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Your current folder is not touched.</text>
+<g transform="translate(262.00,673.00) scale(0.05078)" fill="#6BBF85"><path d="M176.49,95.51a12,12,0,0,1,0,17l-56,56a12,12,0,0,1-17,0l-24-24a12,12,0,1,1,17-17L112,143l47.51-47.52A12,12,0,0,1,176.49,95.51ZM236,128A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128Z"/></g>
+<text x="282.00" y="684.00" font-size="10.5" fill="#6BBF85" font-weight="400" text-anchor="start">Exact fork · Codex thread/fork up to turn 4, cwd = the worktree</text>
+<rect x="468.00" y="702.00" width="70.00" height="28.00" rx="8" fill="none" stroke="#38373A" stroke-width="1" />
+<text x="503.00" y="720.50" font-size="12" fill="#AEACA4" font-weight="500" text-anchor="middle">Cancel</text>
+<rect x="546.00" y="702.00" width="72.00" height="28.00" rx="8" fill="#EA7A43" />
+<text x="582.00" y="720.50" font-size="12" fill="#1F1E1D" font-weight="600" text-anchor="middle">Fork</text>
+</g>
+<text x="700.00" y="56.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">After Fork: the new session sits under its parent</text>
+<rect x="700.00" y="68.00" width="476.00" height="170.00" rx="10" fill="#1F1E1D" />
+<g transform="translate(712.00,82.00) scale(0.04688)" fill="#AEACA4"><path d="M216.49,104.49l-80,80a12,12,0,0,1-17,0l-80-80a12,12,0,0,1,17-17L128,159l71.51-71.52a12,12,0,0,1,17,17Z"/></g>
+<g transform="translate(730.00,80.00) scale(0.06250)" fill="#AEACA4"><path d="M232,64a32,32,0,1,0-40,31v17a8,8,0,0,1-8,8H96a23.84,23.84,0,0,0-8,1.38V95a32,32,0,1,0-16,0v66a32,32,0,1,0,16,0V144a8,8,0,0,1,8-8h88a24,24,0,0,0,24-24V95A32.06,32.06,0,0,0,232,64ZM64,64A16,16,0,1,1,80,80,16,16,0,0,1,64,64ZM96,192a16,16,0,1,1-16-16A16,16,0,0,1,96,192ZM200,80a16,16,0,1,1,16-16A16,16,0,0,1,200,80Z"/></g>
+<text x="754.00" y="92.20" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">acme-web</text>
+<text x="1160.00" y="92.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">6</text>
+<text x="1145.62" y="92.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end" font-family="'SF Mono', Menlo, Monaco, monospace">main</text>
+<g transform="translate(732.00,109.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<text x="754.00" y="120.20" font-size="13" fill="#D9D7CF" font-weight="400" text-anchor="start">Migrate auth to refresh tokens</text>
+<text x="1160.00" y="120.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">now</text>
+<g transform="translate(732.00,137.00) scale(0.05469)" fill="#AEACA4"><path d="M160,116h48a20,20,0,0,0,20-20V48a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20V60H128a28,28,0,0,0-28,28v28H76v-4A20,20,0,0,0,56,92H24A20,20,0,0,0,4,112v32a20,20,0,0,0,20,20H56a20,20,0,0,0,20-20v-4h24v28a28,28,0,0,0,28,28h12v12a20,20,0,0,0,20,20h48a20,20,0,0,0,20-20V160a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20v12H128a4,4,0,0,1-4-4V88a4,4,0,0,1,4-4h12V96A20,20,0,0,0,160,116ZM52,140H28V116H52Zm112,24h40v40H164Zm0-112h40V92H164Z"/></g>
+<text x="754.00" y="148.00" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">fork/auth-refresh-t4</text>
+<rect x="708.00" y="158.00" width="460.00" height="44.00" rx="8" fill="#2E2D2B" />
+<g transform="translate(748.00,165.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<circle cx="761.00" cy="167.00" r="5.2" fill="#2E2D2B"/>
+<circle cx="761.00" cy="167.00" r="3.5" fill="#6BBF85"/>
+<path d="M759.5 167.1 L760.6 168.2 L762.6 165.7" fill="none" stroke="#10241A" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="770.00" y="176.20" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Migrate auth to refresh tokens · fork</text>
+<text x="1160.00" y="176.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">now</text>
+<g transform="translate(770.00,184.50) scale(0.04297)" fill="#AEACA4"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<text x="785.00" y="193.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">from turn 4 · 2 files restored</text>
+<rect x="700.00" y="252.00" width="476.00" height="34.00" rx="10" fill="#262624" />
+<g transform="translate(714.00,262.00) scale(0.05078)" fill="#AEACA4"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<text x="732.00" y="273.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">fork of “Migrate auth to refresh tokens” · T4</text>
+<text x="1162.00" y="273.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">4% · 18k</text>
+<text x="700.00" y="308.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">The header chip links back to the parent and its turn; the journal starts with a Forked notice.</text>
+<text x="700.00" y="334.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">How it is reached</text>
+<circle cx="709.00" cy="358.00" r="9" fill="#EA7A43"/>
+<text x="709.00" y="361.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">1</text>
+<text x="726.00" y="362.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Hover a user message: copy · fork · rewind (⑂ opens the popover below).</text>
+<circle cx="709.00" cy="378.00" r="9" fill="#EA7A43"/>
+<text x="709.00" y="381.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">2</text>
+<text x="726.00" y="382.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">The popover names where the fork goes and what happens to files; the green line says</text>
+<text x="726.00" y="396.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">how exact the fork is.</text>
+<circle cx="709.00" cy="412.00" r="9" fill="#EA7A43"/>
+<text x="709.00" y="415.80" font-size="10.5" fill="#1F1E1D" font-weight="700" text-anchor="middle">3</text>
+<text x="726.00" y="416.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">The turn footer repeats it next to Rewind…, so it works with the pointer anywhere.</text>
+<text x="726.00" y="436.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Shown for a Codex chat. On OMP over ACP the popover says it cannot cut at turn 4 and</text>
+<text x="726.00" y="450.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">offers “fork at the latest turn” or “fork with a summary of turns 1–4”.</text>
+<text x="726.00" y="470.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Also: a turn row in the Context panel, ⌘K “Chat: Fork from Turn…”, `hutan chat fork`, and</text>
+<text x="726.00" y="484.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">the session row's ⑂.</text>
+<text x="700.00" y="504.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">What each harness can do</text>
+<rect x="700.00" y="518.00" width="476.00" height="24.00" rx="6" fill="#1F1E1D" />
+<text x="708.00" y="534.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.6"></text>
+<text x="836.00" y="534.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.6">PAST TURN</text>
+<text x="960.00" y="534.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.6">THIS FOLDER</text>
+<text x="1066.00" y="534.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.6">OTHER FOLDER</text>
+<text x="708.00" y="559.00" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Codex chat</text>
+<circle cx="838.00" cy="556.00" r="3" fill="#6BBF85"/>
+<text x="846.00" y="559.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">exact</text>
+<circle cx="962.00" cy="556.00" r="3" fill="#6BBF85"/>
+<text x="970.00" y="559.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">exact</text>
+<circle cx="1068.00" cy="556.00" r="3" fill="#6BBF85"/>
+<text x="1076.00" y="559.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">exact (cwd)</text>
+<text x="708.00" y="574.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">R 0.162.1 schema: thread/fork {lastTurnId, cwd, sandbox, config}</text>
+<line x1="700.00" y1="580.00" x2="1176.00" y2="580.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<text x="708.00" y="599.00" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">OMP chat</text>
+<circle cx="838.00" cy="596.00" r="3" fill="#E2AE45"/>
+<text x="846.00" y="599.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">head only</text>
+<circle cx="962.00" cy="596.00" r="3" fill="#6BBF85"/>
+<text x="970.00" y="599.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">exact</text>
+<circle cx="1068.00" cy="596.00" r="3" fill="#6BBF85"/>
+<text x="1076.00" y="599.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">fork + /move</text>
+<text x="708.00" y="614.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">R OMP 18.12.3 over ACP: fork, then /move; a different cwd is refused</text>
+<line x1="700.00" y1="620.00" x2="1176.00" y2="620.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<text x="708.00" y="639.00" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Claude Code chat</text>
+<circle cx="838.00" cy="636.00" r="3" fill="#E2AE45"/>
+<text x="846.00" y="639.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">AIR _meta</text>
+<circle cx="962.00" cy="636.00" r="3" fill="#6BBF85"/>
+<text x="970.00" y="639.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">exact</text>
+<circle cx="1068.00" cy="636.00" r="3" fill="#E2AE45"/>
+<text x="1076.00" y="639.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">summary</text>
+<text x="708.00" y="654.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">S adapter 0.98 fork-session.ts, SDK forkSession(upToMessageId); not run</text>
+<line x1="700.00" y1="660.00" x2="1176.00" y2="660.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<text x="708.00" y="679.00" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Direct chat</text>
+<circle cx="838.00" cy="676.00" r="3" fill="#6BBF85"/>
+<text x="846.00" y="679.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">exact</text>
+<circle cx="962.00" cy="676.00" r="3" fill="#6BBF85"/>
+<text x="970.00" y="679.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">exact</text>
+<circle cx="1068.00" cy="676.00" r="3" fill="#6BBF85"/>
+<text x="1076.00" y="679.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">exact</text>
+<text x="708.00" y="694.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">Hutan's own journal: copy the prefix</text>
+<line x1="700.00" y1="700.00" x2="1176.00" y2="700.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<text x="708.00" y="719.00" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Terminal agents</text>
+<circle cx="838.00" cy="716.00" r="3" fill="#E2AE45"/>
+<text x="846.00" y="719.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">head only</text>
+<circle cx="962.00" cy="716.00" r="3" fill="#6BBF85"/>
+<text x="970.00" y="719.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">native CLI</text>
+<circle cx="1068.00" cy="716.00" r="3" fill="#E2AE45"/>
+<text x="1076.00" y="719.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">launch cwd</text>
+<text x="708.00" y="734.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="start">omp --fork · claude --resume --fork-session · codex fork</text>
+<line x1="700.00" y1="740.00" x2="1176.00" y2="740.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<text x="700.00" y="754.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">green: one native call · amber: workaround, non-standard extension or summary</text>
+<text x="700.00" y="768.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">“summary” = a fresh session seeded with the journal (Superset's handoff); the popover says so.</text>
+</svg>

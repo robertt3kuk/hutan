@@ -1,0 +1,220 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1196" height="826" viewBox="0 0 1196 826" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Context panel in three situations</title>
+<desc>Mock: the right-dock Context panel for an OMP chat (everything), a Codex chat (no breakdown, no cost) and a Claude Code terminal without hooks (state only, with the way to get more). Invented data.</desc>
+<rect x="0.00" y="0.00" width="1196.00" height="826.00" fill="#141413" />
+<text x="24.00" y="32.00" font-size="15" fill="#F5F4EF" font-weight="600" text-anchor="start">Context panel (right dock): the same layout, honest about what each harness reports</text>
+<rect x="12.00" y="52.00" width="380.00" height="736.00" rx="10" fill="#1F1E1D" />
+<text x="28.00" y="76.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Context</text>
+<g transform="translate(362.00,64.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<line x1="12.00" y1="88.00" x2="392.00" y2="88.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<rect x="12.00" y="52.00" width="380.00" height="736.00" fill="#1F1E1D" />
+<text x="28.00" y="76.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Context</text>
+<g transform="translate(362.00,64.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<line x1="12.00" y1="88.00" x2="392.00" y2="88.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<g transform="translate(28.00,103.00) scale(1.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<text x="52.00" y="114.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Migrate auth to refresh tokens</text>
+<text x="52.00" y="130.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">opus-5.5 · thinking high · turn 6 · 14 min</text>
+<text x="28.00" y="158.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">CONTEXT</text>
+<text x="376.00" y="158.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">82k / 200k · 41%</text>
+<rect x="28.00" y="166.00" width="348.00" height="10.00" rx="5" fill="#3A3936" />
+<clipPath id="c1"><rect x="28" y="166" width="348" height="10" rx="5"/></clipPath><g clip-path="url(#c1)">
+<rect x="28.00" y="166.00" width="5.39" height="10.00" fill="#8A8780" />
+<rect x="33.39" y="166.00" width="9.05" height="10.00" fill="#A39E94" />
+<rect x="42.44" y="166.00" width="7.13" height="10.00" fill="#C9A25D" />
+<rect x="49.58" y="166.00" width="2.44" height="10.00" fill="#B8865A" />
+<rect x="52.01" y="166.00" width="118.67" height="10.00" fill="#EA7A43" />
+</g>
+<line x1="323.80" y1="163.00" x2="323.80" y2="179.00" stroke="#E2AE45" stroke-width="1.4" stroke-linecap="butt"/>
+<text x="323.80" y="191.00" font-size="9.5" fill="#E2AE45" font-weight="400" text-anchor="middle">auto-compact 85%</text>
+<rect x="28.00" y="200.00" width="8.00" height="8.00" rx="2" fill="#8A8780" />
+<text x="42.00" y="208.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">System prompt</text>
+<text x="190.00" y="208.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">3.1k</text>
+<rect x="202.00" y="200.00" width="8.00" height="8.00" rx="2" fill="#A39E94" />
+<text x="216.00" y="208.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">System tools</text>
+<text x="364.00" y="208.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">5.2k</text>
+<rect x="28.00" y="217.00" width="8.00" height="8.00" rx="2" fill="#C9A25D" />
+<text x="42.00" y="225.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">Project files</text>
+<text x="190.00" y="225.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">4.1k</text>
+<rect x="202.00" y="217.00" width="8.00" height="8.00" rx="2" fill="#B8865A" />
+<text x="216.00" y="225.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">Skills</text>
+<text x="364.00" y="225.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">1.4k</text>
+<rect x="28.00" y="234.00" width="8.00" height="8.00" rx="2" fill="#EA7A43" />
+<text x="42.00" y="242.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">Messages</text>
+<text x="190.00" y="242.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">68.2k</text>
+<text x="28.00" y="264.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">Breakdown as of /context at 14:02</text>
+<text x="376.00" y="264.00" font-size="10.5" fill="#EA7A43" font-weight="400" text-anchor="end">Measure now</text>
+<text x="28.00" y="291.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">FILL BY TURN</text>
+<text x="376.00" y="291.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">peak 82k</text>
+<rect x="28.00" y="299.00" width="348.00" height="46.00" rx="4" fill="none" stroke="#2F2E2C" stroke-width="1" />
+<path d="M34.0 340.0 L34.0 335.0 L101.2 332.1 L168.4 327.8 L235.6 321.6 L302.8 314.8 L370.0 310.5 L370.0 340.0 Z" fill="#EA7A43" opacity="0.22"/>
+<path d="M34.0 335.0 L101.2 332.1 L168.4 327.8 L235.6 321.6 L302.8 314.8 L370.0 310.5" fill="none" stroke="#EA7A43" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="32.00" y1="309.40" x2="372.00" y2="309.40" stroke="#E2AE45" stroke-width="1" stroke-linecap="butt" stroke-dasharray="3 3"/>
+<circle cx="34.00" cy="334.96" r="2.2" fill="#EA7A43"/>
+<circle cx="101.20" cy="332.08" r="2.2" fill="#EA7A43"/>
+<circle cx="168.40" cy="327.76" r="2.2" fill="#EA7A43"/>
+<circle cx="235.60" cy="321.64" r="2.2" fill="#F5F4EF"/>
+<circle cx="302.80" cy="314.80" r="2.2" fill="#EA7A43"/>
+<circle cx="370.00" cy="310.48" r="2.2" fill="#EA7A43"/>
+<text x="28.00" y="369.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">TURNS</text>
+<text x="73.03" y="369.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">6</text>
+<text x="376.00" y="369.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">fork or rewind from any turn</text>
+<line x1="36.00" y1="385.00" x2="36.00" y2="525.00" stroke="#38373A" stroke-width="1.2" stroke-linecap="butt"/>
+<circle cx="36.00" cy="385.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="50.00" y="389.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T6</text>
+<text x="72.00" y="389.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Update the tests for refresh</text>
+<text x="376.00" y="389.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+9.8k</text>
+<text x="72.00" y="404.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">2 files · 38 s · $0.21</text>
+<circle cx="36.00" cy="425.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="50.00" y="429.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T5</text>
+<text x="72.00" y="429.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Rotate tokens on refresh</text>
+<text x="376.00" y="429.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+12.4k</text>
+<text x="72.00" y="444.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">3 files · 41 s · $0.18</text>
+<rect x="20.00" y="454.00" width="364.00" height="40.00" rx="8" fill="#2E2D2B" />
+<circle cx="36.00" cy="465.00" r="4.2" fill="#EA7A43"/>
+<text x="50.00" y="469.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T4</text>
+<text x="72.00" y="469.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Why does /auth/refresh 4…</text>
+<rect x="242.00" y="456.00" width="66.00" height="20.00" rx="6" fill="#3A3936" />
+<g transform="translate(248.00,459.00) scale(0.05078)" fill="#F5F4EF"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<text x="266.00" y="470.50" font-size="11" fill="#F5F4EF" font-weight="500" text-anchor="start">Fork</text>
+<rect x="312.00" y="456.00" width="66.00" height="20.00" rx="6" fill="#3A3936" />
+<g transform="translate(318.00,459.00) scale(0.05078)" fill="#F5F4EF"><path d="M228,128a100,100,0,0,1-98.66,100H128a99.39,99.39,0,0,1-68.62-27.29,12,12,0,0,1,16.48-17.45,76,76,0,1,0-1.57-109c-.13.13-.25.25-.39.37L54.89,92H72a12,12,0,0,1,0,24H24a12,12,0,0,1-12-12V56a12,12,0,0,1,24,0V76.72L57.48,57.06A100,100,0,0,1,228,128Z"/></g>
+<text x="336.00" y="470.50" font-size="11" fill="#F5F4EF" font-weight="500" text-anchor="start">Rewind</text>
+<text x="72.00" y="484.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">1 file · 52 s · $0.29</text>
+<circle cx="36.00" cy="505.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="50.00" y="509.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T3</text>
+<text x="72.00" y="509.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Read the session middleware</text>
+<text x="376.00" y="509.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+11.9k</text>
+<text x="72.00" y="524.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">0 files · 19 s · $0.11</text>
+<text x="28.00" y="553.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">TOOLS</text>
+<text x="376.00" y="553.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">31 calls · 2 failed</text>
+<rect x="28.00" y="561.00" width="54.00" height="17.00" rx="5" fill="#3A3936" />
+<text x="34.00" y="573.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">read 14</text>
+<rect x="87.00" y="561.00" width="48.00" height="17.00" rx="5" fill="#3A3936" />
+<text x="93.00" y="573.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">edit 9</text>
+<rect x="140.00" y="561.00" width="48.00" height="17.00" rx="5" fill="#3A3936" />
+<text x="146.00" y="573.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">bash 7</text>
+<rect x="193.00" y="561.00" width="48.00" height="17.00" rx="5" fill="#3A3936" />
+<text x="199.00" y="573.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">grep 1</text>
+<text x="28.00" y="597.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">Sources</text>
+<rect x="74.00" y="587.00" width="30.81" height="16.00" rx="8" fill="#3A3936" />
+<text x="80.00" y="598.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">chat</text>
+<rect x="108.81" y="587.00" width="47.91" height="16.00" rx="8" fill="#3A3936" />
+<text x="114.81" y="598.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">/context</text>
+<rect x="160.72" y="587.00" width="53.90" height="16.00" rx="8" fill="#3A3936" />
+<text x="166.72" y="598.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">extension</text>
+<text x="28.00" y="627.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">FILES</text>
+<text x="376.00" y="627.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">8 touched</text>
+<g transform="translate(28.00,636.00) scale(0.05078)" fill="#AEACA4"><path d="M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Zm112-80a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,132Zm0,40a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,172Z"/></g>
+<text x="48.00" y="646.00" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/refresh.rs</text>
+<text x="376.00" y="646.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">edit ×4</text>
+<g transform="translate(28.00,656.00) scale(0.05078)" fill="#AEACA4"><path d="M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Zm112-80a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,132Zm0,40a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,172Z"/></g>
+<text x="48.00" y="666.00" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/session.rs</text>
+<text x="376.00" y="666.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">read</text>
+<g transform="translate(28.00,676.00) scale(0.05078)" fill="#AEACA4"><path d="M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Zm112-80a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,132Zm0,40a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,172Z"/></g>
+<text x="48.00" y="686.00" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">tests/auth_refresh.rs</text>
+<text x="376.00" y="686.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">edit ×2</text>
+<text x="48.00" y="706.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="start">5 more</text>
+<text x="28.00" y="733.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">COST AND TIME</text>
+<text x="28.00" y="751.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Cost</text>
+<text x="188.00" y="751.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">$1.42 est.</text>
+<text x="202.00" y="751.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Cache hit</text>
+<text x="362.00" y="751.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">71%</text>
+<text x="28.00" y="769.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Wall</text>
+<text x="188.00" y="769.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">14 min</text>
+<text x="202.00" y="769.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Model API</text>
+<text x="362.00" y="769.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">6 min</text>
+<text x="28.00" y="788.00" font-size="1" fill="#F5F4EF" font-weight="400" text-anchor="start"></text>
+<rect x="404.00" y="52.00" width="380.00" height="736.00" rx="10" fill="#1F1E1D" />
+<text x="420.00" y="76.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Context</text>
+<g transform="translate(754.00,64.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<line x1="404.00" y1="88.00" x2="784.00" y2="88.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<g transform="translate(420.00,103.00) scale(1.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<text x="444.00" y="114.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Fix flaky checkout test</text>
+<text x="444.00" y="130.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">gpt-6.1 · turn 4 · 9 min</text>
+<text x="420.00" y="158.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">CONTEXT</text>
+<text x="768.00" y="158.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">82k / 475k · 17%</text>
+<rect x="420.00" y="166.00" width="348.00" height="10.00" rx="5" fill="#3A3936" />
+<rect x="420.00" y="166.00" width="60.08" height="10.00" rx="5" fill="#EA7A43" />
+<text x="420.00" y="196.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">No breakdown: Codex reports one number (last request, not the running total).</text>
+<text x="420.00" y="226.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">FILL BY TURN</text>
+<text x="768.00" y="226.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">peak 82k</text>
+<rect x="420.00" y="234.00" width="348.00" height="46.00" rx="4" fill="none" stroke="#2F2E2C" stroke-width="1" />
+<path d="M426.0 275.0 L426.0 270.7 L538.0 264.2 L650.0 256.3 L762.0 245.5 L762.0 275.0 Z" fill="#EA7A43" opacity="0.22"/>
+<path d="M426.0 270.7 L538.0 264.2 L650.0 256.3 L762.0 245.5" fill="none" stroke="#EA7A43" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="426.00" cy="270.68" r="2.2" fill="#EA7A43"/>
+<circle cx="538.00" cy="264.20" r="2.2" fill="#EA7A43"/>
+<circle cx="650.00" cy="256.28" r="2.2" fill="#EA7A43"/>
+<circle cx="762.00" cy="245.48" r="2.2" fill="#EA7A43"/>
+<text x="420.00" y="306.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">TURNS</text>
+<text x="465.03" y="306.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">4</text>
+<text x="768.00" y="306.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">fork or rewind from any turn</text>
+<circle cx="428.00" cy="322.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="442.00" y="326.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T4</text>
+<text x="464.00" y="326.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Stabilise the retry test</text>
+<text x="768.00" y="326.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+9.1k</text>
+<text x="464.00" y="341.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">2 files · 33 s</text>
+<circle cx="428.00" cy="362.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="442.00" y="366.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T3</text>
+<text x="464.00" y="366.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Why is it flaky?</text>
+<text x="768.00" y="366.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+14.0k</text>
+<text x="464.00" y="381.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">0 files · 21 s</text>
+<circle cx="428.00" cy="402.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="442.00" y="406.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T2</text>
+<text x="464.00" y="406.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Show the failing run</text>
+<text x="768.00" y="406.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+8.4k</text>
+<text x="464.00" y="421.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">0 files · 12 s</text>
+<circle cx="428.00" cy="442.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="442.00" y="446.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T1</text>
+<text x="464.00" y="446.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Read checkout/tests</text>
+<text x="768.00" y="446.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+12.0k</text>
+<text x="464.00" y="461.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">0 files · 15 s</text>
+<text x="420.00" y="490.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">COST AND TIME</text>
+<text x="420.00" y="508.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Cost</text>
+<text x="524.00" y="508.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">—</text>
+<text x="420.00" y="526.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Wall</text>
+<text x="524.00" y="526.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">9 min</text>
+<text x="420.00" y="548.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">Codex reports no cost: shown as —, never computed here.</text>
+<text x="420.00" y="576.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">Sources</text>
+<rect x="466.00" y="566.00" width="30.81" height="16.00" rx="8" fill="#3A3936" />
+<text x="472.00" y="577.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">chat</text>
+<rect x="796.00" y="52.00" width="380.00" height="736.00" rx="10" fill="#1F1E1D" />
+<text x="812.00" y="76.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Context</text>
+<g transform="translate(1146.00,64.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<line x1="796.00" y1="88.00" x2="1176.00" y2="88.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<g transform="translate(812.00,103.00) scale(1.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="825.00" cy="105.00" r="5.2" fill="#1F1E1D"/>
+<path d="M821.8 105.0 A3.2 3.2 0 1 1 825.0 108.2" fill="none" stroke="#EA7A43" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="836.00" y="114.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Review the migration plan</text>
+<text x="836.00" y="130.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">terminal agent · Claude Code · working</text>
+<text x="812.00" y="158.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">CONTEXT</text>
+<rect x="812.00" y="166.00" width="348.00" height="48.00" rx="8" fill="none" stroke="#2F2E2C" stroke-width="1" />
+<text x="824.00" y="186.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Not reported. This terminal tells Hutan its state only</text>
+<text x="824.00" y="201.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">(program status), not tokens, tools or cost.</text>
+<rect x="812.00" y="226.00" width="190.00" height="28.00" rx="8" fill="#EA7A43" />
+<text x="907.00" y="244.50" font-size="12" fill="#1F1E1D" font-weight="600" text-anchor="middle">Install Claude hooks…</text>
+<text x="1012.00" y="244.50" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">adds tools, files, time</text>
+<text x="812.00" y="284.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">SESSION</text>
+<rect x="812.00" y="294.00" width="348.00" height="36.00" rx="8" fill="#30302E" />
+<g transform="translate(824.00,304.00) scale(0.05859)" fill="#F5F4EF"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<text x="848.00" y="309.00" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Fork session</text>
+<text x="848.00" y="323.00" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start">new terminal: claude --resume &lt;id&gt; --fork-session (latest point)</text>
+<rect x="812.00" y="340.00" width="348.00" height="36.00" rx="8" fill="#30302E" />
+<g transform="translate(824.00,350.00) scale(0.05859)" fill="#F5F4EF"><path d="M216,68H132L105.33,48a20.12,20.12,0,0,0-12-4H40A20,20,0,0,0,20,64V200a20,20,0,0,0,20,20H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68Zm-4,128H44V68H92l28.8,21.6A12,12,0,0,0,128,92h84Z"/></g>
+<text x="848.00" y="355.00" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Add folder</text>
+<text x="848.00" y="369.00" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start">pastes /add-dir &lt;path&gt; at the prompt for you to confirm</text>
+<text x="812.00" y="406.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">TURNS</text>
+<rect x="812.00" y="414.00" width="348.00" height="48.00" rx="8" fill="none" stroke="#2F2E2C" stroke-width="1" />
+<text x="824.00" y="434.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Turn rows need the transcript or hooks. Past-turn fork is</text>
+<text x="824.00" y="449.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">available for chats, where Hutan owns the journal.</text>
+<text x="812.00" y="488.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">Sources</text>
+<rect x="858.00" y="478.00" width="54.84" height="16.00" rx="8" fill="#3A3936" />
+<text x="864.00" y="489.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">OSC 7501</text>
+<rect x="916.85" y="478.00" width="29.10" height="16.00" rx="8" fill="#3A3936" />
+<text x="922.85" y="489.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">title</text>
+<text x="16.00" y="808.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">A  OMP chat</text>
+<text x="16.00" y="823.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">chat journal + /context snapshot: breakdown, per-turn tokens and cost</text>
+<text x="408.00" y="808.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">B  Codex chat</text>
+<text x="408.00" y="823.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">chat journal only: one context number, no breakdown, no cost</text>
+<text x="800.00" y="808.00" font-size="11.5" fill="#F5F4EF" font-weight="600" text-anchor="start">C  Claude Code in a terminal, no hooks</text>
+<text x="800.00" y="823.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">state only; the panel says what to install and still offers fork and add folder</text>
+</svg>

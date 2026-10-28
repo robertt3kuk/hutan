@@ -1,0 +1,274 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Hutan workbench in the proposed style</title>
+<desc>Mock: left sidebar with agent cards and news lines, chat with fork and rewind in the turn footer, right dock Context panel, status bar with usage meters. Invented data.</desc>
+<rect x="0.00" y="0.00" width="1280.00" height="800.00" fill="#141413" />
+<rect x="0.00" y="0.00" width="1280.00" height="800.00" rx="12" fill="#262624" />
+<clipPath id="c1"><rect x="0" y="0" width="1280" height="800" rx="12"/></clipPath><g clip-path="url(#c1)">
+<rect x="0.00" y="0.00" width="1280.00" height="800.00" fill="#262624" />
+<rect x="0.00" y="0.00" width="1280.00" height="36.00" fill="#1F1E1D" />
+<circle cx="20.00" cy="18.00" r="6" fill="#FF5F57"/>
+<circle cx="40.00" cy="18.00" r="6" fill="#FEBC2E"/>
+<circle cx="60.00" cy="18.00" r="6" fill="#28C840"/>
+<text x="585.00" y="22.00" font-size="12.5" fill="#AEACA4" font-weight="500" text-anchor="middle">acme-web</text>
+<g transform="translate(292.00,10.00) scale(0.06250)" fill="#AEACA4"><path d="M80,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H88A8,8,0,0,1,80,64Zm136,56H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm0,64H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16ZM44,52A12,12,0,1,0,56,64,12,12,0,0,0,44,52Zm0,64a12,12,0,1,0,12,12A12,12,0,0,0,44,116Zm0,64a12,12,0,1,0,12,12A12,12,0,0,0,44,180Z"/></g>
+<g transform="translate(896.00,10.00) scale(0.06250)" fill="#AEACA4"><path d="M213.66,66.34l-40-40A8,8,0,0,0,168,24H88A16,16,0,0,0,72,40V56H56A16,16,0,0,0,40,72V216a16,16,0,0,0,16,16H168a16,16,0,0,0,16-16V200h16a16,16,0,0,0,16-16V72A8,8,0,0,0,213.66,66.34ZM168,216H56V72h76.69L168,107.31v84.53c0,.06,0,.11,0,.16s0,.1,0,.16V216Zm32-32H184V104a8,8,0,0,0-2.34-5.66l-40-40A8,8,0,0,0,136,56H88V40h76.69L200,75.31Zm-56-32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,152Zm0,32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,184Z"/></g>
+<rect x="0.00" y="36.00" width="280.00" height="740.00" fill="#1F1E1D" />
+<g transform="translate(16.00,50.00) scale(0.06250)" fill="#AEACA4"><path d="M200,48H136V16a8,8,0,0,0-16,0V48H56A32,32,0,0,0,24,80V192a32,32,0,0,0,32,32H200a32,32,0,0,0,32-32V80A32,32,0,0,0,200,48Zm16,144a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V80A16,16,0,0,1,56,64H200a16,16,0,0,1,16,16Zm-52-56H92a28,28,0,0,0,0,56h72a28,28,0,0,0,0-56Zm-24,16v24H116V152ZM80,164a12,12,0,0,1,12-12h8v24H92A12,12,0,0,1,80,164Zm84,12h-8V152h8a12,12,0,0,1,0,24ZM72,108a12,12,0,1,1,12,12A12,12,0,0,1,72,108Zm88,0a12,12,0,1,1,12,12A12,12,0,0,1,160,108Z"/></g>
+<text x="42.00" y="62.50" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Agents</text>
+<rect x="246.20" y="50.00" width="17.80" height="16.00" rx="8" fill="#3E2C23" />
+<text x="255.10" y="61.30" font-size="10" fill="#E2AE45" font-weight="600" text-anchor="middle">1</text>
+<g transform="translate(16.00,78.00) scale(0.06250)" fill="#AEACA4"><path d="M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z"/></g>
+<text x="42.00" y="90.50" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Mawas</text>
+<g transform="translate(16.00,106.00) scale(0.06250)" fill="#AEACA4"><path d="M248,124a56.11,56.11,0,0,0-32-50.61V72a48,48,0,0,0-88-26.49A48,48,0,0,0,40,72v1.39a56,56,0,0,0,0,101.2V176a48,48,0,0,0,88,26.49A48,48,0,0,0,216,176v-1.41A56.09,56.09,0,0,0,248,124ZM88,208a32,32,0,0,1-31.81-28.56A55.87,55.87,0,0,0,64,180h8a8,8,0,0,0,0-16H64A40,40,0,0,1,50.67,86.27,8,8,0,0,0,56,78.73V72a32,32,0,0,1,64,0v68.26A47.8,47.8,0,0,0,88,128a8,8,0,0,0,0,16,32,32,0,0,1,0,64Zm104-44h-8a8,8,0,0,0,0,16h8a55.87,55.87,0,0,0,7.81-.56A32,32,0,1,1,168,144a8,8,0,0,0,0-16,47.8,47.8,0,0,0-32,12.26V72a32,32,0,0,1,64,0v6.73a8,8,0,0,0,5.33,7.54A40,40,0,0,1,192,164Zm16-52a8,8,0,0,1-8,8h-4a36,36,0,0,1-36-36V80a8,8,0,0,1,16,0v4a20,20,0,0,0,20,20h4A8,8,0,0,1,208,112ZM60,120H56a8,8,0,0,1,0-16h4A20,20,0,0,0,80,84V80a8,8,0,0,1,16,0v4A36,36,0,0,1,60,120Z"/></g>
+<text x="42.00" y="118.50" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Memory</text>
+<text x="16.00" y="158.50" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">PROJECTS</text>
+<g transform="translate(236.00,147.00) scale(0.05469)" fill="#AEACA4"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></g>
+<g transform="translate(254.00,147.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<rect x="8.00" y="170.00" width="264.00" height="28.00" rx="8" fill="#30302E" />
+<g transform="translate(18.00,177.00) scale(0.05469)" fill="#AEACA4"><path d="M232.49,215.51,185,168a92.12,92.12,0,1,0-17,17l47.53,47.54a12,12,0,0,0,17-17ZM44,112a68,68,0,1,1,68,68A68.07,68.07,0,0,1,44,112Z"/></g>
+<text x="40.00" y="188.00" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Filter projects and sessions</text>
+<text x="16.00" y="224.50" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">REQUESTS</text>
+<text x="264.00" y="224.50" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">1</text>
+<g transform="translate(16.00,239.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<circle cx="29.00" cy="241.00" r="5.2" fill="#1F1E1D"/>
+<circle cx="29.00" cy="241.00" r="3.5" fill="#E2AE45"/>
+<line x1="29.00" y1="239.40" x2="29.00" y2="241.40" stroke="#2B2417" stroke-width="1.2" stroke-linecap="round"/>
+<circle cx="29.00" cy="242.90" r="0.6" fill="#2B2417"/>
+<text x="38.00" y="250.20" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Invoice export job</text>
+<text x="264.00" y="250.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">now</text>
+<rect x="38.00" y="256.00" width="49.90" height="15.00" rx="4" fill="#3A3936" />
+<text x="43.00" y="266.92" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">gpt-5.5</text>
+<text x="93.90" y="267.50" font-size="11" fill="#E2AE45" font-weight="400" text-anchor="start">Approve: cargo test -p invoices</text>
+<g transform="translate(12.00,294.00) scale(0.04688)" fill="#AEACA4"><path d="M216.49,104.49l-80,80a12,12,0,0,1-17,0l-80-80a12,12,0,0,1,17-17L128,159l71.51-71.52a12,12,0,0,1,17,17Z"/></g>
+<g transform="translate(30.00,292.00) scale(0.06250)" fill="#AEACA4"><path d="M232,64a32,32,0,1,0-40,31v17a8,8,0,0,1-8,8H96a23.84,23.84,0,0,0-8,1.38V95a32,32,0,1,0-16,0v66a32,32,0,1,0,16,0V144a8,8,0,0,1,8-8h88a24,24,0,0,0,24-24V95A32.06,32.06,0,0,0,232,64ZM64,64A16,16,0,1,1,80,80,16,16,0,0,1,64,64ZM96,192a16,16,0,1,1-16-16A16,16,0,0,1,96,192ZM200,80a16,16,0,1,1,16-16A16,16,0,0,1,200,80Z"/></g>
+<text x="54.00" y="304.20" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">acme-web</text>
+<text x="264.00" y="304.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">5</text>
+<text x="249.62" y="304.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end" font-family="'SF Mono', Menlo, Monaco, monospace">main</text>
+<g transform="translate(32.00,321.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="45.00" cy="323.00" r="5.2" fill="#1F1E1D"/>
+<path d="M41.8 323.0 A3.2 3.2 0 1 1 45.0 326.2" fill="none" stroke="#EA7A43" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="54.00" y="332.20" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix login redirect loop</text>
+<text x="264.00" y="332.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">2m</text>
+<rect x="54.00" y="338.00" width="67.00" height="15.00" rx="4" fill="#3A3936" />
+<text x="59.00" y="348.92" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">sonnet-5.5</text>
+<text x="127.00" y="349.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Editing src/auth/refresh.rs</text>
+<g transform="translate(32.00,365.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.6 L7.4 8 L3 11.4"/><path d="M8.8 12 H13"/></g>
+<text x="54.00" y="376.20" font-size="13" fill="#D9D7CF" font-weight="400" text-anchor="start">Trim the bundle size</text>
+<text x="264.00" y="376.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">3m</text>
+<rect x="8.00" y="386.00" width="264.00" height="44.00" rx="8" fill="#2E2D2B" />
+<g transform="translate(32.00,393.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<circle cx="45.00" cy="395.00" r="5.2" fill="#2E2D2B"/>
+<circle cx="45.00" cy="395.00" r="3.5" fill="#6BBF85"/>
+<path d="M43.5 395.1 L44.6 396.2 L46.6 393.7" fill="none" stroke="#10241A" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="54.00" y="404.20" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Migrate auth to refresh toke…</text>
+<text x="264.00" y="404.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">now</text>
+<rect x="54.00" y="410.00" width="55.60" height="15.00" rx="4" fill="#3A3936" />
+<text x="59.00" y="420.92" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">opus-5.5</text>
+<text x="115.60" y="421.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Rotated tokens in 3 files; te…</text>
+<g transform="translate(32.00,437.00) scale(0.05469)" fill="#AEACA4"><path d="M160,116h48a20,20,0,0,0,20-20V48a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20V60H128a28,28,0,0,0-28,28v28H76v-4A20,20,0,0,0,56,92H24A20,20,0,0,0,4,112v32a20,20,0,0,0,20,20H56a20,20,0,0,0,20-20v-4h24v28a28,28,0,0,0,28,28h12v12a20,20,0,0,0,20,20h48a20,20,0,0,0,20-20V160a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20v12H128a4,4,0,0,1-4-4V88a4,4,0,0,1,4-4h12V96A20,20,0,0,0,160,116ZM52,140H28V116H52Zm112,24h40v40H164Zm0-112h40V92H164Z"/></g>
+<text x="54.00" y="448.00" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">feature/auth-refresh</text>
+<rect x="219.99" y="436.00" width="44.02" height="16.00" rx="8" fill="#3A3936" />
+<text x="241.99" y="447.20" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="middle">1 agent</text>
+<g transform="translate(48.00,465.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<text x="70.00" y="476.20" font-size="13" fill="#D9D7CF" font-weight="400" text-anchor="start">Split the session store</text>
+<text x="264.00" y="476.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">14m</text>
+<g transform="translate(12.00,494.00) scale(0.04688)" fill="#AEACA4"><path d="M184.49,136.49l-80,80a12,12,0,0,1-17-17L159,128,87.51,56.49a12,12,0,1,1,17-17l80,80A12,12,0,0,1,184.49,136.49Z"/></g>
+<g transform="translate(30.00,492.00) scale(0.06250)" fill="#AEACA4"><path d="M232,64a32,32,0,1,0-40,31v17a8,8,0,0,1-8,8H96a23.84,23.84,0,0,0-8,1.38V95a32,32,0,1,0-16,0v66a32,32,0,1,0,16,0V144a8,8,0,0,1,8-8h88a24,24,0,0,0,24-24V95A32.06,32.06,0,0,0,232,64ZM64,64A16,16,0,1,1,80,80,16,16,0,0,1,64,64ZM96,192a16,16,0,1,1-16-16A16,16,0,0,1,96,192ZM200,80a16,16,0,1,1,16-16A16,16,0,0,1,200,80Z"/></g>
+<text x="54.00" y="504.20" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">acme-docs</text>
+<text x="264.00" y="504.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">1</text>
+<text x="249.62" y="504.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end" font-family="'SF Mono', Menlo, Monaco, monospace">main</text>
+<g transform="translate(12.00,522.00) scale(0.04688)" fill="#AEACA4"><path d="M184.49,136.49l-80,80a12,12,0,0,1-17-17L159,128,87.51,56.49a12,12,0,1,1,17-17l80,80A12,12,0,0,1,184.49,136.49Z"/></g>
+<g transform="translate(30.00,520.00) scale(0.06250)" fill="#AEACA4"><path d="M219.31,108.68l-80-80a16,16,0,0,0-22.62,0l-80,80A15.87,15.87,0,0,0,32,120v96a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V160h32v56a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V120A15.87,15.87,0,0,0,219.31,108.68ZM208,208H160V152a8,8,0,0,0-8-8H104a8,8,0,0,0-8,8v56H48V120l80-80,80,80Z"/></g>
+<text x="54.00" y="532.20" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Home</text>
+<line x1="0.00" y1="740.00" x2="280.00" y2="740.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<g transform="translate(16.00,751.00) scale(0.05469)" fill="#AEACA4"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></g>
+<text x="38.00" y="763.00" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Start</text>
+<g transform="translate(188.00,751.00) scale(0.05469)" fill="#AEACA4"><path d="M76,64A12,12,0,0,1,88,52H216a12,12,0,0,1,0,24H88A12,12,0,0,1,76,64Zm140,52H88a12,12,0,0,0,0,24H216a12,12,0,0,0,0-24Zm0,64H88a12,12,0,0,0,0,24H216a12,12,0,0,0,0-24ZM44,112a16,16,0,1,0,16,16A16,16,0,0,0,44,112Zm0-64A16,16,0,1,0,60,64,16,16,0,0,0,44,48Zm0,128a16,16,0,1,0,16,16A16,16,0,0,0,44,176Z"/></g>
+<text x="210.00" y="763.00" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Settings</text>
+<rect x="280.00" y="36.00" width="610.00" height="34.00" fill="#1F1E1D" />
+<rect x="286.00" y="40.00" width="227.62" height="30.00" fill="#262624" />
+<g transform="translate(296.00,48.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<text x="316.00" y="57.50" font-size="12.5" fill="#F5F4EF" font-weight="500" text-anchor="start">Migrate auth to refresh tokens</text>
+<g transform="translate(491.62,48.00) scale(0.04297)" fill="#AEACA4"><path d="M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"/></g>
+<g transform="translate(525.62,48.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<text x="545.62" y="57.50" font-size="12.5" fill="#AEACA4" font-weight="400" text-anchor="start">Fix login redirect loop</text>
+<g transform="translate(672.37,48.00) scale(0.04297)" fill="#AEACA4"><path d="M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"/></g>
+<rect x="280.00" y="70.00" width="610.00" height="30.00" fill="#262624" />
+<line x1="280.00" y1="100.00" x2="890.00" y2="100.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<circle cx="297.00" cy="85.00" r="3.2" fill="#6BBF85"/>
+<text x="308.00" y="89.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">idle</text>
+<text x="338.00" y="89.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">omp · opus-5.5 · ask first</text>
+<g transform="translate(486.04,78.00) scale(0.05078)" fill="#AEACA4"><path d="M216,68H132L105.33,48a20.12,20.12,0,0,0-12-4H40A20,20,0,0,0,20,64V200a20,20,0,0,0,20,20H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68Zm-4,128H44V68H92l28.8,21.6A12,12,0,0,0,128,92h84Z"/></g>
+<text x="504.04" y="89.50" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="start">acme-web</text>
+<rect x="565.01" y="77.00" width="23.65" height="16.00" rx="8" fill="#3E2C23" />
+<text x="571.01" y="88.60" font-size="10" fill="#EA7A43" font-weight="600" text-anchor="start">+2</text>
+<text x="850.00" y="89.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="end">41% · 82k / 200k</text>
+<rect x="856.00" y="83.00" width="20.00" height="3.00" fill="none" />
+<g transform="translate(864.00,78.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<rect x="654.24" y="122.00" width="190.76" height="34.00" rx="10" fill="#30302E" />
+<text x="668.24" y="143.50" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Update the tests for refresh</text>
+<text x="325.00" y="194.00" font-size="14" fill="#F5F4EF" font-weight="400" text-anchor="start">I covered rotation and expiry in the refresh tests;</text>
+<text x="325.00" y="216.00" font-size="14" fill="#F5F4EF" font-weight="400" text-anchor="start">both pass. The old 24 h assumption is gone.</text>
+<rect x="325.00" y="234.00" width="520.00" height="30.00" rx="10" fill="#30302E" />
+<g transform="translate(337.00,242.00) scale(0.05469)" fill="#AEACA4"><path d="M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Zm112-80a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,132Zm0,40a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,172Z"/></g>
+<text x="359.00" y="253.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">edit tests/auth_refresh.rs</text>
+<text x="833.00" y="253.50" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">done · 0.4 s</text>
+<rect x="325.00" y="272.00" width="520.00" height="30.00" rx="10" fill="#30302E" />
+<g transform="translate(337.00,280.00) scale(0.05469)" fill="#AEACA4"><path d="M120,137,48,201A12,12,0,1,1,32,183l61.91-55L32,73A12,12,0,1,1,48,55l72,64A12,12,0,0,1,120,137Zm96,43H120a12,12,0,0,0,0,24h96a12,12,0,0,0,0-24Z"/></g>
+<text x="359.00" y="291.50" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">cargo test auth</text>
+<text x="833.00" y="291.50" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">exit 0 · 4 s</text>
+<g transform="translate(325.00,318.00) scale(0.05078)" fill="#6BBF85"><path d="M176.49,95.51a12,12,0,0,1,0,17l-56,56a12,12,0,0,1-17,0l-24-24a12,12,0,1,1,17-17L112,143l47.51-47.52A12,12,0,0,1,176.49,95.51ZM236,128A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128Z"/></g>
+<text x="343.00" y="329.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">done · 38 s · 9.8k tokens · 3 files</text>
+<rect x="675.00" y="314.00" width="74.00" height="20.00" rx="6" fill="#3A3936" />
+<g transform="translate(682.00,317.00) scale(0.05078)" fill="#AEACA4"><path d="M228,128a100,100,0,0,1-98.66,100H128a99.39,99.39,0,0,1-68.62-27.29,12,12,0,0,1,16.48-17.45,76,76,0,1,0-1.57-109c-.13.13-.25.25-.39.37L54.89,92H72a12,12,0,0,1,0,24H24a12,12,0,0,1-12-12V56a12,12,0,0,1,24,0V76.72L57.48,57.06A100,100,0,0,1,228,128Z"/></g>
+<text x="700.00" y="329.00" font-size="11" fill="#AEACA4" font-weight="500" text-anchor="start">Rewind…</text>
+<rect x="755.00" y="314.00" width="74.00" height="20.00" rx="6" fill="#3A3936" />
+<g transform="translate(762.00,317.00) scale(0.05078)" fill="#AEACA4"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<text x="780.00" y="329.00" font-size="11" fill="#AEACA4" font-weight="500" text-anchor="start">Fork…</text>
+<rect x="304.00" y="678.00" width="562.00" height="74.00" rx="10" fill="#30302E" stroke="#38373A" stroke-width="1" />
+<text x="320.00" y="706.00" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Message the agent…</text>
+<g transform="translate(318.00,724.00) scale(0.06250)" fill="#AEACA4"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></g>
+<text x="344.00" y="737.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">⌘↩ send · ↩ newline</text>
+<circle cx="838.00" cy="730.00" r="14" fill="#3A3936"/>
+<g transform="translate(831.00,723.00) scale(0.05469)" fill="#AEACA4"><path d="M208.49,120.49a12,12,0,0,1-17,0L140,69V216a12,12,0,0,1-24,0V69L64.49,120.49a12,12,0,0,1-17-17l72-72a12,12,0,0,1,17,0l72,72A12,12,0,0,1,208.49,120.49Z"/></g>
+<rect x="890.00" y="36.00" width="350.00" height="740.00" fill="#1F1E1D" />
+<text x="906.00" y="60.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Context</text>
+<g transform="translate(1210.00,48.00) scale(0.05469)" fill="#AEACA4"><path d="M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z"/></g>
+<line x1="890.00" y1="72.00" x2="1240.00" y2="72.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<g transform="translate(906.00,87.00) scale(1.0000)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<text x="930.00" y="98.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Migrate auth to refresh tokens</text>
+<text x="930.00" y="114.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">opus-5.5 · thinking high · turn 6 · 14 min</text>
+<text x="906.00" y="142.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">CONTEXT</text>
+<text x="1224.00" y="142.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">82k / 200k · 41%</text>
+<rect x="906.00" y="150.00" width="318.00" height="10.00" rx="5" fill="#3A3936" />
+<clipPath id="c2"><rect x="906" y="150" width="318" height="10" rx="5"/></clipPath><g clip-path="url(#c2)">
+<rect x="906.00" y="150.00" width="4.93" height="10.00" fill="#8A8780" />
+<rect x="910.93" y="150.00" width="8.27" height="10.00" fill="#A39E94" />
+<rect x="919.20" y="150.00" width="6.52" height="10.00" fill="#C9A25D" />
+<rect x="925.72" y="150.00" width="2.23" height="10.00" fill="#B8865A" />
+<rect x="927.94" y="150.00" width="108.44" height="10.00" fill="#EA7A43" />
+</g>
+<line x1="1176.30" y1="147.00" x2="1176.30" y2="163.00" stroke="#E2AE45" stroke-width="1.4" stroke-linecap="butt"/>
+<text x="1176.30" y="175.00" font-size="9.5" fill="#E2AE45" font-weight="400" text-anchor="middle">auto-compact 85%</text>
+<rect x="906.00" y="184.00" width="8.00" height="8.00" rx="2" fill="#8A8780" />
+<text x="920.00" y="192.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">System prompt</text>
+<text x="1053.00" y="192.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">3.1k</text>
+<rect x="1065.00" y="184.00" width="8.00" height="8.00" rx="2" fill="#A39E94" />
+<text x="1079.00" y="192.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">System tools</text>
+<text x="1212.00" y="192.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">5.2k</text>
+<rect x="906.00" y="201.00" width="8.00" height="8.00" rx="2" fill="#C9A25D" />
+<text x="920.00" y="209.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">Project files</text>
+<text x="1053.00" y="209.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">4.1k</text>
+<rect x="1065.00" y="201.00" width="8.00" height="8.00" rx="2" fill="#B8865A" />
+<text x="1079.00" y="209.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">Skills</text>
+<text x="1212.00" y="209.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">1.4k</text>
+<rect x="906.00" y="218.00" width="8.00" height="8.00" rx="2" fill="#EA7A43" />
+<text x="920.00" y="226.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="start">Messages</text>
+<text x="1053.00" y="226.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">68.2k</text>
+<text x="906.00" y="248.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">Breakdown as of /context at 14:02</text>
+<text x="1224.00" y="248.00" font-size="10.5" fill="#EA7A43" font-weight="400" text-anchor="end">Measure now</text>
+<text x="906.00" y="275.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">FILL BY TURN</text>
+<text x="1224.00" y="275.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">peak 82k</text>
+<rect x="906.00" y="283.00" width="318.00" height="46.00" rx="4" fill="none" stroke="#2F2E2C" stroke-width="1" />
+<path d="M912.0 324.0 L912.0 319.0 L973.2 316.1 L1034.4 311.8 L1095.6 305.6 L1156.8 298.8 L1218.0 294.5 L1218.0 324.0 Z" fill="#EA7A43" opacity="0.22"/>
+<path d="M912.0 319.0 L973.2 316.1 L1034.4 311.8 L1095.6 305.6 L1156.8 298.8 L1218.0 294.5" fill="none" stroke="#EA7A43" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="910.00" y1="293.40" x2="1220.00" y2="293.40" stroke="#E2AE45" stroke-width="1" stroke-linecap="butt" stroke-dasharray="3 3"/>
+<circle cx="912.00" cy="318.96" r="2.2" fill="#EA7A43"/>
+<circle cx="973.20" cy="316.08" r="2.2" fill="#EA7A43"/>
+<circle cx="1034.40" cy="311.76" r="2.2" fill="#EA7A43"/>
+<circle cx="1095.60" cy="305.64" r="2.2" fill="#F5F4EF"/>
+<circle cx="1156.80" cy="298.80" r="2.2" fill="#EA7A43"/>
+<circle cx="1218.00" cy="294.48" r="2.2" fill="#EA7A43"/>
+<text x="906.00" y="353.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">TURNS</text>
+<text x="951.03" y="353.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">6</text>
+<text x="1224.00" y="353.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">fork or rewind from any turn</text>
+<line x1="914.00" y1="369.00" x2="914.00" y2="509.00" stroke="#38373A" stroke-width="1.2" stroke-linecap="butt"/>
+<circle cx="914.00" cy="369.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="928.00" y="373.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T6</text>
+<text x="950.00" y="373.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Update the tests for refresh</text>
+<text x="1224.00" y="373.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+9.8k</text>
+<text x="950.00" y="388.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">2 files · 38 s · $0.21</text>
+<circle cx="914.00" cy="409.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="928.00" y="413.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T5</text>
+<text x="950.00" y="413.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Rotate tokens on refresh</text>
+<text x="1224.00" y="413.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+12.4k</text>
+<text x="950.00" y="428.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">3 files · 41 s · $0.18</text>
+<rect x="898.00" y="438.00" width="334.00" height="40.00" rx="8" fill="#2E2D2B" />
+<circle cx="914.00" cy="449.00" r="4.2" fill="#EA7A43"/>
+<text x="928.00" y="453.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T4</text>
+<text x="950.00" y="453.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Why does /auth/refr…</text>
+<rect x="1090.00" y="440.00" width="66.00" height="20.00" rx="6" fill="#3A3936" />
+<g transform="translate(1096.00,443.00) scale(0.05078)" fill="#F5F4EF"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<text x="1114.00" y="454.50" font-size="11" fill="#F5F4EF" font-weight="500" text-anchor="start">Fork</text>
+<rect x="1160.00" y="440.00" width="66.00" height="20.00" rx="6" fill="#3A3936" />
+<g transform="translate(1166.00,443.00) scale(0.05078)" fill="#F5F4EF"><path d="M228,128a100,100,0,0,1-98.66,100H128a99.39,99.39,0,0,1-68.62-27.29,12,12,0,0,1,16.48-17.45,76,76,0,1,0-1.57-109c-.13.13-.25.25-.39.37L54.89,92H72a12,12,0,0,1,0,24H24a12,12,0,0,1-12-12V56a12,12,0,0,1,24,0V76.72L57.48,57.06A100,100,0,0,1,228,128Z"/></g>
+<text x="1184.00" y="454.50" font-size="11" fill="#F5F4EF" font-weight="500" text-anchor="start">Rewind</text>
+<text x="950.00" y="468.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">1 file · 52 s · $0.29</text>
+<circle cx="914.00" cy="489.00" r="3.4" fill="#1F1E1D" stroke="#EA7A43" stroke-width="1.4"/>
+<text x="928.00" y="493.00" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">T3</text>
+<text x="950.00" y="493.00" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Read the session middleware</text>
+<text x="1224.00" y="493.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">+11.9k</text>
+<text x="950.00" y="508.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">0 files · 19 s · $0.11</text>
+<text x="906.00" y="537.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">TOOLS</text>
+<text x="1224.00" y="537.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">31 calls · 2 failed</text>
+<rect x="906.00" y="545.00" width="54.00" height="17.00" rx="5" fill="#3A3936" />
+<text x="912.00" y="557.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">read 14</text>
+<rect x="965.00" y="545.00" width="48.00" height="17.00" rx="5" fill="#3A3936" />
+<text x="971.00" y="557.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">edit 9</text>
+<rect x="1018.00" y="545.00" width="48.00" height="17.00" rx="5" fill="#3A3936" />
+<text x="1024.00" y="557.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">bash 7</text>
+<rect x="1071.00" y="545.00" width="48.00" height="17.00" rx="5" fill="#3A3936" />
+<text x="1077.00" y="557.10" font-size="10" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">grep 1</text>
+<text x="906.00" y="581.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">Sources</text>
+<rect x="952.00" y="571.00" width="30.81" height="16.00" rx="8" fill="#3A3936" />
+<text x="958.00" y="582.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">chat</text>
+<rect x="986.81" y="571.00" width="47.91" height="16.00" rx="8" fill="#3A3936" />
+<text x="992.81" y="582.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">/context</text>
+<rect x="1038.72" y="571.00" width="53.90" height="16.00" rx="8" fill="#3A3936" />
+<text x="1044.72" y="582.42" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start">extension</text>
+<text x="906.00" y="611.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">FILES</text>
+<text x="1224.00" y="611.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">8 touched</text>
+<g transform="translate(906.00,620.00) scale(0.05078)" fill="#AEACA4"><path d="M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Zm112-80a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,132Zm0,40a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,172Z"/></g>
+<text x="926.00" y="630.00" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/refresh.rs</text>
+<text x="1224.00" y="630.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">edit ×4</text>
+<g transform="translate(906.00,640.00) scale(0.05078)" fill="#AEACA4"><path d="M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Zm112-80a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,132Zm0,40a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,172Z"/></g>
+<text x="926.00" y="650.00" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">src/auth/session.rs</text>
+<text x="1224.00" y="650.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">read</text>
+<g transform="translate(906.00,660.00) scale(0.05078)" fill="#AEACA4"><path d="M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Zm112-80a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,132Zm0,40a12,12,0,0,1-12,12H96a12,12,0,0,1,0-24h64A12,12,0,0,1,172,172Z"/></g>
+<text x="926.00" y="670.00" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">tests/auth_refresh.rs</text>
+<text x="1224.00" y="670.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">edit ×2</text>
+<text x="926.00" y="690.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="start">5 more</text>
+<text x="906.00" y="717.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">COST AND TIME</text>
+<text x="906.00" y="735.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Cost</text>
+<text x="1051.00" y="735.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">$1.42 est.</text>
+<text x="1065.00" y="735.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Cache hit</text>
+<text x="1210.00" y="735.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">71%</text>
+<text x="906.00" y="753.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Wall</text>
+<text x="1051.00" y="753.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">14 min</text>
+<text x="1065.00" y="753.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Model API</text>
+<text x="1210.00" y="753.00" font-size="11" fill="#F5F4EF" font-weight="400" text-anchor="end">6 min</text>
+<rect x="1240.00" y="36.00" width="40.00" height="740.00" fill="#1F1E1D" />
+<line x1="1240.00" y1="36.00" x2="1240.00" y2="776.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<g transform="translate(1252.00,50.00) scale(0.06250)" fill="#AEACA4"><path d="M213.66,66.34l-40-40A8,8,0,0,0,168,24H88A16,16,0,0,0,72,40V56H56A16,16,0,0,0,40,72V216a16,16,0,0,0,16,16H168a16,16,0,0,0,16-16V200h16a16,16,0,0,0,16-16V72A8,8,0,0,0,213.66,66.34ZM168,216H56V72h76.69L168,107.31v84.53c0,.06,0,.11,0,.16s0,.1,0,.16V216Zm32-32H184V104a8,8,0,0,0-2.34-5.66l-40-40A8,8,0,0,0,136,56H88V40h76.69L200,75.31Zm-56-32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,152Zm0,32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,184Z"/></g>
+<g transform="translate(1252.00,86.00) scale(0.06250)" fill="#AEACA4"><path d="M112,152a8,8,0,0,0-8,8v28.69L66.34,151A8,8,0,0,1,64,145.37V95a32,32,0,1,0-16,0v50.38a23.85,23.85,0,0,0,7,17L92.69,200H64a8,8,0,0,0,0,16h48a8,8,0,0,0,8-8V160A8,8,0,0,0,112,152ZM40,64A16,16,0,1,1,56,80,16,16,0,0,1,40,64Zm168,97V110.63a23.85,23.85,0,0,0-7-17L163.31,56H192a8,8,0,0,0,0-16H144a8,8,0,0,0-8,8V96a8,8,0,0,0,16,0V67.31L189.66,105a8,8,0,0,1,2.34,5.66V161a32,32,0,1,0,16,0Zm-8,47a16,16,0,1,1,16-16A16,16,0,0,1,200,208Z"/></g>
+<rect x="1246.00" y="116.00" width="28.00" height="28.00" rx="8" fill="#3E2C23" />
+<g transform="translate(1252.00,122.00) scale(0.06250)" fill="#EA7A43"><path d="M207.06,72.67A111.24,111.24,0,0,0,128,40h-.4C66.07,40.21,16,91,16,153.13V176a16,16,0,0,0,16,16H224a16,16,0,0,0,16-16V152A111.25,111.25,0,0,0,207.06,72.67ZM224,176H119.71l54.76-75.3a8,8,0,0,0-12.94-9.42L99.92,176H32V153.13c0-3.08.15-6.12.43-9.13H56a8,8,0,0,0,0-16H35.27c10.32-38.86,44-68.24,84.73-71.66V80a8,8,0,0,0,16,0V56.33A96.14,96.14,0,0,1,221,128H200a8,8,0,0,0,0,16h23.67c.21,2.65.33,5.31.33,8Z"/></g>
+<g transform="translate(1252.00,158.00) scale(0.06250)" fill="#AEACA4"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm64-88a8,8,0,0,1-8,8H128a8,8,0,0,1-8-8V72a8,8,0,0,1,16,0v48h48A8,8,0,0,1,192,128Z"/></g>
+<g transform="translate(1252.00,194.00) scale(0.06250)" fill="#AEACA4"><path d="M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Z"/></g>
+<line x1="890.00" y1="36.00" x2="890.00" y2="776.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<rect x="0.00" y="776.00" width="1280.00" height="24.00" fill="#1F1E1D" />
+<line x1="0.00" y1="776.00" x2="1280.00" y2="776.00" stroke="#2F2E2C" stroke-width="1" stroke-linecap="butt"/>
+<circle cx="16.00" cy="788.00" r="3.2" fill="#6BBF85"/>
+<text x="26.00" y="792.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">hutand</text>
+<text x="82.00" y="792.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">acme-web · main</text>
+<g transform="translate(190.00,782.00) scale(0.04688)" fill="#E2AE45"><path d="M240.26,186.1,152.81,34.23h0a28.74,28.74,0,0,0-49.62,0L15.74,186.1a27.45,27.45,0,0,0,0,27.71A28.31,28.31,0,0,0,40.55,228h174.9a28.31,28.31,0,0,0,24.79-14.19A27.45,27.45,0,0,0,240.26,186.1Zm-20.8,15.7a4.46,4.46,0,0,1-4,2.2H40.55a4.46,4.46,0,0,1-4-2.2,3.56,3.56,0,0,1,0-3.73L124,46.2a4.77,4.77,0,0,1,8,0l87.44,151.87A3.56,3.56,0,0,1,219.46,201.8ZM116,136V104a12,12,0,0,1,24,0v32a12,12,0,0,1-24,0Zm28,40a16,16,0,1,1-16-16A16,16,0,0,1,144,176Z"/></g>
+<text x="206.00" y="792.00" font-size="11" fill="#E2AE45" font-weight="400" text-anchor="start">1 request</text>
+<rect x="950.00" y="785.00" width="40.00" height="5.00" rx="2.5" fill="#3A3936" />
+<rect x="950.00" y="785.00" width="23.20" height="5.00" rx="2.5" fill="#AEACA4" />
+<text x="998.00" y="792.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Claude 58% 5h</text>
+<rect x="1081.51" y="785.00" width="40.00" height="5.00" rx="2.5" fill="#3A3936" />
+<rect x="1081.51" y="785.00" width="8.80" height="5.00" rx="2.5" fill="#AEACA4" />
+<text x="1129.51" y="792.00" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Codex 22% 5h</text>
+<text x="1264.00" y="792.00" font-size="11" fill="#EA7A43" font-weight="400" text-anchor="end">1 working</text>
+</g>
+</svg>

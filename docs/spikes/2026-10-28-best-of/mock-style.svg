@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="920" viewBox="0 0 1180 920" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Style spec: row anatomy, type scale and colour roles</title>
+<desc>Mock: the proposed sidebar rows with numbered parts, the type scale at real size, and the colour roles from the Hutan packs. Invented data.</desc>
+<rect x="0.00" y="0.00" width="1180.00" height="920.00" fill="#141413" />
+<text x="24.00" y="34.00" font-size="15" fill="#F5F4EF" font-weight="600" text-anchor="start">Row anatomy at 1.6×: name first, one state lane, news only when there is news</text>
+<g transform="translate(24,56) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="52.00" fill="#1F1E1D" />
+<g transform="translate(16.00,7.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<circle cx="29.00" cy="9.00" r="5.2" fill="#1F1E1D"/>
+<circle cx="29.00" cy="9.00" r="3.5" fill="#E2AE45"/>
+<line x1="29.00" y1="7.40" x2="29.00" y2="9.40" stroke="#2B2417" stroke-width="1.2" stroke-linecap="round"/>
+<circle cx="29.00" cy="10.90" r="0.6" fill="#2B2417"/>
+<text x="38.00" y="18.20" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Invoice export job</text>
+<text x="264.00" y="18.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">now</text>
+<rect x="38.00" y="24.00" width="49.90" height="15.00" rx="4" fill="#3A3936" />
+<text x="43.00" y="34.92" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">gpt-5.5</text>
+<text x="93.90" y="35.50" font-size="11" fill="#E2AE45" font-weight="400" text-anchor="start">Approve: cargo test -p invoices</text>
+</g>
+<text x="486.00" y="95.20" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Needs you · 44</text>
+<g transform="translate(24,148.4) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="52.00" fill="#1F1E1D" />
+<g transform="translate(32.00,7.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="45.00" cy="9.00" r="5.2" fill="#1F1E1D"/>
+<path d="M41.8 9.0 A3.2 3.2 0 1 1 45.0 12.2" fill="none" stroke="#EA7A43" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="54.00" y="18.20" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Fix login redirect loop</text>
+<text x="264.00" y="18.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">2m</text>
+<rect x="54.00" y="24.00" width="67.00" height="15.00" rx="4" fill="#3A3936" />
+<text x="59.00" y="34.92" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">sonnet-5.5</text>
+<text x="127.00" y="35.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Editing src/auth/refresh.rs</text>
+</g>
+<text x="486.00" y="187.60" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Working · 44</text>
+<g transform="translate(24,240.8) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="52.00" fill="#1F1E1D" />
+<rect x="8.00" y="0.00" width="264.00" height="44.00" rx="8" fill="#2E2D2B" />
+<g transform="translate(32.00,7.00) scale(0.8750)" fill="none" stroke="#F5F4EF" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<circle cx="45.00" cy="9.00" r="5.2" fill="#2E2D2B"/>
+<circle cx="45.00" cy="9.00" r="3.5" fill="#6BBF85"/>
+<path d="M43.5 9.1 L44.6 10.2 L46.6 7.7" fill="none" stroke="#10241A" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="54.00" y="18.20" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Migrate auth to refresh toke…</text>
+<text x="264.00" y="18.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="end">now</text>
+<rect x="54.00" y="24.00" width="55.60" height="15.00" rx="4" fill="#3A3936" />
+<text x="59.00" y="34.92" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">opus-5.5</text>
+<text x="115.60" y="35.50" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Rotated tokens in 3 files; te…</text>
+</g>
+<text x="486.00" y="280.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Done, unread, selected · 44</text>
+<g transform="translate(24,333.20000000000005) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="36.00" fill="#1F1E1D" />
+<g transform="translate(32.00,7.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<text x="54.00" y="18.20" font-size="13" fill="#D9D7CF" font-weight="400" text-anchor="start">Split the session store</text>
+<text x="264.00" y="18.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">14m</text>
+</g>
+<text x="486.00" y="359.60" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Idle or read · 28</text>
+<g transform="translate(24,400.00000000000006) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="52.00" fill="#1F1E1D" />
+<g transform="translate(32.00,7.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.00 8.00 L14.00 8.00"/><path d="M5.00 2.80 L11.00 13.20"/><path d="M11.00 2.80 L5.00 13.20"/></g>
+<circle cx="45.00" cy="9.00" r="5.2" fill="#1F1E1D"/>
+<circle cx="45.00" cy="9.00" r="3.5" fill="#F08C7A"/>
+<path d="M43.7 7.7 L46.3 10.3 M46.3 7.7 L43.7 10.3" fill="none" stroke="#2B1512" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="54.00" y="18.20" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Ship the CSV export</text>
+<text x="264.00" y="18.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">9m</text>
+<rect x="54.00" y="24.00" width="67.00" height="15.00" rx="4" fill="#3A3936" />
+<text x="59.00" y="34.92" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">sonnet-5.5</text>
+<text x="127.00" y="35.50" font-size="11" fill="#F08C7A" font-weight="400" text-anchor="start">Tests failed: 3 of 41</text>
+</g>
+<text x="486.00" y="439.20" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Failed · 44</text>
+<g transform="translate(24,492.4000000000001) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="36.00" fill="#1F1E1D" />
+<g transform="translate(32.00,7.00) scale(0.8750)" fill="none" stroke="#6F6D66" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.6 L13.6 4.8 V11.2 L8 14.4 L2.4 11.2 V4.8 Z"/><path d="M6.2 6.2 L8.6 8 L6.2 9.8"/></g>
+<circle cx="45.00" cy="9.00" r="5.2" fill="#1F1E1D"/>
+<circle cx="45.00" cy="9.00" r="3.2" fill="none" stroke="#6F6D66" stroke-width="1.1"/>
+<text x="54.00" y="18.20" font-size="13" fill="#6F6D66" font-weight="400" text-anchor="start">Docs sweep</text>
+<text x="264.00" y="18.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">2d</text>
+</g>
+<text x="486.00" y="518.80" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Ended · 28</text>
+<g transform="translate(24,559.2) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="36.00" fill="#1F1E1D" />
+<g transform="translate(32.00,7.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.6 L7.4 8 L3 11.4"/><path d="M8.8 12 H13"/></g>
+<text x="54.00" y="18.20" font-size="13" fill="#D9D7CF" font-weight="400" text-anchor="start">Trim the bundle size</text>
+<text x="264.00" y="18.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">3m</text>
+</g>
+<text x="486.00" y="585.60" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Plain shell · 28</text>
+<g transform="translate(24,626.0) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="36.00" fill="#1F1E1D" />
+<rect x="8.00" y="0.00" width="264.00" height="28.00" rx="8" fill="#262523" />
+<g transform="translate(32.00,7.00) scale(0.8750)" fill="none" stroke="#AEACA4" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.6 H13.4"/><path d="M5.6 4.6 V12.6"/><path d="M10.4 4.6 V10.6 a2 2 0 0 0 2.2 2"/></g>
+<text x="54.00" y="18.20" font-size="13" fill="#D9D7CF" font-weight="400" text-anchor="start">Migrate auth to refresh to…</text>
+<g transform="translate(228.00,7.00) scale(0.05469)" fill="#AEACA4"><path d="M228,64a36,36,0,1,0-48,33.94V112a4,4,0,0,1-4,4H80a4,4,0,0,1-4-4V97.94a36,36,0,1,0-24,0V112a28,28,0,0,0,28,28h36v18.06a36,36,0,1,0,24,0V140h36a28,28,0,0,0,28-28V97.94A36.07,36.07,0,0,0,228,64ZM64,52A12,12,0,1,1,52,64,12,12,0,0,1,64,52Zm64,152a12,12,0,1,1,12-12A12,12,0,0,1,128,204ZM192,76a12,12,0,1,1,12-12A12,12,0,0,1,192,76Z"/></g>
+<g transform="translate(250.00,7.00) scale(0.05469)" fill="#AEACA4"><path d="M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"/></g>
+</g>
+<text x="486.00" y="652.40" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Pointer on the row · 28</text>
+<g transform="translate(24,692.8) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="36.00" fill="#1F1E1D" />
+<g transform="translate(32.00,7.00) scale(0.05469)" fill="#AEACA4"><path d="M160,116h48a20,20,0,0,0,20-20V48a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20V60H128a28,28,0,0,0-28,28v28H76v-4A20,20,0,0,0,56,92H24A20,20,0,0,0,4,112v32a20,20,0,0,0,20,20H56a20,20,0,0,0,20-20v-4h24v28a28,28,0,0,0,28,28h12v12a20,20,0,0,0,20,20h48a20,20,0,0,0,20-20V160a20,20,0,0,0-20-20H160a20,20,0,0,0-20,20v12H128a4,4,0,0,1-4-4V88a4,4,0,0,1,4-4h12V96A20,20,0,0,0,160,116ZM52,140H28V116H52Zm112,24h40v40H164Zm0-112h40V92H164Z"/></g>
+<text x="54.00" y="18.00" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">feature/auth-refresh</text>
+<rect x="219.99" y="6.00" width="44.02" height="16.00" rx="8" fill="#3A3936" />
+<text x="241.99" y="17.20" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="middle">1 agent</text>
+</g>
+<text x="486.00" y="719.20" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Worktree · 28</text>
+<g transform="translate(24,759.5999999999999) scale(1.6)">
+<rect x="0.00" y="-4.00" width="280.00" height="36.00" fill="#1F1E1D" />
+<g transform="translate(12.00,8.00) scale(0.04688)" fill="#AEACA4"><path d="M216.49,104.49l-80,80a12,12,0,0,1-17,0l-80-80a12,12,0,0,1,17-17L128,159l71.51-71.52a12,12,0,0,1,17,17Z"/></g>
+<g transform="translate(30.00,6.00) scale(0.06250)" fill="#AEACA4"><path d="M232,64a32,32,0,1,0-40,31v17a8,8,0,0,1-8,8H96a23.84,23.84,0,0,0-8,1.38V95a32,32,0,1,0-16,0v66a32,32,0,1,0,16,0V144a8,8,0,0,1,8-8h88a24,24,0,0,0,24-24V95A32.06,32.06,0,0,0,232,64ZM64,64A16,16,0,1,1,80,80,16,16,0,0,1,64,64ZM96,192a16,16,0,1,1-16-16A16,16,0,0,1,96,192ZM200,80a16,16,0,1,1,16-16A16,16,0,0,1,200,80Z"/></g>
+<text x="54.00" y="18.20" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">acme-web</text>
+<text x="264.00" y="18.00" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="end">5</text>
+<text x="249.62" y="18.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end" font-family="'SF Mono', Menlo, Monaco, monospace">main</text>
+</g>
+<text x="486.00" y="786.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Project · 28</text>
+<circle cx="62.40" cy="137.40" r="8" fill="#EA7A43"/>
+<text x="62.40" y="141.00" font-size="10" fill="#1F1E1D" font-weight="700" text-anchor="middle">1</text>
+<circle cx="120.00" cy="137.40" r="8" fill="#EA7A43"/>
+<text x="120.00" y="141.00" font-size="10" fill="#1F1E1D" font-weight="700" text-anchor="middle">2</text>
+<circle cx="443.20" cy="137.40" r="8" fill="#EA7A43"/>
+<text x="443.20" y="141.00" font-size="10" fill="#1F1E1D" font-weight="700" text-anchor="middle">3</text>
+<circle cx="264.00" cy="137.40" r="8" fill="#EA7A43"/>
+<text x="264.00" y="141.00" font-size="10" fill="#1F1E1D" font-weight="700" text-anchor="middle">4</text>
+<circle cx="12.00" cy="91.20" r="8" fill="#EA7A43"/>
+<text x="12.00" y="94.80" font-size="10" fill="#1F1E1D" font-weight="700" text-anchor="middle">5</text>
+<text x="640.00" y="34.00" font-size="15" fill="#F5F4EF" font-weight="600" text-anchor="start">Spec</text>
+<text x="640.00" y="68.00" font-size="12" fill="#EA7A43" font-weight="600" text-anchor="start">1  Lane, 16 pt</text>
+<text x="640.00" y="86.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">own harness monogram 14 pt (π OMP, asterisk Claude Code, ring Codex, bubble direct chat,</text>
+<text x="640.00" y="102.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">prompt for a shell) with an 8 pt state badge at its top-right, knocked out by a 1.5 pt ring of the</text>
+<text x="640.00" y="118.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">row colour.</text>
+<text x="640.00" y="160.00" font-size="12" fill="#EA7A43" font-weight="600" text-anchor="start">2  Name, 13/18</text>
+<text x="640.00" y="178.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">`fg` regular, semibold while a finished turn is unread, `faint` once the session ended. Always</text>
+<text x="640.00" y="194.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">the strongest text of the row; cut with “…”, never wraps.</text>
+<text x="640.00" y="236.00" font-size="12" fill="#EA7A43" font-weight="600" text-anchor="start">3  Age, 11 tabular</text>
+<text x="640.00" y="254.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">`faint`, right aligned; on hover it gives way to fork (⑂) and close (×), 14 pt Bold, no extra row</text>
+<text x="640.00" y="270.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">height.</text>
+<text x="640.00" y="312.00" font-size="12" fill="#EA7A43" font-weight="600" text-anchor="start">4  News line, 11/14</text>
+<text x="640.00" y="330.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">only when something is going on: needs-you question (`warn`), failure (`danger`), the tool now</text>
+<text x="640.00" y="346.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">running, or the first line of an unread reply. Model chip in mono 9.5 pt on `surface_hover`,</text>
+<text x="640.00" y="362.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">radius 4. Idle or read rows are one line.</text>
+<text x="640.00" y="404.00" font-size="12" fill="#EA7A43" font-weight="600" text-anchor="start">5  Row box</text>
+<text x="640.00" y="422.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">28 pt one line, 44 pt with a news line; 8 pt side inset; hover and selected are fills (radius 8),</text>
+<text x="640.00" y="438.00" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">never outlines; sessions indent 16 pt under a project, 32 pt under a worktree.</text>
+<text x="640.00" y="488.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Type scale (real size, system sans; mono = terminal family)</text>
+<text x="640.00" y="514.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Group label</text>
+<text x="790.00" y="514.00" font-size="10" fill="#AEACA4" font-weight="600" text-anchor="start" letter-spacing="0.75">PROJECTS</text>
+<text x="790.00" y="530.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">10/12 semibold, uppercase, +0.075 em, `muted`</text>
+<text x="640.00" y="554.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Row name</text>
+<text x="790.00" y="554.00" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Migrate auth to refresh tokens</text>
+<text x="790.00" y="570.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">13/18 regular · semibold unread</text>
+<text x="640.00" y="594.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Meta, news line</text>
+<text x="790.00" y="594.00" font-size="11" fill="#AEACA4" font-weight="400" text-anchor="start">Editing src/auth/refresh.rs · 2m</text>
+<text x="790.00" y="610.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">11/14 `muted`; age `faint`, tabular</text>
+<text x="640.00" y="634.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Chip (mono)</text>
+<text x="790.00" y="634.00" font-size="9.5" fill="#AEACA4" font-weight="400" text-anchor="start" font-family="'SF Mono', Menlo, Monaco, monospace">opus-5.5</text>
+<text x="790.00" y="650.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">9.5 mono on `surface_hover`</text>
+<text x="640.00" y="674.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Panel tab / title</text>
+<text x="790.00" y="674.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Context</text>
+<text x="790.00" y="690.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">13 semibold · tab labels 12</text>
+<text x="640.00" y="714.00" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Page title (settings)</text>
+<text x="790.00" y="714.00" font-size="20" fill="#F5F4EF" font-weight="600" text-anchor="start">Appearance</text>
+<text x="790.00" y="730.00" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">20 semibold, 13 `muted` description</text>
+<text x="640.00" y="778.00" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Colour roles (existing tokens, docs/design.md; no new colours)</text>
+<rect x="640.00" y="790.00" width="96.00" height="26.00" rx="6" fill="#262624" stroke="#38373A" stroke-width="1" />
+<text x="640.00" y="830.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">bg</text>
+<text x="736.00" y="830.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">pane</text>
+<rect x="744.00" y="790.00" width="96.00" height="26.00" rx="6" fill="#1F1E1D" stroke="#38373A" stroke-width="1" />
+<text x="744.00" y="830.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">sidebar</text>
+<text x="840.00" y="830.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">chrome</text>
+<rect x="848.00" y="790.00" width="96.00" height="26.00" rx="6" fill="#2E2D2B" stroke="#38373A" stroke-width="1" />
+<text x="848.00" y="830.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">sel</text>
+<text x="944.00" y="830.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">selected row</text>
+<rect x="952.00" y="790.00" width="96.00" height="26.00" rx="6" fill="#30302E" stroke="#38373A" stroke-width="1" />
+<text x="952.00" y="830.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">surface</text>
+<text x="1048.00" y="830.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">cards</text>
+<rect x="1056.00" y="790.00" width="96.00" height="26.00" rx="6" fill="#3A3936" stroke="#38373A" stroke-width="1" />
+<text x="1056.00" y="830.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">hover</text>
+<text x="1152.00" y="830.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">chips, hover</text>
+<rect x="640.00" y="846.00" width="96.00" height="26.00" rx="6" fill="#EA7A43" stroke="#38373A" stroke-width="1" />
+<text x="640.00" y="886.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">accent</text>
+<text x="736.00" y="886.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">working</text>
+<rect x="744.00" y="846.00" width="96.00" height="26.00" rx="6" fill="#E2AE45" stroke="#38373A" stroke-width="1" />
+<text x="744.00" y="886.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">warn</text>
+<text x="840.00" y="886.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">needs you</text>
+<rect x="848.00" y="846.00" width="96.00" height="26.00" rx="6" fill="#6BBF85" stroke="#38373A" stroke-width="1" />
+<text x="848.00" y="886.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">ok</text>
+<text x="944.00" y="886.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">done</text>
+<rect x="952.00" y="846.00" width="96.00" height="26.00" rx="6" fill="#F08C7A" stroke="#38373A" stroke-width="1" />
+<text x="952.00" y="886.00" font-size="10.5" fill="#F5F4EF" font-weight="500" text-anchor="start">bad</text>
+<text x="1048.00" y="886.00" font-size="9.5" fill="#6F6D66" font-weight="400" text-anchor="end">failed</text>
+</svg>
