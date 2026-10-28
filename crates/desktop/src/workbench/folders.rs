@@ -77,7 +77,7 @@ pub(crate) fn chip(
     } else {
         folders.chip_name()
     };
-    Button::new(id, label, theme, tokens)
+    let button = Button::new(id, label, theme, tokens)
         .ghost()
         .compact()
         .icon(Icon::ItemFolder)
@@ -99,8 +99,9 @@ pub(crate) fn chip(
                 cx,
             );
         })
-        .child(probe(regions, region))
-        .into_any_element()
+        .child(probe(regions, region));
+    // The chip keeps its width: in a header the model's name is what gives way.
+    div().flex_none().child(button).into_any_element()
 }
 
 impl Workbench {
