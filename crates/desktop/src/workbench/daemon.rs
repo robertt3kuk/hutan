@@ -920,7 +920,7 @@ impl Workbench {
                     (3, presentation.label.clone())
                 };
                 let row = ModalRow {
-                    icon: presentation.icon(),
+                    icon: super::panels::common::session_icon(info),
                     tone: presentation.tone,
                     title: info.title.clone().into(),
                     status: status.into(),

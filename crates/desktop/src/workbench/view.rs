@@ -321,6 +321,8 @@ pub enum Region {
     /// A part of the open dialog (`modal.rs`): `card`, `rows` (the list of what it is about),
     /// `footer`, and its buttons `cancel`, `choice`, `ok`.
     Modal(&'static str),
+    /// Line `index` of the dialog's list: its state `dot` and its session `icon`.
+    ModalItem(&'static str, usize),
     /// Row `index` of a list of the settings sheet: `layer` (the header's switch), `reveal` and
     /// `open` (the Data & logs page, per `DataTarget`), `hooks-install`, `hooks-repair` and
     /// `hooks-uninstall` (per agent), `revoke` (per remembered choice), `env-remove`,

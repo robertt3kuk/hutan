@@ -164,3 +164,55 @@ fn the_quit_sheet_lists_the_sessions_and_counts_the_ones_it_does_not_show(cx: &m
         list.size.height
     );
 }
+
+#[gpui::test]
+fn a_session_line_of_the_quit_sheet_is_a_dot_an_icon_and_a_name_never_a_hollow_circle(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::sessions::Tone;
+    use hutan_settings::themes::icons::IconId;
+
+    let daemon = TestDaemon::start();
+    daemon.sh_titled("build watcher", "sleep 600");
+    daemon.sh_titled("server", "sleep 600");
+    let (view, cx) = open(cx, &daemon, 2);
+    cx.dispatch_action(actions::Quit);
+    cx.run_until_parked();
+    settle(cx);
+
+    let rows = view.read_with(cx, |wb, _| wb.modal().unwrap().rows.clone());
+    assert_eq!(rows.len(), 2);
+    for (index, row) in rows.iter().enumerate() {
+        // The icon says what the session is (a shell: the terminal icon), never a state glyph:
+        // the hollow circles of the idle and to-do states read as radio buttons.
+        assert_eq!(row.icon, IconId::SessionTerminal, "{row:?}");
+        assert!(
+            ![IconId::StateIdle, IconId::StateTodo, IconId::StateUnread].contains(&row.icon),
+            "{row:?}"
+        );
+        // A shell that does nothing is idle: the muted tone, as a filled dot.
+        assert_eq!(row.tone, Tone::Muted, "{row:?}");
+        assert_eq!(row.status.as_ref(), "idle");
+
+        let dot = bounds(&view, cx, Region::ModalItem("dot", index)).expect("a state dot");
+        let icon = bounds(&view, cx, Region::ModalItem("icon", index)).expect("a session icon");
+        assert_eq!(
+            (f32::from(dot.size.width), f32::from(dot.size.height)),
+            (8.0, 8.0),
+            "a small dot"
+        );
+        assert_eq!(
+            (f32::from(icon.size.width), f32::from(icon.size.height)),
+            (14.0, 14.0)
+        );
+        assert!(
+            dot.right() <= icon.left(),
+            "the dot comes first: {dot:?} {icon:?}"
+        );
+        let centre = |b: Bounds<Pixels>| f32::from(b.top()) + f32::from(b.size.height) / 2.0;
+        assert!(
+            (centre(dot) - centre(icon)).abs() <= 1.0,
+            "they share a line: {dot:?} {icon:?}"
+        );
+    }
+}

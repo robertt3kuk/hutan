@@ -74,12 +74,16 @@ pub struct ModalCheckbox {
 /// most [`MODAL_ROWS_SHOWN`] are drawn, the rest is counted.
 #[derive(Debug, Clone)]
 pub struct ModalRow {
+    /// The icon of what the line is (a session's kind), beside a small dot in the tone's color.
     pub icon: crate::icons::Icon,
     pub tone: Tone,
     pub title: SharedString,
     /// The state in words, at the right end of the line.
     pub status: SharedString,
 }
+
+/// The diameter of the state dot of a list line.
+const QUIT_DOT: f32 = 8.0;
 
 /// The height of one line of a dialog's list.
 const MODAL_ROW_HEIGHT: f32 = 28.0;
@@ -629,11 +633,25 @@ impl Workbench {
                         .gap(px(ui::space::SM))
                         .h(px(line))
                         .px(px(ui::space::SM))
+                        // A small filled dot in the state's color (muted while idle), then the
+                        // session's own icon: never a hollow circle, which reads as a radio
+                        // button.
                         .child(
                             div()
+                                .relative()
                                 .flex_none()
-                                .text_color(tone)
-                                .child(crate::icons::glyph(row.icon)),
+                                .size(px(QUIT_DOT))
+                                .rounded_full()
+                                .bg(tone)
+                                .child(probe(&self.regions, Region::ModalItem("dot", index))),
+                        )
+                        .child(
+                            div()
+                                .relative()
+                                .flex_none()
+                                .text_color(theme.muted)
+                                .child(crate::icons::glyph(row.icon))
+                                .child(probe(&self.regions, Region::ModalItem("icon", index))),
                         )
                         .child(div().flex_1().min_w_0().truncate().child(row.title.clone()))
                         .child(
