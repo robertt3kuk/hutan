@@ -101,6 +101,7 @@ pub mod scratch;
 pub mod session_names;
 pub mod start_error;
 pub mod tasks;
+pub mod term_agent;
 pub mod terminal_search;
 pub mod terminals;
 #[cfg(feature = "test-support")]

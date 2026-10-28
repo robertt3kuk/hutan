@@ -26,9 +26,9 @@ use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, AgentState, CreatedBy, Event,
     RECENT_PROJECTS_DEFAULT_LIMIT, RECENT_PROJECTS_MAX_LIMIT, RecentProject, RecentProjects,
     SessionBusy, SessionClose, SessionCreate, SessionInfo, SessionList, SessionListFilter,
-    SessionRename, SessionSnapshot, SessionSpec, TerminalSpec, WorkspaceCreate, WorkspaceInfo,
-    WorkspaceKind, WorkspaceList, WorkspaceMove, WorkspaceOpen, WorkspaceOpened, WorkspacePin,
-    WorkspaceRename,
+    SessionRename, SessionSnapshot, SessionSpec, TerminalAgentSource, TerminalAgentState,
+    TerminalSpec, WorkspaceCreate, WorkspaceInfo, WorkspaceKind, WorkspaceList, WorkspaceMove,
+    WorkspaceOpen, WorkspaceOpened, WorkspacePin, WorkspaceRename,
 };
 use hutan_protocol::notify::NotifyMute;
 use hutan_protocol::project::{ProjectInfo, WorkspaceAssign, WorkspaceDelete};
@@ -59,8 +59,10 @@ use crate::placement::{Occupant, PlacementCache, shared_with};
 use crate::projects::{self, Assignment, Folder, HomeRules, Ident};
 use crate::providers::ProviderService;
 use crate::recovery;
+use crate::resources::SystemProcesses;
 use crate::restore::{self, Stored};
 use crate::session_names::{self, Facts, Naming};
+use crate::term_agent;
 use crate::terminals::{TerminalEntry, TerminalHub};
 use crate::tree::{self, TreeState};
 
@@ -85,6 +87,15 @@ pub const ACTIVITY_INTERVAL: Duration = Duration::from_secs(10);
 /// Terminals tell the registry about input and output at most this often each; the registry
 /// applies [`ACTIVITY_INTERVAL`] per workspace.
 pub const ACTIVITY_NOTIFY_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How long after the start of a terminal, and after each command the shell starts, the
+/// watcher looks for a coding agent in its process tree: three looks, each this long after the
+/// one before (`term_agent::probe`).
+const PROGRAM_PROBE_GAPS: [Duration; 3] = [
+    Duration::from_millis(400),
+    Duration::from_millis(1200),
+    Duration::from_millis(2400),
+];
 
 /// Title and cwd changes are coalesced: a session is written at most this often because of them.
 const DIRTY_WRITE_INTERVAL: Duration = Duration::from_secs(1);
@@ -154,6 +165,13 @@ enum Command {
     },
     /// From a terminal's watcher task.
     TerminalMeta(TerminalId, TerminalMeta),
+    /// What the watcher found running in the terminal's process tree (`term_agent::probe`);
+    /// `settled` = the last look of this series, so that finding nothing is final.
+    TerminalProgram {
+        terminal: TerminalId,
+        app: Option<&'static str>,
+        settled: bool,
+    },
     TerminalExited(TerminalId, ExitStatus),
     AgentReport(Box<AgentReportRequest>, Reply<AgentApplied>),
     AgentRelease(AgentReleaseRequest, Reply<AgentApplied>),
@@ -1305,6 +1323,11 @@ impl SessionRegistry {
                 }
                 Command::StopAll { forget, reply } => self.stop_all(forget, reply),
                 Command::TerminalMeta(terminal, meta) => self.on_meta(terminal, meta),
+                Command::TerminalProgram {
+                    terminal,
+                    app,
+                    settled,
+                } => self.on_program(terminal, app, settled),
                 Command::TerminalExited(terminal, status) => self.on_exited(terminal, &status),
                 Command::AgentReport(req, reply) => {
                     let _ = reply.send(self.report_agent(*req));
@@ -2386,6 +2409,7 @@ impl SessionRegistry {
         session.forget_agent(now_ms());
         session.tree.reset_seqs();
         session.osc_title = None;
+        session.info.terminal_agent = None;
         session.info.terminal_id = None;
         // Restart where the program last said it was (OSC 7) when that directory still exists.
         session.info.cwd = session
@@ -2841,6 +2865,157 @@ impl SessionRegistry {
         Ok(AgentApplied { applied: true })
     }
 
+    // Agents that report in the terminal ------------------------------------------------------
+
+    /// The agent of session `index` after the terminal's title became `title`; whether the
+    /// agent (not the session's name) changed.
+    fn apply_agent_title(&mut self, index: usize, title: Option<&str>) -> bool {
+        let session = &mut self.sessions[index];
+        let Some(agent) = &session.info.terminal_agent else {
+            return false;
+        };
+        let next = term_agent::with_title(agent, title, now_ms());
+        if next == *agent {
+            return false;
+        }
+        session.info.terminal_agent = Some(next);
+        true
+    }
+
+    /// An OSC 7501 report: the agent's state, announced; folded into the session's agent tree
+    /// (so tasks, notifications and the attention model treat it like a hook's report) unless
+    /// a hook already speaks for the main agent.
+    fn on_agent_status(&mut self, index: usize, status: &hutan_terminal::AgentStatus) {
+        let now = now_ms();
+        let message = status
+            .message
+            .as_deref()
+            .map(|text| clipped(&hutan_index::redact::redact(text), MAX_AGENT_MESSAGE_CHARS))
+            .filter(|text| !text.trim().is_empty());
+        let session = &mut self.sessions[index];
+        if !session.info.state.is_live() {
+            return;
+        }
+        let next = term_agent::from_status(
+            session.info.terminal_agent.as_ref(),
+            status,
+            message.clone(),
+            now,
+        );
+        // Whatever the title said before the agent was known is the agent's own name now.
+        let next = match (&session.info.terminal_agent, &session.osc_title) {
+            (None, Some(title)) => term_agent::with_title(&next, Some(title), now),
+            _ => next,
+        };
+        let spoken_for = session
+            .tree
+            .tree()
+            .root()
+            .is_some_and(|root| root.source != term_agent::OSC_SOURCE && !root.is_finished());
+        if !spoken_for {
+            let tree_state = match next.state {
+                TerminalAgentState::Working => AgentState::Working,
+                TerminalAgentState::Blocked => AgentState::Blocked,
+                _ => AgentState::Idle,
+            };
+            let mut update = node_update(
+                term_agent::OSC_SOURCE,
+                &next.app,
+                Some(tree_state),
+                None,
+                message
+                    .as_deref()
+                    .filter(|_| tree_state == AgentState::Blocked),
+            );
+            if next.state == TerminalAgentState::Error {
+                update.outcome = Some(NodeOutcome::Failed);
+            }
+            session.tree.apply(update, now);
+            session.agent_message = message.filter(|_| tree_state == AgentState::Blocked);
+        }
+        let changed = session.info.terminal_agent.as_ref() != Some(&next);
+        session.info.terminal_agent = Some(next);
+        if !spoken_for {
+            self.tree_changed(index);
+        }
+        if changed {
+            self.emit_session(index);
+        }
+    }
+
+    /// OSC 7501 `state=clear`: the agent left. Its node in the tree is released; a hook's is not.
+    fn on_agent_cleared(&mut self, index: usize) {
+        let session = &mut self.sessions[index];
+        let released = session.tree.release(
+            term_agent::OSC_SOURCE,
+            None,
+            NodeOutcome::Completed,
+            now_ms(),
+        );
+        if released {
+            session.agent_message = None;
+            self.tree_changed(index);
+        }
+        if self.clear_terminal_agent(index) {
+            self.emit_session(index);
+        }
+    }
+
+    /// Forgets the session's terminal agent. The title it set was its own: the shell names the
+    /// terminal again at its next prompt. Whether there was one; the caller announces.
+    fn clear_terminal_agent(&mut self, index: usize) -> bool {
+        let session = &mut self.sessions[index];
+        let Some(agent) = session.info.terminal_agent.take() else {
+            return false;
+        };
+        let terminal = session.info.terminal_id;
+        if agent.title.is_some()
+            && session.osc_title.take().is_some()
+            && let Some(terminal_id) = terminal
+        {
+            self.emit(&Event::TerminalTitle {
+                terminal_id,
+                title: None,
+            });
+        }
+        true
+    }
+
+    /// What the watcher found in the process tree of a terminal.
+    fn on_program(&mut self, terminal: TerminalId, app: Option<&'static str>, settled: bool) {
+        let Some(index) = self.terminal_index(terminal) else {
+            return;
+        };
+        let session = &mut self.sessions[index];
+        if !session.info.state.is_live() {
+            return;
+        }
+        let prev = session.info.terminal_agent.as_ref();
+        let next = match app {
+            Some(app) => term_agent::from_process(prev, app, now_ms()).map(|agent| {
+                // The title the program already set is its own.
+                let title = session.osc_title.clone();
+                term_agent::with_title(&agent, title.as_deref(), now_ms())
+            }),
+            None if settled
+                && prev.is_some_and(|agent| agent.source == TerminalAgentSource::Process) =>
+            {
+                let had_title = prev.is_some_and(|agent| agent.title.is_some());
+                if had_title {
+                    session.osc_title = None;
+                }
+                session.info.terminal_agent = None;
+                self.emit_session(index);
+                return;
+            }
+            None => None,
+        };
+        if let Some(next) = next {
+            self.sessions[index].info.terminal_agent = Some(next);
+            self.emit_session(index);
+        }
+    }
+
     fn release_agent(&mut self, req: AgentReleaseRequest) -> Result<AgentApplied, ErrorBody> {
         let index = self.session_index(req.session_id)?;
         agent_field("source", &req.source)?;
@@ -2944,15 +3119,21 @@ impl SessionRegistry {
                     return;
                 }
                 session.osc_title.clone_from(&title);
+                let agent_changed = self.apply_agent_title(index, title.as_deref());
                 self.emit(&Event::TerminalTitle {
                     terminal_id: terminal,
                     title,
                 });
-                if self.retitle(index) {
+                let renamed = self.retitle(index);
+                if renamed || agent_changed {
                     self.emit_session(index);
+                }
+                if renamed {
                     self.mark_dirty(index);
                 }
             }
+            TerminalMeta::AgentStatus(status) => self.on_agent_status(index, &status),
+            TerminalMeta::AgentCleared => self.on_agent_cleared(index),
             TerminalMeta::Bell => self.emit(&Event::TerminalBell {
                 terminal_id: terminal,
             }),
@@ -2977,6 +3158,9 @@ impl SessionRegistry {
                 self.tree_changed(index);
                 if resumable {
                     self.persist_session(index);
+                }
+                if self.clear_terminal_agent(index) {
+                    self.emit_session(index);
                 }
             }
             TerminalMeta::Block(block) => {
@@ -3026,6 +3210,7 @@ impl SessionRegistry {
         session.resume_ref_json = resume;
         session.stopping = false;
         self.sync_agent_summary(index);
+        self.clear_terminal_agent(index);
         // The waiters and the event below must not show it still sharing a checkout.
         self.refresh_placement(index);
         let session = &mut self.sessions[index];
@@ -4826,10 +5011,34 @@ async fn watch_terminal(
     let mut quiet = std::pin::pin!(sleep_until(Instant::now()));
     let mut throttled = false;
     let mut watching_output = true;
+    // What runs in the terminal is looked at after the start and after every command the shell
+    // starts (OSC 133 C): the process appears a moment later, so each series looks a few times.
+    let mut probe_step = Some(0);
+    let mut probe_due = std::pin::pin!(sleep_until(Instant::now() + PROGRAM_PROBE_GAPS[0]));
     let status = loop {
         tokio::select! {
             biased;
             () = &mut quiet, if throttled => throttled = false,
+            () = &mut probe_due, if probe_step.is_some() => {
+                let step = probe_step.take().unwrap_or_default();
+                let app = match terminal.pid() {
+                    Some(pid) => tokio::task::spawn_blocking(move || {
+                        term_agent::probe(&SystemProcesses, pid)
+                    })
+                    .await
+                    .ok()
+                    .flatten(),
+                    None => None,
+                };
+                let settled = step + 1 >= PROGRAM_PROBE_GAPS.len();
+                if !send(Command::TerminalProgram { terminal: id, app, settled }).await {
+                    return;
+                }
+                if !settled {
+                    probe_step = Some(step + 1);
+                    probe_due.as_mut().reset(Instant::now() + PROGRAM_PROBE_GAPS[step + 1]);
+                }
+            }
             changed = damage.changed(), if watching_output && !throttled => {
                 if changed.is_err() {
                     watching_output = false;
@@ -4843,6 +5052,10 @@ async fn watch_terminal(
             }
             received = meta.recv() => match received {
                 Ok(event) => {
+                    if matches!(event, TerminalMeta::PromptMark(PromptMark::C)) {
+                        probe_step = Some(0);
+                        probe_due.as_mut().reset(Instant::now() + PROGRAM_PROBE_GAPS[0]);
+                    }
                     if !send(Command::TerminalMeta(id, event)).await {
                         return;
                     }

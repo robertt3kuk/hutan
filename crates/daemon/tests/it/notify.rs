@@ -1497,3 +1497,30 @@ async fn notify_finished_false_raises_nothing_for_finished_work_but_still_for_fa
     assert_eq!(pending.len(), 1, "{pending:?}");
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_that_asks_through_osc_7501_raises_the_blocked_intent_with_its_question() {
+    let mut t = Env::plain().await;
+    let session = create(&t.client, sh("exec cat")).await;
+    // What OMP writes when it waits for a permission: `cat` echoes the line back as output.
+    let question = "UnVuIHRoZSB0ZXN0cz8="; // "Run the tests?"
+    t.client
+        .send_input(
+            common::terminal_of(&session),
+            format!("\x1b]7501;state=blocked:kind=permission:app=omp:msg={question}\x1b\\\r")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let intent = t
+        .next_intent("the blocked intent", |i| i.kind == IntentKind::AgentBlocked)
+        .await;
+    assert_eq!(intent.session_id, session.id);
+    assert!(
+        intent.title.ends_with("omp is waiting for you"),
+        "{}",
+        intent.title
+    );
+    assert_eq!(intent.body, "Run the tests?");
+    t.stop().await;
+}

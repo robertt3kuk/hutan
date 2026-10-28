@@ -44,6 +44,7 @@ mod staging;
 mod start_error;
 mod task_delivery;
 mod tasks;
+mod term_agent;
 mod terminal_search;
 mod transport;
 mod usage;
