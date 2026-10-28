@@ -598,9 +598,12 @@ fn send_on_daemon(daemon: &TestDaemon, id: SessionId, text: &str) {
 /// Scrolls the chat's list by `dy` pixels (positive reads further up) over an entry that is
 /// drawn.
 fn scroll(view: &Entity<Workbench>, cx: &mut VisualTestContext, dy: f32) {
-    let bounds = (0..64)
-        .find_map(|at| view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatEntry(at))))
-        .expect("an entry is drawn");
+    // An entry in the middle of the window: the first one drawn may be cut by the window's top
+    // edge, and its centre is then outside the list.
+    let drawn: Vec<_> = (0..64)
+        .filter_map(|at| view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatEntry(at))))
+        .collect();
+    let bounds = drawn[drawn.len() / 2];
     cx.simulate_event(gpui::ScrollWheelEvent {
         position: bounds.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(dy))),

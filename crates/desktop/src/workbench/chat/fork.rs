@@ -256,16 +256,24 @@ impl ChatView {
             .into_any_element()
     }
 
-    /// The turn the transcript is showing at its top edge: the one the first visible entry
-    /// belongs to when it ended, else the newest that did. `None` without an ended turn.
+    /// The turn the reader is at: the newest while the transcript follows its end, else the
+    /// turn of the last entry that is not below the window. Only a turn that has ended counts;
+    /// `None` without one.
     pub fn turn_in_view(&self, cx: &App) -> Option<TurnId> {
         let model = self.model.read(cx);
         let transcript = model.transcript();
         let ended = ended_turns(transcript, !model.has_earlier());
-        let top = self.list.logical_scroll_top().item_ix;
-        turn_of_entry(transcript.entries(), top)
+        let newest = ended.last().map(|e| e.turn);
+        if self.list.is_following_tail() {
+            return newest;
+        }
+        let entries = transcript.entries();
+        let here = (0..entries.len())
+            .rev()
+            .find(|ix| self.list.item_is_below_viewport(*ix) == Some(false));
+        here.and_then(|ix| turn_of_entry(entries, ix))
             .filter(|turn| ended.iter().any(|e| e.turn == *turn))
-            .or_else(|| ended.last().map(|e| e.turn))
+            .or(newest)
     }
 
     /// The header chip of a fork: *Forked from “Parent” · turn 4*, which opens the parent. A

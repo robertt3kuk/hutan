@@ -759,6 +759,11 @@ mod audit {
             "the git peek's buttons: the code view is below the desktop's ui::Button",
         ),
         (
+            "desktop/src/workbench/fork.rs",
+            2,
+            "the fork popover's option rows (a checkbox row, a cut to choose)",
+        ),
+        (
             "desktop/src/workbench/agents.rs",
             1,
             "a row of the agent picker",

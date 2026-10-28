@@ -278,11 +278,15 @@ pub fn terminal_fork(session: &SessionInfo) -> TerminalFork {
     let Some(app) = app else {
         return TerminalFork::Nothing;
     };
+    // The hooks name their agent as they like (`Claude Code`): the harness is what they mean.
     let app = app.to_ascii_lowercase();
-    let known = ["omp", "claude", "codex"].contains(&app.as_str());
-    if !known {
+    let Some(app) = ["omp", "claude", "codex"]
+        .into_iter()
+        .find(|harness| app.starts_with(harness))
+        .map(str::to_owned)
+    else {
         return TerminalFork::Nothing;
-    }
+    };
     let id = session
         .agent
         .as_ref()

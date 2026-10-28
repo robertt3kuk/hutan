@@ -124,6 +124,7 @@ struct View {
     /// The daemon can fork into a worktree, restore files and archive (0.58).
     worktree_capable: bool,
     where_: ForkWhereSetting,
+    branch: String,
     branch_placeholder: String,
     /// What a new worktree gets, in a sentence.
     worktree_note: Option<String>,
@@ -199,6 +200,9 @@ impl Workbench {
                 ForkWhereSetting::ThisFolder => "where: this folder".to_owned(),
                 ForkWhereSetting::NewWorktree => "where: new worktree".to_owned(),
             });
+        }
+        if view.where_ == ForkWhereSetting::NewWorktree && view.worktree_capable {
+            lines.push(format!("branch: {}", view.branch));
         }
         lines.extend(view.worktree_note.map(|note| format!("worktree: {note}")));
         for (path, why) in &view.skipped {
@@ -380,7 +384,8 @@ impl Workbench {
         }
     }
 
-    /// ⌘K *Chat: Fork from Here*: the popover for the turn at the top of the focused chat.
+    /// ⌘K *Chat: Fork from Here*: the popover for the turn the focused chat is showing: its
+    /// newest while it follows its end, else the one at the bottom of the window.
     pub fn fork_focused_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self.focused_session() else {
             self.set_notice("Fork works on the focused chat", cx);
@@ -659,6 +664,7 @@ impl Workbench {
             } else {
                 ForkWhereSetting::ThisFolder
             },
+            branch: open.branch.clone(),
             branch_placeholder: match n {
                 Some(n) => format!("fork/<name>-t{n} (default)"),
                 None => "fork/<name>-t<N> (default)".to_owned(),

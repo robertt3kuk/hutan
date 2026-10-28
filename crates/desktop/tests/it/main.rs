@@ -35,6 +35,7 @@ mod files_ops_gpui;
 mod files_roots_gpui;
 mod files_sections_gpui;
 mod first_run_gpui;
+mod fork_gpui;
 mod fx1_gpui;
 mod fx_e2e2_gpui;
 mod fx_e2e2c_gpui;
