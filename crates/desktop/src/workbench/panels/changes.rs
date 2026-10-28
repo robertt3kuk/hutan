@@ -809,7 +809,7 @@ impl ChangesPanel {
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .tooltip(move |_, cx| {
-                cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                cx.new(|_| crate::workbench::style::TextTooltip::new(tip.clone()))
                     .into()
             })
             .on_click(move |_, window, cx| {
@@ -1022,7 +1022,7 @@ impl Render for ChangesPanel {
                 .text_size(px(tokens.secondary_font_size))
                 .text_color(theme.warning)
                 .tooltip(move |_, cx| {
-                    cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                    cx.new(|_| crate::workbench::style::TextTooltip::new(tip.clone()))
                         .into()
                 })
                 .child(SharedString::from(format!(

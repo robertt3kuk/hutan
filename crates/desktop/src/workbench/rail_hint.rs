@@ -7,10 +7,7 @@
 //! click on it opens Files (a peek where the center has no room), its × — or the first time
 //! Files is shown any other way — turns the setting off.
 
-use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, div, px,
-};
+use gpui::{AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled, div, px};
 
 use super::model::{DockMode, DockPosition, PanelId};
 use super::render::probe;

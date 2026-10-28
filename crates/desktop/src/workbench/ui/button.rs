@@ -404,7 +404,7 @@ impl RenderOnce for Button {
             button = button.track_focus(handle);
         }
         if let Some(text) = tooltip {
-            button = button.tooltip(move |_, cx| cx.new(|_| TextTooltip(text.clone())).into());
+            button = button.tooltip(move |_, cx| cx.new(|_| TextTooltip::new(text.clone())).into());
         }
         if !inert && let Some(handler) = on_click {
             button = button.on_click(handler);
@@ -662,7 +662,7 @@ impl RenderOnce for IconButton {
             .justify_center()
             .size(px(hit))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tooltip.clone())).into());
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tooltip.clone())).into());
         if disabled && !neutral {
             button = button.opacity(m.button_disabled_opacity);
         }
@@ -766,6 +766,11 @@ mod audit {
             "desktop/src/workbench/changes/list.rs",
             2,
             "a file row and a folder row of the file list",
+        ),
+        (
+            "desktop/src/workbench/changes/staging.rs",
+            1,
+            "an entry of the diff header's ⋯ menu",
         ),
         (
             "desktop/src/workbench/changes/history.rs",

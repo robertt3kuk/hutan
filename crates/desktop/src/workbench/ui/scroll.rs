@@ -14,9 +14,57 @@
 //! scrolling, so "scroll, then stop" is one listener.
 
 use gpui::{
-    InteractiveElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent,
-    StatefulInteractiveElement, px,
+    DispatchPhase, HitboxBehavior, InteractiveElement, IntoElement, Pixels, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled as _, canvas, point, px,
 };
+
+/// Rows a wheel notch moves a list: 3, as macOS does (FX-WORK-2, N-11). GPUI takes a notch of a
+/// wheel mouse (a line delta) as that many lines of the *text*, which is under a row's height, so
+/// a list of rows would crawl; [`row_wheel`] takes the notch for rows.
+pub const WHEEL_ROWS: f32 = 3.0;
+
+/// Pixels a line-delta wheel event of `lines` moves a list of `row_height` rows by (negative:
+/// content up, towards its end).
+pub fn wheel_pixels(lines: f32, row_height: f32) -> f32 {
+    lines * WHEEL_ROWS * row_height
+}
+
+/// An invisible element, a child of the list's `relative` parent and after the list, that turns a
+/// wheel *line* delta over that parent into [`WHEEL_ROWS`] rows of `row_height` for `handle`'s
+/// list. Pixel deltas (a trackpad) are left to GPUI, and so is a wheel over anything drawn above
+/// the list (an overlay that occludes the pointer).
+pub fn row_wheel(handle: ScrollHandle, row_height: f32) -> impl IntoElement {
+    canvas(
+        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        move |_, hitbox, window, _| {
+            let handle = handle.clone();
+            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                let ScrollDelta::Lines(lines) = event.delta else {
+                    return;
+                };
+                if phase != DispatchPhase::Capture
+                    || lines.y == 0.0
+                    || !hitbox.should_handle_scroll(window)
+                {
+                    return;
+                }
+                let max = handle.max_offset().y;
+                if max <= px(0.5) {
+                    return;
+                }
+                let offset = handle.offset();
+                let moved = offset.y + px(wheel_pixels(lines.y, row_height));
+                handle.set_offset(point(offset.x, moved.clamp(-max, px(0.0))));
+                window.refresh();
+                cx.stop_propagation();
+            });
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
 
 /// Whether `event` asks to move along the vertical axis.
 fn vertical(event: &ScrollWheelEvent) -> bool {
@@ -72,6 +120,12 @@ mod tests {
             modifiers: Modifiers::none(),
             touch_phase: TouchPhase::Moved,
         }
+    }
+
+    #[test]
+    fn a_wheel_notch_is_three_rows() {
+        assert_eq!(wheel_pixels(1.0, 24.0), 72.0);
+        assert_eq!(wheel_pixels(-2.0, 22.0), -132.0);
     }
 
     #[test]

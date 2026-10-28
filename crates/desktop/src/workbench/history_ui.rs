@@ -150,7 +150,7 @@ pub fn when_tooltip(
     let text = SharedString::from(hutan_client::time::local_time_text(
         commit.time.max(0) as u64 * 1000,
     ));
-    move |_, cx| cx.new(|_| TextTooltip(text.clone())).into()
+    move |_, cx| cx.new(|_| TextTooltip::new(text.clone())).into()
 }
 
 /// The first seven characters of a hash.

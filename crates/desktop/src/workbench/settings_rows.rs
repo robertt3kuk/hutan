@@ -202,7 +202,7 @@ pub(super) fn source_chip(
         .id(id.into())
         .max_w(px(160.0))
         .truncate()
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
         .into_any_element()
 }
 

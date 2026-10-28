@@ -71,6 +71,10 @@ pub const UI_OPEN_MAX_AGE_MS: u64 = 15_000;
 /// Dirty checkouts whose uncommitted files are counted for the sidebar's badges; the rest show
 /// none.
 const MAX_COUNTED_CHECKOUTS: usize = 16;
+/// The first notice of a burst of file changes counts the uncommitted files again after this.
+pub const FS_RECOUNT_AFTER: Duration = Duration::from_millis(300);
+/// ... and while changes keep coming, at most this often.
+pub const FS_RECOUNT_EVERY: Duration = Duration::from_millis(1500);
 
 /// Most notification intents remembered to acknowledge when their sessions are read (the
 /// daemon keeps at most this many pending).
@@ -475,6 +479,10 @@ pub struct SessionsStore {
     checkouts_in_flight: bool,
     /// A listing asked for while one was in flight: one more follows it.
     checkouts_again: bool,
+    /// The coalesced recount after a burst of `fs.changed` notices is under way (`note_fs_changed`).
+    fs_recount: Option<Task<()>>,
+    /// More files changed while it ran: it counts once more when it is done.
+    fs_recount_again: bool,
     /// How many files each dirty checkout has uncommitted (`worktree.diff`, the file list only),
     /// for the sidebar's badges. Read after a checkout listing, never while drawing; a checkout
     /// that is clean or could not be counted has no entry.
@@ -663,6 +671,8 @@ impl SessionsStore {
             checkouts_loaded: false,
             checkouts_in_flight: false,
             checkouts_again: false,
+            fs_recount: None,
+            fs_recount_again: false,
             changed_files: HashMap::new(),
             changed_in_flight: false,
             checkouts_tried: HashSet::new(),
@@ -1044,15 +1054,13 @@ impl SessionsStore {
             Notice::NotifyIntent { intent } => self.note_intent(intent, cx),
             // A worktree was made or removed: the sidebar's rows list again.
             Notice::WorktreesChanged { .. } => self.refresh_checkouts(cx),
+            // Files changed under a watched folder: the badges count again, once per burst.
+            Notice::FsChanged { .. } | Notice::FsGeneration { .. } => self.note_fs_changed(cx),
             Notice::SessionExited { .. }
             | Notice::Bell { .. }
             | Notice::DaemonRestarted { .. }
             // `workbench/remote.rs` follows `Connection::notices` itself.
             | Notice::UiCommand { .. }
-            // The buffer store and the Files panel follow the file changes themselves
-            // (`workbench/file_sync.rs`, `panels/files.rs`), the ⌘P finder the generations.
-            | Notice::FsChanged { .. }
-            | Notice::FsGeneration { .. }
             // The Search panel follows its own searches (`panels/search.rs`).
             | Notice::FsSearchProgress { .. }
             // The file tabs' language servers (`workbench/lsp.rs`) and the Problems panel
@@ -1738,6 +1746,44 @@ impl SessionsStore {
             .ok();
         })
         .detach();
+    }
+
+    /// A file changed in a folder this window watches (the Files panel's open folders, the open
+    /// files): the uncommitted counts of the sidebar and the Changes icon are read again,
+    /// [`FS_RECOUNT_AFTER`] after the first notice of a burst and at most every
+    /// [`FS_RECOUNT_EVERY`] while it lasts (FX-WORK-2, N-10: after 5 200 files were trashed the
+    /// badges kept their numbers until the daemon's next worktree notice).
+    fn note_fs_changed(&mut self, cx: &mut Context<Self>) {
+        if self.state.connection != ConnectionState::Connected {
+            return;
+        }
+        if self.fs_recount.is_some() {
+            self.fs_recount_again = true;
+            return;
+        }
+        self.fs_recount = Some(cx.spawn(async move |this, cx| {
+            let mut wait = FS_RECOUNT_AFTER;
+            loop {
+                cx.background_executor().timer(wait).await;
+                let more = this.update(cx, |store, cx| {
+                    store.fs_recount_again = false;
+                    store.refresh_checkouts(cx);
+                });
+                if more.is_err() {
+                    return;
+                }
+                // Changes during the pause are one more recount, not one each.
+                cx.background_executor().timer(FS_RECOUNT_EVERY).await;
+                let again = this
+                    .update(cx, |store, _| std::mem::take(&mut store.fs_recount_again))
+                    .unwrap_or(false);
+                if !again {
+                    this.update(cx, |store, _| store.fs_recount = None).ok();
+                    return;
+                }
+                wait = Duration::ZERO;
+            }
+        }));
     }
 
     /// How many files `project`'s checkouts have uncommitted, as last counted: the sidebar's

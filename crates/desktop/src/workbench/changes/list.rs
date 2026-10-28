@@ -503,7 +503,7 @@ impl ChangesView {
             .rounded(px(tokens.radius))
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_folder(&target, cx)))
             .child(div().flex_none().w(px(12.0)).text_color(theme.muted).child(
                 crate::icons::glyph(if folded {
@@ -570,7 +570,7 @@ impl ChangesView {
                 .flex_none()
                 .w(px(14.0))
                 .text_color(tone)
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(SharedString::from(tip))).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(SharedString::from(tip))).into())
                 .child(crate::icons::glyph(icon))
         });
         let selected = self.selected.as_deref() == Some(file.path.as_str());
@@ -632,7 +632,7 @@ impl ChangesView {
             .cursor_pointer()
             .when(selected, |s| s.bg(theme.accent_soft))
             .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select(&path, cx);
                 this.keys_to_list(window, cx);

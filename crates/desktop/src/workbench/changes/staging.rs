@@ -71,7 +71,13 @@ pub(super) struct StagingState {
     confirm: Option<DiscardAsk>,
     undo: Option<UndoOffer>,
     scroll: ScrollHandle,
+    /// The ⋯ menu of a diff header too narrow for its options is open.
+    options_open: bool,
 }
+
+/// Below this width (pixels) of the diff side the header's options — *Show in Files*, *Wrap
+/// lines* — fold into one ⋯ menu instead of running out of the pane (FX-WORK-2, N-09).
+const OPTIONS_COLLAPSE_BELOW: f32 = 560.0;
 
 impl Default for StagingState {
     fn default() -> Self {
@@ -85,6 +91,7 @@ impl Default for StagingState {
             confirm: None,
             undo: None,
             scroll: ScrollHandle::new(),
+            options_open: false,
         }
     }
 }
@@ -616,7 +623,7 @@ impl ChangesView {
                 .when(file.staged, |s| {
                     s.bg(theme.accent).text_color(theme.on_accent())
                 })
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(SharedString::from(tip))).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(SharedString::from(tip))).into())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     this.toggle_file_staged(&path, cx);
@@ -688,6 +695,7 @@ impl ChangesView {
         let showing = available && self.staging.on;
         let mut side = div().flex_1().min_w_0().min_h_0().flex().flex_col();
         side = side.child(self.render_mode_bar(available, showing, theme, tokens, cx));
+        side = side.children(self.render_options_menu(showing, theme, tokens, cx));
         if showing && let Some(ask) = &self.staging.confirm {
             side = side.child(self.render_discard_ask(ask, theme, tokens, cx));
         }
@@ -799,8 +807,21 @@ impl ChangesView {
         bar.into_any_element()
     }
 
-    /// What the header of the diff offers beside the mode: *Wrap lines* while there is a text
-    /// diff to wrap.
+    /// The width the diff side has, as of the last frame (wide until one has been painted).
+    fn side_width(&self, tokens: &Tokens) -> f32 {
+        let Some(view) = self.width.get() else {
+            return f32::MAX;
+        };
+        if self.narrow() {
+            f32::from(view)
+        } else {
+            f32::from(view) - self.list_width(tokens)
+        }
+    }
+
+    /// What the header of the diff offers beside the mode: *Show in Files* for the selected file
+    /// and *Wrap lines* while there is a text diff to wrap — as buttons, or in one ⋯ menu when the
+    /// side is too narrow for them.
     fn render_diff_options(
         &self,
         showing: bool,
@@ -808,22 +829,44 @@ impl ChangesView {
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let mut options = Vec::new();
         let Some(file) = self.selected.as_deref() else {
-            return options;
+            return Vec::new();
         };
         let text = matches!(
             self.patches.get(file),
             Some(FilePatch::Ready { binary: false, .. })
         );
-        if let Some(entry) = self.selected_entry()
-            && entry.status != hutan_protocol::worktree::DiffStatus::Deleted
-        {
-            let path = entry.path.clone();
-            let target = crate::workbench::actions::ChangedFileAt {
+        let show_in_files = self
+            .selected_entry()
+            .filter(|entry| entry.status != hutan_protocol::worktree::DiffStatus::Deleted)
+            .map(|entry| crate::workbench::actions::ChangedFileAt {
                 checkout: self.path.display().to_string(),
-                file: path,
-            };
+                file: entry.path.clone(),
+            });
+        let wrap = (text && !showing).then(|| self.wraps(file));
+        if show_in_files.is_none() && wrap.is_none() {
+            return Vec::new();
+        }
+        if self.side_width(tokens) < OPTIONS_COLLAPSE_BELOW {
+            return vec![
+                ui::IconButton::new(
+                    "changes-options",
+                    crate::icons::Icon::ActionMore,
+                    "More",
+                    theme,
+                    tokens,
+                )
+                .compact()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.staging.options_open = !this.staging.options_open;
+                    cx.notify();
+                }))
+                .child(probe(&self.env.regions, Region::Changes("options")))
+                .into_any_element(),
+            ];
+        }
+        let mut options = Vec::new();
+        if let Some(target) = show_in_files {
             options.push(
                 ui::Button::new("changes-show-in-files", "Show in Files", theme, tokens)
                     .compact()
@@ -839,8 +882,7 @@ impl ChangesView {
                     .into_any_element(),
             );
         }
-        if text && !showing {
-            let wrap = self.wraps(file);
+        if let Some(wrap) = wrap {
             options.push(
                 ui::Button::new("changes-wrap", "Wrap lines", theme, tokens)
                     .compact()
@@ -860,6 +902,89 @@ impl ChangesView {
             );
         }
         options
+    }
+
+    /// The ⋯ menu of a narrow diff header, under the mode bar while it is open.
+    fn render_options_menu(
+        &self,
+        showing: bool,
+        theme: &Theme,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.staging.options_open || self.side_width(tokens) >= OPTIONS_COLLAPSE_BELOW {
+            return None;
+        }
+        let file = self.selected.as_deref()?;
+        let text = matches!(
+            self.patches.get(file),
+            Some(FilePatch::Ready { binary: false, .. })
+        );
+        let hover = theme.surface_hover;
+        let row = |id: &'static str, label: &'static str, checked: bool| {
+            div()
+                .id(id)
+                .relative()
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing))
+                .px(px(tokens.spacing * 2.0))
+                .py(px(tokens.spacing))
+                .rounded(px(tokens.radius))
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .child(
+                    div()
+                        .w(px(14.0))
+                        .flex_none()
+                        .child(if checked { "✓" } else { "" }),
+                )
+                .child(label)
+        };
+        let mut menu = div()
+            .flex()
+            .flex_col()
+            .self_end()
+            .mx(px(tokens.spacing * 2.0))
+            .min_w(px(tokens.font_size * 14.0))
+            .popover(theme, tokens);
+        if let Some(entry) = self
+            .selected_entry()
+            .filter(|e| e.status != hutan_protocol::worktree::DiffStatus::Deleted)
+        {
+            let target = crate::workbench::actions::ChangedFileAt {
+                checkout: self.path.display().to_string(),
+                file: entry.path.clone(),
+            };
+            menu = menu.child(
+                row("changes-opt-show-in-files", "Show in Files", false)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.staging.options_open = false;
+                        window.dispatch_action(
+                            Box::new(crate::workbench::actions::ShowInFiles(target.clone())),
+                            cx,
+                        );
+                        cx.notify();
+                    }))
+                    .child(probe(
+                        &self.env.regions,
+                        Region::Changes("opt-show-in-files"),
+                    )),
+            );
+        }
+        if text && !showing {
+            let wrap = self.wraps(file);
+            menu = menu.child(
+                row("changes-opt-wrap", "Wrap lines", wrap)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.staging.options_open = false;
+                        this.set_wrap(!wrap, cx);
+                        window.focus(&this.review.focus, cx);
+                    }))
+                    .child(probe(&self.env.regions, Region::Changes("opt-wrap"))),
+            );
+        }
+        Some(menu.into_any_element())
     }
 
     /// Stages (`stage`) or unstages the whole selected file, a renamed one with both paths.

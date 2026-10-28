@@ -48,6 +48,7 @@
 //!   refused with the reason by a daemon on another Mac (`ops.rs::remote_refusal`); ⌘Z / ⇧⌘Z undo
 //!   and redo, a batch is one step (`ops.rs`). Every change is a request to the daemon, which never overwrites; the workbench
 //!   re-keys the tabs of what was renamed or moved and marks the tabs of what went to the Trash.
+//! - **Refresh and Collapse all** scroll the tree to its first row.
 
 mod drag;
 mod edit;
@@ -987,6 +988,7 @@ impl FilesPanel {
         let Some(tree) = &self.tree else {
             return;
         };
+        self.scroll_to_top();
         for dir in tree.expanded_dirs() {
             self.list(&dir, cx);
         }
@@ -1265,7 +1267,14 @@ impl FilesPanel {
             self.unwatch(&dir, cx);
         }
         self.after_tree_change(cx);
+        self.scroll_to_top();
         cx.notify();
+    }
+
+    /// The tree shows its first row at the top (Refresh and Collapse all: after them the tree
+    /// is not left mid-list with its top folders out of view).
+    fn scroll_to_top(&self) {
+        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
     }
 
     /// Opens every folder in view (⌘→, the header's ⋯ menu); says why when it would be too much.
@@ -1993,7 +2002,9 @@ impl FilesPanel {
                                 row_el
                             })
                             .when_some(tip, |s, tip| {
-                                s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                                s.tooltip(move |_, cx| {
+                                    cx.new(|_| TextTooltip::new(tip.clone())).into()
+                                })
                             })
                             .on_mouse_down(
                                 gpui::MouseButton::Right,
@@ -2091,7 +2102,7 @@ impl FilesPanel {
                                     .text_color(tint)
                                     .child(SharedString::from(d.shown().to_string()))
                                     .tooltip(move |_, cx| {
-                                        cx.new(|_| TextTooltip(words.clone())).into()
+                                        cx.new(|_| TextTooltip::new(words.clone())).into()
                                     })
                             }))
                             .children(agent_file.map(|file| {
@@ -2103,7 +2114,7 @@ impl FilesPanel {
                                     .text_color(accent)
                                     .child("◆")
                                     .tooltip(move |_, cx| {
-                                        cx.new(|_| TextTooltip(words.clone())).into()
+                                        cx.new(|_| TextTooltip::new(words.clone())).into()
                                     })
                             }))
                             .when(agent_dir, |s| {
@@ -2116,7 +2127,9 @@ impl FilesPanel {
                                         .bg(accent)
                                         .tooltip(|_, cx| {
                                             cx.new(|_| {
-                                                TextTooltip("Holds files an agent changed".into())
+                                                TextTooltip::new(
+                                                    "Holds files an agent changed".into(),
+                                                )
                                             })
                                             .into()
                                         }),
@@ -2131,7 +2144,7 @@ impl FilesPanel {
                                         .rounded_full()
                                         .bg(theme.diff_modified)
                                         .tooltip(|_, cx| {
-                                            cx.new(|_| TextTooltip("Contains changes".into()))
+                                            cx.new(|_| TextTooltip::new("Contains changes".into()))
                                                 .into()
                                         }),
                                 )
@@ -2145,7 +2158,7 @@ impl FilesPanel {
                                     .text_color(m.color(&theme))
                                     .child(m.letter())
                                     .tooltip(move |_, cx| {
-                                        cx.new(|_| TextTooltip(m.words().into())).into()
+                                        cx.new(|_| TextTooltip::new(m.words().into())).into()
                                     })
                             }))
                             .into_any_element(),
@@ -2369,6 +2382,10 @@ impl Render for FilesPanel {
                     .size_full(),
                 )
                 .child(self.bar.element())
+                .child(ui::scroll::row_wheel(
+                    self.scroll.0.borrow().base_handle.clone(),
+                    tokens.sidebar_row - 4.0,
+                ))
                 .child(probe(&self.env.regions, Region::Files("tree")))
                 .into_any_element(),
         };
@@ -2417,7 +2434,6 @@ impl Render for FilesPanel {
             .children(self.tree.is_some().then(|| self.filter_row(window, cx)))
             .children(sections)
             .child(body)
-            .children(self.name_error_strip(cx))
     }
 }
 

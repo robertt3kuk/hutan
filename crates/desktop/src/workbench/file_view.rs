@@ -489,7 +489,7 @@ impl FileView {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .tooltip(|_, cx| {
                 cx.new(|_| {
-                    TextTooltip(
+                    TextTooltip::new(
                         "Scroll to the agent's newest change whenever it writes this file".into(),
                     )
                 })
@@ -539,7 +539,7 @@ impl FileView {
                         .when_some(session_name, |s, name| {
                             let tip = name.clone();
                             s.child(format!("· {name}")).tooltip(move |_, cx| {
-                                cx.new(|_| TextTooltip(tip.clone().into())).into()
+                                cx.new(|_| TextTooltip::new(tip.clone().into())).into()
                             })
                         }),
                 )

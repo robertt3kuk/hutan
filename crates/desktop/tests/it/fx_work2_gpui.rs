@@ -362,3 +362,246 @@ fn open_editors_lists_the_preview_once_and_scrolls_past_six_rows_to_the_active_f
         "the section is about six rows tall"
     );
 }
+
+fn wheel(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, dy: f32) {
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: at,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(dy))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    draw(cx);
+}
+
+#[gpui::test]
+fn collapse_all_and_refresh_scroll_the_tree_to_its_top(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    for n in 0..120 {
+        write(&root, &format!("dir{n:03}/file.txt"), "x");
+    }
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_rows(&panel, cx, 120);
+    let at = row_at(&view, cx, 3);
+    wheel(cx, at, -900.0);
+    wait_until(cx, "the tree to be scrolled", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.scrolled() > 100.0)
+    });
+    // Collapse all lands on the first row.
+    panel.update(cx, |p, cx| p.collapse_all(cx));
+    wait_until(cx, "the tree at its top after Collapse all", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.scrolled() < 1.0)
+    });
+    // So does Refresh.
+    let at = row_at(&view, cx, 3);
+    wheel(cx, at, -900.0);
+    wait_until(cx, "the tree to be scrolled again", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.scrolled() > 100.0)
+    });
+    panel.update(cx, |p, cx| p.refresh(cx));
+    wait_until(cx, "the tree at its top after Refresh", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.scrolled() < 1.0)
+    });
+}
+
+#[gpui::test]
+fn a_rename_that_collides_says_so_under_the_edited_row(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        write(&root, name, name);
+    }
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_rows(&panel, cx, 3);
+    panel.update_in(cx, |p, window, cx| {
+        p.select_path(&root.join("b.txt"), cx);
+        p.focus_tree(window, cx);
+    });
+    draw(cx);
+    cx.simulate_keystrokes("f2");
+    wait_until(cx, "the name field", |cx| {
+        panel.read_with(cx, |p, _| p.editing().is_some())
+    });
+    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_input("c.txt");
+    cx.simulate_keystrokes("enter");
+    wait_until(cx, "the collision to be said", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.editing().is_some_and(|e| e.error.is_some()))
+            && view
+                .read_with(cx, |wb, _| wb.region_bounds(Region::Files("name-error")))
+                .is_some()
+    });
+    let error = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Files("name-error")))
+        .unwrap();
+    // The edited row is the second of three; the message hangs right under it, not at the bottom
+    // of the panel.
+    let second = row_at(&view, cx, 1);
+    let third = row_at(&view, cx, 2);
+    assert!(
+        error.top() >= second.y && error.top() < third.y + gpui::px(6.0),
+        "the message starts at {:?}, the edited row is at {:?}",
+        error.top(),
+        second.y
+    );
+    let tree = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Files("tree")))
+        .unwrap();
+    assert!(
+        error.bottom() < tree.bottom(),
+        "the message is inside the tree's area, not in a strip under it"
+    );
+}
+
+#[gpui::test]
+fn a_tooltip_goes_stale_when_the_wheel_moves_or_a_sheet_opens(cx: &mut TestAppContext) {
+    use common::{offline_connection, open_with as open_offline};
+    use hutan_desktop::workbench::style::{TextTooltip, TooltipGate};
+
+    let (connection, settings, _) = offline_connection();
+    let (view, cx) = open_offline(cx, settings, connection, None);
+    draw(cx);
+    let epoch = |cx: &mut VisualTestContext| cx.update(|_, app| TooltipGate::epoch(app));
+    let fresh = |cx: &mut VisualTestContext| {
+        cx.update(|_, app| gpui::AppContext::new(app, |_| TextTooltip::new("tip".into())))
+    };
+
+    // A tooltip is good until the next wheel notch.
+    let before = fresh(cx);
+    assert!(!cx.update(|_, app| before.read(app).stale(app)));
+    let at = gpui::point(gpui::px(300.0), gpui::px(300.0));
+    wheel(cx, at, -20.0);
+    assert!(epoch(cx) > 0);
+    assert!(
+        cx.update(|_, app| before.read(app).stale(app)),
+        "a tooltip of before the wheel moved draws nothing"
+    );
+    let after = fresh(cx);
+    assert!(
+        !cx.update(|_, app| after.read(app).stale(app)),
+        "one made after it is fine"
+    );
+
+    // A sheet opening over the window makes what was shown stale, once.
+    let epoch_before = epoch(cx);
+    cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+    wait_until(cx, "the settings sheet", |cx| epoch(cx) > epoch_before);
+    assert!(cx.update(|_, app| after.read(app).stale(app)));
+    let inside = fresh(cx);
+    draw(cx);
+    draw(cx);
+    assert!(
+        !cx.update(|_, app| inside.read(app).stale(app)),
+        "a tooltip of the sheet's own buttons shows"
+    );
+    let _ = view;
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[gpui::test]
+fn the_counts_follow_a_burst_of_file_changes_without_waiting_for_the_next_notice(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (_dir, base) = scratch();
+    let root = base.join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    for (key, value) in [
+        ("user.name", "Test"),
+        ("user.email", "test@example.com"),
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", "/dev/null"),
+    ] {
+        git(&root, &["config", key, value]);
+    }
+    write(&root, "a.txt", "one\n");
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "first"]);
+    for n in 0..30 {
+        write(&root, &format!("junk/f{n:02}.txt"), "x\n");
+    }
+    write(&root, "a.txt", "one\ntwo\n");
+
+    let (view, cx) = open(cx, &daemon);
+    project(&view, cx, &root);
+    let badge = |cx: &VisualTestContext| view.read_with(cx, |wb, cx| wb.rail_badge("changes", cx));
+    wait_until(cx, "31 uncommitted files", |cx| badge(cx) == Some(31));
+    // The Files panel watches the folders it shows: open `junk`.
+    let panel = files_panel(&view, cx);
+    wait_until(cx, "the root's rows", |cx| {
+        panel.read_with(cx, |p, _| !p.rows().is_empty())
+    });
+    panel.update(cx, |p, cx| p.toggle(&root.join("junk"), cx));
+    wait_until(cx, "junk listed and watched", |cx| {
+        panel.read_with(cx, |p, _| p.settled() && p.watched_dirs() > 0)
+    });
+
+    // Thirty files go at once (outside the window, as an agent or a script would); the badge
+    // follows within a recount, with no window activation and no daemon worktree notice.
+    std::fs::remove_dir_all(root.join("junk")).unwrap();
+    wait_until(cx, "the badge to count again", |cx| {
+        cx.executor()
+            .advance_clock(hutan_desktop::sessions::FS_RECOUNT_AFTER);
+        badge(cx) == Some(1)
+    });
+}
+
+#[gpui::test]
+fn a_wheel_notch_moves_the_tree_three_rows(cx: &mut TestAppContext) {
+    use hutan_desktop::theme::DensityExt as _;
+    use hutan_desktop::workbench::style::UiStyle;
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    for n in 0..120 {
+        write(&root, &format!("f{n:03}.txt"), "x");
+    }
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_rows(&panel, cx, 120);
+    let row = cx.update(|_, app| UiStyle::get(app).density.ui().sidebar_row - 4.0);
+    let at = row_at(&view, cx, 3);
+    // A notch of a wheel mouse is one line: three rows of the list, not three lines of text.
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: at,
+        delta: gpui::ScrollDelta::Lines(gpui::point(0.0, -1.0)),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    draw(cx);
+    let moved = panel.read_with(cx, |p, _| p.scrolled());
+    assert!(
+        (moved - 3.0 * row).abs() < 1.0,
+        "one notch moved {moved} px, three rows are {}",
+        3.0 * row
+    );
+    // A trackpad's pixel deltas are exact as ever.
+    wheel(cx, at, -10.0);
+    let more = panel.read_with(cx, |p, _| p.scrolled());
+    assert!((more - moved - 10.0).abs() < 1.0, "{moved} → {more}");
+}

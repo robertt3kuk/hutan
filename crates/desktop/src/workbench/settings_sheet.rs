@@ -1063,7 +1063,7 @@ impl Workbench {
                         .text_color(theme.muted)
                         .tooltip({
                             let full = full.clone();
-                            move |_, cx| cx.new(|_| TextTooltip(full.clone())).into()
+                            move |_, cx| cx.new(|_| TextTooltip::new(full.clone())).into()
                         })
                         .child(SharedString::from(short_path(file)))
                         .into_any_element(),

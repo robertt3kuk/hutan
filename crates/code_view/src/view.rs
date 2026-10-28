@@ -275,10 +275,6 @@ pub struct CodeView {
     focus: FocusHandle,
     /// Pixels of content above the top of the view.
     pub(crate) scroll_y: f32,
-    /// Blank pixels the view keeps above its first line (the scroll is negative by this much):
-    /// what is left of the room a bar above the view gave up. Scrolling up to the top of the
-    /// file takes it back.
-    pub(crate) inset: f32,
     /// Keep the text where it is on screen when the view's top moves at the next frame
     /// ([`keep_text_in_place`](CodeView::keep_text_in_place)).
     pub(crate) keep_in_place: bool,
@@ -405,7 +401,6 @@ impl CodeView {
             style_generation: 0,
             focus: cx.focus_handle(),
             scroll_y: 0.0,
-            inset: 0.0,
             keep_in_place: false,
             scroll_x: 0.0,
             selections: Selections::cursor(0),
@@ -684,15 +679,14 @@ impl CodeView {
             return;
         }
         let max_y = self.max_scroll_y(cx);
-        self.scroll_y = self.scroll_y.clamp(-self.inset, max_y);
-        self.inset = (-self.scroll_y).max(0.0);
+        self.scroll_y = self.scroll_y.clamp(0.0, max_y);
         let max_x = self.max_scroll_x(cx);
         self.scroll_x = self.scroll_x.clamp(0.0, max_x);
     }
 
     /// Asks the view to keep its text where it is on the screen if its top moves up at the
-    /// next frame (a bar above it went away): the scroll follows, and when the file is already
-    /// at its top the first line stays put under a blank band that the next scroll takes back.
+    /// next frame (a bar above it went away): the scroll follows as far as the file is scrolled;
+    /// a file at its top just moves up with the view, leaving no blank band (FX-WORK-2, N-08).
     pub fn keep_text_in_place(&mut self) {
         self.keep_in_place = true;
     }

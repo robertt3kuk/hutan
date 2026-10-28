@@ -1872,7 +1872,7 @@ impl SessionsPanel {
                         .flex()
                         .items_center()
                         .gap(px(2.0))
-                        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                        .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                         .child(crate::icons::glyph(Icon::VcsDirty))
                         .child(row.changed.to_string())
                         .child(probe(&self.env.regions, Region::ProjectChanged(id))),
@@ -1975,7 +1975,7 @@ impl SessionsPanel {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                     .child(SharedString::from(label))
             })
             .when(row.needs > 0, |s| {
@@ -2072,7 +2072,10 @@ impl SessionsPanel {
                 .id(SharedString::from(format!("session-muted-{id}")))
                 .relative()
                 .flex_none()
-                .tooltip(|_, cx| cx.new(|_| TextTooltip("Notifications muted".into())).into())
+                .tooltip(|_, cx| {
+                    cx.new(|_| TextTooltip::new("Notifications muted".into()))
+                        .into()
+                })
                 .child(icon(Icon::StateMuted, 12.0, theme.muted))
                 .child(probe(&self.env.regions, Region::SessionMuted(info.id)))
         });
@@ -2169,8 +2172,10 @@ impl SessionsPanel {
                             .justify_center()
                             .size(px(STATUS_LANE))
                             .when(lane.is_some(), |s| {
-                                s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-                                    .child(state_dot(&theme, &presentation))
+                                s.tooltip(move |_, cx| {
+                                    cx.new(|_| TextTooltip::new(tip.clone())).into()
+                                })
+                                .child(state_dot(&theme, &presentation))
                             })
                             .when(unread, |s| {
                                 let dot = div()
@@ -2229,7 +2234,7 @@ impl SessionsPanel {
                             match tip.map(SharedString::from) {
                                 Some(tip) => title
                                     .tooltip(move |_, cx| {
-                                        cx.new(|_| TextTooltip(tip.clone())).into()
+                                        cx.new(|_| TextTooltip::new(tip.clone())).into()
                                     })
                                     .into_any_element(),
                                 None => title.into_any_element(),

@@ -200,6 +200,24 @@ impl Render for Workbench {
         let recovery = self.render_recovery_summary(cx);
         let sheet = self.render_settings_sheet(cx);
         let setup = self.render_setup(window, cx);
+        // A tooltip shown before a sheet, menu or palette opened must not stay over it.
+        let overlay = [
+            palette.is_some(),
+            picker.is_some(),
+            agent_picker.is_some(),
+            launcher.is_some(),
+            menu.is_some(),
+            modal.is_some(),
+            sheet.is_some(),
+            setup.is_some(),
+            checkpoints_list.is_some(),
+            rewind_sheet.is_some(),
+        ]
+        .contains(&true);
+        if overlay && !self.overlay_open {
+            super::style::TooltipGate::bump(cx);
+        }
+        self.overlay_open = overlay;
         self.regions.end_frame();
         if self.regions.take_fresh() {
             window.on_next_frame(|window, _| window.refresh());
@@ -280,6 +298,7 @@ impl Render for Workbench {
         )
         .child(status)
         .child(super::ui::keyboard_focus_observer())
+        .child(super::style::tooltip_scroll_observer())
         // The dock handles come before every popover and menu: an overlay painted after them
         // takes the hit-test and the hover over a handle it covers (the daemon popover's
         // *Start* was dead where it crossed the bottom dock's edge).
@@ -2558,7 +2577,10 @@ impl Workbench {
                 }),
             )
             .when_some(tab_tip, |tab, tip| {
-                tab.tooltip(move |_, cx| cx.new(|_| super::style::TextTooltip(tip.clone())).into())
+                tab.tooltip(move |_, cx| {
+                    cx.new(|_| super::style::TextTooltip::new(tip.clone()))
+                        .into()
+                })
             })
             .on_drag(dragged, |dragged: &DraggedItem, _, _, cx| {
                 let style = super::style::UiStyle::get(cx);
@@ -2597,7 +2619,7 @@ impl Workbench {
                     .rounded_full()
                     .bg(accent)
                     .tooltip(|_, cx| {
-                        cx.new(|_| super::style::TextTooltip("Asked for you".into()))
+                        cx.new(|_| super::style::TextTooltip::new("Asked for you".into()))
                             .into()
                     })
                     .child(probe(&self.regions, Region::TabCall(pane_id, index)))
@@ -2624,7 +2646,7 @@ impl Workbench {
                             .rounded_full()
                             .bg(theme.fg)
                             .tooltip(|_, cx| {
-                                cx.new(|_| super::style::TextTooltip("Unsaved changes".into()))
+                                cx.new(|_| super::style::TextTooltip::new("Unsaved changes".into()))
                                     .into()
                             })
                     }),

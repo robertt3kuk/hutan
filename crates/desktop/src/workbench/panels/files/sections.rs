@@ -558,7 +558,7 @@ fn open_row(
                 })
                 .when(editor.preview, |s| s.italic())
                 .when(!is_active, move |s| s.hover(move |s| s.bg(hover)))
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                 .on_click(cx.listener(move |_, event: &ClickEvent, window, cx| {
                     // ⌘-click closes (the tab asks first when it has unsaved changes).
                     let action: Box<dyn gpui::Action> = if event.modifiers().platform {
@@ -604,7 +604,8 @@ fn open_row(
                             .rounded_full()
                             .bg(theme.fg)
                             .tooltip(|_, cx| {
-                                cx.new(|_| TextTooltip("Unsaved changes".into())).into()
+                                cx.new(|_| TextTooltip::new("Unsaved changes".into()))
+                                    .into()
                             }),
                     )
                 })
@@ -619,7 +620,7 @@ fn open_row(
                         .rounded(px(tokens.radius))
                         .text_color(theme.muted)
                         .hover(move |s| s.bg(hover).text_color(theme.fg))
-                        .tooltip(|_, cx| cx.new(|_| TextTooltip("Close".into())).into())
+                        .tooltip(|_, cx| cx.new(|_| TextTooltip::new("Close".into())).into())
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
@@ -666,7 +667,7 @@ fn agent_row(
                 .text_size(px(tokens.font_size))
                 .text_color(theme.fg)
                 .hover(move |s| s.bg(hover))
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                 .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
                     window.dispatch_action(
                         Box::new(OpenChosenFile(ChosenFile {

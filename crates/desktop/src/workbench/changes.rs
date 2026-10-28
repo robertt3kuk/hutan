@@ -1292,7 +1292,10 @@ impl ChangesView {
                 .flex_none()
                 .text_size(px(tokens.secondary_font_size))
                 .text_color(theme.warning)
-                .tooltip(move |_, cx| cx.new(|_| super::style::TextTooltip(tip.clone())).into())
+                .tooltip(move |_, cx| {
+                    cx.new(|_| super::style::TextTooltip::new(tip.clone()))
+                        .into()
+                })
                 .child(SharedString::from(text))
                 .child(probe(&self.env.regions, Region::Changes("freshness")))
                 .into_any_element(),

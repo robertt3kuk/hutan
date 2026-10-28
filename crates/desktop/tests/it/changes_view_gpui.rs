@@ -440,6 +440,47 @@ fn lines_wrap_for_prose_by_default_and_the_header_toggle_changes_it(cx: &mut Tes
 }
 
 #[gpui::test]
+fn in_a_narrow_pane_the_diff_header_folds_its_options_into_a_menu(cx: &mut TestAppContext) {
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx);
+    let changes = open_changes(&view, cx, &fx.root);
+    // Wide: both options are buttons.
+    resize(&view, cx, &changes, 2056.0, 1329.0);
+    wait_until(cx, "the Wrap lines button", |cx| {
+        region(&view, cx, Region::Changes("wrap")).is_some()
+    });
+    assert!(region(&view, cx, Region::Changes("options")).is_none());
+
+    // At 640 px the center is about 550 px: the buttons would run out of the pane, so they
+    // are one ⋯ button (F-04, N-09).
+    resize(&view, cx, &changes, 640.0, 800.0);
+    wait_until(cx, "the ⋯ button", |cx| {
+        region(&view, cx, Region::Changes("options")).is_some()
+    });
+    assert!(
+        region(&view, cx, Region::Changes("wrap")).is_none(),
+        "no clipped Wrap lines button"
+    );
+    let pane = at(&view, cx, Region::Changes("diff"));
+    let more = at(&view, cx, Region::Changes("options"));
+    assert!(
+        more.right() <= pane.right() + px(1.0),
+        "the ⋯ button is inside the pane: {more:?} in {pane:?}"
+    );
+    let markdown = changes.read_with(cx, |c, _| c.selected().unwrap().to_owned());
+    let was = changes.read_with(cx, |c, _| c.wraps(&markdown));
+    cx.simulate_click(more.center(), Modifiers::none());
+    wait_until(cx, "the menu", |cx| {
+        region(&view, cx, Region::Changes("opt-wrap")).is_some()
+    });
+    let entry = at(&view, cx, Region::Changes("opt-wrap"));
+    cx.simulate_click(entry.center(), Modifiers::none());
+    draw(cx);
+    assert_eq!(changes.read_with(cx, |c, _| c.wraps(&markdown)), !was);
+    assert!(region(&view, cx, Region::Changes("opt-wrap")).is_none());
+}
+
+#[gpui::test]
 fn keys_scroll_the_list_and_the_diff_and_arrows_move_the_selection(cx: &mut TestAppContext) {
     let fx = Fx::new();
     let (view, cx) = open(cx, &fx);

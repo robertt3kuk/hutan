@@ -553,6 +553,14 @@ fn the_trust_bar_names_every_server_of_the_folder_and_not_now_covers_the_folder(
     wait_until(cx, "no bar", |cx| {
         bar_of(&rust, cx).is_none() && bar_of(&fake, cx).is_none()
     });
+    // The bar's room is given back: the text moves up with the view, no blank band stays above
+    // the first line (the view is never scrolled to a negative offset).
+    draw(cx);
+    draw(cx);
+    let scrolled = rust
+        .view
+        .read_with(cx, |v, cx| v.code().read(cx).scroll_y());
+    assert!(scrolled >= 0.0, "a blank band of {} px", -scrolled);
     let next = open_file(&view, cx, &env.file("b.fake"), "y\n");
     draw(cx);
     assert_eq!(bar_of(&next, cx), None);

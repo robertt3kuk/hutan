@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement,
-    SharedString, Styled, Subscription, Window, div, px,
+    SharedString, Styled, Subscription, Window, deferred, div, px,
 };
 use hutan_protocol::fs::{FsCreate, FsCreateKind, FsRename};
 
@@ -21,7 +21,9 @@ use super::super::files_names::{NameProblem, check_name, collision, stem_range};
 use super::super::files_tree::RowKind;
 use super::{FilesPanel, error_message};
 use crate::theme::DensityExt as _;
+use crate::workbench::Region;
 use crate::workbench::chat::vim::Outcome;
+use crate::workbench::render::probe;
 use crate::workbench::style::UiStyle;
 use crate::workbench::text_field::FieldRef;
 use crate::workbench::ui::FocusRingExt as _;
@@ -523,9 +525,35 @@ impl FilesPanel {
             .editing
             .as_ref()
             .map_or_else(String::new, |e| e.text.clone());
-        let error = self.editing.as_ref().is_some_and(|e| e.error.is_some());
+        let message = self.editing.as_ref().and_then(|e| e.error.clone());
+        let error = message.is_some();
+        // The reason the typed name was not taken hangs under the field, over the rows below it
+        // (deferred: drawn after them).
+        let reason = message.map(|message| {
+            deferred(
+                div()
+                    .id("files-name-error")
+                    .absolute()
+                    .top(px(tokens.sidebar_row - 6.0))
+                    .left_0()
+                    .w_full()
+                    .min_w(px(180.0))
+                    .px(px(tokens.spacing * 2.0))
+                    .py(px(tokens.spacing))
+                    .rounded(px(tokens.radius))
+                    .bg(theme.surface)
+                    .border_1()
+                    .border_color(theme.danger)
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.danger)
+                    .child(SharedString::from(message))
+                    .child(probe(&self.env.regions, Region::Files("name-error"))),
+            )
+            .with_priority(1)
+        });
         div()
             .id("files-name-edit")
+            .relative()
             .key_context("FilesNameEdit")
             .track_focus(&self.name_focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -556,25 +584,8 @@ impl FilesPanel {
                 &theme,
                 &tokens,
             ))
+            .children(reason)
             .into_any_element()
-    }
-
-    /// The reason the typed name was not taken, in a strip under the tree.
-    pub(super) fn name_error_strip(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let message = self.editing.as_ref()?.error.clone()?;
-        let style = UiStyle::get(cx);
-        let (theme, tokens) = (style.theme, style.density.ui());
-        Some(
-            div()
-                .id("files-name-error")
-                .flex_none()
-                .px(px(tokens.spacing * 3.0))
-                .py(px(tokens.spacing))
-                .text_size(px(tokens.secondary_font_size))
-                .text_color(theme.danger)
-                .child(SharedString::from(message))
-                .into_any_element(),
-        )
     }
 }
 

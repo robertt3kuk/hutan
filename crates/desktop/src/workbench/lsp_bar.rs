@@ -214,7 +214,7 @@ pub fn render(
                     .min_w_0()
                     .truncate()
                     .text_color(theme.fg)
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone().into())).into())
                     .child(SharedString::from(message)),
             )
             .child(close)

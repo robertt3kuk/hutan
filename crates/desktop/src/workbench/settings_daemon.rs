@@ -1292,7 +1292,7 @@ impl Workbench {
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.warning)
                     .tooltip(|_, cx| {
-                        cx.new(|_| TextTooltip(words::PENDING_RESTART.into()))
+                        cx.new(|_| TextTooltip::new(words::PENDING_RESTART.into()))
                             .into()
                     })
                     .child(words::PENDING_RESTART_SHORT)
@@ -1306,7 +1306,7 @@ impl Workbench {
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.muted)
                     .tooltip(|_, cx| {
-                        cx.new(|_| TextTooltip(words::APPLIES_RESTART.into()))
+                        cx.new(|_| TextTooltip::new(words::APPLIES_RESTART.into()))
                             .into()
                     })
                     .child(words::APPLIES_RESTART_SHORT)

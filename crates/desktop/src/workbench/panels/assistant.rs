@@ -1068,7 +1068,7 @@ impl AssistantPanel {
             div()
                 .id("assistant-state")
                 .flex_none()
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(label.clone())).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(label.clone())).into())
                 .child(state_dot(theme, &presentation))
                 .into_any_element()
         });

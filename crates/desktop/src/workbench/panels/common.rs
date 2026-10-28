@@ -139,7 +139,7 @@ pub fn agent_badge(
             .items_center()
             .gap(px(tokens.spacing))
             .text_size(px(tokens.secondary_font_size))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
             .children(badge.running_text().map(|text| {
                 div()
                     .text_color(theme.accent)
@@ -185,7 +185,7 @@ pub fn placement_badge(
         .text_size(px(tokens.secondary_font_size))
         .text_color(theme.muted)
         .cursor_pointer()
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(move |event, window, cx| {
             window.dispatch_action(
@@ -219,7 +219,7 @@ pub fn shared_checkout_marker(
         .items_center()
         .justify_center()
         .size(px(16.0))
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
         .child(icon(Icon::VcsSharedWarning, 14.0, theme.warning))
         .child(probe(regions, Region::SharedCheckout(session)))
         .into_any_element()
@@ -258,7 +258,7 @@ pub fn recovery_chip(
             .flex_none()
             .text_size(px(tokens.secondary_font_size))
             .text_color(color)
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
             .child(crate::icons::glyph(glyph))
             .child(probe(regions, Region::RecoveryChip(site, session)))
             .into_any_element();
@@ -278,7 +278,7 @@ pub fn recovery_chip(
         .bg(theme.surface_hover)
         .text_size(px(tokens.secondary_font_size))
         .text_color(theme.fg)
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
         .when(chip.tone == hutan_client::recovery::ChipTone::Warn, |s| {
             s.child(icon(Icon::StateWarning, 14.0, theme.warning))
         })
@@ -414,7 +414,7 @@ pub fn age_label(created_at_ms: u64) -> String {
 /// zone (`docs/design.md` § Time).
 pub fn time_tooltip(ms: u64) -> impl Fn(&mut gpui::Window, &mut App) -> gpui::AnyView + 'static {
     let text = SharedString::from(hutan_client::time::local_time_seconds_text(ms));
-    move |_, cx| cx.new(|_| TextTooltip(text.clone())).into()
+    move |_, cx| cx.new(|_| TextTooltip::new(text.clone())).into()
 }
 
 /// The ⚙ of a panel's header: opens Settings at the panel's namespace.
@@ -568,7 +568,7 @@ pub fn scope_chip(
             .rounded(px(tokens.radius))
             .text_size(px(11.0))
             .text_color(theme.muted)
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
             .child(icon(glyph, 12.0, theme.muted))
             .child(div().min_w_0().truncate().child(text))
             .when(working, |chip| {

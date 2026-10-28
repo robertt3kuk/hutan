@@ -123,7 +123,7 @@ impl AgentsPage {
                     .truncate()
                     .text_color(theme.muted)
                     .when_some(reason_tip, |s, tip| {
-                        s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                        s.tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                     })
                     .child(SharedString::from(format!("· {status}")))
             }))
@@ -283,7 +283,7 @@ impl AgentsPage {
                         .text_color(theme.muted)
                         .child(SharedString::from(model.clone()))
                         .when_some(id, |s, id| {
-                            s.tooltip(move |_, cx| cx.new(|_| TextTooltip(id.clone())).into())
+                            s.tooltip(move |_, cx| cx.new(|_| TextTooltip::new(id.clone())).into())
                         })
                 }))
         });
@@ -302,7 +302,9 @@ impl AgentsPage {
                     div()
                         .id(SharedString::from(format!("agents-duration-{session}")))
                         .h(px(16.0))
-                        .tooltip(move |_, cx| cx.new(|_| TextTooltip(duration_tip.clone())).into())
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| TextTooltip::new(duration_tip.clone())).into()
+                        })
                         .child(SharedString::from(duration.text.clone())),
                 )
                 .child(
@@ -311,7 +313,7 @@ impl AgentsPage {
                         .h(px(16.0))
                         .text_size(px(tokens.secondary_font_size))
                         .when_some(updated_tip, |s, tip| {
-                            s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                            s.tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                         })
                         .child(SharedString::from(updated.clone())),
                 )

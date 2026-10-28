@@ -789,7 +789,7 @@ fn name_cell(
         .items_center()
         .gap(px(tokens.spacing))
         .pl(px(indent))
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
         .child(probe(regions, Region::ResourceCell(index, "name")))
 }
 
@@ -926,7 +926,7 @@ impl ResourcesPanel {
             .text_color(theme.muted)
             .when(tooltip, |s| {
                 let text = text.clone();
-                s.tooltip(move |_, cx| cx.new(|_| TextTooltip(text.clone())).into())
+                s.tooltip(move |_, cx| cx.new(|_| TextTooltip::new(text.clone())).into())
             })
             .child(text)
             .child(probe(
@@ -1119,7 +1119,7 @@ impl ResourcesPanel {
                 .gap(px(4.0))
                 .text_size(px(tokens.secondary_font_size))
                 .text_color(theme.accent)
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                 .child(
                     div()
                         .flex_none()
@@ -1270,7 +1270,7 @@ impl ResourcesPanel {
                 .gap(px(tokens.spacing))
                 .text_size(px(tokens.secondary_font_size))
                 .text_color(color)
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                 .when(badge.shared, |s| {
                     s.child(crate::icons::icon(
                         crate::icons::Icon::VcsSharedWarning,
@@ -1310,7 +1310,9 @@ impl ResourcesPanel {
             .child(
                 self.number_cell(index, "pid", processes, tier.pid(), theme)
                     .id(SharedString::from(format!("resources-procs-{index}")))
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(processes_tip.clone())).into()),
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| TextTooltip::new(processes_tip.clone())).into()
+                    }),
             )
             .child(self.number_cell(
                 index,

@@ -1114,7 +1114,7 @@ impl Workbench {
         .min_w(px(210.0))
         .child(
             item("pack-open-folder", words::PACK_OPEN_FOLDER)
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(folder_tip.clone())).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(folder_tip.clone())).into())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.close_pack_menu(cx);
                     this.pack_open_folder(kind, cx);

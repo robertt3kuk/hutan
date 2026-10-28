@@ -189,7 +189,7 @@ fn clickable(id: &'static str, ctx: &StatusContext<'_>) -> gpui::Stateful<gpui::
 
 fn tooltip(text: String) -> impl Fn(&mut gpui::Window, &mut gpui::App) -> AnyView + 'static {
     move |_, cx| {
-        cx.new(|_| TextTooltip(SharedString::from(text.clone())))
+        cx.new(|_| TextTooltip::new(SharedString::from(text.clone())))
             .into()
     }
 }

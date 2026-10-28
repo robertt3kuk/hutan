@@ -310,8 +310,7 @@ fn prepare(
     {
         let moved_up = f32::from(previous - bounds.top());
         if moved_up > 0.0 {
-            view.inset += moved_up;
-            view.scroll_y -= moved_up;
+            view.scroll_y -= moved_up.min(view.scroll_y.max(0.0));
         }
     }
     view.apply_reveal(cx);
@@ -892,7 +891,7 @@ fn shape_muted(
         len: text.len(),
         font: style.font(None),
         color: {
-            let mut color: Hsla = rgba(style.theme.gutter_foreground).into();
+            let mut color = rgba(style.theme.gutter_foreground);
             // The lines of a run after its head, which only repeat who and when.
             if tag == "blame-run" {
                 color.a *= 0.6;

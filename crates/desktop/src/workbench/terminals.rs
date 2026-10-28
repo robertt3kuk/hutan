@@ -1006,6 +1006,32 @@ impl Workbench {
     }
 
     /// Context menu of a session (sessions panel, overview card, tab).
+    /// *Switch Model…* of a chat that can change its model between turns, naming the one it
+    /// runs (the chat's header says it too, while it has the room).
+    fn switch_model_entry(&self, session: SessionId, cx: &gpui::App) -> Option<MenuEntry> {
+        use super::chat::{is_gateway_chat, is_harness_chat};
+        let store = self.sessions.read(cx);
+        let info = store.session(session)?;
+        let chat = info.chat.as_ref()?;
+        if chat.is_assistant()
+            || chat.turn_active
+            || !(is_gateway_chat(&chat.agent) || is_harness_chat(&chat.agent))
+        {
+            return None;
+        }
+        let model =
+            super::chat::model_label(&chat.model, store.model_name(&chat.agent, &chat.model));
+        Some(Self::entry(
+            format!("Switch Model… ({model})"),
+            move |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(actions::SwitchChatModelById(session.to_string())),
+                    cx,
+                );
+            },
+        ))
+    }
+
     pub(crate) fn session_menu(&self, session: SessionId, cx: &gpui::App) -> Vec<MenuEntry> {
         let mut entries = vec![
             Self::entry("Open", move |this, window, cx| {
@@ -1040,6 +1066,10 @@ impl Workbench {
             entries.insert(entries.len() - 1, review);
         }
         entries.insert(entries.len() - 1, Self::open_file_entry());
+        // The model a narrow chat header has no room for.
+        if let Some(entry) = self.switch_model_entry(session, cx) {
+            entries.insert(4, entry);
+        }
         // A chat's checkpoints (or, once, why it has none), before Copy Session ID.
         if let Some(checkpoints) = self.checkpoints_menu_entry(session, cx) {
             entries.insert(entries.len() - 1, checkpoints);
@@ -1355,7 +1385,7 @@ impl Workbench {
                 })
                 .truncate()
                 .tooltip(move |_, cx| {
-                    cx.new(|_| crate::workbench::style::TextTooltip(tooltip.clone()))
+                    cx.new(|_| crate::workbench::style::TextTooltip::new(tooltip.clone()))
                         .into()
                 })
                 .child(gpui::SharedString::from(chip.text))

@@ -681,7 +681,7 @@ impl ProblemsPanel {
                 .items_center()
                 .gap(px(tokens.spacing * 2.0))
                 .min_h(px(ROW_HEIGHT))
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone().into())).into())
                 .child(
                     div()
                         .flex_none()
@@ -834,7 +834,9 @@ impl ProblemsPanel {
                         .cursor_pointer()
                         .when(is_selected && focused, |s| s.bg(selected_bg))
                         .hover(move |s| s.bg(hover))
-                        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| TextTooltip::new(tip.clone().into())).into()
+                        })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open(index, window, cx);

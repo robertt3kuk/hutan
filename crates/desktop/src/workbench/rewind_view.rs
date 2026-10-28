@@ -43,7 +43,7 @@ fn muted_with_path(
         .text_size(px(tokens.secondary_font_size))
         .text_color(theme.muted)
         .child(SharedString::from(text.to_owned()))
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(path.clone())).into())
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(path.clone())).into())
 }
 
 impl Workbench {

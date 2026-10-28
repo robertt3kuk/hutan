@@ -1986,7 +1986,9 @@ impl Render for SearchPanel {
                 .text_size(px(tokens.secondary_font_size))
                 .text_color(if failed { theme.danger } else { theme.muted })
                 .when(failed, |s| s.child(crate::icons::glyph(Icon::StateFailed)))
-                .child(div().min_w_0().truncate().child(SharedString::from(text)))
+                // Whole: a summary such as `1 000 results in 309 files · stopped at 1000
+                // results` wraps under itself instead of being cut (N-11).
+                .child(div().flex_1().min_w_0().child(SharedString::from(text)))
         });
         let waiting_versions = self.show_replace
             && matches!(self.status, SearchStatus::Done { .. })
@@ -2067,6 +2069,10 @@ impl Render for SearchPanel {
                     .size_full(),
                 )
                 .child(self.bar.element())
+                .child(ui::scroll::row_wheel(
+                    self.scroll.0.borrow().base_handle.clone(),
+                    ROW_HEIGHT,
+                ))
                 .into_any_element()
         } else {
             let hint = match self.status {

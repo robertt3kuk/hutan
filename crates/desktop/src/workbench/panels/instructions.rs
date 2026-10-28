@@ -623,7 +623,7 @@ impl InstructionsPanel {
                         reader.harness.id()
                     )))
                     .flex_none()
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                     .child(icons::icon(harness_icon(reader.harness), 14.0, color))
                     .into_any_element()
             })

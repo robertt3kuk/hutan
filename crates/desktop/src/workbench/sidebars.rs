@@ -1127,7 +1127,7 @@ fn rail_button(wb: &Workbench, spec: RailButton, hover: Hsla) -> Stateful<Div> {
         .when(spec.background.is_none(), move |s| {
             s.hover(move |s| s.bg(hover))
         })
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
         .child(spec.face)
         .children(spec.badge.map(|count| {
             div()

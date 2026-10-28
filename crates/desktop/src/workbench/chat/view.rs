@@ -109,9 +109,12 @@ impl Focusable for ChatView {
     }
 }
 
+/// A chat header narrower than this (pixels) keeps its model in the ⋯ menu.
+pub const NARROW_HEADER: f32 = 460.0;
+
 /// A model as the chat header says it: the catalog's display name when there is one, else the
 /// last segment of its id (`gitlab-duo/duo-chat-opus-4-6` reads `duo-chat-opus-4-6`).
-pub(super) fn model_label(id: &str, display_name: Option<&str>) -> String {
+pub(crate) fn model_label(id: &str, display_name: Option<&str>) -> String {
     if let Some(name) = display_name.map(str::trim).filter(|name| !name.is_empty()) {
         return name.to_owned();
     }
@@ -853,7 +856,7 @@ impl ChatView {
         let between_turns = chat.is_some_and(|chat| !chat.turn_active);
         let tooltip = |text: SharedString| {
             move |_: &mut Window, cx: &mut App| {
-                cx.new(|_| crate::workbench::style::TextTooltip(text.clone()))
+                cx.new(|_| crate::workbench::style::TextTooltip::new(text.clone()))
                     .into()
             }
         };
@@ -871,7 +874,13 @@ impl ChatView {
         // while a turn runs.
         // In a narrow pane it gives way first, but keeps the harness readable (`OMP · gitl…`).
         const WHO_MIN_WIDTH: f32 = 80.0;
-        let who = detail.map(|text| {
+        // Narrower than this the model leaves the header for the ⋯ menu (*Switch Model…*), where
+        // it was clipped to nothing (FX-WORK-2, N-09). The width is last frame's.
+        let narrow = self
+            .regions
+            .get(Region::Chat("header"))
+            .is_some_and(|header| f32::from(header.size.width) < NARROW_HEADER);
+        let who = detail.filter(|_| !narrow).map(|text| {
             let detail_text = SharedString::from(text.clone());
             let words = div().min_w_0().truncate().child(SharedString::from(text));
             if !switchable {

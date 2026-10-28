@@ -1780,7 +1780,7 @@ impl MemoryPanel {
             }
             let tip = body;
             line = line.tooltip(move |_, cx| {
-                cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                cx.new(|_| crate::workbench::style::TextTooltip::new(tip.clone()))
                     .into()
             });
         }
