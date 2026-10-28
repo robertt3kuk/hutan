@@ -186,7 +186,8 @@ impl SessionFolders {
 
     /// The popover's last line: how this harness takes a folder (the spike's mock).
     pub fn how(&self) -> String {
-        let contain = "Contain fixes its boundary when the process starts, so a folder needs a restart.";
+        let contain =
+            "Contain fixes its boundary when the process starts, so a folder needs a restart.";
         match &self.holder {
             Holder::Chat(agent) => match agent.as_str() {
                 "claude" => "Claude Code takes folders when its session opens, so a folder added now needs a restart.".to_owned(),
@@ -275,7 +276,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            live.extras.iter().map(|f| live.waits(f)).collect::<Vec<_>>(),
+            live.extras
+                .iter()
+                .map(|f| live.waits(f))
+                .collect::<Vec<_>>(),
             [false, true, true, true, true]
         );
         assert!(live.needs_restart());

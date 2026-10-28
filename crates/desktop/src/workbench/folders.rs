@@ -274,11 +274,17 @@ impl Workbench {
     /// *Add Folder to the Focused Session…* (the ＋ menu, ⌘K): the session in the active tab.
     pub fn add_folder_to_shown_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self.shown_session() else {
-            self.set_notice("Open a chat or a terminal agent first: folders belong to a session", cx);
+            self.set_notice(
+                "Open a chat or a terminal agent first: folders belong to a session",
+                cx,
+            );
             return;
         };
         if !self.sessions.read(cx).supports_session_dirs() {
-            self.set_notice("This daemon cannot give a session more folders (needs 0.57)", cx);
+            self.set_notice(
+                "This daemon cannot give a session more folders (needs 0.57)",
+                cx,
+            );
             return;
         }
         if self.sessions.read(cx).session_folders(session).is_none() {
@@ -416,12 +422,17 @@ impl Workbench {
             return;
         }
         let names: Vec<String> = restart.iter().map(|folder| folder.name()).collect();
-        let what = if names.len() == 1 { "this folder" } else { "these folders" };
+        let what = if names.len() == 1 {
+            "this folder"
+        } else {
+            "these folders"
+        };
         let message = format!(
             "“{}” is running. {} takes {what} (“{}”) only when it starts, so Hutan stops it and starts it again. {}",
             info.title,
             match &folders.holder {
-                crate::sessions::folders::Holder::Chat(agent) => super::harnesses::harness_name(agent).to_owned(),
+                crate::sessions::folders::Holder::Chat(agent) =>
+                    super::harnesses::harness_name(agent).to_owned(),
                 crate::sessions::folders::Holder::Terminal(_) => "The program".to_owned(),
             },
             names.join("”, “"),
@@ -432,7 +443,11 @@ impl Workbench {
             }
         );
         self.open_confirm(
-            if names.len() == 1 { "Restart with this folder?" } else { "Restart with these folders?" },
+            if names.len() == 1 {
+                "Restart with this folder?"
+            } else {
+                "Restart with these folders?"
+            },
             message,
             "Restart",
             move |this, window, cx| this.restart_with_folders(session, window, cx),
@@ -457,7 +472,8 @@ impl Workbench {
                 stopping.await?;
                 let restarting = this
                     .update(cx, |this, cx| {
-                        this.sessions.update(cx, |store, cx| store.restart(session, cx))
+                        this.sessions
+                            .update(cx, |store, cx| store.restart(session, cx))
                     })
                     .map_err(|error| error.to_string())?;
                 restarting.await
@@ -468,7 +484,11 @@ impl Workbench {
                 match result {
                     Ok(_) => this.set_folders_problem(session, None),
                     Err(error) => {
-                        this.folders_say(session, format!("Cannot restart the session: {error}"), cx);
+                        this.folders_say(
+                            session,
+                            format!("Cannot restart the session: {error}"),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -578,7 +598,10 @@ impl Workbench {
             (f32::from(open.at.y) + 14.0).max(8.0)
         };
 
-        let folder_row = |index: Option<usize>, path: &Path, subtitle: Option<(&'static str, bool)>, region_row: usize| {
+        let folder_row = |index: Option<usize>,
+                          path: &Path,
+                          subtitle: Option<(&'static str, bool)>,
+                          region_row: usize| {
             let name = SharedString::from(name_of(path));
             let shown_path = SharedString::from(tilde(path));
             let trailing: AnyElement = match index {
@@ -778,8 +801,7 @@ impl Workbench {
 }
 
 fn folder_is(folder: &Folder, path: &Path) -> bool {
-    folder.path == path
-        || std::fs::canonicalize(path).is_ok_and(|real| real == folder.path)
+    folder.path == path || std::fs::canonicalize(path).is_ok_and(|real| real == folder.path)
 }
 
 /// The restart button's label while some folder only a restart gives: *Restart with this

@@ -351,9 +351,7 @@ fn a_chat_header_has_a_folders_chip_and_its_popover_adds_and_removes_folders(
         view.read_with(cx, |wb, _| wb.folders_popover_problem().is_some())
     });
     let problem = view
-        .read_with(cx, |wb, _| {
-            wb.folders_popover_problem().map(str::to_owned)
-        })
+        .read_with(cx, |wb, _| wb.folders_popover_problem().map(str::to_owned))
         .unwrap();
     assert!(problem.contains("own folder"), "{problem}");
     assert_eq!(extras(&view, cx, chat.id).len(), 1, "nothing was added");
@@ -361,7 +359,10 @@ fn a_chat_header_has_a_folders_chip_and_its_popover_adds_and_removes_folders(
     // Escape closes it.
     cx.simulate_keystrokes("escape");
     draw(cx);
-    assert_eq!(view.read_with(cx, |wb, _| wb.folders_popover_session()), None);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.folders_popover_session()),
+        None
+    );
 }
 
 #[gpui::test]
@@ -419,9 +420,7 @@ fn the_agents_page_row_menu_opens_the_folders_of_a_chat(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-fn a_claude_chat_says_a_new_folder_needs_a_restart_and_restarts_with_it(
-    cx: &mut TestAppContext,
-) {
+fn a_claude_chat_says_a_new_folder_needs_a_restart_and_restarts_with_it(cx: &mut TestAppContext) {
     let work = tempfile::tempdir().unwrap();
     let daemon = claude_daemon(work.path());
     let folders = Folders::new();
@@ -544,9 +543,7 @@ fn a_running_terminal_agent_is_typed_add_dir_for_the_user_to_confirm(cx: &mut Te
 }
 
 #[gpui::test]
-fn a_plain_shell_has_no_chip_but_the_session_menu_still_opens_its_folders(
-    cx: &mut TestAppContext,
-) {
+fn a_plain_shell_has_no_chip_but_the_session_menu_still_opens_its_folders(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start_with_config("[terminal]\nenv_inherit = \"daemon\"\n");
     let folders = Folders::new();
     let project = folders.make("project");
@@ -599,7 +596,9 @@ fn the_plus_menu_adds_a_folder_to_the_workspace_and_to_the_focused_session(
         "{labels:?}"
     );
     assert!(
-        labels.contains(&"Add Folder to the Focused Session… (no chat or terminal in view)".to_owned()),
+        labels.contains(
+            &"Add Folder to the Focused Session… (no chat or terminal in view)".to_owned()
+        ),
         "{labels:?}"
     );
     let disabled: Vec<String> = view
@@ -699,9 +698,18 @@ fn add_folder_to_this_workspace_makes_a_workspace_around_a_lone_project_and_keep
     wait_until(cx, "the window to follow into the workspace", |cx| {
         view.read_with(cx, |wb, _| wb.active_workspace() == Some(workspace))
     });
-    assert_eq!(tab(cx), 1, "the project's tab moved into the workspace's layout");
+    assert_eq!(
+        tab(cx),
+        1,
+        "the project's tab moved into the workspace's layout"
+    );
     let name = view.read_with(cx, |wb, cx| {
-        wb.sessions().read(cx).workspace(workspace).unwrap().name.clone()
+        wb.sessions()
+            .read(cx)
+            .workspace(workspace)
+            .unwrap()
+            .name
+            .clone()
     });
     assert_eq!(name, "acme-web + acme-docs");
 
@@ -743,20 +751,25 @@ fn files_shows_a_sessions_extra_folders_as_roots_while_that_session_is_shown(
         .read_with(cx, |wb, _| wb.panel::<FilesPanel>("files"))
         .expect("the Files panel is drawn");
     let roots = |cx: &VisualTestContext| panel.read_with(cx, |p, _| p.roots().to_vec());
-    wait_until(cx, "Files to follow the project", |cx| roots(cx) == [app.clone()]);
+    wait_until(cx, "Files to follow the project", |cx| {
+        roots(cx) == [app.clone()]
+    });
 
     // The chat takes a folder; with its tab shown, Files lists it as a root next to the project.
     open_chat(&view, cx, chat.id);
-    let added = daemon.call::<SessionResult>(Request::ChatAddDir(hutan_protocol::chat::ChatAddDir {
-        session_id: chat.id,
-        path: docs.clone(),
-    }));
+    let added =
+        daemon.call::<SessionResult>(Request::ChatAddDir(hutan_protocol::chat::ChatAddDir {
+            session_id: chat.id,
+            path: docs.clone(),
+        }));
     assert_eq!(added.session.id, chat.id);
     wait_until(cx, "the session's folder as a root", |cx| {
         roots(cx) == [app.clone(), docs.clone()]
     });
     wait_until(cx, "the folder's files", |cx| {
-        panel.read_with(cx, |p, _| p.rows().iter().any(|row| row.name.as_ref() == "docs"))
+        panel.read_with(cx, |p, _| {
+            p.rows().iter().any(|row| row.name.as_ref() == "docs")
+        })
     });
 
     // Another tab of the same project has no such folder: the root leaves with the session.
@@ -774,10 +787,12 @@ fn files_shows_a_sessions_extra_folders_as_roots_while_that_session_is_shown(
     assert_eq!(roots(cx), [app.clone(), docs.clone()]);
 
     // Taking the folder out takes the root away.
-    let _: SessionResult = daemon.call(Request::ChatRemoveDir(hutan_protocol::chat::ChatRemoveDir {
-        session_id: chat.id,
-        path: docs.clone(),
-    }));
+    let _: SessionResult = daemon.call(Request::ChatRemoveDir(
+        hutan_protocol::chat::ChatRemoveDir {
+            session_id: chat.id,
+            path: docs.clone(),
+        },
+    ));
     wait_until(cx, "the root to go with the folder", |cx| {
         roots(cx) == [app.clone()]
     });

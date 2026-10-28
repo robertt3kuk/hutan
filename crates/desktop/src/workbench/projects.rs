@@ -818,9 +818,10 @@ impl Workbench {
         self.choose_folder(
             "Add",
             move |this, path, window, cx| {
-                let folder = path
-                    .file_name()
-                    .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+                let folder = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
                 this.create_workspace(
                     format!("{name} + {folder}"),
                     vec![path],
