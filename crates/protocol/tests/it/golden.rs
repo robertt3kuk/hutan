@@ -3827,6 +3827,9 @@ fn requests() -> Vec<(&'static str, Request)> {
                 mode: hutan_core::ForkMode::Exact,
                 title: None,
                 where_: ForkWhere::ThisFolder,
+                branch: None,
+                restore_files: false,
+                archive_parent: false,
             }),
         ),
         (
@@ -3837,6 +3840,35 @@ fn requests() -> Vec<(&'static str, Request)> {
                 mode: hutan_core::ForkMode::Summary,
                 title: Some("Try the other approach".into()),
                 where_: ForkWhere::ThisFolder,
+                branch: None,
+                restore_files: false,
+                archive_parent: false,
+            }),
+        ),
+        (
+            "chat_fork_new_worktree",
+            Request::ChatFork(ChatFork {
+                session_id: sid(),
+                turn_id: Some(turn()),
+                mode: hutan_core::ForkMode::Exact,
+                title: None,
+                where_: ForkWhere::NewWorktree,
+                branch: Some("fork/try-it-t2".into()),
+                restore_files: false,
+                archive_parent: true,
+            }),
+        ),
+        (
+            "chat_fork_restore_files",
+            Request::ChatFork(ChatFork {
+                session_id: sid(),
+                turn_id: Some(turn()),
+                mode: hutan_core::ForkMode::Exact,
+                title: None,
+                where_: ForkWhere::ThisFolder,
+                branch: None,
+                restore_files: true,
+                archive_parent: false,
             }),
         ),
         (
@@ -6017,6 +6049,98 @@ fn responses_match_fixtures() {
                         turn_id: turn(),
                         ordinal: 2,
                         copied_events: 41,
+                        worktree: None,
+                        restored: None,
+                        parent_archived: false,
+                        notes: Vec::new(),
+                    },
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "chat_forked_worktree",
+            ControlMessage::ok(
+                76,
+                &ChatForked {
+                    session: SessionInfo {
+                        title: "codex · repo (fork)".into(),
+                        cwd: Some("/work/repo-wt/fork-try-it-t2".into()),
+                        forked_from: Some(hutan_core::ForkOrigin {
+                            session_id: sid(),
+                            turn_id: turn(),
+                            ordinal: 2,
+                            mode: hutan_core::ForkMode::Exact,
+                            at_ms: 1_791_894_400_000,
+                        }),
+                        ..harness_chat_session_info()
+                    },
+                    fork: ForkDone {
+                        mode: hutan_core::ForkMode::Exact,
+                        support: hutan_core::ForkSupport::Exact,
+                        turn_id: turn(),
+                        ordinal: 2,
+                        copied_events: 41,
+                        worktree: Some(ForkWorktree {
+                            path: "/work/repo-wt/fork-try-it-t2".into(),
+                            branch: "fork/try-it-t2".into(),
+                            base: "0f1e2d3c4b5a69788796a5b4c3d2e1f001122334".into(),
+                            files: ForkFiles::Turn,
+                            checkpoint_id: Some(checkpoint_id(2)),
+                            skipped: vec![SkippedFile {
+                                path: ".env.local".into(),
+                                reason: SkipReason::SecretName,
+                                bytes: Some(120),
+                            }],
+                            setup: Some(WorktreeSetup {
+                                state: WorktreeSetupState::Running,
+                                session_id: Some(sid()),
+                                commands: vec!["pnpm install".into()],
+                                teardown: vec![],
+                                hash: None,
+                                copied: 1,
+                                message: None,
+                            }),
+                        }),
+                        restored: None,
+                        parent_archived: true,
+                        notes: Vec::new(),
+                    },
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "chat_forked_restored",
+            ControlMessage::ok(
+                77,
+                &ChatForked {
+                    session: SessionInfo {
+                        title: "codex · repo (fork)".into(),
+                        forked_from: Some(hutan_core::ForkOrigin {
+                            session_id: sid(),
+                            turn_id: turn(),
+                            ordinal: 1,
+                            mode: hutan_core::ForkMode::Exact,
+                            at_ms: 1_791_894_400_000,
+                        }),
+                        ..harness_chat_session_info()
+                    },
+                    fork: ForkDone {
+                        mode: hutan_core::ForkMode::Exact,
+                        support: hutan_core::ForkSupport::Exact,
+                        turn_id: turn(),
+                        ordinal: 1,
+                        copied_events: 17,
+                        worktree: None,
+                        restored: Some(CheckpointRestored {
+                            checkpoint: restore_checkpoint_fixture(),
+                            written: vec!["src/main.rs".into()],
+                            deleted: vec!["src/new.rs".into()],
+                            skipped: vec![],
+                        }),
+                        parent_archived: false,
+                        notes: vec!["the parent session could not be closed: a terminal runs in it".into()],
                     },
                 },
             )

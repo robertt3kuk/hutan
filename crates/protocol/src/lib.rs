@@ -1,5 +1,9 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`chat`] also carries where a fork works — `ChatFork.where: new_worktree` (a git worktree
+//!   whose files are the checkpoint of the turn), `branch`, `restore_files`, `archive_parent`,
+//!   and `ForkDone.worktree` / `restored` / `parent_archived` / `notes` (protocol 0.58,
+//!   capability `chat.fork.worktree`, ADR 0023 decision 3).
 //! - [`chat`] also carries session folders — `ChatCreate.extra_dirs`, `TerminalSpec.extra_dirs`,
 //!   `chat.add_dir`, `chat.remove_dir`, `ChatInfo.dirs` and `SessionInfo.extra_dirs` (protocol
 //!   0.57, capability `session.dirs`, ADR 0023).
@@ -137,7 +141,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 57,
+    minor: 58,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

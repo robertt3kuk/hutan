@@ -7,14 +7,17 @@ use std::path::PathBuf;
 
 use hutan_core::agent::{PermissionKind, PermissionOption};
 use hutan_core::{
-    AgentEvent, ApprovalId, ApprovalPolicy, ForkMode, ForkSupport, ModelInfo, QuestionId,
-    QuestionResponse, QuestionSpec, SandboxMode, SessionId, TurnId, WorkspaceId,
+    AgentEvent, ApprovalId, ApprovalPolicy, CheckpointId, ForkMode, ForkSupport, ModelInfo,
+    QuestionId, QuestionResponse, QuestionSpec, SandboxMode, SessionId, SkippedFile, TurnId,
+    WorkspaceId,
 };
 use hutan_core::{SafetyEnforcer, SafetyPreset};
 use serde::{Deserialize, Serialize};
 
 use crate::assistant::Attachment;
+use crate::checkpoint::CheckpointRestored;
 use crate::messages::SessionInfo;
+use crate::worktree::WorktreeSetup;
 
 /// Most events one `chat.history` returns, whatever `limit` asks for.
 pub const HISTORY_MAX_LIMIT: u32 = 1000;
@@ -223,6 +226,28 @@ pub struct ChatRetry {
 ///   created like `chat.create`: the session is answered `idle` once its agent is ready; it
 ///   follows `[control]` for an agent-originated caller. `bad_request` for a session that is
 ///   not a chat, `unsupported` for an assistant, `not_found` for an unknown session.
+///
+/// Where the fork works (protocol 0.58, capability `chat.fork.worktree`, ADR 0023 decision 3):
+///
+/// - `where: this_folder` (the default) leaves every file alone. With `restore_files` the
+///   checkout of the parent is first brought to the files as they were at the end of the turn:
+///   the same restore as `checkpoint.restore` over the turns after it (previewed by the daemon,
+///   Undo is the restore's own checkpoint, answered as [`ForkDone::restored`]); a conflict, a
+///   turn running in the checkout, or no checkpoints refuses the whole fork before anything
+///   changes, and a fork that then fails to start is undone.
+/// - `where: new_worktree` creates a git worktree on a new branch `branch` (default
+///   `fork/<title>-t<N>`) from the commit the turn ended on, lays the files of the turn's
+///   checkpoint on it as uncommitted changes (modified, deleted and untracked files; the paths
+///   the checkpoint skipped are listed), runs the worktree's setup like `worktree.create`, and
+///   the fork works there: Codex forks with the new `cwd`, OMP forks and is moved with
+///   `/move`, a Claude Code chat can only be forked with a `summary` there (its transcript
+///   belongs to the old folder), a direct chat just starts there. `unsupported` when the turn
+///   has no checkpoint (`data.reason`), `conflict` when the branch exists. `restore_files`
+///   is `bad_request` with it (the worktree already has the turn's files).
+/// - `archive_parent` closes the parent session once the fork is up (`session.close`: its
+///   journal stays and `session.reopen` brings it back): the conversation rewind of ADR 0023
+///   is "fork, then archive the parent". A parent that cannot be closed is left open and
+///   [`ForkDone::notes`] says so.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatFork {
     pub session_id: SessionId,
@@ -234,18 +259,30 @@ pub struct ChatFork {
     /// The new session's name; default: the parent's, marked as a fork.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Where the fork works: `this_folder`, the parent's folder (the only place today).
+    /// Where the fork works: `this_folder`, the parent's folder, or `new_worktree`.
     #[serde(default, rename = "where")]
     pub where_: ForkWhere,
+    /// `new_worktree`: the branch the worktree gets; default `fork/<title slug>-t<N>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// `this_folder`: first put the files of the parent's folder back to how the turn left
+    /// them (previewed, with Undo).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restore_files: bool,
+    /// Close the parent session when the fork is up.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub archive_parent: bool,
 }
 
 /// Where a fork works (`chat.fork`'s `where`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ForkWhere {
-    /// The parent's folder: no file is touched.
+    /// The parent's folder: no file is touched (unless `restore_files`).
     #[default]
     ThisFolder,
+    /// A new git worktree whose files are the checkpoint of the turn (protocol 0.58).
+    NewWorktree,
 }
 
 /// Result of `chat.fork`: the new session, and what was done.
@@ -268,6 +305,55 @@ pub struct ForkDone {
     pub ordinal: u32,
     /// Events of the parent's journal copied into the new session.
     pub copied_events: u64,
+    /// `where: new_worktree` (protocol 0.58): the worktree the fork works in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<ForkWorktree>,
+    /// `restore_files` (protocol 0.58): the restore of the parent's folder; its `checkpoint` is
+    /// what `checkpoint.restore` of Undo takes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored: Option<CheckpointRestored>,
+    /// `archive_parent` (protocol 0.58): the parent session was closed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parent_archived: bool,
+    /// Things the user should know that did not stop the fork (a parent that could not be
+    /// closed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+/// The worktree a `chat.fork` with `where: new_worktree` made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkWorktree {
+    /// Canonical directory; the fork's folder (inside it, when the parent worked in a
+    /// subfolder of its checkout).
+    pub path: PathBuf,
+    pub branch: String,
+    /// The commit the branch starts from: the one the turn ended on.
+    pub base: String,
+    /// Where the files come from.
+    pub files: ForkFiles,
+    /// The checkpoint whose tree was laid on the worktree (`files: turn | earlier`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_id: Option<CheckpointId>,
+    /// Paths the checkpoint left out (too large, likely secrets, filtered, nested repositories),
+    /// which the worktree has as `base` has them (or not at all).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<SkippedFile>,
+    /// The worktree's setup, as `worktree.create` reports it; absent when none is configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<WorktreeSetup>,
+}
+
+/// Which files a fork's new worktree holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkFiles {
+    /// The files as the turn left them (its checkpoint's end).
+    Turn,
+    /// The turn changed no file: those of the latest earlier turn that did.
+    Earlier,
+    /// No turn up to this one changed a file: `base` as it is.
+    Base,
 }
 
 /// What a chat's harness can do for a fork (`ChatInfo.fork`, protocol 0.56).
