@@ -170,7 +170,10 @@ const NAMESPACE_DESCRIPTIONS: &[(&str, &str)] = &[
         "Sign in to agent harnesses and see which accounts they use.",
     ),
     ("models", "Model providers and their credentials."),
-    ("notifications", "When Hutan tells you something needs you."),
+    (
+        "notifications",
+        "When Hutan notifies you: requests, failures and finished work.",
+    ),
     (
         "sessions_restore",
         "What comes back when the daemon restarts.",

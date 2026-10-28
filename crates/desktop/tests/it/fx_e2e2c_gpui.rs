@@ -262,10 +262,10 @@ fn row_height(view: &Entity<Workbench>, cx: &mut VisualTestContext, index: usize
     bounds(view, cx, Region::SettingsItem("row", index)).map(|b| f32::from(b.size.height))
 }
 
-/// FX-E2E2-C item 7, replaced by CL-POLISH-4 item 14: a help line is never cut with "…", so no
-/// row grows when the keyboard reaches it; the rows that need two lines have them at rest.
+/// FX-E2E2-C item 7, replaced by CL-POLISH-4 item 14 and then by UI-RHYTHM: a help line is one
+/// line (the whole text is its tooltip), so no row grows when the keyboard reaches it.
 #[gpui::test]
-fn a_help_line_is_whole_at_rest_and_the_keyboard_grows_no_row(cx: &mut TestAppContext) {
+fn a_help_line_is_one_line_and_the_keyboard_grows_no_row(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open_with(cx, settings_of(&daemon), daemon.connection(), None);
     wait_until(cx, "the first synchronisation", |cx| {
@@ -298,8 +298,10 @@ fn a_help_line_is_whole_at_rest_and_the_keyboard_grows_no_row(cx: &mut TestAppCo
         );
         cx.simulate_keystrokes("down");
     }
+    // A help is one line whatever its length (UI-RHYTHM): the whole text is the tooltip, so no
+    // row has a second line, at rest or under the keyboard.
     assert!(
-        resting.iter().any(|h| *h > 56.0),
-        "a long help takes a second line at rest: {resting:?}"
+        resting.iter().all(|h| *h == 51.0),
+        "every row is one 52 pt row: {resting:?}"
     );
 }

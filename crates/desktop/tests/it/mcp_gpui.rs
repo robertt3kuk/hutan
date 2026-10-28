@@ -63,11 +63,12 @@ fn drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) -
 /// Scrolls the page of the sheet until `region` is well inside it: the page is taller than the
 /// sheet, and a click only reaches what is in view (a click outside the sheet closes it).
 fn reveal(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
-    // The sheet is 860 × 600 px, 48 px from the top and centred; its footer takes the bottom
-    // 110 px. The page scrolls inside it, so the band where a click lands on the page is:
+    // The sheet is 880 × 620 pt, 48 pt from the top and centred; its header (title and
+    // description) and the restart banner take the top of the page, the footer the bottom.
+    // The page scrolls inside it, so the band where a click lands on the page is:
     let size = cx.update(|window, _| window.viewport_size());
     let at = gpui::point(size.width / 2.0, gpui::px(300.0));
-    let (band_top, band_bottom) = (gpui::px(150.0), gpui::px(470.0));
+    let (band_top, band_bottom) = (gpui::px(230.0), gpui::px(470.0));
     for _ in 0..200 {
         let bounds = view
             .read_with(cx, |wb, _| wb.region_bounds(region))
