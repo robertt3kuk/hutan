@@ -1,7 +1,7 @@
 //! The lead lane of a row and the state badge on it (STYLE-TOKENS, spike 2026-10-28 §1.5): one
 //! harness glyph in a `sidebar.lane` box, and in the glyph's top-right corner a badge of
 //! `icon.badge.size` that says what the thing is doing. Shape and colour both, never colour
-//! alone: an arc turns while it works, a disc holds `!` when it needs you, `×` when it failed and
+//! alone: an arc turns while it works, a disc holds `!` when a request waits, `×` when it failed and
 //! `✓` when it finished unread, a hollow ring marks an ended session, and an idle or read one has
 //! no badge at all (the quiet state).
 
@@ -20,8 +20,9 @@ pub enum BadgeState {
     /// An agent turn or a command is running: an accent arc that turns (still under Reduce
     /// Motion).
     Working,
-    /// A question, an approval or a plan waits for the user: a `warning` disc with `!`.
-    NeedsYou,
+    /// A request waits for the user (a question, an approval, a plan): a `warning` disc with
+    /// `!`. The word is the group's: *Request*.
+    Request,
     /// It failed: a `danger` disc with `×`.
     Failed,
     /// A turn finished and nobody has looked: a `success` disc with `✓`.
@@ -37,7 +38,7 @@ impl BadgeState {
     pub fn word(self) -> Option<&'static str> {
         match self {
             Self::Working => Some("Working"),
-            Self::NeedsYou => Some("Needs you"),
+            Self::Request => Some("Request"),
             Self::Failed => Some("Failed"),
             Self::DoneUnread => Some("Done, unread"),
             Self::Idle => None,
@@ -53,7 +54,7 @@ impl BadgeState {
     /// The fill of the disc, for the states that are a disc.
     fn disc(self, theme: &Theme) -> Option<Hsla> {
         match self {
-            Self::NeedsYou => Some(theme.warning),
+            Self::Request => Some(theme.warning),
             Self::Failed => Some(theme.danger),
             Self::DoneUnread => Some(theme.success),
             Self::Working | Self::Idle | Self::Ended => None,
@@ -125,7 +126,7 @@ const CROSS: Strokes = &[&[(0.32, 0.32), (0.68, 0.68)], &[(0.68, 0.32), (0.32, 0
 /// The `✓` of a done badge.
 const TICK: Strokes = &[&[(0.27, 0.52), (0.44, 0.68), (0.74, 0.34)]];
 
-/// The `!` of a needs-you badge: a bar over a dot, drawn with boxes so it stays crisp at 8 px.
+/// The `!` of a request badge: a bar over a dot, drawn with boxes so it stays crisp at 8 px.
 fn bang(ink: Hsla) -> impl IntoElement {
     div()
         .flex()
@@ -167,7 +168,7 @@ pub fn state_badge(
                 .border_1()
                 .border_color(theme.faint),
         ),
-        BadgeState::NeedsYou | BadgeState::Failed | BadgeState::DoneUnread => {
+        BadgeState::Request | BadgeState::Failed | BadgeState::DoneUnread => {
             let fill = state.disc(theme).unwrap_or(theme.muted);
             let ink = ink_on(fill);
             outer.child(
@@ -179,7 +180,7 @@ pub fn state_badge(
                     .rounded_full()
                     .bg(fill)
                     .child(match state {
-                        BadgeState::NeedsYou => bang(ink).into_any_element(),
+                        BadgeState::Request => bang(ink).into_any_element(),
                         BadgeState::Failed => stroke_mark(size, CROSS, ink).into_any_element(),
                         _ => stroke_mark(size, TICK, ink).into_any_element(),
                     }),
@@ -238,7 +239,7 @@ mod tests {
     fn only_a_quiet_state_has_no_badge() {
         for state in [
             BadgeState::Working,
-            BadgeState::NeedsYou,
+            BadgeState::Request,
             BadgeState::Failed,
             BadgeState::DoneUnread,
             BadgeState::Ended,
@@ -252,7 +253,7 @@ mod tests {
     fn a_mark_is_legible_on_every_disc_of_both_built_in_packs() {
         for theme in [Theme::dark(), Theme::light()] {
             for state in [
-                BadgeState::NeedsYou,
+                BadgeState::Request,
                 BadgeState::Failed,
                 BadgeState::DoneUnread,
             ] {
