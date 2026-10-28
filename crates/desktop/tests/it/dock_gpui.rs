@@ -890,3 +890,25 @@ fn a_new_approval_does_not_expand_a_collapsed_right_panel(cx: &mut TestAppContex
         Some(PanelId::new("inspector"))
     );
 }
+
+#[gpui::test]
+fn the_left_edge_can_be_grabbed_on_the_centers_side_as_the_right_one_on_the_docks(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx) = open(cx);
+    resize(cx, 1440.0);
+    let left = bounds(&view, cx, Region::Dock(Left));
+    let handle = bounds(&view, cx, Region::Toolbar("left-dock-handle"));
+    let right_handle = bounds(&view, cx, Region::Toolbar("right-dock-handle"));
+    // The left handle covers the edge and reaches past it into the center; both are at least
+    // as wide as the right one.
+    assert!(handle.left() < left.right() && handle.right() > left.right() + px(2.0));
+    assert!(handle.size.width >= right_handle.size.width);
+
+    // A press 3 pt outside the dock's edge (where it used to miss) drags it.
+    let from = point(left.right() + px(3.0), px(400.0));
+    press_and_move(cx, from, from + point(px(40.0), px(0.0)));
+    release(cx, from + point(px(40.0), px(0.0)));
+    let size = state(&view, cx).docks.left.size;
+    assert!(size > 300.0, "the left dock grew to {size}");
+}

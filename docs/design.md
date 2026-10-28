@@ -415,6 +415,7 @@ preset = "default"
 auto_collapse = true           # a narrow window shows the right panel as its rail below 1180 pt, the left sidebar as its icons below 900 pt (Layout § Docks)
 rail_peek = true              # in a window too narrow for the center to keep 480 pt, a rail icon opens the panel as a peek over the center instead of pushing it in (Layout § Docks, Rail peek)
 offer_new_default = true       # a layout saved before the clean default is offered it once (Layout migration); off after you answer
+files_hint = true              # one card at the right rail's Files icon while the rail is all there is of the right side (First run); off after it was used
 
 # A preset of your own: every rail icon shown, and the status bar of before CL-CHROME.
 [layout.presets.busy]
@@ -469,6 +470,7 @@ line_height = 1.45            # code line height, a multiple of the font size
 large_file_bytes = 16777216   # above this a file asks first, then opens read-only without syntax (see File tabs)
 soft_wrap = "auto"            # auto (Markdown and plain text wrap at the window's edge, code scrolls sideways) | off | viewport | column; View → Toggle Soft Wrap (⌥Z) flips one tab
 wrap_column = 100             # for soft_wrap = "column": cells per row, 20–1000 (a narrower window wraps at its own edge)
+preview_tabs = true           # a single click on a file in the Files tree shows it in an italic preview tab the next click replaces (Workability fixes, FX-WORK-2)
 
 [languages.rust]              # per language, by name (markdown, rust, toml, …; plaintext for files without one); no page in the sheet
 soft_wrap = "viewport"        # overrides editor.soft_wrap for this language
@@ -765,7 +767,7 @@ A file opens in a center tab (`ItemRef::File`, `ui.layout` kind `file`, file ico
 
 Behaviour is in `docs/editor.md` § Git blame and file history; how it looks:
 
-- **Blame column.** As wide as its text needs: 14 to 32 cells, never more than 30 % of the view, left out of a view too narrow for 10; in the gutter between the marks and the line numbers; text in `editor.gutter-foreground` at the editor's font size, the short form `AD · 3d · subject` (a name over 12 characters is its initials, dates `now` `5m` `3h` `2d` `3w` `4mo` `2y`), cut with `…` to the column and never wrapped; lines of the same run are blank, except the first line in view, which repeats its run's text when the run began above the view. The first line of a run is the only one that answers hover (a popover below the line, the gutter's background, 6 px radius: *1a2b3c4 · subject* in semibold, then *Author <email> · date* muted) and click. Uncommitted lines say `Uncommitted`. The text never moves while the column is off (`text_left` only grows by the column).
+- **Blame column.** As wide as its text needs: 14 to 32 cells, never more than 30 % of the view, left out of a view too narrow for 10; in the gutter between the marks and the line numbers; text in `editor.gutter-foreground` at the editor's font size, the short form `Ada · 3d · subject` on the first row of a run and the fainter `Ada · 3d` on the others, so no row is blank (a name over 14 characters is `Robert T.`, else its initials, dates `now` `5m` `3h` `2d` `3w` `4mo` `2y`), cut with `…` to the column and never wrapped; lines of the same run are blank, except the first line in view, which repeats its run's text when the run began above the view. The first line of a run is the only one that answers hover (a popover below the line, the gutter's background, 6 px radius: *1a2b3c4 · subject* in semibold, then *Author <email> · date* muted) and click. Uncommitted lines say `Uncommitted`. The text never moves while the column is off (`text_left` only grows by the column).
 - **Inline blame.** The same text, three spaces after the end of the caret line, muted; a diagnostic's message on that line is shown instead.
 - **File history tab** (`History · name`, `PanelHistory` icon). Header: file name, its path muted, `n commits` (`n+` while there are more), Refresh. Left column (34 font-sizes wide, hairline right): a row per commit — subject (medium when selected), then relative time (absolute in the tooltip), author, short hash, muted and small; selected row `accent-soft`; *Older commits* (ghost, compact) closes the list while more exist. Right: the commit's subject (medium), `hash · author <email> · local time` muted, `Renamed from …` muted when it renamed the file, the message body, **Open at this revision** (secondary, compact) and **Copy hash** (ghost), and under them the patch of the file in a bordered block of diff rows (line numbers, sign, text; the Changes view's colors) that scrolls sideways inside itself. Empty: *No commit has changed this file yet.*; an error: the error mascot and the reason.
 - **Revision tab** (`name @ 1a2b3c4`, file icon): a bar (`sidebar` fill, hairline under it) saying `<path> at commit 1a2b3c4 · read-only`, then the code view; the text cannot be edited.
@@ -1018,6 +1020,25 @@ From the workability evaluation of 0.3.0 (`docs/spikes/2026-10-27-workability.md
 | F-17 project replace | After *Replace All*, the card *Replaced 40 matches in 6 files …* and the replacement text clear when the query changes, so one more click on *Replace All* cannot apply the last replacement to the next search's matches. Editing the replacement alone keeps both. |
 
 Parity: the only moved key is the terminal's prompt jump (⌘↑ / ⌘↓ → ⌘⇧↑ / ⌘⇧↓); nothing else was removed.
+
+## Workability fixes (FX-WORK-2)
+
+From the second evaluation (`docs/spikes/2026-10-28-workability-2.md`, user 2026-10-27). One row per behaviour; the tests are `fx_work2_gpui.rs` and the ones named.
+
+| Finding | Behaviour now |
+|---|---|
+| N-01 first run | A fresh layout is the `default` preset as it is: the right side opens **on Files** (before, the very first launch put the right dock on its rail). Where the window is too narrow for the body (below 1180 pt, or the center under 480 pt) the dock shows its rail and the rail points at Files **once**: a small card left of the Files icon, *Your project's files · Show Files · ×* (`workbench/rail_hint.rs`, `layout.files_hint`). *Show Files* opens Files (a peek where the center has no room); it, ×, or Files being shown while the card was up turn the setting off. A window that opened on Files at once never drew the card and writes nothing. Every rail icon has a hover label (its panel's title, with the count for Changes). `hutan ui layout` on a fresh home reads `right visible files*`. |
+| N-03 preview tab | A single click on a file in the Files tree (and Space on its row) shows it in a **preview tab**: italic title, the next such click replaces it (one preview per window, in the pane it opened in), so browsing does not add a tab or an *Open Editors* row per click. A double click on the row or the tab, an edit, *Keep Open* in the tab's menu, and opening the file any other way (Return, ⌘P, an agent's card, a split, a click on its *Open Editors* row) make it a regular tab. ⇧- and ⌘-clicks only select. The preview is view state (not saved; after a restart every tab is regular). `editor.preview_tabs = false` turns it off. |
+| N-03 / N-13 Open Editors | The section lists the preview once (italic), shows at most **six rows** and scrolls inside itself past them (a wheel over it never scrolls the tree), and scrolls the active file's row into view whenever the focused tab changes; the active row keeps its fill. |
+| N-09 narrow headers | The Changes diff header (*Show in Files*, *Wrap lines*) folds into one **⋯** menu when the diff side is under 560 px (it was clipped at 325); the chat header keeps its model in the session ⋯ menu (*Switch Model… (Claude Haiku 5.5)*) when the header is under 460 px. |
+| N-04 left dock handle | The left dock's resize handle covers its edge and reaches 4 px into the center (a press a pixel outside the dock used to land in the editor); both side handles are at least 6 pt wide. |
+| N-05 Refresh, Collapse all | Both scroll the tree to its first row. |
+| N-06 rename collision | The reason (*"main.rs" already exists in this folder*) hangs under the edited row, over the rows below it, not in a strip at the bottom of the panel. |
+| N-07 tooltips | A tooltip draws nothing once the wheel moved or a sheet, menu, palette or picker opened after it appeared (`style::TooltipGate`: an epoch each tooltip remembers). A tooltip of the overlay's own buttons is born after the bump and shows. |
+| N-08 LSP bar | Dismissing the language-server bar gives its room back: the text moves up with the view and never leaves a blank band above the first line (`code_view`'s *keep text in place* only follows a file that is scrolled). |
+| N-10 counts | The project rows' and the Changes icon's uncommitted counts are read again 300 ms after the first `fs.changed` of a burst and at most every 1.5 s while it lasts, not only on the daemon's next worktree notice or the window coming back. |
+| N-11 wheel | A wheel-mouse notch (a line delta) moves a Files tree or a Search results list **three rows** (`ui::scroll::row_wheel`, `WHEEL_ROWS`); a trackpad's pixel deltas are untouched. The Search summary wraps instead of being cut (*1 000 results in 309 files · stopped at 1000 results*). |
+| F-09 blame | The column names the author (whole up to 14 characters, else `Robert T.`, else the initials) and **no row of a run is blank**: the first row of a run says `author · date · subject`, the others `author · date` fainter. |
 
 ## Keyboard defaults
 

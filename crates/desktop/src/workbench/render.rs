@@ -36,6 +36,10 @@ pub const TITLEBAR_HEIGHT: f32 = 36.0;
 /// Space reserved for the traffic lights when the left dock does not cover them.
 const TRAFFIC_LIGHT_INSET: f32 = 80.0;
 const HANDLE_THICKNESS: f32 = 6.0;
+/// How much wider than [`HANDLE_THICKNESS`] the left dock's handle is, on the center's side of its
+/// edge: the right one has the dock's whole edge, the left one lay inside it and a drag at the
+/// very edge (a pixel outside the dock) hit the center instead (N-04).
+const LEFT_HANDLE_OUTSET: f32 = 4.0;
 /// Room above a center pane's tabs in their strip; a tab reaches the strip's bottom, so the
 /// active one is connected to its pane.
 const TAB_TOP_INSET: f32 = 6.0;
@@ -1967,13 +1971,15 @@ impl Workbench {
                     .left(px(size - HANDLE_THICKNESS))
                     .top_0()
                     .bottom(px(status_h))
-                    .w(px(HANDLE_THICKNESS))
+                    .w(px(HANDLE_THICKNESS + LEFT_HANDLE_OUTSET))
+                    .child(probe(&self.regions, Region::Toolbar("left-dock-handle")))
                     .cursor_col_resize(),
                 DockPosition::Right => base
                     .right(px(right - HANDLE_THICKNESS))
                     .top_0()
                     .bottom(px(status_h))
                     .w(px(HANDLE_THICKNESS))
+                    .child(probe(&self.regions, Region::Toolbar("right-dock-handle")))
                     .cursor_col_resize(),
                 DockPosition::Bottom => base
                     .left(px(left))
