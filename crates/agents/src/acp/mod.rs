@@ -18,7 +18,7 @@ mod nodes;
 mod udiff;
 mod wire;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -520,9 +520,21 @@ async fn open(
                     Some(fork_meta(spec.session_meta.as_ref(), message))
                 }
             };
+            // The agent forks in the folder its parent's conversation belongs to; a fork that
+            // works elsewhere is moved there after the open.
+            let source_cwd = from
+                .source_cwd
+                .as_deref()
+                .filter(|source| *source != spec.cwd)
+                .map(|source| source.to_string_lossy().into_owned());
+            if source_cwd.is_some() && agent != "omp" {
+                return Err(AgentError::Unsupported(format!(
+                    "{name} cannot carry a forked conversation to another folder: its conversation                      belongs to the folder it ran in (a summary starts one there)"
+                )));
+            }
             let params = serde_json::to_value(wire::ForkSessionParams {
                 session_id: &from.thread_id,
-                cwd: &cwd,
+                cwd: source_cwd.as_deref().unwrap_or(&cwd),
                 mcp_servers: &servers,
                 additional_directories: &at_open,
                 meta: meta.as_ref(),
@@ -560,6 +572,12 @@ async fn open(
         ),
     };
     let params = params.map_err(|e| AgentError::Protocol(format!("encoding `{method}`: {e}")))?;
+    // A fork that works in another folder than its parent's was made in the parent's: it moves.
+    let moved = spec
+        .fork
+        .as_ref()
+        .and_then(|from| from.source_cwd.as_deref())
+        .is_some_and(|source| source != spec.cwd);
 
     let mut answer = open_call(transport, incoming, method, params.clone()).await;
     if let Err(error) = &answer
@@ -575,6 +593,9 @@ async fn open(
             "`{method}` answered without a sessionId"
         )));
     };
+    if moved {
+        move_to(transport, incoming, &session_id, &spec.cwd).await?;
+    }
     if session_dirs.uses_commands() {
         dirs::open_with_commands(
             transport,
@@ -598,6 +619,39 @@ async fn open(
         fork,
         dirs: session_dirs,
     })
+}
+
+/// OMP's local command `/move <folder>` on a forked session: its working directory becomes
+/// `folder` (a command, so no model call and nothing in the transcript). OMP answers `Moved to
+/// <folder>.` (18.12.3); anything else is a refusal and the fork is not offered as done: the
+/// conversation would be in a folder the files are not in.
+async fn move_to(
+    transport: &Transport,
+    incoming: &mut mpsc::Receiver<Incoming>,
+    session: &str,
+    folder: &Path,
+) -> Result<(), AgentError> {
+    let mut said = String::new();
+    open_call_collecting(
+        transport,
+        incoming,
+        "session/prompt",
+        json!({
+            "sessionId": session,
+            "prompt": [{"type": "text", "text": format!("/move {}", folder.display())}],
+        }),
+        Some(&mut said),
+    )
+    .await?;
+    if said.trim_start().starts_with("Moved") {
+        Ok(())
+    } else {
+        Err(AgentError::Unsupported(format!(
+            "the agent did not move the forked conversation to {}: {}",
+            folder.display(),
+            said.trim()
+        )))
+    }
 }
 
 /// The agent said it needs authentication: use its own plain method (OMP's `agent`: the

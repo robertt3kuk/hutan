@@ -1680,6 +1680,7 @@ fn fork_spec(h: &Harness, point: Option<ForkPoint>) -> StartSpec {
         fork: Some(ForkFrom {
             thread_id: SESSION.to_owned(),
             point,
+            source_cwd: None,
         }),
         ..h.spec(None, None)
     }
@@ -1747,6 +1748,89 @@ async fn an_omp_fork_at_the_end_is_a_new_session_that_takes_turns() {
         "sess_fixture_2"
     );
     adapter.shutdown().await;
+}
+
+fn moved_spec(h: &Harness) -> (StartSpec, PathBuf) {
+    let target = h.dir.path().join("work-fork");
+    std::fs::create_dir(&target).unwrap();
+    let mut spec = fork_spec(h, None);
+    spec.cwd = target.clone();
+    if let Some(from) = spec.fork.as_mut() {
+        from.source_cwd = Some(h.dir.path().to_owned());
+    }
+    (spec, target)
+}
+
+#[tokio::test]
+async fn an_omp_fork_for_another_folder_is_made_where_its_parent_is_and_then_moved() {
+    // OMP refuses a `cwd` other than its parent's on `session/fork` (spike §2.5.1): the fork
+    // is made in the parent's folder, then `/move` carries it to the worktree.
+    let h = Harness::new();
+    let (spec, target) = moved_spec(&h);
+    let AcpSession {
+        adapter,
+        started,
+        mut events,
+        ..
+    } = timeout(
+        WAIT,
+        AcpAdapter::start(&h.config("fork-move"), &spec, None, &[]),
+    )
+    .await
+    .expect("start timed out")
+    .unwrap();
+    assert_eq!(started.thread_id, "sess_fixture_2");
+    let fork = &h.received_of("session/fork")[0]["params"];
+    assert_eq!(
+        fork["cwd"],
+        h.dir.path().display().to_string(),
+        "the parent's folder: {fork}"
+    );
+    assert_eq!(
+        h.prompt_texts(),
+        [format!("/move {}", target.display())],
+        "the move is a command, sent before anything else"
+    );
+    adapter.send_message("hi".into()).await.unwrap();
+    let seen = collect_until(&mut events, ends_turn).await;
+    // The command's answer is not part of the conversation.
+    assert_eq!(texts_of_messages(&seen), ["hi", "Hello, world."]);
+    assert_eq!(h.prompt_texts().len(), 2);
+    adapter.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_fork_that_omp_will_not_move_fails_instead_of_staying_in_the_wrong_folder() {
+    let h = Harness::new();
+    let (spec, _) = moved_spec(&h);
+    let error = timeout(
+        WAIT,
+        AcpAdapter::start(&h.config("fork-move-refused"), &spec, None, &[]),
+    )
+    .await
+    .expect("start timed out")
+    .map(|_| ())
+    .unwrap_err();
+    assert!(
+        matches!(&error, AgentError::Unsupported(text) if text.contains("Directory does not exist")),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_that_cannot_move_a_fork_refuses_another_folder_before_asking() {
+    // Claude Code's conversation belongs to the folder it ran in: a worktree fork is a summary.
+    let h = Harness::new();
+    let (spec, _) = moved_spec(&h);
+    let error = try_fork(claude(&h, "claude-fork-exact"), spec)
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        matches!(&error, AgentError::Unsupported(text) if text.contains("another folder")),
+        "{error:?}"
+    );
+    assert!(h.received_of("session/fork").is_empty());
 }
 
 #[tokio::test]

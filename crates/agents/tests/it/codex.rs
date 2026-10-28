@@ -1315,6 +1315,7 @@ fn fork_spec(h: &Harness, point: Option<hutan_agents::ForkPoint>) -> StartSpec {
         fork: Some(hutan_agents::ForkFrom {
             thread_id: FORK_PARENT.to_owned(),
             point,
+            source_cwd: None,
         }),
         ..h.spec(None)
     }
@@ -1395,6 +1396,31 @@ async fn a_fork_cuts_at_the_provider_turn_and_the_new_thread_takes_turns() {
         FORKED
     );
     adapter.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_fork_in_another_folder_gets_the_new_cwd_in_thread_fork() {
+    let h = Harness::new();
+    let mut spec = fork_spec(&h, None);
+    spec.cwd = h.dir.path().join("worktree");
+    std::fs::create_dir(&spec.cwd).unwrap();
+    if let Some(from) = spec.fork.as_mut() {
+        from.source_cwd = Some(h.dir.path().to_owned());
+    }
+    let session = timeout(
+        WAIT,
+        CodexAppServerAdapter::start(&h.config(&fixture("fork-turn")), &spec),
+    )
+    .await
+    .expect("start timed out")
+    .expect("start failed");
+    let params = &received_of(&h, "thread/fork")[0]["params"];
+    assert_eq!(
+        params["cwd"],
+        h.dir.path().join("worktree").display().to_string(),
+        "Codex takes the new folder itself: {params}"
+    );
+    session.adapter.shutdown().await;
 }
 
 #[tokio::test]

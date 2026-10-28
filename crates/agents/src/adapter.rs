@@ -74,6 +74,12 @@ pub struct ForkFrom {
     /// Where the conversation is cut; `None`: at its end (what the agent has now).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub point: Option<ForkPoint>,
+    /// The fork works in another folder than its parent did (a new worktree, `StartSpec.cwd`):
+    /// the folder the parent's conversation belongs to. Codex's `thread/fork` takes the new
+    /// folder directly and ignores this; OMP refuses a `cwd` other than its parent's on
+    /// `session/fork`, so it is forked here and then moved to `StartSpec.cwd` with `/move`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_cwd: Option<PathBuf>,
 }
 
 /// The provider's names for the end of the turn a fork keeps, as Hutan journaled them. An
