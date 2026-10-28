@@ -507,6 +507,13 @@ impl Chat<'_> {
             .read(move |conn| sql::chat_items(conn, session, before, limit))
     }
 
+    /// The newest `limit` events of the session that can change its insight, oldest first, with
+    /// raw provider payloads and tool output left out (see [`sql::chat_insight_items`]).
+    pub fn insight_items(&self, session: SessionId, limit: u32) -> Result<Vec<ChatItemRow>> {
+        self.0
+            .read(move |conn| sql::chat_insight_items(conn, session, limit))
+    }
+
     /// The newest `limit` events whose `type` is `kind`, oldest first (a direct chat reads its
     /// messages this way).
     pub fn items_of_kind(

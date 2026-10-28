@@ -185,6 +185,14 @@ pub enum Notice {
         files_searched: u64,
         hits: u32,
     },
+    /// The insight of the chat this connection focused (`client.focus`) changed
+    /// (`agent.insight_updated`, protocol 0.59, capability `agent.insight`): the whole
+    /// snapshot; replace what you hold when its `seq` is larger. At most one a second per
+    /// session. Outside the event sequence: a client that missed one asks `agent.insight`.
+    AgentInsight {
+        session_id: hutan_core::SessionId,
+        insight: Box<hutan_core::insight::AgentInsight>,
+    },
     /// A language server changed state (`lsp.state`, protocol 0.39, capability `lsp`): the
     /// whole entry as it is now. Sent to every connection.
     LspState {
@@ -527,6 +535,14 @@ impl StoreState {
                     .notices
                     .push(Notice::FsGeneration { root, generation });
             }
+            // A snapshot for the connection that focused the chat, outside the sequence.
+            Event::AgentInsightUpdated {
+                session_id,
+                insight,
+            } => effects.notices.push(Notice::AgentInsight {
+                session_id,
+                insight,
+            }),
             // The search's progress, for whoever runs the search on this connection.
             Event::FsSearchProgress {
                 search_id,

@@ -238,6 +238,9 @@ pub(crate) const CHAT_FORK_WORKTREE_CAPABILITY: &str = "chat.fork.worktree";
 /// Capability for session folders: `extra_dirs`, `chat.add_dir|remove_dir`, `ChatInfo.dirs`
 /// (protocol 0.57).
 pub(crate) const SESSION_DIRS_CAPABILITY: &str = "session.dirs";
+/// Capability for `agent.insight`, `agent.measure_context` and the `agent.insight_updated`
+/// event (protocol 0.59).
+pub(crate) const AGENT_INSIGHT_CAPABILITY: &str = "agent.insight";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -298,6 +301,7 @@ const CAPABILITIES: &[&str] = &[
     FS_OPS_CAPABILITY,
     CHAT_FORK_CAPABILITY,
     SESSION_DIRS_CAPABILITY,
+    AGENT_INSIGHT_CAPABILITY,
     CHAT_FORK_WORKTREE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -607,6 +611,43 @@ impl Client {
     pub async fn usage_summary(&self, refresh: bool) -> Result<UsageSummary, ClientError> {
         self.call(Request::UsageSummary(UsageSummaryRequest { refresh }))
             .await
+    }
+
+    /// True when the daemon advertised capability `agent.insight` (protocol 0.59).
+    pub fn supports_agent_insight(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENT_INSIGHT_CAPABILITY)
+    }
+
+    /// `agent.insight`: what a chat's context holds, what each turn used, its tools, files and
+    /// time. `node_id` must be the session's main agent when given.
+    pub async fn agent_insight(
+        &self,
+        session_id: SessionId,
+        node_id: Option<String>,
+    ) -> Result<hutan_protocol::insight::AgentInsightResult, ClientError> {
+        self.call(Request::AgentInsight(
+            hutan_protocol::insight::AgentInsightRequest {
+                session_id,
+                node_id,
+            },
+        ))
+        .await
+    }
+
+    /// `agent.measure_context`: has the harness print its context by category (`/context`),
+    /// reads the answer, and returns the insight after it. A turn of the conversation that
+    /// costs no tokens; only call it because the user asked.
+    pub async fn agent_measure_context(
+        &self,
+        session_id: SessionId,
+    ) -> Result<hutan_protocol::insight::AgentContextMeasured, ClientError> {
+        self.call(Request::AgentMeasureContext(
+            hutan_protocol::insight::AgentMeasureContext { session_id },
+        ))
+        .await
     }
 
     /// True when the daemon advertised capability `chat.safety` (protocol 0.51).

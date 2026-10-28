@@ -104,6 +104,48 @@ impl Usage<'_> {
         })
     }
 
+    /// The newest `limit` turns of one session (as far as the records go back: they are kept
+    /// [`USAGE_KEPT_DAYS`] days), oldest first.
+    pub fn turns_of(&self, session: SessionId, limit: u32) -> Result<Vec<UsageTurnRow>> {
+        self.0.read(move |conn| {
+            let context = "reading a session's turns";
+            let mut stmt = conn
+                .prepare(
+                    "SELECT turn_id, at_ms, harness, provider, model, input_tokens, \
+                         cached_input_tokens, output_tokens, reasoning_output_tokens, \
+                         total_tokens, cost_usd \
+                     FROM usage_turns WHERE session_id = ?1 ORDER BY at_ms DESC LIMIT ?2",
+                )
+                .map_err(StorageError::sqlite(context))?;
+            let rows = stmt
+                .query_map(params![session.to_string(), i64::from(limit)], |row| {
+                    let tokens = |at: usize| -> rusqlite::Result<Option<u64>> {
+                        Ok(row.get::<_, Option<i64>>(at)?.map(unms))
+                    };
+                    Ok(UsageTurnRow {
+                        session_id: session,
+                        turn_id: row.get(0)?,
+                        at_ms: unms(row.get(1)?),
+                        harness: row.get(2)?,
+                        provider: row.get(3)?,
+                        model: row.get(4)?,
+                        input_tokens: tokens(5)?,
+                        cached_input_tokens: tokens(6)?,
+                        output_tokens: tokens(7)?,
+                        reasoning_output_tokens: tokens(8)?,
+                        total_tokens: tokens(9)?,
+                        cost_usd: row.get(10)?,
+                    })
+                })
+                .map_err(StorageError::sqlite(context))?;
+            let mut turns = rows
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(StorageError::sqlite(context))?;
+            turns.reverse();
+            Ok(turns)
+        })
+    }
+
     /// The turns that ended at or after `since_ms`, summed per harness and provider.
     pub fn sums_since(&self, since_ms: u64) -> Result<Vec<UsageSum>> {
         self.0.read(move |conn| sums_since(conn, since_ms))
@@ -328,6 +370,36 @@ mod tests {
             .unwrap();
         let sums = usage.sums_since(0).unwrap();
         assert_eq!((sums[0].turns, sums[0].total_tokens), (1, 99));
+    }
+
+    #[test]
+    fn a_sessions_turns_come_back_oldest_first_and_only_its_own() {
+        let (_dir, storage) = storage();
+        let usage = storage.usage();
+        let mine = SessionId::new();
+        for (name, at) in [("a", 1_000), ("b", 2_000), ("c", 3_000)] {
+            usage
+                .record_turn(UsageTurnRow {
+                    session_id: mine,
+                    ..turn(name, at, "omp", at, Some(0.5))
+                })
+                .unwrap();
+        }
+        usage
+            .record_turn(turn("other", 1_500, "omp", 1, None))
+            .unwrap();
+        let rows = usage.turns_of(mine, 10).unwrap();
+        let ids: Vec<_> = rows.iter().map(|r| r.turn_id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c"]);
+        assert_eq!(rows[0].cost_usd, Some(0.5));
+        assert_eq!(rows[2].input_tokens, Some(3_000));
+        let newest: Vec<_> = usage
+            .turns_of(mine, 2)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.turn_id)
+            .collect();
+        assert_eq!(newest, ["b", "c"], "the newest two, still oldest first");
     }
 
     fn limit(harness: &str, window: &str, used: f64) -> UsageLimitRow {

@@ -350,6 +350,47 @@ impl InsightReducer {
         }
     }
 
+    /// When the breakdown was last measured.
+    pub fn breakdown_at(&self) -> Option<u64> {
+        self.breakdown.as_ref().map(|(_, at, _)| *at)
+    }
+
+    /// Roughly how many bytes the reducer holds (a test of the budget reads it).
+    pub fn approx_bytes(&self) -> usize {
+        use std::mem::size_of;
+        size_of::<Self>()
+            + self.ended.capacity() * size_of::<InsightTurn>()
+            + self
+                .tools
+                .iter()
+                .map(|tool| size_of::<ToolCount>() + tool.name.capacity())
+                .sum::<usize>()
+            + self
+                .files
+                .iter()
+                .map(|file| size_of::<FileRow>() + file.path.capacity())
+                .sum::<usize>()
+            + self
+                .pending_tools
+                .iter()
+                .map(|pending| size_of::<PendingTool>() + pending.name.capacity())
+                .sum::<usize>()
+            + self.running.as_ref().map_or(0, |running| {
+                size_of::<Running>()
+                    + running.answer.capacity()
+                    + running
+                        .files
+                        .iter()
+                        .map(|path| size_of::<String>() + path.capacity())
+                        .sum::<usize>()
+            })
+            + self.breakdown.as_ref().map_or(0, |(rows, ..)| {
+                rows.iter()
+                    .map(|row| size_of::<BreakdownRow>() + row.id.capacity() + row.label.capacity())
+                    .sum()
+            })
+    }
+
     // Tools -----------------------------------------------------------------------------------
 
     fn tool_row(&mut self, name: &str) -> &mut ToolCount {
@@ -796,24 +837,28 @@ fn lines(text: &str) -> u64 {
     text.lines().count() as u64
 }
 
-/// Lines added and removed by one change, where the harness gave enough to know.
+/// Lines added and removed by one change, where the harness gave enough to know. The adapters
+/// keep the provider's text in `patch` whatever the kind (`FileChange`): an added file's
+/// content, a deleted file's old content, an update's unified diff.
 fn line_counts(change: &FileChange) -> (Option<u64>, Option<u64>) {
-    if let Some(patch) = &change.patch {
-        let mut added = 0;
-        let mut removed = 0;
-        for line in patch.lines() {
-            if line.starts_with('+') && !line.starts_with("+++") {
-                added += 1;
-            } else if line.starts_with('-') && !line.starts_with("---") {
-                removed += 1;
+    match (change.kind, change.patch.as_deref()) {
+        (FileChangeKind::Add, Some(content)) => (Some(lines(content)), Some(0)),
+        (FileChangeKind::Delete, Some(content)) => (Some(0), Some(lines(content))),
+        (FileChangeKind::Update, Some(patch)) => {
+            let mut added = 0;
+            let mut removed = 0;
+            for line in patch.lines() {
+                if line.starts_with('+') && !line.starts_with("+++") {
+                    added += 1;
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    removed += 1;
+                }
             }
+            (Some(added), Some(removed))
         }
-        return (Some(added), Some(removed));
-    }
-    match change.kind {
-        FileChangeKind::Add => (change.after.as_deref().map(lines), Some(0)),
-        FileChangeKind::Delete => (Some(0), change.before.as_deref().map(lines)),
-        FileChangeKind::Update => (None, None),
+        (FileChangeKind::Add, None) => (change.after.as_deref().map(lines), Some(0)),
+        (FileChangeKind::Delete, None) => (Some(0), change.before.as_deref().map(lines)),
+        (FileChangeKind::Update, None) => (None, None),
     }
 }
 

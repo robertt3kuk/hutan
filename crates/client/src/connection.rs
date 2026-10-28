@@ -1179,6 +1179,33 @@ impl Connection {
         client.hooks_test(hook).await
     }
 
+    /// True while connected to a daemon that advertised capability `agent.insight`
+    /// ([`Client::supports_agent_insight`]); false when disconnected.
+    pub fn supports_agent_insight(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_agent_insight())
+    }
+
+    /// `agent.insight` ([`Client::agent_insight`]).
+    pub async fn agent_insight(
+        &self,
+        session_id: SessionId,
+        node_id: Option<String>,
+    ) -> Result<hutan_protocol::insight::AgentInsightResult, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agent_insight(session_id, node_id).await
+    }
+
+    /// `agent.measure_context` ([`Client::agent_measure_context`]).
+    pub async fn agent_measure_context(
+        &self,
+        session_id: SessionId,
+    ) -> Result<hutan_protocol::insight::AgentContextMeasured, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agent_measure_context(session_id).await
+    }
+
     /// `usage.summary`: the limit windows the harnesses report and what the turns used;
     /// `refresh` asks the harnesses first (it takes seconds).
     pub async fn usage_summary(

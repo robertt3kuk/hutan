@@ -364,6 +364,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         codex_config.clone(),
         config.usage_probes,
     );
+    let insight = crate::insight::InsightHub::new(storage.clone(), bus.clone());
     let registry = registry::spawn(
         bus.clone(),
         hub.clone(),
@@ -397,6 +398,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             scratch_dir: paths.base.join("scratch"),
             checkpoints: checkpoints.clone(),
             usage: usage.clone(),
+            insight: insight.clone(),
             sandbox: sandbox.clone(),
         },
         stored,
@@ -569,6 +571,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             lsp,
             ui,
             hooks,
+            insight,
             settings: settings_service,
         },
         bus.clone(),

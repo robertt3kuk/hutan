@@ -77,6 +77,7 @@ pub mod harness;
 pub mod history;
 pub mod history_catalog;
 pub mod hooks;
+pub mod insight;
 pub mod lsp;
 pub mod mcp_wiring;
 pub mod memory;

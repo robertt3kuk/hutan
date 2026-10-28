@@ -32,6 +32,7 @@ use crate::daemon_settings::SettingsService;
 use crate::files::FileService;
 use crate::history::HistoryService;
 use crate::hooks::HooksService;
+use crate::insight::InsightHub;
 use crate::lsp::LspHub;
 use crate::memory::MemoryService;
 use crate::notify::NotifyService;
@@ -46,6 +47,7 @@ use crate::worktrees::WorktreeService;
 use hutan_protocol::ui::{SessionSendText, SessionTextSent};
 
 mod fork;
+mod insight;
 
 /// The services a router hands requests to besides the registry and the terminal hub.
 #[derive(Debug)]
@@ -64,6 +66,7 @@ pub struct Services {
     pub lsp: Arc<LspHub>,
     pub ui: Arc<UiHub>,
     pub hooks: Arc<HooksService>,
+    pub insight: Arc<InsightHub>,
     pub settings: Arc<SettingsService>,
 }
 
@@ -89,6 +92,7 @@ pub struct Router {
     lsp: Arc<LspHub>,
     ui: Arc<UiHub>,
     hooks: Arc<HooksService>,
+    insight: Arc<InsightHub>,
     settings: Arc<SettingsService>,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
     forget: AtomicBool,
@@ -124,6 +128,7 @@ impl Router {
             lsp: services.lsp,
             ui: services.ui,
             hooks: services.hooks,
+            insight: services.insight,
             settings: services.settings,
             forget: AtomicBool::new(false),
         }
@@ -388,6 +393,8 @@ impl Router {
                 ok(&ChatSent { turn_id })
             }
             Request::ChatFork(req) => ok(&self.fork_chat(conn, req).await?),
+            Request::AgentInsight(req) => ok(&self.agent_insight(req).await?),
+            Request::AgentMeasureContext(req) => ok(&self.measure_context(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
                 self.registry
@@ -521,6 +528,7 @@ impl Router {
             Request::NotifyAct(req) => ok(&self.notify.act(conn.client_kind(), req).await?),
             Request::ClientFocus(req) => {
                 self.notify.set_focus(conn.id(), req.session_id);
+                self.insight.focus(conn, req.session_id);
                 ok(&Empty {})
             }
             Request::NotifyMute(req) => {
@@ -969,6 +977,7 @@ impl Router {
     pub fn connection_closed(&self, conn: ConnId) {
         self.hub.connection_closed(conn);
         self.notify.connection_closed(conn);
+        self.insight.connection_closed(conn);
         self.resources.unsubscribe(conn);
         self.ui.connection_closed(conn);
         self.files.connection_closed(conn);
@@ -1075,6 +1084,10 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::ChatRetry(_) => ("chat.retry", Mutate),
         // A new chat that starts with another's conversation: what `chat.create` would do.
         Request::ChatFork(_) => ("chat.fork", Mutate),
+        // What the agent's context holds: read-only. `/context` is a turn sent to the agent, so
+        // asking for it is what `chat.send` would be.
+        Request::AgentInsight(_) => ("agent.insight", Read),
+        Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.
         Request::ChatQueueAdd(_) => ("chat.queue.add", Mutate),

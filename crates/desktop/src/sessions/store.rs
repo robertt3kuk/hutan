@@ -1174,7 +1174,9 @@ impl SessionsStore {
             // The file tabs' language servers (`workbench/lsp.rs`) and the Problems panel
             // follow these themselves.
             | Notice::LspState { .. }
-            | Notice::LspDiagnostics { .. } => {}
+            | Notice::LspDiagnostics { .. }
+            // The context panel (a later slice) follows the focused chat's insight itself.
+            | Notice::AgentInsight { .. } => {}
             // The resources panel listens for itself too; the sample also says which terminals
             // run an agent that never reported.
             Notice::ResourcesUpdated { sample } => self.apply_sample(sample, cx),

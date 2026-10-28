@@ -828,6 +828,47 @@ pub fn chat_items(
     Ok(items)
 }
 
+/// The newest `limit` events of the session that can change its insight (turn boundaries,
+/// usage, tools, file changes, and the messages short enough to be a `/context` command or its
+/// answer), oldest first. Raw provider payloads and tool output are cut out in SQLite, so a
+/// session of long outputs does not have to be read into memory to count its tools.
+pub fn chat_insight_items(
+    conn: &Connection,
+    session: SessionId,
+    limit: u32,
+) -> Result<Vec<ChatItemRow>> {
+    let context = "reading a chat journal for its insight";
+    let mut stmt = conn
+        .prepare(
+            "SELECT seq, ts_ms, turn_id, item_id, kind, \
+                    COALESCE(json_remove(event_json, '$.payload', '$.output'), event_json) \
+             FROM chat_items \
+             WHERE session_id = ?1 AND (kind IN ('turn_started', 'tool_start', 'tool_end', \
+                    'file_diff', 'usage', 'turn_completed', 'turn_failed', 'turn_cancelled') \
+                OR (kind = 'message_end' AND length(event_json) <= 16384)) \
+             ORDER BY seq DESC LIMIT ?2",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map(params![session.to_string(), i64::from(limit)], |row| {
+            Ok(ChatItemRow {
+                session_id: session,
+                seq: unms(row.get(0)?),
+                ts_ms: unms(row.get(1)?),
+                turn_id: row.get(2)?,
+                item_id: row.get(3)?,
+                kind: row.get(4)?,
+                event_json: row.get(5)?,
+            })
+        })
+        .map_err(StorageError::sqlite(context))?;
+    let mut items = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(StorageError::sqlite(context))?;
+    items.reverse();
+    Ok(items)
+}
+
 /// The newest `limit` events of one `kind` of the session, oldest first.
 pub fn chat_items_of_kind(
     conn: &Connection,

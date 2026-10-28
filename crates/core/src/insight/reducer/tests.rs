@@ -579,6 +579,21 @@ fn files_are_relative_to_the_folder_and_counted_from_their_patches() {
         },
     );
     r.apply(&e);
+    // Codex and the ACP adapters keep an added file's content in `patch`.
+    let e = s.at(
+        1,
+        Some(t),
+        Some(ItemId::new()),
+        AgentEventKind::FileDiff {
+            changes: vec![change(
+                "/work/app/new.txt",
+                FileChangeKind::Add,
+                Some("hi\n"),
+            )],
+            patch: None,
+        },
+    );
+    r.apply(&e);
     let e = s.event(t, AgentEventKind::TurnCompleted { duration_ms: None });
     r.apply(&e);
 
@@ -586,7 +601,7 @@ fn files_are_relative_to_the_folder_and_counted_from_their_patches() {
     let files = insight.files.expect("files");
     assert_eq!(
         (files.count, files.added, files.removed, files.truncated),
-        (2, 4, 1, false)
+        (3, 5, 1, false)
     );
     assert_eq!(
         files.items,
@@ -603,9 +618,15 @@ fn files_are_relative_to_the_folder_and_counted_from_their_patches() {
                 added: Some(2),
                 removed: Some(0)
             },
+            InsightFile {
+                path: "new.txt".into(),
+                kind: FileChangeKind::Add,
+                added: Some(1),
+                removed: Some(0)
+            },
         ]
     );
-    assert_eq!(insight.turns[0].files, 2);
+    assert_eq!(insight.turns[0].files, 3);
 }
 
 #[test]

@@ -1217,6 +1217,84 @@ fn journaled(session: SessionId, seq: u64, turn: Option<&str>, kind: &str) -> Ch
     }
 }
 
+/// The journal read for insight skips what cannot change it, cuts the raw payload and tool
+/// output out in SQLite, and returns the newest window oldest first.
+#[test]
+fn the_insight_read_keeps_boundaries_and_drops_payloads_and_long_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let session = chat_session(&storage);
+    let big = "x".repeat(20_000);
+    let row = |seq: u64, kind: &str, extra: serde_json::Value| {
+        let mut json = serde_json::json!({
+            "session_id": session.to_string(), "seq": seq, "ts_ms": 20_000 + seq, "type": kind,
+        });
+        json.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        ChatItemRow {
+            session_id: session,
+            seq,
+            ts_ms: 20_000 + seq,
+            turn_id: Some("t1".into()),
+            item_id: None,
+            kind: kind.to_owned(),
+            event_json: json.to_string(),
+        }
+    };
+    let rows = vec![
+        row(
+            1,
+            "turn_started",
+            serde_json::json!({"payload": {"raw": big}}),
+        ),
+        row(2, "message_delta", serde_json::json!({"text": "streamed"})),
+        row(
+            3,
+            "message_end",
+            serde_json::json!({"role": "user", "text": "/context"}),
+        ),
+        row(
+            4,
+            "message_end",
+            serde_json::json!({"role": "assistant", "text": big}),
+        ),
+        row(
+            5,
+            "tool_end",
+            serde_json::json!({"status": "completed", "output": big, "duration_ms": 4}),
+        ),
+        row(6, "reasoning_end", serde_json::json!({"summary": []})),
+        row(7, "usage", serde_json::json!({"last": {"total_tokens": 9}})),
+        row(8, "turn_completed", serde_json::json!({"duration_ms": 12})),
+    ];
+    for r in rows {
+        storage.chat().append(r).unwrap();
+    }
+    let items = storage.chat().insight_items(session, 100).unwrap();
+    let seqs: Vec<_> = items.iter().map(|i| i.seq).collect();
+    assert_eq!(
+        seqs,
+        [1, 3, 5, 7, 8],
+        "no deltas, reasoning or long messages"
+    );
+    assert!(
+        !items[0].event_json.contains("raw"),
+        "the payload is cut out"
+    );
+    let end: serde_json::Value = serde_json::from_str(&items[2].event_json).unwrap();
+    assert!(end.get("output").is_none());
+    assert_eq!(end["duration_ms"], 4, "what insight reads stays");
+    let newest: Vec<_> = storage
+        .chat()
+        .insight_items(session, 2)
+        .unwrap()
+        .iter()
+        .map(|i| i.seq)
+        .collect();
+    assert_eq!(newest, [7, 8]);
+}
+
 fn turn_row(session: SessionId, id: &str, started: u64) -> ChatTurnRow {
     ChatTurnRow {
         session_id: session,

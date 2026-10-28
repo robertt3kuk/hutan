@@ -247,6 +247,8 @@ enum Command {
     ChatTarget(SessionId, Reply<bool>),
     /// What the registry knows of a chat that is to be forked (`chat.fork`).
     ForkParent(SessionId, Reply<ForkParent>),
+    /// What insight needs to know of a chat (`agent.insight`).
+    InsightTarget(SessionId, Reply<crate::insight::InsightTarget>),
     /// A decided fork: add its session next to the parent's and start it; answered once its
     /// agent is up (or failed, and nothing is left).
     ForkChat(Box<ForkChat>, Reply<SessionInfo>),
@@ -790,6 +792,14 @@ impl RegistryHandle {
         .await
     }
 
+    /// What `agent.insight` needs to know of a chat: its harness, model and folder.
+    pub(crate) async fn insight_target(
+        &self,
+        id: SessionId,
+    ) -> Result<crate::insight::InsightTarget, ErrorBody> {
+        self.ask(|r| Command::InsightTarget(id, r)).await
+    }
+
     /// Whether `id` is a chat session (else an error), and whether it is live.
     pub async fn chat_target(&self, id: SessionId) -> Result<bool, ErrorBody> {
         self.ask(|r| Command::ChatTarget(id, r)).await
@@ -1078,6 +1088,8 @@ pub struct RegistryConfig {
     pub checkpoints: Arc<crate::checkpoints::turns::TurnCheckpoints>,
     /// Usage and limits records: what the turns of chats used.
     pub usage: Arc<crate::usage::UsageService>,
+    /// What each chat session's context holds and spends (protocol 0.59).
+    pub insight: Arc<crate::insight::InsightHub>,
     /// Contain (protocol 0.52): the Seatbelt boundary of sessions that ask for one.
     pub sandbox: Arc<crate::contain::Sandbox>,
 }
@@ -1107,6 +1119,7 @@ pub fn spawn(
         config.tmp_dir,
         config.checkpoints,
         config.usage,
+        config.insight,
         config.sandbox.clone(),
     );
     let (workspaces, home, next_position) =
@@ -1593,6 +1606,9 @@ impl SessionRegistry {
                 }
                 Command::ForkParent(id, reply) => {
                     let _ = reply.send(self.fork_parent(id));
+                }
+                Command::InsightTarget(id, reply) => {
+                    let _ = reply.send(self.insight_target(id));
                 }
                 Command::ForkChat(fork, reply) => self.create_fork(*fork, reply),
                 Command::ChatSeedDelivered { session } => self.on_chat_seed_delivered(session),
@@ -4703,6 +4719,51 @@ impl SessionRegistry {
             fork.seed = None;
             self.persist_session(index);
         }
+    }
+
+    /// What insight needs to know of a chat, or why it has none: `not_found`, `bad_request`
+    /// for a session that is not a chat.
+    fn insight_target(&self, id: SessionId) -> Result<crate::insight::InsightTarget, ErrorBody> {
+        let session = &self.sessions[self.session_index(id)?];
+        let Some(spec) = &session.chat else {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                format!("session {id} is not a chat session"),
+            ));
+        };
+        let model = session
+            .info
+            .chat
+            .as_ref()
+            .map(|chat| chat.model.clone())
+            .filter(|model| !model.is_empty())
+            .or_else(|| spec.model.clone());
+        // An assistant that runs on a provider, and a direct chat, are charged as `direct`.
+        let provider_backed = spec.agent == AGENT_DIRECT || spec.agent == AGENT_ASSISTANT;
+        let attribution = match (&spec.provider_id, provider_backed) {
+            (Some(provider), true) => {
+                crate::usage::Attribution::direct(provider, model.as_deref().unwrap_or_default())
+            }
+            _ => crate::usage::Attribution::harness(
+                if provider_backed {
+                    hutan_protocol::usage::HARNESS_DIRECT
+                } else {
+                    &spec.agent
+                },
+                model.as_deref(),
+            ),
+        };
+        Ok(crate::insight::InsightTarget {
+            harness: attribution.harness,
+            model: attribution.model,
+            provider: Some(attribution.provider),
+            cwd: session
+                .info
+                .cwd
+                .as_ref()
+                .map(|cwd| cwd.display().to_string()),
+            assistant: spec.assistant || spec.agent == AGENT_ASSISTANT,
+        })
     }
 
     /// What the registry knows of a chat that is going to be forked, or why it cannot be.

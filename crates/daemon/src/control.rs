@@ -991,6 +991,7 @@ fn target_session(request: &Request) -> Option<SessionId> {
         Request::ChatSend(r) => Some(r.session_id),
         Request::ChatRetry(r) => Some(r.session_id),
         Request::ChatFork(r) => Some(r.session_id),
+        Request::AgentMeasureContext(r) => Some(r.session_id),
         Request::ChatSetModel(r) => Some(r.session_id),
         Request::CheckpointRemove(r) => r.session_id,
         _ => None,
@@ -1145,6 +1146,10 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
         ),
         Request::ChatRetry(r) => format!(
             "send the last message of the chat {} again",
+            session(r.session_id)
+        ),
+        Request::AgentMeasureContext(r) => format!(
+            "ask the chat {} to print its context by category (/context)",
             session(r.session_id)
         ),
         Request::ChatFork(r) => format!(

@@ -49,7 +49,7 @@ use hutan_storage::{
     QuestionOutcome as StoredOutcome, QuestionRow, Storage,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::assistant_pick::{CATALOG_TIMEOUT, pick_assistant_model};
@@ -63,6 +63,7 @@ use crate::direct::{DirectSession, Target};
 use crate::harness::{
     AGENT_CLAUDE, AGENT_OMP, Harnesses, assistant_profile, is_harness_agent, omp_assistant_prompt,
 };
+use crate::insight::{InsightHub, InsightTarget};
 use crate::mcp_wiring::{McpServerSpec, McpWiring};
 use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
@@ -98,6 +99,8 @@ pub fn is_gateway_agent(agent: &str) -> bool {
 
 /// How long a fetched model catalog is reused.
 const MODEL_CACHE: Duration = Duration::from_secs(60);
+/// How long `agent.measure_context` waits for the harness to answer `/context`.
+const MEASURE_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a harness's model list is reused (`omp models` is a subprocess of seconds).
 const HARNESS_MODEL_CACHE: Duration = Duration::from_secs(5 * 60);
 /// The longest the idle sleeper waits between two looks at the assistants.
@@ -346,6 +349,16 @@ struct Live {
     seed: Mutex<Option<String>>,
     /// What this session's turns used, and who they are charged to (`docs/agents.md` § Usage).
     usage: LiveUsage,
+    /// `agent.measure_context` waits here for the end of its turn: the first turn that ends
+    /// while it is set is the measuring one (it holds `busy`, so no other turn runs).
+    measuring: Mutex<Option<oneshot::Sender<MeasureEnd>>>,
+}
+
+/// How the turn of `agent.measure_context` ended.
+#[derive(Debug)]
+enum MeasureEnd {
+    Completed,
+    Failed(String),
 }
 
 /// The usage accounting of one running session.
@@ -393,6 +406,7 @@ impl Live {
             first_turn: Mutex::new(None),
             seed: Mutex::new(None),
             usage,
+            measuring: Mutex::new(None),
         })
     }
 
@@ -509,6 +523,8 @@ pub struct ChatManager {
     queues: Queues,
     /// Records what turns used and the limits harnesses report.
     usage: Arc<UsageService>,
+    /// What each chat's context holds and spends (protocol 0.59): fed by the pump.
+    insight: Arc<InsightHub>,
     /// Contain (protocol 0.52): wraps the process of a chat that asks for the boundary.
     sandbox: Arc<Sandbox>,
     /// The boundary each running chat's process was started in, read from what was applied.
@@ -605,6 +621,7 @@ impl ChatManager {
         tmp_dir: PathBuf,
         checkpoints: Arc<TurnCheckpoints>,
         usage: Arc<UsageService>,
+        insight: Arc<InsightHub>,
         sandbox: Arc<Sandbox>,
     ) -> Arc<Self> {
         // A daemon that was killed mid-turn left its images behind: nothing is in flight yet.
@@ -648,6 +665,7 @@ impl ChatManager {
             tmp_dir,
             checkpoints,
             usage,
+            insight,
             sandbox,
             contained: Mutex::new(HashMap::new()),
         });
@@ -1292,6 +1310,8 @@ impl ChatManager {
             ),
         );
         // A summary fork's digest went in as the thread's developer instructions, above.
+        self.attach_insight(&live, Some(&start.cwd), !started.resumed)
+            .await;
         self.adopt(&live);
         info!(session = %id, model = %started.model, resumed = started.resumed, "chat agent started");
         tokio::spawn(self.clone().pump(live, events));
@@ -1423,6 +1443,8 @@ impl ChatManager {
             *lock(&live.first_turn) = Some(memory.text);
         }
         *lock(&live.seed) = spec.fork.as_ref().and_then(|fork| fork.seed.clone());
+        self.attach_insight(&live, Some(&start.cwd), !started.resumed)
+            .await;
         self.adopt(&live);
         info!(session = %id, agent = %spec.agent, model = %started.model, resumed = started.resumed, "chat harness started");
         tokio::spawn(self.clone().pump(live, events));
@@ -1541,6 +1563,8 @@ impl ChatManager {
                 spec.thread_id.is_none(),
             ),
         );
+        self.attach_insight(&live, None, spec.thread_id.is_none())
+            .await;
         self.adopt(&live);
         info!(session = %id, provider = %provider_id, %model, "direct chat started");
         tokio::spawn(self.clone().pump(live, events));
@@ -1587,6 +1611,83 @@ impl ChatManager {
                 *attribution = Attribution::harness(&attribution.harness.clone(), Some(&model))
                     .with_account(attribution.account.clone());
                 Ok(())
+            }
+        }
+    }
+
+    /// Builds the insight of a chat whose agent just started from its journal, so that every
+    /// event of the run lands in it (`fresh`: the conversation began with this start).
+    async fn attach_insight(&self, live: &Live, cwd: Option<&std::path::Path>, fresh: bool) {
+        let attribution = lock(&live.usage.attribution).clone();
+        let target = InsightTarget {
+            harness: attribution.harness,
+            model: attribution.model,
+            provider: Some(attribution.provider),
+            cwd: cwd.map(|cwd| cwd.display().to_string()),
+            assistant: live.assistant || live.mawas,
+        };
+        self.insight.attach(live.id, &target, fresh).await;
+    }
+
+    /// `agent.measure_context`: sends `/context` to the harness as a turn and waits for its end
+    /// (the insight reads the answer from the journal's events: `hutan_core::insight`). The
+    /// turn is part of the conversation, costs no tokens, and is sent only because a client
+    /// asked. `unsupported` for an agent without such a command and for assistants,
+    /// `invalid_state` while a turn runs or the session is not running.
+    pub async fn measure_context(&self, id: SessionId) -> Result<TurnId, ErrorBody> {
+        let live = match self.acquire(id).await {
+            Ok(live) => live,
+            Err(Acquire::Busy(_)) => return Err(turn_in_progress()),
+            Err(Acquire::Failed(error)) => return Err(error),
+        };
+        let supported = match &live.backend {
+            Backend::Agent(adapter) => {
+                hutan_core::insight::harness_insight(adapter.agent()).can_measure
+            }
+            Backend::Direct(_) => false,
+        };
+        if !supported || live.assistant || live.mawas {
+            live.busy.store(false, Ordering::Release);
+            return Err(crate::insight::measure_unsupported(
+                &lock(&live.usage.attribution).harness,
+            ));
+        }
+        let (tx, ended) = oneshot::channel();
+        *lock(&live.measuring) = Some(tx);
+        let turn = match self
+            .run_turn(
+                &live,
+                hutan_core::insight::MEASURE_COMMAND.to_owned(),
+                None,
+                false,
+            )
+            .await
+        {
+            Ok(turn) => turn,
+            Err(error) => {
+                lock(&live.measuring).take();
+                return Err(error);
+            }
+        };
+        match tokio::time::timeout(MEASURE_TIMEOUT, ended).await {
+            Ok(Ok(MeasureEnd::Completed)) => Ok(turn),
+            Ok(Ok(MeasureEnd::Failed(message))) => Err(ErrorBody::new(
+                ErrorCode::ProviderError,
+                format!("the agent did not answer /context: {message}"),
+            )),
+            Ok(Err(_)) => Err(ErrorBody::new(
+                ErrorCode::ProviderError,
+                "the agent went away before it answered /context",
+            )),
+            Err(_) => {
+                lock(&live.measuring).take();
+                Err(ErrorBody::new(
+                    ErrorCode::ProviderError,
+                    format!(
+                        "the agent did not answer /context within {} seconds",
+                        MEASURE_TIMEOUT.as_secs()
+                    ),
+                ))
             }
         }
     }
@@ -2632,6 +2733,7 @@ impl ChatManager {
                                 && let Some(cost) = usage.cost_usd
                             {
                                 lock(&live.usage.turn).cost_reported(cost);
+                                self.insight.cost(live.id, cost);
                             }
                             self.notifier.node(live.id, *update).await;
                         }
@@ -2989,6 +3091,19 @@ impl ChatManager {
             required.is_some() || resolved.is_some() || asked.is_some() || settled.is_some();
         if !event.kind.is_streaming() {
             self.journal(&event);
+            // After the journal write is queued: a reducer built from the journal meanwhile
+            // has this event, and one that is not yet in place buffers it (`InsightHub`).
+            self.insight.observe(&event);
+        }
+        if ends_turn && let Some(waiter) = lock(&live.measuring).take() {
+            let end = match &event.kind {
+                AgentEventKind::TurnFailed { message, .. } => MeasureEnd::Failed(message.clone()),
+                AgentEventKind::TurnCancelled => {
+                    MeasureEnd::Failed("the turn was cancelled".to_owned())
+                }
+                _ => MeasureEnd::Completed,
+            };
+            let _ = waiter.send(end);
         }
         self.emit(&Event::ChatEvent {
             session_id: live.id,
