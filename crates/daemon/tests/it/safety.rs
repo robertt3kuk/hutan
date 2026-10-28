@@ -125,6 +125,7 @@ impl S {
 
     fn request(&self, agent: &str, safety: Option<SafetyPreset>) -> ChatCreate {
         ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: self.work.path().to_owned(),

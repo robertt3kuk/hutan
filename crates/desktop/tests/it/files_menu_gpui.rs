@@ -838,6 +838,7 @@ fn chat_in(
     use hutan_protocol::chat::ChatCreate;
     use hutan_protocol::messages::{Request, SessionResult};
     let created: SessionResult = daemon.call(Request::ChatCreate(ChatCreate {
+        extra_dirs: Vec::new(),
         contain: None,
         workspace_id: Some(workspace),
         cwd: cwd.to_path_buf(),

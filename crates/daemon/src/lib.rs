@@ -98,6 +98,7 @@ pub mod restore;
 pub mod router;
 pub mod safety;
 pub mod scratch;
+pub mod session_dirs;
 pub mod session_names;
 pub mod start_error;
 pub mod tasks;

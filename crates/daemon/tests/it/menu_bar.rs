@@ -463,6 +463,7 @@ async fn a_pending_approval_needs_you_until_it_is_answered() {
     let created = t
         .client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: t.work.path().to_owned(),

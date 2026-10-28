@@ -455,6 +455,7 @@ async fn a_chat_lands_in_the_project_of_its_folder() {
 
     let chat = client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: repo.clone(),

@@ -102,6 +102,7 @@ fn spec_in(cwd: &Path) -> TerminalSpec {
 
 fn chat_request() -> ChatCreate {
     ChatCreate {
+        extra_dirs: Vec::new(),
         contain: None,
         workspace_id: None,
         cwd: PathBuf::new(),

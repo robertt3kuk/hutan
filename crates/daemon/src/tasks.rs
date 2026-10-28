@@ -864,6 +864,7 @@ impl TaskService {
         cwd: PathBuf,
     ) -> Result<SessionInfo, ErrorBody> {
         let spec = TerminalSpec {
+            extra_dirs: Vec::new(),
             command: argv,
             cwd: Some(cwd),
             env: BTreeMap::from([(TASK_ID_ENV.to_owned(), task.id.to_string())]),
@@ -906,6 +907,7 @@ impl TaskService {
         let session = self
             .registry
             .create_chat(ChatCreate {
+                extra_dirs: Vec::new(),
                 workspace_id,
                 cwd,
                 agent: agent.to_owned(),

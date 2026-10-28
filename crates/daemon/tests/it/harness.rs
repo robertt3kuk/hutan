@@ -170,6 +170,7 @@ impl H {
 
     fn request(&self, agent: &str) -> ChatCreate {
         ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: self.work.path().to_owned(),

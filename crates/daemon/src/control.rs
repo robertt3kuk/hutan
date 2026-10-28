@@ -1128,6 +1128,16 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
         Request::HistoryClear(_) => "delete the session history index".to_owned(),
         Request::HistoryRebuild(_) => "rebuild the session history index".to_owned(),
         Request::ChatCreate(r) => format!("start a {} chat in {}", r.agent, r.cwd.display()),
+        Request::ChatAddDir(r) => format!(
+            "add the folder {} to the session {}",
+            r.path.display(),
+            session(r.session_id)
+        ),
+        Request::ChatRemoveDir(r) => format!(
+            "take the folder {} out of the session {}",
+            r.path.display(),
+            session(r.session_id)
+        ),
         Request::ChatSend(r) => format!(
             "send a message ({} characters) to the chat {}",
             r.text.chars().count(),
@@ -1319,6 +1329,7 @@ mod tests {
     fn session(kind: SessionKind, state: SessionState, agent: bool) -> SessionInfo {
         SessionInfo {
             forked_from: None,
+            extra_dirs: Vec::new(),
             containment: None,
             terminal_agent: None,
             id: SessionId::new(),

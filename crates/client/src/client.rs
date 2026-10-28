@@ -23,11 +23,11 @@ use hutan_protocol::blocks::{
     BlockPart, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks, TerminalBlocksResult,
 };
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatFork,
-    ChatForked, ChatHistory, ChatHistoryRequest, ChatInterrupt, ChatModels, ChatModelsRequest,
-    ChatQueue, ChatQueueAdd, ChatQueueEdit, ChatQueueItemRef, ChatQueued, ChatRetry, ChatSend,
-    ChatSendNow, ChatSent, ChatSentNow, HISTORY_MAX_LIMIT, QuestionAnswer, QuestionInfo,
-    QuestionList, QuestionListRequest, QueuedMessage,
+    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatAddDir, ChatCreate,
+    ChatFork, ChatForked, ChatHistory, ChatHistoryRequest, ChatInterrupt, ChatModels,
+    ChatModelsRequest, ChatQueue, ChatQueueAdd, ChatQueueEdit, ChatQueueItemRef, ChatQueued,
+    ChatRemoveDir, ChatRetry, ChatSend, ChatSendNow, ChatSent, ChatSentNow, HISTORY_MAX_LIMIT,
+    QuestionAnswer, QuestionInfo, QuestionList, QuestionListRequest, QueuedMessage,
 };
 use hutan_protocol::checkpoint::{
     CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest,
@@ -232,6 +232,9 @@ pub(crate) const WORKTREE_STAGE_CAPABILITY: &str = "worktree.stage";
 pub(crate) const FS_OPS_CAPABILITY: &str = "fs.ops";
 /// Capability for `chat.fork` (protocol 0.56).
 pub(crate) const CHAT_FORK_CAPABILITY: &str = "chat.fork";
+/// Capability for session folders: `extra_dirs`, `chat.add_dir|remove_dir`, `ChatInfo.dirs`
+/// (protocol 0.57).
+pub(crate) const SESSION_DIRS_CAPABILITY: &str = "session.dirs";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -291,6 +294,7 @@ const CAPABILITIES: &[&str] = &[
     WORKTREE_STAGE_CAPABILITY,
     FS_OPS_CAPABILITY,
     CHAT_FORK_CAPABILITY,
+    SESSION_DIRS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -616,6 +620,43 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == SANDBOX_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `session.dirs` (protocol 0.57): a session can
+    /// hold extra folders (`chat.add_dir`, `chat.remove_dir`, `extra_dirs`).
+    pub fn supports_session_dirs(&self) -> bool {
+        self.has_capability(SESSION_DIRS_CAPABILITY)
+    }
+
+    /// Adds a folder to a chat or terminal session (`chat.add_dir`, user-only); answers with the
+    /// session as it is now (`ChatInfo.dirs`, or `SessionInfo.extra_dirs` for a terminal).
+    pub async fn chat_add_dir(
+        &self,
+        session_id: SessionId,
+        path: impl Into<PathBuf>,
+    ) -> Result<SessionInfo, ClientError> {
+        let result: SessionResult = self
+            .call(Request::ChatAddDir(ChatAddDir {
+                session_id,
+                path: path.into(),
+            }))
+            .await?;
+        Ok(result.session)
+    }
+
+    /// Takes an extra folder out of a session (`chat.remove_dir`, user-only).
+    pub async fn chat_remove_dir(
+        &self,
+        session_id: SessionId,
+        path: impl Into<PathBuf>,
+    ) -> Result<SessionInfo, ClientError> {
+        let result: SessionResult = self
+            .call(Request::ChatRemoveDir(ChatRemoveDir {
+                session_id,
+                path: path.into(),
+            }))
+            .await?;
+        Ok(result.session)
     }
 
     /// The logins of the harnesses (`account.list`): names and plan only.

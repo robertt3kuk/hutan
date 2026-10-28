@@ -11,7 +11,8 @@ use hutan_protocol::chat::{ChatQueued, ChatSent};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::grants::ControlGrants;
 use hutan_protocol::messages::{
-    ClientKind, DaemonStatusInfo, Empty, Event, Request, SessionResult, StopBy, Subscribed,
+    ClientKind, DaemonStatusInfo, Empty, Event, Request, SessionCreate, SessionResult, SessionSpec,
+    StopBy, Subscribed,
 };
 use hutan_protocol::notify::NotifyList;
 use hutan_protocol::task::TaskResult;
@@ -336,6 +337,16 @@ impl Router {
                 ok(&SessionResult {
                     session: self.registry.create_chat(req).await?,
                 })
+            }
+            Request::ChatAddDir(req) => {
+                let (session, paste) = self.registry.add_dir(req.session_id, req.path).await?;
+                self.type_for_the_user(paste).await;
+                ok(&SessionResult { session })
+            }
+            Request::ChatRemoveDir(req) => {
+                let (session, paste) = self.registry.remove_dir(req.session_id, req.path).await?;
+                self.type_for_the_user(paste).await;
+                ok(&SessionResult { session })
             }
             Request::ChatSend(req) => {
                 self.live_chat(req.session_id).await?;
@@ -837,6 +848,20 @@ impl Router {
         }
     }
 
+    /// Types `paste` at the prompt of a terminal agent, without Enter: the user confirms
+    /// (`chat.add_dir` on a terminal session, protocol 0.57). Typed by the user's request, so
+    /// the input counts as the user's.
+    async fn type_for_the_user(&self, paste: Option<crate::registry::Paste>) {
+        if let Some(paste) = paste
+            && self
+                .hub
+                .input(paste.terminal, Bytes::from(paste.text.into_bytes()))
+                .await
+        {
+            self.registry.note_input(paste.terminal, true);
+        }
+    }
+
     /// `session.send_text`: types into the terminal of a live terminal session.
     async fn send_text(
         &self,
@@ -1041,6 +1066,9 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::HistoryRebuild(_) => ("history.rebuild", Mutate),
         Request::ChatCreate(_) => ("chat.create", Mutate),
         Request::ChatSend(_) => ("chat.send", Mutate),
+        // Adding a folder widens what an agent may touch: only the user does it (ADR 0023).
+        Request::ChatAddDir(_) => ("chat.add_dir", UserOnly),
+        Request::ChatRemoveDir(_) => ("chat.remove_dir", UserOnly),
         // Sends the same message again: what `chat.send` would do.
         Request::ChatRetry(_) => ("chat.retry", Mutate),
         // A new chat that starts with another's conversation: what `chat.create` would do.
@@ -1234,7 +1262,16 @@ fn classification(request: &Request) -> (&'static str, Access) {
 
 /// How `request` is treated for an agent-originated connection.
 pub fn classify(request: &Request) -> Access {
-    classification(request).1
+    match request {
+        // Creating a session with folders of its own is the same widening as adding them
+        // (ADR 0023 decision 4); without folders the request keeps its class.
+        Request::ChatCreate(req) if !req.extra_dirs.is_empty() => Access::UserOnly,
+        Request::SessionCreate(SessionCreate {
+            spec: SessionSpec::Terminal(spec),
+            ..
+        }) if !spec.extra_dirs.is_empty() => Access::UserOnly,
+        _ => classification(request).1,
+    }
 }
 
 /// The wire name of `request`'s method.

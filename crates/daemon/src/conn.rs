@@ -94,6 +94,7 @@ pub const CAPABILITIES: &[&str] = &[
     "fs.ops",
     "terminal.agent",
     "chat.fork",
+    "session.dirs",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

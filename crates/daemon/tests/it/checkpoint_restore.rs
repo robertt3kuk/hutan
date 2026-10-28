@@ -701,6 +701,7 @@ async fn only_the_user_restores_never_during_a_turn_and_an_open_file_hears_it() 
     let (user, mut events) = daemon.connect_subscribed().await;
     let session = user
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: root.clone(),

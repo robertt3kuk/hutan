@@ -22,7 +22,7 @@ use hutan_core::{
     WorkspaceId,
 };
 use hutan_protocol::chat::{
-    ChatCreate, ChatFork, ChatForkSupport, ChatForked, ChatInfo, ChatMode, ForkDone,
+    ChatCreate, ChatDirApplied, ChatFork, ChatForkSupport, ChatForked, ChatInfo, ChatMode, ForkDone,
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{
@@ -196,6 +196,14 @@ enum Command {
         bool,
         Reply<SessionInfo>,
     ),
+    /// `chat.add_dir` / `chat.remove_dir` (protocol 0.57): what a session's folders are now,
+    /// before the checks of a new folder (which need the session's folder and list).
+    DirsContext(SessionId, Reply<DirsContext>),
+    /// Changes a session's extra folders; the running agent is told by the caller.
+    DirsEdit(SessionId, DirsEdit, Reply<DirsEdited>),
+    /// Puts a session's extra folders back (`Some`: a change the agent refused) and announces
+    /// the session as it is now.
+    DirsSet(SessionId, Option<Vec<PathBuf>>, Reply<SessionInfo>),
     /// From the task that started a chat agent (`wake`: the agent of a sleeping assistant,
     /// started to be used; the session was idle all along).
     ChatStarted {
@@ -370,6 +378,40 @@ pub struct ProcessTarget {
     pub agents: Vec<AgentNode>,
 }
 
+/// What a session's folders are, for the checks of `chat.add_dir` (protocol 0.57).
+#[derive(Debug)]
+pub struct DirsContext {
+    /// The session's own folder.
+    pub cwd: Option<PathBuf>,
+    /// Its extra folders, in order.
+    pub dirs: Vec<PathBuf>,
+}
+
+/// One change to a session's extra folders (canonical paths).
+#[derive(Debug)]
+pub enum DirsEdit {
+    Add(PathBuf),
+    Remove(PathBuf),
+}
+
+/// Text to type at the prompt of a terminal agent, without Enter: the user confirms
+/// (`/add-dir <path>`, protocol 0.57).
+#[derive(Debug)]
+pub struct Paste {
+    pub terminal: TerminalId,
+    pub text: String,
+}
+
+/// The answer of [`DirsEdit`].
+#[derive(Debug)]
+pub struct DirsEdited {
+    /// The folders before the change, to put back when the agent refuses it.
+    pub previous: Vec<PathBuf>,
+    /// A chat's spec after the change: what the running agent is told.
+    pub chat: Option<ChatSpec>,
+    pub paste: Option<Paste>,
+}
+
 /// Handle to the registry actor; cheap to clone.
 #[derive(Debug, Clone)]
 pub struct RegistryHandle {
@@ -517,7 +559,16 @@ impl RegistryHandle {
 
     /// Without `req.workspace_id` the session goes to the project of its `cwd`, which is
     /// created when it is new.
-    pub async fn create_session(&self, req: SessionCreate) -> Result<SessionInfo, ErrorBody> {
+    pub async fn create_session(&self, mut req: SessionCreate) -> Result<SessionInfo, ErrorBody> {
+        {
+            let SessionSpec::Terminal(spec) = &mut req.spec;
+            spec.extra_dirs = crate::session_dirs::check_list(
+                self.chats.sandbox(),
+                spec.cwd.as_deref(),
+                std::mem::take(&mut spec.extra_dirs),
+            )
+            .await?;
+        }
         let assignment = match req.workspace_id {
             Some(_) => None,
             None => {
@@ -527,6 +578,64 @@ impl RegistryHandle {
         };
         self.ask(|r| Command::CreateSession(req, assignment, r))
             .await
+    }
+
+    /// `chat.add_dir` (protocol 0.57): adds `path` to the session's extra folders after the
+    /// checks of [`crate::session_dirs::check_one`], tells the running agent, and answers with
+    /// the session as it is. A terminal agent is given text to type for the user to confirm.
+    pub async fn add_dir(
+        &self,
+        session: SessionId,
+        path: PathBuf,
+    ) -> Result<(SessionInfo, Option<Paste>), ErrorBody> {
+        let context = self.ask(|r| Command::DirsContext(session, r)).await?;
+        let path = crate::session_dirs::check_one(
+            self.chats.sandbox(),
+            context.cwd.as_deref(),
+            &context.dirs,
+            path,
+        )
+        .await?;
+        self.edit_dirs(session, DirsEdit::Add(path)).await
+    }
+
+    /// `chat.remove_dir` (protocol 0.57).
+    pub async fn remove_dir(
+        &self,
+        session: SessionId,
+        path: PathBuf,
+    ) -> Result<(SessionInfo, Option<Paste>), ErrorBody> {
+        // A folder that is gone can still be taken out: the path is matched as typed when it
+        // cannot be resolved.
+        let asked = path.clone();
+        let path =
+            tokio::task::spawn_blocking(move || std::fs::canonicalize(&path).unwrap_or(path))
+                .await
+                .unwrap_or(asked);
+        self.edit_dirs(session, DirsEdit::Remove(path)).await
+    }
+
+    async fn edit_dirs(
+        &self,
+        session: SessionId,
+        edit: DirsEdit,
+    ) -> Result<(SessionInfo, Option<Paste>), ErrorBody> {
+        let DirsEdited {
+            previous,
+            chat,
+            paste,
+        } = self.ask(|r| Command::DirsEdit(session, edit, r)).await?;
+        if let Some(spec) = chat
+            && let Err(error) = self.chats.apply_dirs(session, &spec).await
+        {
+            // Not pretended: the list goes back to what the agent has.
+            let _ = self
+                .ask(|r| Command::DirsSet(session, Some(previous), r))
+                .await;
+            return Err(error);
+        }
+        let info = self.ask(|r| Command::DirsSet(session, None, r)).await?;
+        Ok((info, paste))
     }
 
     pub async fn list_sessions(&self, filter: SessionListFilter) -> Result<SessionList, ErrorBody> {
@@ -633,6 +742,12 @@ impl RegistryHandle {
         asleep: bool,
     ) -> Result<SessionInfo, ErrorBody> {
         req.cwd = canonical_dir(req.cwd).await?;
+        req.extra_dirs = crate::session_dirs::check_list(
+            self.chats.sandbox(),
+            Some(&req.cwd),
+            std::mem::take(&mut req.extra_dirs),
+        )
+        .await?;
         let assignment = match req.workspace_id {
             Some(_) => None,
             None => Some(self.assign(Some(req.cwd.clone())).await?),
@@ -745,6 +860,11 @@ struct SessionEntry {
     running_command: Option<String>,
     /// `session.close` is waiting for the session to end: it is removed once it has.
     close: Option<CloseRequest>,
+    /// A terminal's extra folders its process was started with (`--add-dir`, the boundary's
+    /// profile): what `SessionInfo.extra_dirs` calls `now` (protocol 0.57).
+    launched_dirs: Vec<PathBuf>,
+    /// The extra folders a running terminal agent was pasted `/add-dir` for (`paste`).
+    pasted_dirs: Vec<PathBuf>,
 }
 
 /// A decided fork on its way to the registry (`chat.fork`).
@@ -767,6 +887,36 @@ struct CloseRequest {
 }
 
 impl SessionEntry {
+    /// How a terminal's process holds each extra folder (`SessionInfo.extra_dirs`): `now` when
+    /// it was started with it (`--add-dir`, the boundary's profile) and — for a plain program
+    /// outside a boundary, which the file service serves at once — when it is only recorded;
+    /// `paste` when a running agent was typed `/add-dir`; else `restart`.
+    fn terminal_dir_states(&self) -> Vec<ChatDirApplied> {
+        let live = self.info.state.is_live();
+        let plain = self.spec.contain.is_none()
+            && self.info.terminal_agent.is_none()
+            && self
+                .spec
+                .command
+                .first()
+                .is_none_or(|program| crate::session_dirs::launch_agent(program).is_none());
+        self.spec
+            .extra_dirs
+            .iter()
+            .map(|dir| {
+                if !live {
+                    ChatDirApplied::Restart
+                } else if self.launched_dirs.contains(dir) || plain {
+                    ChatDirApplied::Now
+                } else if self.pasted_dirs.contains(dir) {
+                    ChatDirApplied::Paste
+                } else {
+                    ChatDirApplied::Restart
+                }
+            })
+            .collect()
+    }
+
     fn advance(&mut self, event: SessionEvent) {
         match self.info.state.transition(event) {
             Ok(next) => {
@@ -1419,6 +1569,15 @@ impl SessionRegistry {
                 }
                 Command::CreateChat(req, assignment, assistant, asleep, reply) => {
                     self.create_chat(req, assignment, assistant, asleep, reply);
+                }
+                Command::DirsContext(session, reply) => {
+                    let _ = reply.send(self.dirs_context(session));
+                }
+                Command::DirsEdit(session, edit, reply) => {
+                    let _ = reply.send(self.edit_dirs(session, edit));
+                }
+                Command::DirsSet(session, dirs, reply) => {
+                    let _ = reply.send(self.set_dirs(session, dirs));
                 }
                 Command::ChatStarted {
                     session,
@@ -2191,6 +2350,174 @@ impl SessionRegistry {
             .ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, format!("session {id} not found")))
     }
 
+    // Session folders (protocol 0.57) ----------------------------------------------------------
+
+    /// The extra folders of session `index` as the session stores them.
+    fn session_dir_list(&self, index: usize) -> Vec<PathBuf> {
+        let session = &self.sessions[index];
+        match &session.chat {
+            Some(spec) => spec.dirs.clone(),
+            None => session.spec.extra_dirs.clone(),
+        }
+    }
+
+    fn dirs_context(&self, id: SessionId) -> Result<DirsContext, ErrorBody> {
+        let index = self.session_index(id)?;
+        self.check_dirs_target(index)?;
+        Ok(DirsContext {
+            cwd: self.sessions[index].info.cwd.clone(),
+            dirs: self.session_dir_list(index),
+        })
+    }
+
+    /// A direct chat and an assistant have no tools to give folders to.
+    fn check_dirs_target(&self, index: usize) -> Result<(), ErrorBody> {
+        match &self.sessions[index].chat {
+            Some(spec) if is_gateway_agent(&spec.agent) || spec.assistant => Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                "a direct chat or an assistant has no tools to give folders to",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn edit_dirs(&mut self, id: SessionId, edit: DirsEdit) -> Result<DirsEdited, ErrorBody> {
+        let index = self.session_index(id)?;
+        self.check_dirs_target(index)?;
+        let previous = self.session_dir_list(index);
+        let mut dirs = previous.clone();
+        let (command, path) = match edit {
+            DirsEdit::Add(path) => {
+                if dirs.contains(&path) {
+                    return Err(ErrorBody::new(
+                        ErrorCode::BadRequest,
+                        format!("{} is already one of the session's folders", path.display()),
+                    ));
+                }
+                if dirs.len() >= hutan_protocol::chat::SESSION_DIRS_MAX {
+                    return Err(ErrorBody::new(
+                        ErrorCode::InvalidState,
+                        format!(
+                            "the session already holds {} extra folders; take one out first",
+                            hutan_protocol::chat::SESSION_DIRS_MAX
+                        ),
+                    ));
+                }
+                dirs.push(path.clone());
+                ("/add-dir", path)
+            }
+            DirsEdit::Remove(path) => {
+                let Some(position) = dirs.iter().position(|dir| *dir == path) else {
+                    let own = self.sessions[index].info.cwd.as_deref() == Some(path.as_path());
+                    return Err(if own {
+                        ErrorBody::new(
+                            ErrorCode::BadRequest,
+                            "the session's own folder cannot be removed",
+                        )
+                    } else {
+                        ErrorBody::new(
+                            ErrorCode::NotFound,
+                            format!("{} is not an extra folder of the session", path.display()),
+                        )
+                    });
+                };
+                dirs.remove(position);
+                ("/remove-dir", path)
+            }
+        };
+        let adding = command == "/add-dir";
+        let session = &mut self.sessions[index];
+        let mut paste = None;
+        let chat = match &mut session.chat {
+            Some(spec) => {
+                spec.dirs = dirs;
+                spec.dirs_managed |= adding;
+                Some(spec.clone())
+            }
+            None => {
+                session.spec.extra_dirs = dirs;
+                session.pasted_dirs.retain(|dir| *dir != path);
+                session.launched_dirs.retain(|dir| *dir != path || adding);
+                // A running terminal agent is typed the command for the user to confirm; a
+                // contained one could not write there before a restart, so it is not told.
+                let agent = session.info.terminal_agent.as_ref();
+                let takes = agent.is_some_and(|agent| {
+                    let known = if adding {
+                        agent.app == "omp" || agent.app == "claude"
+                    } else {
+                        agent.app == "omp"
+                    };
+                    known && agent.state != TerminalAgentState::Blocked
+                });
+                if takes
+                    && session.spec.contain.is_none()
+                    && let Some(terminal) = session
+                        .info
+                        .terminal_id
+                        .filter(|_| session.info.state.is_live())
+                {
+                    paste = Some(Paste {
+                        terminal,
+                        text: format!("{command} {}", path.display()),
+                    });
+                    if adding {
+                        session.pasted_dirs.push(path);
+                    }
+                }
+                None
+            }
+        };
+        self.persist_session(index);
+        Ok(DirsEdited {
+            previous,
+            chat,
+            paste,
+        })
+    }
+
+    /// Puts the session's extra folders back to `dirs` (`Some`) and announces the session.
+    fn set_dirs(
+        &mut self,
+        id: SessionId,
+        dirs: Option<Vec<PathBuf>>,
+    ) -> Result<SessionInfo, ErrorBody> {
+        let index = self.session_index(id)?;
+        if let Some(dirs) = dirs {
+            let session = &mut self.sessions[index];
+            match &mut session.chat {
+                Some(spec) => spec.dirs = dirs,
+                None => session.spec.extra_dirs = dirs,
+            }
+        }
+        self.persist_session(index);
+        self.emit_session(index);
+        Ok(self.sessions[index].info.clone())
+    }
+
+    /// Derives `ChatInfo.dirs` / `SessionInfo.extra_dirs` of session `index` from its list and
+    /// what the running agent holds (`applied` is what the daemon knows, never what was asked).
+    fn refresh_dirs(&mut self, index: usize) {
+        let session = &self.sessions[index];
+        match &session.chat {
+            Some(spec) => {
+                let dirs = if is_gateway_agent(&spec.agent) || spec.assistant {
+                    Vec::new()
+                } else {
+                    let states = self.chats.dir_states(session.info.id, spec);
+                    crate::session_dirs::chat_dirs(session.info.cwd.as_deref(), &spec.dirs, &states)
+                };
+                if let Some(chat) = &mut self.sessions[index].info.chat {
+                    chat.dirs = dirs;
+                }
+            }
+            None => {
+                let states = session.terminal_dir_states();
+                let dirs = crate::session_dirs::extra_dirs(&session.spec.extra_dirs, &states);
+                self.sessions[index].info.extra_dirs = dirs;
+            }
+        }
+    }
+
     fn terminal_index(&self, terminal: TerminalId) -> Option<usize> {
         self.sessions
             .iter()
@@ -2216,8 +2543,10 @@ impl SessionRegistry {
         if let Some(reason) = crate::contain::nested_reason(argv) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, reason));
         }
+        // The session's extra folders are writable in the boundary.
+        let request = crate::session_dirs::contain_with(request, &spec.extra_dirs);
         self.sandbox
-            .plan(cwd, request, &Fragment::default())
+            .plan(cwd, &request, &Fragment::default())
             .map(Some)
             .map_err(ErrorBody::from)
     }
@@ -2277,6 +2606,7 @@ impl SessionRegistry {
         };
         let info = SessionInfo {
             forked_from: None,
+            extra_dirs: crate::session_dirs::extra_dirs(&spec.extra_dirs, &[]),
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Terminal,
@@ -2320,6 +2650,8 @@ impl SessionRegistry {
             chat: None,
             running_command: None,
             close: None,
+            launched_dirs: Vec::new(),
+            pasted_dirs: Vec::new(),
         });
         let index = self.sessions.len() - 1;
         // The new name may change what its namesakes are called (a named session counts too).
@@ -2361,6 +2693,9 @@ impl SessionRegistry {
         let argv = restore_argv
             .clone()
             .unwrap_or_else(|| session.spec.command.clone());
+        // A known agent is started with the session's extra folders (`--add-dir=<path>`).
+        let launch_dirs = crate::session_dirs::existing(&session.spec.extra_dirs);
+        let argv = crate::session_dirs::with_launch_dirs(&argv, &launch_dirs);
         let contained = match self.contain_terminal(&session.spec, &argv) {
             Ok(plan) => plan,
             Err(error) => {
@@ -2426,6 +2761,9 @@ impl SessionRegistry {
                 session.info.terminal_id = Some(entry.id());
                 session.terminal = Some(entry);
                 session.info.containment = contained.map(|plan| plan.containment);
+                // What the new process holds: the folders it was started with.
+                session.launched_dirs = launch_dirs;
+                session.pasted_dirs.clear();
                 session.advance(SessionEvent::Spawned);
             }
             Err(error) => {
@@ -3492,6 +3830,12 @@ impl SessionRegistry {
                 "`mode` is a session mode of a harness chat (omp, claude)",
             ));
         }
+        if !req.extra_dirs.is_empty() && (is_gateway_agent(&req.agent) || assistant) {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                "a direct chat or an assistant has no tools to give folders to (`extra_dirs`)",
+            ));
+        }
         if harness && (req.approval_policy.is_some() || req.sandbox.is_some()) {
             // Not faked: the harness decides what asks and what is sandboxed.
             return Err(ErrorBody::new(
@@ -3556,8 +3900,14 @@ impl SessionRegistry {
                     "an assistant keeps its own tool profile and cannot be contained",
                 ));
             }
+            // The folders of the session are writable in the boundary: planned with them, so a
+            // folder the boundary cannot take is this request's error.
             self.sandbox
-                .plan(&req.cwd, request, &Fragment::default())
+                .plan(
+                    &req.cwd,
+                    &crate::session_dirs::contain_with(request, &req.extra_dirs),
+                    &Fragment::default(),
+                )
                 .map_err(ErrorBody::from)?;
         }
         let direct = if is_gateway_agent(&req.agent) {
@@ -3609,6 +3959,8 @@ impl SessionRegistry {
                 account_label: None,
                 safety: None,
                 contain: None,
+                dirs: Vec::new(),
+                dirs_managed: false,
             },
             None => ChatSpec {
                 fork: None,
@@ -3639,6 +3991,8 @@ impl SessionRegistry {
                 account_label,
                 safety: req.safety,
                 contain,
+                dirs_managed: !req.extra_dirs.is_empty(),
+                dirs: req.extra_dirs,
             },
         };
         let folder = req
@@ -3669,6 +4023,7 @@ impl SessionRegistry {
         chosen: Option<String>,
     ) -> Result<usize, ErrorBody> {
         let info = SessionInfo {
+            extra_dirs: Vec::new(),
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Harness,
@@ -3680,7 +4035,15 @@ impl SessionRegistry {
             agent: None,
             created_at_ms: now_ms(),
             restored: false,
-            chat: Some(chat_info(&spec)),
+            chat: Some(ChatInfo {
+                // Nothing runs yet: the folders are given when the agent starts.
+                dirs: if is_gateway_agent(&spec.agent) || spec.assistant {
+                    Vec::new()
+                } else {
+                    crate::session_dirs::chat_dirs(Some(&cwd), &spec.dirs, &[])
+                },
+                ..chat_info(&spec)
+            }),
             placement: self.placement_of(Some(&cwd)),
             folder: Some(cwd.clone()),
             recovery: None,
@@ -3717,6 +4080,8 @@ impl SessionRegistry {
             chat: Some(spec),
             running_command: None,
             close: None,
+            launched_dirs: Vec::new(),
+            pasted_dirs: Vec::new(),
         });
         let index = self.sessions.len() - 1;
         let workspace = self.sessions[index].info.workspace_id;
@@ -4079,7 +4444,10 @@ impl SessionRegistry {
                 if !wake {
                     session.advance(SessionEvent::Ready);
                 }
-                if session.stopping {
+                let stopping = session.stopping;
+                // What the agent holds of the session's folders, in the answer too.
+                self.refresh_dirs(index);
+                if stopping {
                     // A stop arrived while the agent was starting; it goes down right away
                     // and the exit finishes the session.
                     self.chats.stop(id);
@@ -4553,6 +4921,8 @@ impl SessionRegistry {
                         account_label: None,
                         safety: None,
                         contain: None,
+                        dirs: Vec::new(),
+                        dirs_managed: false,
                     },
                     Some(format!("stored spec unreadable: {error}")),
                 )
@@ -4608,6 +4978,7 @@ impl SessionRegistry {
         self.sessions.push(SessionEntry {
             info: SessionInfo {
                 forked_from: spec.fork.as_ref().map(|fork| fork.origin.clone()),
+                extra_dirs: Vec::new(),
                 id: row.id,
                 workspace_id: row.workspace_id,
                 kind: SessionKind::Harness,
@@ -4651,8 +5022,11 @@ impl SessionRegistry {
             chat: Some(spec),
             running_command: None,
             close: None,
+            launched_dirs: Vec::new(),
+            pasted_dirs: Vec::new(),
         });
         let index = self.sessions.len() - 1;
+        self.refresh_dirs(index);
         match action {
             ChatRestoreKind::Start => ChatRestore::Start(index),
             ChatRestoreKind::Rewrite => ChatRestore::Rewrite(index),
@@ -4839,6 +5213,7 @@ impl SessionRegistry {
             self.sessions.push(SessionEntry {
                 info: SessionInfo {
                     forked_from: None,
+                    extra_dirs: Vec::new(),
                     id: row.id,
                     workspace_id: row.workspace_id,
                     kind: row.kind,
@@ -4877,8 +5252,11 @@ impl SessionRegistry {
                 chat: None,
                 running_command: None,
                 close: None,
+                launched_dirs: Vec::new(),
+                pasted_dirs: Vec::new(),
             });
             let index = self.sessions.len() - 1;
+            self.refresh_dirs(index);
             match action {
                 Some(true) => pending.respawn.push(index),
                 Some(false) => pending.rewrite.push(index),
@@ -5049,6 +5427,7 @@ impl SessionRegistry {
     /// Announces the session and, when the change moved its workspace's counts, the workspace.
     fn emit_session(&mut self, index: usize) {
         self.refresh_placement(index);
+        self.refresh_dirs(index);
         if self.retitle(index) {
             self.mark_dirty(index);
         }
@@ -5506,6 +5885,7 @@ struct Restoring {
 fn chat_info(spec: &ChatSpec) -> ChatInfo {
     ChatInfo {
         fork: None,
+        dirs: Vec::new(),
         agent: spec.agent.clone(),
         model: spec.model.clone().unwrap_or_default(),
         approval_policy: spec.approval_policy,

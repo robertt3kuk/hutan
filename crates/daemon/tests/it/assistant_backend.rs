@@ -1135,6 +1135,7 @@ async fn a_plain_codex_chat_takes_files_and_images() {
     let plain = t
         .client
         .call::<SessionResult>(Request::ChatCreate(hutan_protocol::chat::ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: Some(project.id),
             cwd: t.project.clone(),

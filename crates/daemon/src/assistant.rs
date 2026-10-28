@@ -568,6 +568,7 @@ impl AssistantService {
             title.push_str(&format!(" {}", existing + 1));
         }
         let mut request = ChatCreate {
+            extra_dirs: Vec::new(),
             workspace_id: Some(workspace.id),
             cwd,
             agent: AGENT_ASSISTANT.to_owned(),

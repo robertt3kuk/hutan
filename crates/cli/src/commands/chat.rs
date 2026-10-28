@@ -9,8 +9,8 @@ use hutan_core::{
 };
 use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ChatCreate, ChatFork, ChatHistory, ChatSentNow, ForkWhere,
-    QuestionInfo, QuestionList,
+    ApprovalInfo, ApprovalList, ChatCreate, ChatDirApplied, ChatDirRole, ChatFork, ChatHistory,
+    ChatSentNow, ForkWhere, QuestionInfo, QuestionList,
 };
 use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, SessionResult, Subscribed};
 use hutan_protocol::provider::AGENT_DIRECT;
@@ -19,8 +19,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::{Ctx, print_line};
 use crate::args::{
-    AnswerArgs, ApproveArgs, ChatCommand, ChatForkArgs, ChatInterruptArgs, ChatModelArgs,
-    ChatNewArgs, ChatSendArgs, TargetArgs,
+    AnswerArgs, ApproveArgs, ChatCommand, ChatDirsCommand, ChatDirsEditArgs, ChatForkArgs,
+    ChatInterruptArgs, ChatModelArgs, ChatNewArgs, ChatSendArgs, TargetArgs,
 };
 use crate::error::CliError;
 use hutan_cli::chat_render::ChatPrinter;
@@ -80,6 +80,7 @@ impl Ctx {
             ChatCommand::Fork(args) => self.chat_fork(args).await,
             ChatCommand::Models(args) => self.chat_models(&args.agent).await,
             ChatCommand::Model(args) => self.chat_model(args).await,
+            ChatCommand::Dirs(command) => self.chat_dirs(command).await,
         }
     }
 
@@ -106,6 +107,12 @@ impl Ctx {
             Some((target, _)) => Some(self.resolve_workspace_id(&client, &target).await?),
             None => None,
         };
+        // The daemon resolves paths from its own working directory, not ours.
+        let extra_dirs = args
+            .dirs
+            .into_iter()
+            .map(super::paths::absolute)
+            .collect::<Result<Vec<_>, _>>()?;
         let direct = args.direct;
         let agent = if direct {
             AGENT_DIRECT.to_owned()
@@ -114,6 +121,7 @@ impl Ctx {
         };
         let session = client
             .chat_create(ChatCreate {
+                extra_dirs,
                 contain: None,
                 workspace_id: workspace,
                 cwd,
@@ -159,6 +167,68 @@ impl Ctx {
                 ),
                 None => format!("session {}", session.id),
             }
+        })
+    }
+
+    /// `hutan chat dirs list|add|remove` (protocol 0.57, capability `session.dirs`).
+    async fn chat_dirs(&self, command: ChatDirsCommand) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        if !client.supports_session_dirs() {
+            return Err(CliError::Failed(
+                "this daemon keeps no session folders (it predates protocol 0.57); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let (session, adding, paths) = match command {
+            ChatDirsCommand::List(TargetArgs { target }) => {
+                let session = self.resolve(&client, &target).await?;
+                return self.print_dirs(&session);
+            }
+            ChatDirsCommand::Add(ChatDirsEditArgs { target, paths }) => (target, true, paths),
+            ChatDirsCommand::Remove(ChatDirsEditArgs { target, paths }) => (target, false, paths),
+        };
+        let mut session = self.resolve(&client, &session).await?;
+        for path in paths {
+            let path = super::paths::absolute(path)?;
+            session = if adding {
+                client.chat_add_dir(session.id, &path).await
+            } else {
+                client.chat_remove_dir(session.id, &path).await
+            }
+            .map_err(|e| self.fail(e))?;
+        }
+        self.print_dirs(&session)
+    }
+
+    /// The session's folders: the working folder first (chats), then the extra ones with what
+    /// the agent has taken of them.
+    fn print_dirs(&self, session: &SessionInfo) -> Result<(), CliError> {
+        let dirs = session
+            .chat
+            .as_ref()
+            .map_or(&session.extra_dirs, |chat| &chat.dirs);
+        self.print(&json!({"session_id": session.id, "dirs": dirs}), || {
+            if dirs.is_empty() {
+                return format!("session {} has no extra folders", session.id);
+            }
+            dirs.iter()
+                .map(|dir| {
+                    let role = match dir.role {
+                        ChatDirRole::Primary => "primary",
+                        ChatDirRole::Extra => "extra  ",
+                    };
+                    let applied = match dir.applied {
+                        ChatDirApplied::Now => "now",
+                        ChatDirApplied::NextTurn => "next turn",
+                        ChatDirApplied::Restart => "after a restart",
+                        ChatDirApplied::Paste => "typed at its prompt: confirm there",
+                        ChatDirApplied::Unsupported => "not supported by this agent",
+                    };
+                    format!("{role}  {}  ({applied})", dir.path.display())
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
         })
     }
 

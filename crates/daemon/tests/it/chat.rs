@@ -139,6 +139,7 @@ impl Chat {
     ) -> SessionInfo {
         self.client
             .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: None,
                 workspace_id: None,
                 cwd: self.cwd(),
@@ -408,6 +409,7 @@ async fn an_unknown_model_is_refused_with_the_catalog() {
     let error = t
         .client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: t.cwd(),
@@ -1319,6 +1321,7 @@ async fn creating_a_chat_validates_the_request() {
         async move {
             client
                 .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+                    extra_dirs: Vec::new(),
                     contain: None,
                     workspace_id: None,
                     cwd,
@@ -1386,6 +1389,7 @@ async fn an_unsupported_codex_version_fails_the_session_with_a_clear_reason() {
     let result = chat
         .client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: chat.cwd(),
@@ -1436,6 +1440,7 @@ async fn a_missing_codex_says_where_to_configure_it() {
     let cwd = tempfile::tempdir().unwrap();
     let result = client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: cwd.path().to_owned(),

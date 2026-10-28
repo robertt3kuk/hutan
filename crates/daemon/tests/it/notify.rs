@@ -118,6 +118,7 @@ impl Env {
     ) -> SessionInfo {
         self.client
             .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: None,
                 workspace_id: None,
                 cwd: self.work.path().to_owned(),

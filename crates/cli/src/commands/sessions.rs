@@ -53,6 +53,12 @@ impl Ctx {
             workspace = Some(placed.workspace);
             cwd = placed.path;
         }
+        // The daemon resolves paths from its own working directory, not ours.
+        let extra_dirs = args
+            .dirs
+            .into_iter()
+            .map(super::paths::absolute)
+            .collect::<Result<Vec<_>, _>>()?;
         // Subscribe before creating so an instantly exiting command is not missed by `attach`.
         let events = client.events();
         if args.attach {
@@ -66,6 +72,7 @@ impl Ctx {
                 Request::SessionCreate(SessionCreate {
                     workspace_id: workspace,
                     spec: SessionSpec::Terminal(TerminalSpec {
+                        extra_dirs,
                         contain: args.contain.then_some(hutan_core::Contain {
                             network: args.network,
                             extra_write: args.write,
@@ -712,6 +719,7 @@ mod tests {
     fn session(id: &str, terminal: u64, title: &str) -> SessionInfo {
         SessionInfo {
             forked_from: None,
+            extra_dirs: Vec::new(),
             containment: None,
             terminal_agent: None,
             id: id.parse().unwrap(),

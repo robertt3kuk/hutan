@@ -210,6 +210,7 @@ impl Direct {
 
     fn create_request(&self, provider: &str, model: Option<&str>, system: Option<&str>) -> Request {
         Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: self.work.path().to_owned(),
@@ -1413,6 +1414,7 @@ async fn creating_a_direct_chat_validates_the_request() {
     let p = t.add_provider("ollama", "ollama", None, None).await;
     let create = |provider: Option<&str>, model: Option<&str>| {
         Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: t.work.path().to_owned(),

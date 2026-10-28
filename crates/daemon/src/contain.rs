@@ -456,6 +456,29 @@ impl Sandbox {
     pub fn user_home(&self) -> Option<&Path> {
         self.user_home.as_deref()
     }
+
+    /// Why `path` (canonical) cannot be a session folder (protocol 0.57): it is Hutan's own
+    /// data folder or below it, or it is, or lies below, a folder `[sandbox] read_deny` keeps
+    /// out of reach (credentials). `None` when it may be one. The rule holds for every
+    /// session, contained or not: a folder the boundary would hide is not given to an agent.
+    pub fn refuses_folder(&self, path: &Path) -> Option<String> {
+        if path.starts_with(&self.base) {
+            return Some(format!(
+                "{} is Hutan's own data folder",
+                self.base.display()
+            ));
+        }
+        self.read_deny
+            .iter()
+            .find(|denied| path.starts_with(denied))
+            .map(|denied| {
+                format!(
+                    "{} is kept out of reach (`[sandbox] read_deny`: {})",
+                    path.display(),
+                    denied.display()
+                )
+            })
+    }
 }
 
 fn dedup(paths: Vec<PathBuf>) -> Vec<PathBuf> {

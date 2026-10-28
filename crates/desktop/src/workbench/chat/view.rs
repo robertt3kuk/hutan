@@ -2030,6 +2030,7 @@ mod safety_chip_tests {
     ) -> ChatInfo {
         ChatInfo {
             fork: None,
+            dirs: Vec::new(),
             agent: agent.into(),
             model: "m".into(),
             approval_policy: Default::default(),
@@ -2251,6 +2252,7 @@ mod mode_chip_tests {
     fn chat(mode: Option<ChatMode>) -> ChatInfo {
         ChatInfo {
             fork: None,
+            dirs: Vec::new(),
             agent: "claude".into(),
             model: "sonnet".into(),
             approval_policy: Default::default(),

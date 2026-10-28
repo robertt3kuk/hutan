@@ -361,6 +361,7 @@ mod tests {
     fn session(title: &str, of: &WorkspaceInfo) -> SessionInfo {
         SessionInfo {
             forked_from: None,
+            extra_dirs: Vec::new(),
             containment: None,
             terminal_agent: None,
             id: hutan_core::SessionId::new(),

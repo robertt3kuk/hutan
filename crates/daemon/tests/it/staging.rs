@@ -970,6 +970,7 @@ async fn a_running_turn_in_the_checkout_refuses_a_discard() {
     let (user, mut events) = env.daemon.connect_subscribed().await;
     let session = user
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             workspace_id: None,
             cwd: root.clone(),
             agent: "codex".to_owned(),

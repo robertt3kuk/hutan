@@ -143,6 +143,7 @@ impl Ctx {
             .map_or_else(|| argv.join(" "), |title| format!("resume: {title}"));
         let attach = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
         self.new_session(NewArgs {
+            dirs: Vec::new(),
             workspace: None,
             cwd,
             title: Some(title),

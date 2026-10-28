@@ -217,6 +217,7 @@ fn a_chat_started_with_a_preset_draws_the_safety_chip_the_daemon_reported(cx: &m
     let daemon = daemon(scripts.path(), "plain-turn", "");
     let cwd = scripts.path().canonicalize().unwrap();
     let created: SessionResult = daemon.call(Request::ChatCreate(ChatCreate {
+        extra_dirs: Vec::new(),
         contain: None,
         workspace_id: None,
         cwd,
@@ -275,6 +276,7 @@ fn a_harness_chat_switches_its_model_between_turns(cx: &mut TestAppContext) {
         .clone();
     let cwd = scripts.path().canonicalize().unwrap();
     let created: SessionResult = daemon.call(Request::ChatCreate(ChatCreate {
+        extra_dirs: Vec::new(),
         contain: None,
         workspace_id: None,
         cwd,
@@ -641,6 +643,7 @@ fn model_names_survive_an_app_restart_with_no_harness_spawn(cx: &mut TestAppCont
     });
     let cwd = scripts.path().canonicalize().unwrap();
     let created: SessionResult = daemon.call(Request::ChatCreate(ChatCreate {
+        extra_dirs: Vec::new(),
         contain: None,
         workspace_id: None,
         cwd,

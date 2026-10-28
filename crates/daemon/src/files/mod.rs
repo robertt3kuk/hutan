@@ -31,6 +31,7 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use hutan_core::SessionId;
+use hutan_protocol::chat::ChatDirRole;
 use hutan_protocol::control::ErrorBody;
 use hutan_protocol::fs::{
     CHANGES_MAX, CHUNK_MAX_BYTES, FIND_MAX, FsCopy, FsCreate, FsEntry, FsFile, FsFind, FsFound,
@@ -179,11 +180,21 @@ impl FileService {
             .list_sessions(SessionListFilter::default())
             .await
         {
-            roots.extend(
-                list.sessions
-                    .into_iter()
-                    .filter_map(|s| s.placement.map(|p| p.root)),
-            );
+            for session in list.sessions {
+                // The extra folders of a live session are roots while it lives (protocol 0.57):
+                // an agent that works in a folder the user gave it can be followed there.
+                if session.state.is_live() {
+                    let extra = session
+                        .chat
+                        .iter()
+                        .flat_map(|chat| &chat.dirs)
+                        .chain(&session.extra_dirs)
+                        .filter(|dir| dir.role == ChatDirRole::Extra)
+                        .map(|dir| dir.path.clone());
+                    roots.extend(extra);
+                }
+                roots.extend(session.placement.map(|p| p.root));
+            }
         }
         roots
     }

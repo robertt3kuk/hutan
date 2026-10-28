@@ -841,6 +841,33 @@ pub enum ChatCommand {
     Models(ChatModelsArgs),
     /// Switch the model of a direct or harness chat for its next turn (the history stays)
     Model(ChatModelArgs),
+    /// The extra folders of a session: list, add, remove (you only: an agent cannot)
+    #[command(subcommand)]
+    Dirs(ChatDirsCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ChatDirsCommand {
+    /// List the session's folders and how far the agent has taken each (now, next turn, restart,
+    /// paste, unsupported)
+    #[command(visible_alias = "ls")]
+    List(TargetArgs),
+    /// Add folders to a chat or terminal session. A running Codex or OMP chat takes them at
+    /// once or with its next turn; Claude Code and a contained OMP need a restart; a terminal
+    /// agent (OMP, Claude Code) is typed `/add-dir <path>` without Enter, for you to confirm
+    Add(ChatDirsEditArgs),
+    /// Take extra folders out of a session
+    #[command(visible_alias = "rm")]
+    Remove(ChatDirsEditArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ChatDirsEditArgs {
+    #[arg(help = TARGET_HELP)]
+    pub target: String,
+    /// The folders (absolute, or relative to the current directory)
+    #[arg(required = true, value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -1039,6 +1066,10 @@ pub struct ChatNewArgs {
     /// Session title (default: `codex · <directory>`, or `<provider> · <model>` with --direct)
     #[arg(long)]
     pub title: Option<String>,
+    /// A further folder the agent works in besides --cwd; repeatable, at most 8 (also
+    /// `hutan chat dirs add` later)
+    #[arg(long = "dir", value_name = "PATH", conflicts_with = "direct")]
+    pub dirs: Vec<PathBuf>,
     /// Chat directly with a model of a provider (no agent, no tools); needs --provider
     #[arg(long, requires = "provider")]
     pub direct: bool,
@@ -2072,6 +2103,11 @@ pub struct NewArgs {
     /// With --contain: a folder the session may also write; repeatable
     #[arg(long = "write", value_name = "PATH", requires = "contain")]
     pub write: Vec<PathBuf>,
+    /// A further folder the program works in besides --cwd; repeatable, at most 8. A claude,
+    /// codex or omp command is started with `--add-dir=<path>` for each; with --contain they
+    /// are writable too (also `hutan chat dirs add` later)
+    #[arg(long = "dir", value_name = "PATH")]
+    pub dirs: Vec<PathBuf>,
     /// Command to run after `--`; the login shell if omitted
     #[arg(last = true, value_name = "ARGV")]
     pub argv: Vec<String>,

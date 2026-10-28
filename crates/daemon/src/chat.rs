@@ -26,8 +26,8 @@ use std::time::{Duration, Instant};
 use futures::future::BoxFuture;
 use hutan_agents::{
     AcpAdapter, AcpConfig, AcpSession, AdapterMessage, AgentAdapter, AgentError,
-    CodexAppServerAdapter, CodexConfig, CodexSession, ContextBlock, ExitInfo, ImageBlock,
-    MessageExtras, StartSpec, Started,
+    CodexAppServerAdapter, CodexConfig, CodexSession, ContextBlock, DirsChange, ExitInfo,
+    ImageBlock, MessageExtras, StartSpec, Started,
 };
 use hutan_core::agent::{DecidedBy, NoticeLevel, PermissionOutcome};
 use hutan_core::question::{self, QuestionResponse};
@@ -38,9 +38,9 @@ use hutan_core::{
 };
 use hutan_protocol::assistant::{ATTACHMENTS_META_KEY, AttachmentMeta};
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ChatHistory, ChatHistoryRequest, ChatModels, ChatQueue,
-    ChatSentNow, HISTORY_MAX_LIMIT, QuestionInfo, QuestionList, QueueHold, QueuedMessage,
-    SEND_MAX_BYTES,
+    ApprovalInfo, ApprovalList, ChatDirApplied, ChatHistory, ChatHistoryRequest, ChatModels,
+    ChatQueue, ChatSentNow, HISTORY_MAX_LIMIT, QuestionInfo, QuestionList, QueueHold,
+    QueuedMessage, SEND_MAX_BYTES,
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{ClientKind, Event};
@@ -167,6 +167,16 @@ pub struct ChatSpec {
     /// has to do. Absent for chats that are not forks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork: Option<ChatForkSpec>,
+    /// Codex and harness chats (protocol 0.57): the extra folders of the session, canonical, in
+    /// the order they were added; given to the agent again at every start, restart and restore
+    /// (`session_dirs`). The session's own folder is the session's `cwd`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirs: Vec<PathBuf>,
+    /// The chat has had extra folders at some time, so an agent that keeps a list of its own
+    /// (OMP's session header) is asked for it on a resume and made to match `dirs`, also when
+    /// that is empty now (a folder taken out while the agent was not running).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dirs_managed: bool,
 }
 
 /// What runs a session: an agent process, or the model gateway.
@@ -648,6 +658,84 @@ impl ChatManager {
     /// spawn, `None` for a chat started without one.
     pub(crate) fn containment(&self, id: SessionId) -> Option<Containment> {
         lock(&self.contained).get(&id).cloned()
+    }
+
+    /// How far the running agent has taken each extra folder of the session (protocol 0.57),
+    /// one per `spec.dirs` entry in order: what the agent says it holds (`now`), how the rest
+    /// reaches it. A session without a running agent says `restart`: the folders are given at
+    /// the next start. Contain's profile is fixed at spawn, so a folder it does not list is
+    /// `restart` whatever the agent holds.
+    pub(crate) fn dir_states(&self, id: SessionId, spec: &ChatSpec) -> Vec<ChatDirApplied> {
+        let adapter = lock(&self.live)
+            .get(&id)
+            .and_then(|live| match &live.backend {
+                Backend::Agent(adapter) => Some(adapter.clone()),
+                Backend::Direct(_) => None,
+            });
+        let held = adapter.as_ref().and_then(|adapter| adapter.dirs());
+        let profile = spec.contain.as_ref().map(|_| {
+            self.containment(id)
+                .map(|c| c.write_roots)
+                .unwrap_or_default()
+        });
+        spec.dirs
+            .iter()
+            .map(|dir| {
+                let Some(held) = &held else {
+                    return ChatDirApplied::Restart;
+                };
+                if profile.as_ref().is_some_and(|roots| !roots.contains(dir)) {
+                    return ChatDirApplied::Restart;
+                }
+                if held.given.contains(dir) {
+                    return ChatDirApplied::Now;
+                }
+                match held.change {
+                    DirsChange::NextTurn => ChatDirApplied::NextTurn,
+                    DirsChange::Restart => ChatDirApplied::Restart,
+                    DirsChange::Unsupported => ChatDirApplied::Unsupported,
+                }
+            })
+            .collect()
+    }
+
+    /// Tells the running agent which extra folders the session has now (`chat.add_dir`,
+    /// `chat.remove_dir`). Nothing to do for a session without a running agent: the folders are
+    /// given at its next start. A contained session is only told the folders its boundary
+    /// lists: a folder it cannot write would be announced to the agent as usable.
+    pub(crate) async fn apply_dirs(&self, id: SessionId, spec: &ChatSpec) -> Result<(), ErrorBody> {
+        let adapter = lock(&self.live)
+            .get(&id)
+            .and_then(|live| match &live.backend {
+                Backend::Agent(adapter) => Some(adapter.clone()),
+                Backend::Direct(_) => None,
+            });
+        let Some(adapter) = adapter else {
+            return Ok(());
+        };
+        let dirs = match &spec.contain {
+            None => spec.dirs.clone(),
+            Some(_) => {
+                let profile = self
+                    .containment(id)
+                    .map(|c| c.write_roots)
+                    .unwrap_or_default();
+                spec.dirs
+                    .iter()
+                    .filter(|dir| profile.contains(dir))
+                    .cloned()
+                    .collect()
+            }
+        };
+        adapter.set_dirs(dirs).await.map_err(|error| match error {
+            AgentError::Unsupported(_) => ErrorBody::new(ErrorCode::Unsupported, error.to_string()),
+            error => ErrorBody::new(ErrorCode::ProviderError, error.to_string()),
+        })
+    }
+
+    /// Contain's service: it also knows the places a session folder may not be.
+    pub(crate) fn sandbox(&self) -> &Arc<Sandbox> {
+        &self.sandbox
     }
 
     /// The model providers of this daemon.
@@ -1175,6 +1263,8 @@ impl ChatManager {
                     .flatten()
             }),
             session_meta: None,
+            dirs: crate::session_dirs::existing(&spec.dirs),
+            dirs_managed: spec.dirs_managed,
         };
         let codex = self.codex_for(id, spec.account.as_deref()).await?;
         let CodexSession {
@@ -1247,11 +1337,14 @@ impl ChatManager {
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}")))??;
         // What the errors below call the program, not the Seatbelt tool that runs it.
         let program = config.program.clone();
+        // The folders the process is started with; a contained OMP can write in them too (the
+        // profile is fixed now).
+        let launch_dirs = crate::session_dirs::existing(&spec.dirs);
         let config = match &spec.contain {
             None => config,
             Some(request) => {
                 let sandbox = self.sandbox.clone();
-                let request = request.clone();
+                let request = crate::session_dirs::contain_with(request, &launch_dirs);
                 let dir = cwd.clone();
                 let planned = tokio::task::spawn_blocking(move || {
                     let fragment = Fragment::omp(sandbox.user_home(), &config.env);
@@ -1285,6 +1378,8 @@ impl ChatManager {
             session_meta: spec
                 .safety
                 .and_then(|preset| crate::safety::claude_session_meta(&spec.agent, preset)),
+            dirs: launch_dirs,
+            dirs_managed: spec.dirs_managed,
         };
         // The user's `[mcp.*]` servers, and Hutan's own (`[control] mcp`), which carries this
         // session's id so that its requests are attributed to it.

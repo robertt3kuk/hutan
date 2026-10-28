@@ -590,6 +590,7 @@ async fn a_closed_chat_keeps_its_journal_and_reopening_resumes_the_conversation(
     let (client, mut events) = t.connect_subscribed().await;
     let created = client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: work.path().to_owned(),
@@ -666,6 +667,7 @@ async fn omp_chat(transcript: &str) -> (TestDaemon, Client, tempfile::TempDir, S
     let client = t.connect().await;
     let created = client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
             contain: None,
             workspace_id: None,
             cwd: work.path().to_owned(),

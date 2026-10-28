@@ -2371,6 +2371,7 @@ impl Workbench {
             };
             let created = connection
                 .chat_create(ChatCreate {
+                    extra_dirs: Vec::new(),
                     contain: None,
                     workspace_id: Some(project),
                     cwd,
