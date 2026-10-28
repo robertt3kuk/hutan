@@ -223,8 +223,8 @@ fn typing_shows_what_the_tree_has_listed_while_the_daemons_answer_is_held(cx: &m
     );
     assert_eq!(
         names(&panel, cx),
-        ["src", "  main_util.rs", "main.rs"],
-        "matches among the listed files, with their folders"
+        ["main.rs", "src", "  main_util.rs"],
+        "matches among the listed files, with their folders: the file called `main` first (N-02)"
     );
     assert_eq!(status(&panel, cx), FilesFilterStatus::Searching);
     assert_eq!(
@@ -837,4 +837,42 @@ fn a_project_of_a_hundred_thousand_files_answers_with_at_most_two_hundred(cx: &m
     );
     // The folders of the projection were never listed: no `fs.list` per folder.
     assert!(!panel.read_with(cx, |p, _| p.tree().unwrap().knows(&root.join("pkg137"))));
+}
+
+#[gpui::test]
+fn the_file_called_what_was_typed_is_listed_before_paths_that_only_hold_its_letters(
+    cx: &mut TestAppContext,
+) {
+    // FX-WORK-2, N-02: filter `glue`: the exact file name first, then the rest.
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    write(&root, ".github/ISSUE_TEMPLATE/bug_report.yml", "");
+    write(&root, ".github/workflows/lint_guard_test.yml", "");
+    write(&root, "UNLICENSE", "");
+    write(&root, "pkg/deb/prelude.fish", "");
+    write(&root, "crates/ignore/src/glue.rs", "");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_until(cx, "the root listed", |cx| {
+        panel.read_with(cx, |p, _| p.settled() && !p.rows().is_empty())
+    });
+    // Hidden names show in the filter's results only when the tree shows them.
+    panel.update(cx, |p, cx| {
+        p.set_option("show_hidden", toml::Value::Boolean(true), cx)
+    });
+    focus_tree(&panel, cx);
+    type_text(cx, "glue");
+    wait_found(&panel, cx);
+    let rows = names(&panel, cx);
+    let at = |name: &str| {
+        rows.iter()
+            .position(|r| r.trim().starts_with(name))
+            .unwrap_or_else(|| panic!("{name} in {rows:?}"))
+    };
+    assert!(
+        at("crates") < at(".github"),
+        "the folder of glue.rs comes before the scattered matches: {rows:?}"
+    );
+    assert_eq!(rows.iter().filter(|r| r.trim() == "glue.rs").count(), 1);
 }

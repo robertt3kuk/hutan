@@ -118,9 +118,12 @@ pub fn parse_query(query: &str) -> FileQuery {
     }
 }
 
-/// The daemon's matches, best first once recency counts: a file opened recently gains up to
-/// [`RECENT_BONUS`]. `recent` holds paths relative to the root, most recent first.
-pub fn rank(matches: Vec<FsFindMatch>, recent: &[String]) -> Vec<FsFindMatch> {
+/// The daemon's matches for `query`, best first: how well the path answers the words
+/// ([`super::relevance`]: the file's name, then its start, then somewhere in it, then the path),
+/// then the daemon's score once recency counts — a file opened recently gains up to
+/// [`RECENT_BONUS`] — then the shorter path. `recent` holds paths relative to the root, most
+/// recent first.
+pub fn rank(query: &str, matches: Vec<FsFindMatch>, recent: &[String]) -> Vec<FsFindMatch> {
     let considered = recent.len().min(RECENT_CONSIDERED);
     let bonus = |path: &str| {
         recent
@@ -131,16 +134,24 @@ pub fn rank(matches: Vec<FsFindMatch>, recent: &[String]) -> Vec<FsFindMatch> {
                 RECENT_BONUS * (considered - i) as u32 / considered as u32
             })
     };
-    let mut ranked: Vec<(u32, FsFindMatch)> = matches
+    let mut ranked: Vec<(super::relevance::Rank, u32, FsFindMatch)> = matches
         .into_iter()
-        .map(|m| (m.score.saturating_add(bonus(&m.path)), m))
+        .map(|m| {
+            (
+                super::relevance::rank(query, &m.path),
+                m.score.saturating_add(bonus(&m.path)),
+                m,
+            )
+        })
         .collect();
     ranked.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| a.1.path.len().cmp(&b.1.path.len()))
-            .then_with(|| a.1.path.cmp(&b.1.path))
+        a.0.class
+            .cmp(&b.0.class)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| a.0.len.cmp(&b.0.len))
+            .then_with(|| a.2.path.cmp(&b.2.path))
     });
-    ranked.into_iter().map(|(_, m)| m).collect()
+    ranked.into_iter().map(|(_, _, m)| m).collect()
 }
 
 /// Whether every word of `query` is a subsequence of `path`, ignoring case (what keeps an old
@@ -340,7 +351,7 @@ impl Workbench {
                     Ok(found) => {
                         picker.files.failed = None;
                         picker.files.indexed = found.indexed;
-                        let rows = rank(found.matches, &recent)
+                        let rows = rank(&path, found.matches, &recent)
                             .into_iter()
                             .take(FILE_ROWS)
                             .map(|m| file_entry(&root, &m.path, &m.matched))
@@ -472,7 +483,7 @@ mod tests {
             hit("tools/maint/run.rs", 6_000),
         ];
         let recent = vec!["crates/a/src/main.rs".to_owned()];
-        let ranked: Vec<String> = rank(found.clone(), &recent)
+        let ranked: Vec<String> = rank("main", found.clone(), &recent)
             .into_iter()
             .map(|m| m.path)
             .collect();
@@ -481,7 +492,25 @@ mod tests {
             ["crates/a/src/main.rs", "src/main.rs", "tools/maint/run.rs"]
         );
         let recent = vec!["tools/maint/run.rs".to_owned()];
-        assert_eq!(rank(found, &recent)[0].path, "src/main.rs");
+        assert_eq!(rank("main", found, &recent)[0].path, "src/main.rs");
+    }
+
+    #[test]
+    fn a_path_that_starts_with_the_query_comes_before_one_that_holds_it_deeper() {
+        // N-12: the daemon scored the deeper one higher; `src/…` still comes first.
+        let found = vec![
+            hit("second-edition/src/ch04-01-what-is-ownership.md", 9_000),
+            hit("src/ch04-01-what-is-ownership.md", 8_500),
+        ];
+        let ranked: Vec<String> = rank("src/ch04-01-what", found, &[])
+            .into_iter()
+            .map(|m| m.path)
+            .collect();
+        assert_eq!(ranked[0], "src/ch04-01-what-is-ownership.md");
+        // And the file called what was typed comes before a recent one that only holds it.
+        let found = vec![hit("docs/old/glue_notes.md", 9_000), hit("glue.rs", 5_000)];
+        let recent = vec!["docs/old/glue_notes.md".to_owned()];
+        assert_eq!(rank("glue", found, &recent)[0].path, "glue.rs");
     }
 
     #[test]

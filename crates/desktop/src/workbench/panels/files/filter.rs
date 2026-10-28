@@ -69,6 +69,8 @@ struct Word {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Query {
     words: Vec<Word>,
+    /// The words as typed, separated by one space: what [`crate::workbench::relevance`] ranks by.
+    text: String,
 }
 
 fn same(a: char, b: char, exact: bool) -> bool {
@@ -128,7 +130,18 @@ impl Query {
                 exact: word.chars().any(char::is_uppercase),
             })
             .collect();
-        (!words.is_empty()).then_some(Self { words })
+        let text = words
+            .iter()
+            .map(|word| word.chars.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (!words.is_empty()).then_some(Self { words, text })
+    }
+
+    /// How well `path` answers the query, 0 (the file's own name) to 5 (scattered letters): the
+    /// class [`crate::workbench::relevance`] gives it, the order the results come in.
+    pub fn rank(&self, path: &str) -> u8 {
+        crate::workbench::relevance::rank(&self.text, path).class
     }
 
     /// The byte ranges of `path` the query matched, or `None` when some word does not match. A
@@ -164,6 +177,8 @@ pub struct Hit {
     pub kind: RowKind,
     /// Byte ranges of `path` that matched.
     pub ranges: Vec<Range<usize>>,
+    /// How well the path answers the query ([`Query::rank`]): the better results come first.
+    pub rank: u8,
 }
 
 /// The rows of the matches and the folders they are in.
@@ -182,11 +197,15 @@ struct Node {
     marks: Vec<Range<usize>>,
     dirs: Vec<usize>,
     files: Vec<usize>,
+    /// The best [`Hit::rank`] of what is at or below this node.
+    best: u8,
 }
 
 impl Projection {
-    /// The rows of `hits` below `scope`: folders first, each group in natural order, the folders
-    /// synthesised from the paths and all open; with `compact` a folder that holds only one
+    /// The rows of `hits` below `scope`: what holds the better results first ([`Hit::rank`]: a
+    /// file called what was typed before a path that only has its letters), and within the same
+    /// rank folders first, each group in natural order; the folders synthesised from the paths and
+    /// all open; with `compact` a folder that holds only one
     /// folder shares its row with it.
     pub fn build(scope: &Path, hits: &[Hit], compact: bool) -> Self {
         let mut nodes = vec![Node {
@@ -196,6 +215,7 @@ impl Projection {
             marks: Vec::new(),
             dirs: Vec::new(),
             files: Vec::new(),
+            best: u8::MAX,
         }];
         let mut known: HashMap<(usize, &str), usize> = HashMap::new();
         let mut files = 0;
@@ -228,6 +248,7 @@ impl Projection {
                             marks: Vec::new(),
                             dirs: Vec::new(),
                             files: Vec::new(),
+                            best: u8::MAX,
                         });
                         if last {
                             nodes[at].files.push(node);
@@ -241,6 +262,7 @@ impl Projection {
                 };
                 nodes[node].marks.extend(marks);
                 merge(&mut nodes[node].marks);
+                nodes[node].best = nodes[node].best.min(hit.rank);
                 at = node;
             }
         }
@@ -258,7 +280,32 @@ impl Projection {
         let mut files = std::mem::take(&mut nodes[at].files);
         dirs.sort_by(|a, b| natural_cmp(&nodes[*a].name, &nodes[*b].name));
         files.sort_by(|a, b| natural_cmp(&nodes[*a].name, &nodes[*b].name));
-        for dir in dirs {
+        // Folders then files in natural order, and what holds the better results first (a stable
+        // sort: equal ranks keep that order).
+        let mut order: Vec<(usize, bool)> = dirs
+            .into_iter()
+            .map(|d| (d, true))
+            .chain(files.into_iter().map(|f| (f, false)))
+            .collect();
+        order.sort_by_key(|(node, _)| nodes[*node].best);
+        for (child, is_dir) in order {
+            if !is_dir {
+                let node = &nodes[child];
+                self.rows.push(Row {
+                    path: node.path.clone(),
+                    tail: None,
+                    name: node.name.clone().into(),
+                    depth,
+                    kind: node.kind,
+                    ignored: false,
+                    expanded: false,
+                    loading: false,
+                    root: false,
+                });
+                self.marks.push(node.marks.clone());
+                continue;
+            }
+            let dir = child;
             // A folded chain: this folder, then the one it holds alone, and so on.
             let mut chain = vec![dir];
             let mut last = dir;
@@ -297,21 +344,6 @@ impl Projection {
             });
             self.marks.push(marks);
             self.emit_children(nodes, tail, depth + 1, compact);
-        }
-        for file in files {
-            let node = &nodes[file];
-            self.rows.push(Row {
-                path: node.path.clone(),
-                tail: None,
-                name: node.name.clone().into(),
-                depth,
-                kind: node.kind,
-                ignored: false,
-                expanded: false,
-                loading: false,
-                root: false,
-            });
-            self.marks.push(node.marks.clone());
         }
     }
 
@@ -489,7 +521,7 @@ impl Filter {
 }
 
 /// Hits of the daemon's answer.
-fn hits_of(found: FsFound) -> Vec<Hit> {
+fn hits_of(found: FsFound, query: &Query) -> Vec<Hit> {
     found
         .matches
         .into_iter()
@@ -499,6 +531,7 @@ fn hits_of(found: FsFound) -> Vec<Hit> {
                 .iter()
                 .map(|r| r[0] as usize..r[1] as usize)
                 .collect(),
+            rank: query.rank(&m.path),
             path: m.path,
             kind: RowKind::File,
         })
@@ -857,6 +890,7 @@ impl FilesPanel {
                             path: hit.path.clone(),
                             kind: hit.kind,
                             ranges,
+                            rank: query.rank(&hit.path),
                         });
                     }
                 }
@@ -881,6 +915,7 @@ impl FilesPanel {
                                 _ => RowKind::File,
                             },
                             ranges,
+                            rank: query.rank(relative),
                         });
                     }
                     true
@@ -959,6 +994,9 @@ impl FilesPanel {
         self.filter.task = None;
         self.filter.answers += 1;
         let hide = !self.env.settings.get::<FilesPanelSettings>().show_hidden;
+        let Some(query) = self.filter.query.clone() else {
+            return;
+        };
         let mut found: Found = Vec::new();
         let mut failure: Option<hutan_client::ClientError> = None;
         let (mut shown, mut capped, mut index_truncated) = (0, false, false);
@@ -967,7 +1005,7 @@ impl FilesPanel {
                 Ok(reply) => {
                     capped |= reply.matches.len() >= RESULTS_MAX;
                     index_truncated |= reply.index_truncated;
-                    let mut hits = hits_of(reply);
+                    let mut hits = hits_of(reply, &query);
                     if hide {
                         hits.retain(|h| !is_hidden(&h.path));
                     }
@@ -1331,6 +1369,7 @@ mod tests {
             path: path.to_owned(),
             kind: RowKind::File,
             ranges,
+            rank: Query::parse(query).map_or(u8::MAX, |q| q.rank(path)),
         }
     }
 
@@ -1393,6 +1432,29 @@ mod tests {
         assert_eq!(p.files(), 4);
         assert_eq!(p.rows()[0].path, Path::new("/r/docs"));
         assert_eq!(p.rows()[4].path, Path::new("/r/src/inner/c.rs"));
+    }
+
+    #[test]
+    fn the_file_called_what_was_typed_comes_before_paths_that_only_have_its_letters() {
+        // N-02: filter `glue`: the exact file first, in its folder, ahead of `.github/…`.
+        let hits = [
+            hit(".github/ISSUE_TEMPLATE/bug_report.yml", "glue"),
+            hit("crates/ignore/src/glue.rs", "glue"),
+            hit("UNLICENSE", "glue"),
+            hit("glue.rs", "glue"),
+        ];
+        let p = Projection::build(Path::new("/r"), &hits, false);
+        let rows = shape(&p);
+        // `glue.rs` at the root (class 0) and `crates` (class 0 below) come before `.github`
+        // (scattered letters), which used to sort first.
+        let at = |name: &str| rows.iter().position(|r| r.trim() == name).unwrap();
+        assert!(at("crates") < at(".github"), "{rows:?}");
+        assert!(at("glue.rs") < at(".github"), "{rows:?}");
+        assert!(at("glue.rs") < at("UNLICENSE"), "{rows:?}");
+        // Equal ranks keep the tree's order: folders first, natural.
+        let hits = [hit("b.rs", "rs"), hit("a/x.rs", "rs"), hit("c.rs", "rs")];
+        let p = Projection::build(Path::new("/r"), &hits, false);
+        assert_eq!(shape(&p), ["a", "  x.rs", "b.rs", "c.rs"]);
     }
 
     #[test]

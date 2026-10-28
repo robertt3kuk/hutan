@@ -63,6 +63,7 @@ mod recovery_summary;
 pub mod regions;
 pub mod registry;
 mod reinstall;
+pub mod relevance;
 mod remote;
 mod render;
 mod resources;
