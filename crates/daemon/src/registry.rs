@@ -165,12 +165,14 @@ enum Command {
     },
     /// From a terminal's watcher task.
     TerminalMeta(TerminalId, TerminalMeta),
-    /// What the watcher found running in the terminal's process tree (`term_agent::probe`);
-    /// `settled` = the last look of this series, so that finding nothing is final.
+    /// What the watcher found in the terminal's process tree (`term_agent::probe`); `settled` =
+    /// the last look of this series, so that finding nothing is final; `after_prompt` = the
+    /// shell prompted since the series began.
     TerminalProgram {
         terminal: TerminalId,
-        app: Option<&'static str>,
+        found: term_agent::Probe,
         settled: bool,
+        after_prompt: bool,
     },
     TerminalExited(TerminalId, ExitStatus),
     AgentReport(Box<AgentReportRequest>, Reply<AgentApplied>),
@@ -1325,9 +1327,10 @@ impl SessionRegistry {
                 Command::TerminalMeta(terminal, meta) => self.on_meta(terminal, meta),
                 Command::TerminalProgram {
                     terminal,
-                    app,
+                    found,
                     settled,
-                } => self.on_program(terminal, app, settled),
+                    after_prompt,
+                } => self.on_program(terminal, found, settled, after_prompt),
                 Command::TerminalExited(terminal, status) => self.on_exited(terminal, &status),
                 Command::AgentReport(req, reply) => {
                     let _ = reply.send(self.report_agent(*req));
@@ -2983,8 +2986,17 @@ impl SessionRegistry {
         true
     }
 
-    /// What the watcher found in the process tree of a terminal.
-    fn on_program(&mut self, terminal: TerminalId, app: Option<&'static str>, settled: bool) {
+    /// What the watcher found in the process tree of a terminal. A program that is a known
+    /// harness is the terminal's agent unless the agent reports itself; at the last look of a
+    /// series nothing found ends a program-only agent, and ends one that reports itself when
+    /// the shell has prompted and nothing runs below it any more (it died without saying so).
+    fn on_program(
+        &mut self,
+        terminal: TerminalId,
+        found: term_agent::Probe,
+        settled: bool,
+        after_prompt: bool,
+    ) {
         let Some(index) = self.terminal_index(terminal) else {
             return;
         };
@@ -2993,28 +3005,40 @@ impl SessionRegistry {
             return;
         }
         let prev = session.info.terminal_agent.as_ref();
-        let next = match app {
-            Some(app) => term_agent::from_process(prev, app, now_ms()).map(|agent| {
+        match found.app {
+            Some(app) => {
+                let Some(agent) = term_agent::from_process(prev, app, now_ms()) else {
+                    return;
+                };
                 // The title the program already set is its own.
                 let title = session.osc_title.clone();
-                term_agent::with_title(&agent, title.as_deref(), now_ms())
-            }),
-            None if settled
-                && prev.is_some_and(|agent| agent.source == TerminalAgentSource::Process) =>
-            {
-                let had_title = prev.is_some_and(|agent| agent.title.is_some());
-                if had_title {
-                    session.osc_title = None;
-                }
-                session.info.terminal_agent = None;
+                let agent = term_agent::with_title(&agent, title.as_deref(), now_ms());
+                self.sessions[index].info.terminal_agent = Some(agent);
                 self.emit_session(index);
-                return;
             }
-            None => None,
-        };
-        if let Some(next) = next {
-            self.sessions[index].info.terminal_agent = Some(next);
-            self.emit_session(index);
+            None if settled
+                && prev.is_some_and(|agent| match agent.source {
+                    TerminalAgentSource::Process => true,
+                    TerminalAgentSource::Osc => after_prompt && !found.busy,
+                }) =>
+            {
+                if prev.is_some_and(|agent| agent.source == TerminalAgentSource::Osc) {
+                    let resumable = session.forget_agent(now_ms());
+                    session.tree.release(
+                        term_agent::OSC_SOURCE,
+                        None,
+                        NodeOutcome::Completed,
+                        now_ms(),
+                    );
+                    self.tree_changed(index);
+                    if resumable {
+                        self.persist_session(index);
+                    }
+                }
+                self.clear_terminal_agent(index);
+                self.emit_session(index);
+            }
+            None => {}
         }
     }
 
@@ -3153,6 +3177,15 @@ impl SessionRegistry {
                     self.mark_dirty(index);
                 }
             }
+            // An agent that reports itself writes prompt marks of its own (OMP does around every
+            // redraw) and says when it leaves: its marks end nothing, and the watcher looks
+            // whether it still runs once the shell prompts.
+            TerminalMeta::PromptMark(PromptMark::A)
+                if self.sessions[index]
+                    .info
+                    .terminal_agent
+                    .as_ref()
+                    .is_some_and(|agent| agent.source == TerminalAgentSource::Osc) => {}
             TerminalMeta::PromptMark(PromptMark::A) => {
                 // The shell is prompting again: whatever agent was running in the foreground is
                 // gone, even if it never got to say so.
@@ -5022,6 +5055,7 @@ async fn watch_terminal(
     // What runs in the terminal is looked at after the start and after every command the shell
     // starts (OSC 133 C): the process appears a moment later, so each series looks a few times.
     let mut probe_step = Some(0);
+    let mut probe_after_prompt = false;
     let mut probe_due = std::pin::pin!(sleep_until(Instant::now() + PROGRAM_PROBE_GAPS[0]));
     let status = loop {
         tokio::select! {
@@ -5029,17 +5063,22 @@ async fn watch_terminal(
             () = &mut quiet, if throttled => throttled = false,
             () = &mut probe_due, if probe_step.is_some() => {
                 let step = probe_step.take().unwrap_or_default();
-                let app = match terminal.pid() {
+                let nothing = term_agent::Probe { app: None, busy: true };
+                let found = match terminal.pid() {
                     Some(pid) => tokio::task::spawn_blocking(move || {
                         term_agent::probe(&SystemProcesses, pid)
                     })
                     .await
-                    .ok()
-                    .flatten(),
-                    None => None,
+                    .unwrap_or(nothing),
+                    None => nothing,
                 };
                 let settled = step + 1 >= PROGRAM_PROBE_GAPS.len();
-                if !send(Command::TerminalProgram { terminal: id, app, settled }).await {
+                let after_prompt = probe_after_prompt;
+                if settled {
+                    probe_after_prompt = false;
+                }
+                let command = Command::TerminalProgram { terminal: id, found, settled, after_prompt };
+                if !send(command).await {
                     return;
                 }
                 if !settled {
@@ -5060,7 +5099,8 @@ async fn watch_terminal(
             }
             received = meta.recv() => match received {
                 Ok(event) => {
-                    if matches!(event, TerminalMeta::PromptMark(PromptMark::C)) {
+                    if let TerminalMeta::PromptMark(mark @ (PromptMark::A | PromptMark::C)) = &event {
+                        probe_after_prompt |= *mark == PromptMark::A;
                         probe_step = Some(0);
                         probe_due.as_mut().reset(Instant::now() + PROGRAM_PROBE_GAPS[0]);
                     }

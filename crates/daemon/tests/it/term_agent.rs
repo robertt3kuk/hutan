@@ -373,3 +373,61 @@ async fn an_agent_names_its_session_unless_the_user_did() {
     assert!(!left.title.contains('π'), "{}", left.title);
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_marks_an_agent_writes_itself_do_not_end_it() {
+    let t = TestDaemon::start().await;
+    let client = t.connect().await;
+    let session = echo_session(&client).await;
+    status(&client, &session, "state=working:app=omp").await;
+    wait_session(
+        &client,
+        session.id,
+        "working",
+        in_state(TerminalAgentState::Working),
+    )
+    .await;
+
+    // OMP writes OSC 133 marks around every redraw: the agent and its tree stay.
+    osc(&client, &session, "133;A").await;
+    osc(&client, &session, "133;C").await;
+    osc(&client, &session, "133;D;0").await;
+    status(&client, &session, "state=blocked:kind=question:app=omp").await;
+    let info = wait_session(
+        &client,
+        session.id,
+        "blocked after the marks",
+        in_state(TerminalAgentState::Blocked),
+    )
+    .await;
+    assert_eq!(
+        info.agent.expect("the tree node is still there").state,
+        AgentState::Blocked
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_that_died_without_saying_so_is_dropped_when_the_shell_prompts_again() {
+    let t = TestDaemon::start().await;
+    let client = t.connect().await;
+    // The agent reported, then nothing of it is left and the "shell" prompts (the session's own
+    // process is a `cat`, with nothing below it).
+    let session = create(
+        &client,
+        sh("printf '\\033]7501;state=working:app=omp\\033\\\\'; printf '\\033]133;A\\007'; exec cat"),
+    )
+    .await;
+    wait_session(
+        &client,
+        session.id,
+        "the agent reported",
+        in_state(TerminalAgentState::Working),
+    )
+    .await;
+    wait_session(&client, session.id, "the agent dropped", |s| {
+        s.terminal_agent.is_none() && s.agent.is_none()
+    })
+    .await;
+    t.stop().await;
+}

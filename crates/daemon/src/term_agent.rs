@@ -101,12 +101,23 @@ pub fn app_of(args: &[String]) -> Option<&'static str> {
         })
 }
 
-/// The harness running at or below `root` (a terminal's process), if any: the first process of
-/// the tree, parents before children, that [`app_of`] knows.
-pub fn probe(source: &dyn ProcessSource, root: u32) -> Option<&'static str> {
+/// What a look at a terminal's process tree found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probe {
+    /// The harness at or below the terminal's process, if any: the first process of the tree,
+    /// parents before children, that [`app_of`] knows.
+    pub app: Option<&'static str>,
+    /// Something runs below the terminal's process (a shell with a job in the foreground).
+    pub busy: bool,
+}
+
+/// Looks at the processes at and below `root`, a terminal's process.
+pub fn probe(source: &dyn ProcessSource, root: u32) -> Probe {
+    let below = source.descendants(root, MAX_PROBED);
+    let busy = !below.is_empty();
     let mut pids = vec![root];
-    pids.extend(source.descendants(root, MAX_PROBED));
-    pids.into_iter().find_map(|pid| {
+    pids.extend(below);
+    let app = pids.into_iter().find_map(|pid| {
         source
             .arguments(pid)
             .as_deref()
@@ -116,7 +127,8 @@ pub fn probe(source: &dyn ProcessSource, root: u32) -> Option<&'static str> {
                     .inspect(pid)
                     .and_then(|snapshot| app_named(&snapshot.name))
             })
-    })
+    });
+    Probe { app, busy }
 }
 
 fn phase_state(phase: AgentPhase) -> TerminalAgentState {
@@ -360,15 +372,30 @@ mod tests {
             (11, 10, "omp", "omp --model x"),
             (12, 11, "bun", "bun helper"),
         ]);
-        assert_eq!(probe(&table, 10), Some("omp"));
+        assert_eq!(probe(&table, 10).app, Some("omp"));
         // A session whose own command is the harness.
-        assert_eq!(probe(&table, 11), Some("omp"));
+        assert_eq!(probe(&table, 11).app, Some("omp"));
         let plain = Table::with(&[(10, 1, "zsh", "-zsh"), (11, 10, "vim", "vim a")]);
-        assert_eq!(probe(&plain, 10), None);
+        assert_eq!(
+            probe(&plain, 10),
+            Probe {
+                app: None,
+                busy: true
+            }
+        );
+        // A shell at its prompt: nothing below it.
+        let idle = Table::with(&[(10, 1, "zsh", "-zsh")]);
+        assert_eq!(
+            probe(&idle, 10),
+            Probe {
+                app: None,
+                busy: false
+            }
+        );
         // Only the kernel's name is known (arguments unreadable): the name decides.
         let mut named = Table::with(&[(10, 1, "zsh", "-zsh"), (11, 10, "codex", "")]);
         named.processes.get_mut(&11).unwrap().2.clear();
-        assert_eq!(probe(&named, 10), Some("codex"));
+        assert_eq!(probe(&named, 10).app, Some("codex"));
     }
 
     fn status(phase: AgentPhase, kind: Option<&str>) -> AgentStatus {
