@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use hutan_core::{
-    AgentEventDraft, ApprovalId, ApprovalPolicy, NodeUpdate, QuestionId, QuestionResponse,
-    SandboxMode, TurnId,
+    AgentEventDraft, ApprovalId, ApprovalPolicy, ForkSupport, NodeUpdate, QuestionId,
+    QuestionResponse, SandboxMode, TurnId,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::error::AgentError;
 
@@ -30,6 +31,46 @@ pub struct StartSpec {
     /// for what an agent takes through it (Claude Code's `claudeCode.options`, whose `sandbox`
     /// is Hutan's *Contained* preset). Codex ignores it.
     pub session_meta: Option<serde_json::Value>,
+    /// Open the conversation as a fork of another one (ADR 0023) instead of starting a new one
+    /// or continuing `resume_thread_id`: Codex `thread/fork`, ACP `session/fork`.
+    pub fork: Option<ForkFrom>,
+}
+
+/// The conversation a fork starts from, and where it is cut. What the agent forks is its own
+/// copy of the parent's conversation, found by `thread_id` in the agent's own storage, so the
+/// parent need not be running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkFrom {
+    /// The parent's provider conversation (Codex thread, ACP session).
+    pub thread_id: String,
+    /// Where the conversation is cut; `None`: at its end (what the agent has now).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub point: Option<ForkPoint>,
+}
+
+/// The provider's names for the end of the turn a fork keeps, as Hutan journaled them. An
+/// agent reads the one it knows; one that cannot cut at a turn refuses ([`AgentError::Unsupported`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkPoint {
+    /// Codex: the turn's id (`thread/fork` `lastTurnId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_turn_id: Option<String>,
+    /// Claude Code's ACP adapter: the turn's last assistant message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<ForkMessage>,
+}
+
+/// An assistant message of the parent, named the way Claude Code's ACP adapter finds it
+/// (`_meta.jetbrains.air.fork`, adapter 0.98): the ACP `messageId` of its chunks, and — for an
+/// adapter that no longer knows the id — the SHA-256 of its text and how many equal messages
+/// precede it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkMessage {
+    pub id: String,
+    /// `sha256:<hex>` of the message's text.
+    pub fingerprint: String,
+    /// The message's place among equal ones, counted from 1.
+    pub occurrence: u32,
 }
 
 /// The conversation that is open after [`StartSpec`] was applied.
@@ -48,6 +89,10 @@ pub struct Started {
     /// sandbox); `None` when the agent reports none (ACP agents say a session mode instead).
     /// Read back, never what Hutan asked for.
     pub reported: Option<ReportedSafety>,
+    /// What the agent can do for a fork, from what it advertised (ACP `sessionCapabilities`,
+    /// the adapter's name and version); `None` when this start cannot tell (a Codex app server
+    /// always cuts at a turn: `Some(Exact)`).
+    pub fork: Option<ForkSupport>,
 }
 
 /// The approval policy and sandbox an agent reported when the conversation opened.

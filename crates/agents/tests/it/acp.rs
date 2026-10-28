@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use hutan_agents::{
     AcpAdapter, AcpConfig, AcpSession, AdapterMessage, AgentAdapter, AgentError, ContextBlock,
-    ImageBlock, MessageExtras, StartSpec,
+    ForkFrom, ForkMessage, ForkPoint, ImageBlock, MessageExtras, StartSpec,
 };
 use hutan_core::agent::{
     FileChangeKind, MessageRole, NoticeLevel, PermissionKind, PermissionOptionKind,
@@ -18,8 +18,8 @@ use hutan_core::agent::{
 };
 use hutan_core::question::{FieldKind, QuestionExpiry, Values};
 use hutan_core::{
-    AgentEventKind, ApprovalId, ApprovalPolicy, NodeKind, NodeOutcome, NodeState, QuestionId,
-    QuestionOutcome, QuestionResponse, SandboxMode,
+    AgentEventKind, ApprovalId, ApprovalPolicy, ForkSupport, NodeKind, NodeOutcome, NodeState,
+    QuestionId, QuestionOutcome, QuestionResponse, SandboxMode,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -67,6 +67,7 @@ impl Harness {
 
     fn spec(&self, model: Option<&str>, resume: Option<&str>) -> StartSpec {
         StartSpec {
+            fork: None,
             cwd: self.dir.path().to_owned(),
             model: model.map(str::to_owned),
             approval_policy: ApprovalPolicy::default(),
@@ -1625,4 +1626,227 @@ async fn claude_rate_limits_in_a_usage_update_become_limit_windows() {
         ]
     );
     assert!(names(&seen).contains(&"usage"));
+}
+
+// Fork (ADR 0023). The transcripts are built from the ACP `session/fork` schema, OMP's handshake
+// (recorded) and what `claude-agent-acp` 0.98.0 answers (its source was read, no login here):
+// they are scrubbed like the recordings.
+
+fn fork_spec(h: &Harness, point: Option<ForkPoint>) -> StartSpec {
+    StartSpec {
+        fork: Some(ForkFrom {
+            thread_id: SESSION.to_owned(),
+            point,
+        }),
+        ..h.spec(None, None)
+    }
+}
+
+fn claude(h: &Harness, name: &str) -> AcpConfig {
+    AcpConfig {
+        agent: "claude".to_owned(),
+        ..h.config(name)
+    }
+}
+
+fn message_point() -> ForkPoint {
+    ForkPoint {
+        provider_turn_id: None,
+        message: Some(ForkMessage {
+            id: "msg-1".to_owned(),
+            fingerprint: "sha256:abc123".to_owned(),
+            occurrence: 2,
+        }),
+    }
+}
+
+async fn try_fork(config: AcpConfig, spec: StartSpec) -> Result<AcpSession, AgentError> {
+    timeout(WAIT, AcpAdapter::start(&config, &spec, None, &[]))
+        .await
+        .expect("start timed out")
+}
+
+#[tokio::test]
+async fn an_omp_fork_at_the_end_is_a_new_session_that_takes_turns() {
+    let h = Harness::new();
+    let AcpSession {
+        adapter,
+        started,
+        mut events,
+        ..
+    } = try_fork(h.config("fork-head"), fork_spec(&h, None))
+        .await
+        .unwrap();
+    assert_eq!(started.thread_id, "sess_fixture_2", "the new session's id");
+    assert!(!started.resumed);
+    assert_eq!(
+        started.fork,
+        Some(ForkSupport::Head),
+        "OMP forks at the end"
+    );
+
+    let fork = &h.received_of("session/fork")[0]["params"];
+    assert_eq!(fork["sessionId"], SESSION);
+    assert_eq!(fork["cwd"], h.dir.path().display().to_string());
+    assert_eq!(fork["mcpServers"], json!([]));
+    assert!(fork.get("_meta").is_none(), "no fork point: {fork}");
+    assert!(h.received_of("session/new").is_empty());
+    assert!(h.received_of("session/load").is_empty());
+
+    adapter.send_message("hi".into()).await.unwrap();
+    let seen = collect_until(&mut events, ends_turn).await;
+    assert!(matches!(
+        kinds(&seen)[0],
+        AgentEventKind::ResumeLocator { thread_id, .. } if thread_id == "sess_fixture_2"
+    ));
+    assert_eq!(
+        h.received_of("session/prompt")[0]["params"]["sessionId"],
+        "sess_fixture_2"
+    );
+    adapter.shutdown().await;
+}
+
+#[tokio::test]
+async fn omp_cannot_cut_at_a_turn_and_says_so_before_asking() {
+    let h = Harness::new();
+    let error = try_fork(h.config("fork-head"), fork_spec(&h, Some(message_point())))
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        matches!(&error, AgentError::Unsupported(text) if text.contains("only at the end")),
+        "{error}"
+    );
+    assert!(h.received_of("session/fork").is_empty());
+}
+
+#[tokio::test]
+async fn claude_code_cuts_at_a_message_through_the_adapters_fork_point() {
+    let h = Harness::new();
+    let mut spec = fork_spec(&h, Some(message_point()));
+    spec.session_meta = Some(json!({"claudeCode": {"options": {"sandbox": {"enabled": true}}}}));
+    let session = try_fork(claude(&h, "claude-fork-exact"), spec)
+        .await
+        .unwrap();
+    assert_eq!(session.started.fork, Some(ForkSupport::Exact));
+    assert_eq!(session.started.thread_id, "sess_fixture_2");
+    let meta = &h.received_of("session/fork")[0]["params"]["_meta"];
+    assert_eq!(
+        meta["jetbrains"]["air"]["fork"],
+        json!({
+            "version": 1,
+            "messageId": "msg-1",
+            "messageFingerprint": "sha256:abc123",
+            "messageOccurrence": 2
+        })
+    );
+    assert_eq!(
+        meta["claudeCode"]["options"]["sandbox"]["enabled"], true,
+        "the session's own meta rides along"
+    );
+    session.adapter.shutdown().await;
+
+    // No point: no `jetbrains` key, the adapter forks the whole session.
+    let h = Harness::new();
+    let session = try_fork(claude(&h, "claude-fork-exact"), fork_spec(&h, None))
+        .await
+        .unwrap();
+    assert!(
+        h.received_of("session/fork")[0]["params"]
+            .get("_meta")
+            .is_none()
+    );
+    session.adapter.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_older_claude_adapter_forks_at_the_end_only_and_never_gets_a_fork_point_it_would_ignore()
+{
+    let h = Harness::new();
+    let session = try_fork(claude(&h, "claude-fork-old"), fork_spec(&h, None))
+        .await
+        .unwrap();
+    assert_eq!(session.started.fork, Some(ForkSupport::Head), "0.73.0");
+    session.adapter.shutdown().await;
+
+    let h = Harness::new();
+    let error = try_fork(
+        claude(&h, "claude-fork-old"),
+        fork_spec(&h, Some(message_point())),
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(matches!(error, AgentError::Unsupported(_)), "{error}");
+    assert!(
+        h.received_of("session/fork").is_empty(),
+        "an adapter that would ignore the point must not be asked"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_without_session_fork_offers_a_summary_only() {
+    let h = Harness::new();
+    let session = h.start("no-fork").await;
+    assert_eq!(session.started.fork, Some(ForkSupport::Summary));
+    session.adapter.shutdown().await;
+
+    let h = Harness::new();
+    let error = try_fork(h.config("no-fork"), fork_spec(&h, None))
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        matches!(&error, AgentError::Unsupported(text) if text.contains("cannot fork")),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn the_agents_message_id_is_journaled_with_its_assistant_messages() {
+    let h = Harness::new();
+    let AcpSession {
+        adapter,
+        mut events,
+        ..
+    } = h.start("plain-turn").await;
+    initial(&mut events).await;
+    adapter.send_message("hi".into()).await.unwrap();
+    let seen = collect_until(&mut events, ends_turn).await;
+    let assistant: Vec<_> = seen
+        .iter()
+        .filter_map(|m| match m {
+            AdapterMessage::Event(draft) => Some(draft),
+            _ => None,
+        })
+        .filter(|draft| {
+            matches!(
+                draft.kind,
+                AgentEventKind::MessageStart {
+                    role: MessageRole::Assistant,
+                    ..
+                } | AgentEventKind::MessageEnd {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(assistant.len(), 2, "a start and an end");
+    for draft in assistant {
+        assert_eq!(
+            draft.provider.item_id.as_deref(),
+            Some("msg-1"),
+            "{:?}",
+            draft.kind
+        );
+    }
+    // Thoughts have their own ids and are not what a fork cuts at.
+    assert!(seen.iter().all(|m| match m {
+        AdapterMessage::Event(draft)
+            if matches!(draft.kind, AgentEventKind::ReasoningEnd { .. }) =>
+            draft.provider.item_id.is_none(),
+        _ => true,
+    }));
+    adapter.shutdown().await;
 }

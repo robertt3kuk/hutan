@@ -14,9 +14,9 @@ use serde::de::DeserializeOwned;
 use crate::error::{Result, StorageError};
 use crate::rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
-    CreatedBy, EpochEnd, EpochRecord, GrantRow, LspTrustRow, ProviderRow, QuestionOutcome,
-    QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
-    WorktreeSetupTrustRow,
+    CreatedBy, EpochEnd, EpochRecord, ForkedJournal, GrantRow, LspTrustRow, ProviderRow,
+    QuestionOutcome, QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind,
+    WorkspaceRow, WorktreeRow, WorktreeSetupTrustRow,
 };
 
 pub const EPOCH_HISTORY_KEY: &str = "epoch_history";
@@ -875,6 +875,82 @@ pub fn chat_last_seq(conn: &Connection, session: SessionId) -> Result<u64> {
         )
         .map_err(StorageError::sqlite("reading the last chat seq"))?;
     Ok(last.map_or(0, unms))
+}
+
+/// The highest `seq` journaled for `turn` of the session; `None` when the turn has no event.
+pub fn chat_turn_last_seq(
+    conn: &Connection,
+    session: SessionId,
+    turn: &str,
+) -> Result<Option<u64>> {
+    let last: Option<i64> = conn
+        .query_row(
+            "SELECT MAX(seq) FROM chat_items WHERE session_id = ?1 AND turn_id = ?2",
+            params![session.to_string(), turn],
+            |row| row.get(0),
+        )
+        .map_err(StorageError::sqlite(
+            "reading the last event of a chat turn",
+        ))?;
+    Ok(last.map(unms))
+}
+
+/// Copies the journal of `parent` through `through_seq` into `child` in one savepoint, then
+/// adds `extra` rows (ADR 0023): every event with `seq <= through_seq` keeps its `seq` (the gaps
+/// where deltas were stay) with the event's own `session_id` rewritten to the child's; the
+/// parent's resume locators are left out (the child's agent writes its own); the rows of
+/// `chat_turns` through `through_turn` are copied. Nothing is written when any step fails.
+/// One `INSERT … SELECT` per table, so the rows never leave SQLite.
+pub fn fork_chat_journal(
+    conn: &Connection,
+    parent: SessionId,
+    child: SessionId,
+    through_seq: u64,
+    through_turn: &str,
+    extra: &[ChatItemRow],
+) -> Result<ForkedJournal> {
+    let context = "forking a chat journal";
+    conn.execute_batch("SAVEPOINT chat_fork")
+        .map_err(StorageError::sqlite(context))?;
+    let copied = (|| {
+        let events = conn.execute(
+            "INSERT INTO chat_items (session_id, seq, ts_ms, turn_id, item_id, kind, event_json) \
+             SELECT ?2, seq, ts_ms, turn_id, item_id, kind, \
+                    json_set(event_json, '$.session_id', ?2) \
+             FROM chat_items WHERE session_id = ?1 AND seq <= ?3 AND kind <> 'resume_locator'",
+            params![parent.to_string(), child.to_string(), ms(through_seq)],
+        )?;
+        let turns = conn.execute(
+            "INSERT INTO chat_turns (session_id, turn_id, provider_turn_id, status, started_at_ms, \
+                 ended_at_ms, error) \
+             SELECT ?2, turn_id, provider_turn_id, status, started_at_ms, ended_at_ms, error \
+             FROM chat_turns WHERE session_id = ?1 AND (started_at_ms, turn_id) <= \
+                 (SELECT started_at_ms, turn_id FROM chat_turns WHERE session_id = ?1 AND turn_id = ?3)",
+            params![parent.to_string(), child.to_string(), through_turn],
+        )?;
+        Ok::<_, rusqlite::Error>((events, turns))
+    })()
+    .map_err(StorageError::sqlite(context))
+    .and_then(|(events, turns)| {
+        for row in extra {
+            append_chat_item(conn, row)?;
+        }
+        Ok(ForkedJournal {
+            events: u64::try_from(events).unwrap_or(u64::MAX),
+            turns: u64::try_from(turns).unwrap_or(u64::MAX),
+        })
+    });
+    match copied {
+        Ok(copied) => {
+            conn.execute_batch("RELEASE chat_fork")
+                .map_err(StorageError::sqlite(context))?;
+            Ok(copied)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK TO chat_fork; RELEASE chat_fork");
+            Err(error)
+        }
+    }
 }
 
 /// Deletes and inserts in one savepoint: a crash leaves the old queue or the new one.

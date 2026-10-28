@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
-use hutan_core::{ApprovalId, ModelInfo, QuestionId, QuestionResponse};
+use hutan_core::{ApprovalId, ForkSupport, ModelInfo, QuestionId, QuestionResponse};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
@@ -332,6 +332,65 @@ fn unknown_model(model: &str, models: &[ModelInfo]) -> AgentError {
     }
 }
 
+/// Claude Code's ACP adapter (`@agentclientprotocol/claude-agent-acp`): the name it reports.
+const CLAUDE_ADAPTER: &str = "@agentclientprotocol/claude-agent-acp";
+/// The first adapter version Hutan knows takes a fork point in `session/fork`
+/// (`_meta.jetbrains.air.fork`; read in its source at 0.98.0, `docs/agents.md` § Fork). An older
+/// adapter would ignore the object and fork the whole session, so none is sent to it.
+const CLAUDE_FORK_POINT_FROM: (u64, u64, u64) = (0, 98, 0);
+
+/// `major.minor.patch` of a version text (a suffix such as `-beta.1` is ignored).
+fn version_triple(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.trim().trim_start_matches('v').split('.');
+    let mut next = || {
+        parts
+            .next()
+            .and_then(|part| part.split(['-', '+']).next())
+            .and_then(|digits| digits.parse().ok())
+    };
+    Some((next()?, next()?, next()?))
+}
+
+/// What the agent can do for a fork, from its handshake (ADR 0023): no `session/fork` means a
+/// summary is all there is; Claude Code's adapter that is new enough to read a fork point cuts
+/// at a turn; every other agent (OMP) forks at the end.
+fn fork_support(
+    agent: &str,
+    info: Option<&wire::AgentInfo>,
+    capabilities: &wire::AgentCapabilities,
+) -> ForkSupport {
+    if capabilities.session_capabilities.fork.is_none() {
+        return ForkSupport::Summary;
+    }
+    let takes_point = agent == "claude"
+        && info.is_some_and(|info| {
+            info.name == CLAUDE_ADAPTER
+                && info
+                    .version
+                    .as_deref()
+                    .and_then(version_triple)
+                    .is_some_and(|version| version >= CLAUDE_FORK_POINT_FROM)
+        });
+    if takes_point {
+        ForkSupport::Exact
+    } else {
+        ForkSupport::Head
+    }
+}
+
+/// The `_meta` of a `session/fork` that cuts at `message`: the session's own `_meta` (Claude
+/// Code's `claudeCode.options`) with the adapter's fork point added.
+fn fork_meta(base: Option<&Value>, message: &crate::adapter::ForkMessage) -> Value {
+    let mut meta = base.cloned().unwrap_or(Value::Null);
+    meta["jetbrains"]["air"]["fork"] = json!({
+        "version": 1,
+        "messageId": message.id,
+        "messageFingerprint": message.fingerprint,
+        "messageOccurrence": message.occurrence,
+    });
+    meta
+}
+
 /// What the handshake learned.
 struct Opened {
     session_id: String,
@@ -339,13 +398,17 @@ struct Opened {
     result: wire::SessionResult,
     capabilities: wire::AgentCapabilities,
     close: bool,
+    /// What the agent says it can do for a fork.
+    fork: ForkSupport,
 }
 
-/// `initialize`, the version gate, and the session (new, loaded or resumed), with the agent's
-/// own `authenticate` when the session call says it is needed.
+/// `initialize`, the version gate, and the session (new, loaded, resumed or forked), with the
+/// agent's own `authenticate` when the session call says it is needed. `agent` is what the
+/// agent is called in events (`omp`, `claude`).
 async fn open(
     transport: &Transport,
     incoming: &mut mpsc::Receiver<Incoming>,
+    agent: &str,
     spec: &StartSpec,
     mcp_servers: &[Value],
 ) -> Result<Opened, AgentError> {
@@ -394,18 +457,51 @@ async fn open(
     }
     let cwd = spec.cwd.to_string_lossy().into_owned();
 
-    let (method, params, session_id) = match &spec.resume_thread_id {
-        Some(id) => {
+    let name = init
+        .agent_info
+        .as_ref()
+        .map_or("the agent", |a| a.name.as_str());
+    let fork = fork_support(agent, init.agent_info.as_ref(), &capabilities);
+
+    let (method, params, session_id) = match (&spec.fork, &spec.resume_thread_id) {
+        (Some(from), _) => {
+            if capabilities.session_capabilities.fork.is_none() {
+                return Err(AgentError::Unsupported(format!(
+                    "{name} cannot fork a conversation (it does not offer session/fork)"
+                )));
+            }
+            let meta = match &from.point {
+                None => spec.session_meta.clone(),
+                Some(point) => {
+                    let message = point
+                        .message
+                        .as_ref()
+                        .filter(|_| fork == ForkSupport::Exact)
+                        .ok_or_else(|| {
+                            AgentError::Unsupported(format!(
+                                "{name} forks only at the end of a conversation over ACP: fork at \
+                                 the latest turn, or start a new chat with a summary"
+                            ))
+                        })?;
+                    Some(fork_meta(spec.session_meta.as_ref(), message))
+                }
+            };
+            let params = serde_json::to_value(wire::ForkSessionParams {
+                session_id: &from.thread_id,
+                cwd: &cwd,
+                mcp_servers: &servers,
+                meta: meta.as_ref(),
+            });
+            ("session/fork", params, None)
+        }
+        (None, Some(id)) => {
             let method = if capabilities.load_session {
                 "session/load"
             } else if capabilities.session_capabilities.resume.is_some() {
                 "session/resume"
             } else {
                 return Err(AgentError::Unsupported(format!(
-                    "{} cannot continue a conversation (it offers neither session/load nor session/resume)",
-                    init.agent_info
-                        .as_ref()
-                        .map_or("the agent", |a| a.name.as_str())
+                    "{name} cannot continue a conversation (it offers neither session/load nor session/resume)"
                 )));
             };
             let params = serde_json::to_value(wire::LoadSessionParams {
@@ -416,7 +512,7 @@ async fn open(
             });
             (method, params, Some(id.clone()))
         }
-        None => (
+        (None, None) => (
             "session/new",
             serde_json::to_value(wire::NewSessionParams {
                 cwd: &cwd,
@@ -438,9 +534,9 @@ async fn open(
     let result: wire::SessionResult = parse(method, answer?)?;
     let resumed = session_id.is_some();
     let Some(session_id) = session_id.or_else(|| result.session_id.clone()) else {
-        return Err(AgentError::Protocol(
-            "`session/new` answered without a sessionId".to_owned(),
-        ));
+        return Err(AgentError::Protocol(format!(
+            "`{method}` answered without a sessionId"
+        )));
     };
     Ok(Opened {
         session_id,
@@ -448,6 +544,7 @@ async fn open(
         result,
         close: capabilities.session_capabilities.close.is_some(),
         capabilities,
+        fork,
     })
 }
 
@@ -493,7 +590,16 @@ impl AcpAdapter {
     ) -> Result<AcpSession, AgentError> {
         let (transport, mut incoming, exit) =
             Transport::spawn_v2(&config.launch(Some(spec.cwd.clone())))?;
-        match Self::begin(&transport, &mut incoming, spec, mode, mcp_servers).await {
+        match Self::begin(
+            &transport,
+            &mut incoming,
+            &config.agent,
+            spec,
+            mode,
+            mcp_servers,
+        )
+        .await
+        {
             Ok(begun) => Ok(Self::run(config, transport, incoming, exit, begun)),
             Err(error) => {
                 transport.shutdown().await;
@@ -505,11 +611,12 @@ impl AcpAdapter {
     async fn begin(
         transport: &Transport,
         incoming: &mut mpsc::Receiver<Incoming>,
+        agent: &str,
         spec: &StartSpec,
         mode: Option<&str>,
         mcp_servers: &[Value],
     ) -> Result<Begun, AgentError> {
-        let opened = open(transport, incoming, spec, mcp_servers).await?;
+        let opened = open(transport, incoming, agent, spec, mcp_servers).await?;
         let mut model = model_choice(&opened.result);
         let mut mode_state = mode_choice(&opened.result);
         let session = opened.session_id.clone();
@@ -594,6 +701,7 @@ impl AcpAdapter {
             images: Some(opened.capabilities.prompt_capabilities.image),
             mode: mode.as_ref().and_then(ModeChoice::current_mode),
             reported: None,
+            fork: Some(opened.fork),
         };
         let shared = Arc::new(Shared {
             transport,
@@ -1124,6 +1232,7 @@ fn slug(label: &str) -> String {
 /// The models an agent offers, from a throwaway session in `cwd` (started, asked, closed).
 pub async fn list_models(config: &AcpConfig, cwd: PathBuf) -> Result<Vec<ModelInfo>, AgentError> {
     let spec = StartSpec {
+        fork: None,
         cwd,
         model: None,
         approval_policy: hutan_core::ApprovalPolicy::default(),
@@ -1136,4 +1245,21 @@ pub async fn list_models(config: &AcpConfig, cwd: PathBuf) -> Result<Vec<ModelIn
     let models = session.models.clone();
     session.adapter.shutdown().await;
     Ok(models)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adapter_versions_compare_as_numbers_not_as_text() {
+        assert_eq!(version_triple("0.98.0"), Some((0, 98, 0)));
+        assert_eq!(version_triple("v0.100.2"), Some((0, 100, 2)));
+        assert_eq!(version_triple("1.2.3-beta.4"), Some((1, 2, 3)));
+        assert_eq!(version_triple("0.98"), None);
+        assert_eq!(version_triple("nightly"), None);
+        assert!(version_triple("0.100.0") > Some(CLAUDE_FORK_POINT_FROM));
+        assert!(version_triple("0.73.0") < Some(CLAUDE_FORK_POINT_FROM));
+        assert!(version_triple("0.98.0") >= Some(CLAUDE_FORK_POINT_FROM));
+    }
 }

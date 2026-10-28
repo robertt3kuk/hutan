@@ -64,6 +64,7 @@ impl Harness {
 
     fn spec_with(&self, resume: Option<&str>, instructions: Option<&str>) -> StartSpec {
         StartSpec {
+            fork: None,
             cwd: self.dir.path().to_owned(),
             model: None,
             approval_policy: ApprovalPolicy::Untrusted,
@@ -1297,4 +1298,137 @@ async fn the_started_conversation_carries_what_the_server_says_it_enforces() {
         Some("read-only")
     );
     session.adapter.shutdown().await;
+}
+
+// Fork (ADR 0023). `fork-turn` is built from the 0.162.1 schema (`ThreadForkParams`,
+// `ThreadForkResponse`) on the shape of a recorded `thread/resume`, not recorded from a login:
+// there was none here. Its ids are scrubbed like the recordings'.
+
+const FORK_PARENT: &str = "01a00000-0000-7000-8000-000000000005";
+const FORK_TURN: &str = "01a00000-0000-7000-8000-000000000006";
+const FORKED: &str = "01a00000-0000-7000-8000-000000000007";
+
+fn fork_spec(h: &Harness, point: Option<hutan_agents::ForkPoint>) -> StartSpec {
+    StartSpec {
+        fork: Some(hutan_agents::ForkFrom {
+            thread_id: FORK_PARENT.to_owned(),
+            point,
+        }),
+        ..h.spec(None)
+    }
+}
+
+fn received_of(h: &Harness, method: &str) -> Vec<Value> {
+    h.received()
+        .into_iter()
+        .filter(|(name, _)| name == method)
+        .map(|(_, msg)| msg)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_fork_cuts_at_the_provider_turn_and_the_new_thread_takes_turns() {
+    let h = Harness::new();
+    let point = hutan_agents::ForkPoint {
+        provider_turn_id: Some(FORK_TURN.to_owned()),
+        message: None,
+    };
+    let CodexSession {
+        adapter,
+        started,
+        mut events,
+    } = timeout(
+        WAIT,
+        CodexAppServerAdapter::start(
+            &h.config(&fixture("fork-turn")),
+            &fork_spec(&h, Some(point)),
+        ),
+    )
+    .await
+    .expect("start timed out")
+    .expect("start failed");
+    // A new thread, not the parent's, and not a resume.
+    assert_eq!(started.thread_id, FORKED);
+    assert!(!started.resumed);
+    assert_eq!(started.fork, Some(hutan_core::ForkSupport::Exact));
+    assert_eq!(started.model, "gpt-6.1-sol");
+    assert_eq!(
+        started.reported.clone().unwrap().sandbox.as_deref(),
+        Some("read-only")
+    );
+
+    let params = &received_of(&h, "thread/fork")[0]["params"];
+    assert_eq!(params["threadId"], FORK_PARENT);
+    assert_eq!(params["lastTurnId"], FORK_TURN, "cut after this turn");
+    assert_eq!(params["excludeTurns"], true, "history is our journal");
+    assert_eq!(params["approvalsReviewer"], "user");
+    assert_eq!(params["approvalPolicy"], "untrusted");
+    assert_eq!(params["sandbox"], "read-only");
+    assert_eq!(params["cwd"], h.dir.path().display().to_string());
+    assert!(params.get("developerInstructions").is_none());
+
+    adapter.send_message("again".into()).await.unwrap();
+    let all = collect_until(&mut events, ends_turn).await;
+    assert!(matches!(
+        kinds(&all).pop().unwrap(),
+        AgentEventKind::TurnCompleted { .. }
+    ));
+    assert_eq!(
+        *kinds(&all)[0],
+        AgentEventKind::ResumeLocator {
+            agent: "codex".into(),
+            thread_id: FORKED.into(),
+            model: Some("gpt-6.1-sol".into())
+        },
+        "the journal learns the new thread"
+    );
+    let methods: Vec<_> = h.received().into_iter().map(|(m, _)| m).collect();
+    assert_eq!(
+        methods,
+        ["initialize", "initialized", "thread/fork", "turn/start"],
+        "no catalog, no thread/start, no thread/resume"
+    );
+    assert_eq!(
+        received_of(&h, "turn/start")[0]["params"]["threadId"],
+        FORKED
+    );
+    adapter.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_fork_at_the_end_names_no_turn() {
+    let h = Harness::new();
+    let session = timeout(
+        WAIT,
+        CodexAppServerAdapter::start(&h.config(&fixture("fork-turn")), &fork_spec(&h, None)),
+    )
+    .await
+    .expect("start timed out")
+    .expect("start failed");
+    let params = &received_of(&h, "thread/fork")[0]["params"];
+    assert_eq!(params["threadId"], FORK_PARENT);
+    assert!(params.get("lastTurnId").is_none(), "{params}");
+    session.adapter.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_fork_at_a_turn_the_journal_has_no_provider_id_for_is_refused_before_anything_is_sent() {
+    let h = Harness::new();
+    let point = hutan_agents::ForkPoint {
+        provider_turn_id: None,
+        message: None,
+    };
+    let error = timeout(
+        WAIT,
+        CodexAppServerAdapter::start(
+            &h.config(&fixture("fork-turn")),
+            &fork_spec(&h, Some(point)),
+        ),
+    )
+    .await
+    .expect("start timed out")
+    .map(|_| ())
+    .unwrap_err();
+    assert!(matches!(error, AgentError::Unsupported(_)), "{error}");
+    assert!(received_of(&h, "thread/fork").is_empty());
 }

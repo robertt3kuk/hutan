@@ -350,22 +350,33 @@ impl Mapper {
 
     // Streaming runs ----------------------------------------------------------------------------
 
+    /// The agent's own id of an assistant message rides in `provider.item_id` of its events:
+    /// Claude Code's adapter names the message a fork cuts at by it (ADR 0023).
     fn close_open(&mut self) -> Vec<AgentEventDraft> {
         let Some(open) = self.open.take() else {
             return Vec::new();
         };
-        let kind = match open.kind {
-            OpenKind::Message => AgentEventKind::MessageEnd {
-                role: MessageRole::Assistant,
-                phase: None,
-                text: open.text,
-            },
-            OpenKind::Reasoning => AgentEventKind::ReasoningEnd {
-                summary: vec![open.text],
-                content: Vec::new(),
-            },
+        let message_id = open.message_id;
+        let (kind, message_id) = match open.kind {
+            OpenKind::Message => (
+                AgentEventKind::MessageEnd {
+                    role: MessageRole::Assistant,
+                    phase: None,
+                    text: open.text,
+                },
+                message_id,
+            ),
+            OpenKind::Reasoning => (
+                AgentEventKind::ReasoningEnd {
+                    summary: vec![open.text],
+                    content: Vec::new(),
+                },
+                None,
+            ),
         };
-        vec![self.draft(Some(open.item), kind)]
+        let mut draft = self.draft(Some(open.item), kind);
+        draft.provider.item_id = message_id;
+        vec![draft]
     }
 
     fn chunk(
@@ -392,7 +403,11 @@ impl Mapper {
                 },
                 OpenKind::Reasoning => AgentEventKind::ReasoningStart,
             };
-            drafts.push(self.draft(Some(item), start));
+            let mut start_draft = self.draft(Some(item), start);
+            if kind == OpenKind::Message {
+                start_draft.provider.item_id.clone_from(&message_id);
+            }
+            drafts.push(start_draft);
             self.open = Some(Open {
                 kind,
                 item,

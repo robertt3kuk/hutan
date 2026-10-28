@@ -80,6 +80,19 @@ pub struct LoadSessionParams<'a> {
     pub meta: Option<&'a Value>,
 }
 
+/// `session/fork`: a new session with the history of `session_id` (the agent finds it in its
+/// own storage, so the parent need not be loaded). The answer is a [`SessionResult`] with the
+/// new `sessionId`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkSessionParams<'a> {
+    pub session_id: &'a str,
+    pub cwd: &'a str,
+    pub mcp_servers: &'a [Value],
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<&'a Value>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetConfigOptionParams<'a> {
@@ -113,6 +126,8 @@ pub struct InitializeResult {
 pub struct AgentInfo {
     #[serde(default)]
     pub name: String,
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -160,6 +175,9 @@ pub struct SessionCapabilities {
     pub resume: Option<Value>,
     #[serde(default)]
     pub close: Option<Value>,
+    /// `session/fork` (an ACP unstable method both OMP and the Claude Code adapter offer).
+    #[serde(default)]
+    pub fork: Option<Value>,
 }
 
 /// The session a `session/new`, `session/load` or `session/resume` opened.

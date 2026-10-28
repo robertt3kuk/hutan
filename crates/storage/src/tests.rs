@@ -1180,6 +1180,243 @@ fn chat_turns_are_updated_in_place() {
     storage.close();
 }
 
+/// A second chat session in the same workspace as `parent`.
+fn sibling_chat(storage: &Storage, parent: SessionId) -> SessionId {
+    let workspace = storage
+        .sessions()
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.id == parent)
+        .unwrap()
+        .workspace_id;
+    let mut row = session(workspace, "codex");
+    row.kind = SessionKind::Harness;
+    let id = row.id;
+    storage.sessions().upsert(row).unwrap();
+    id
+}
+
+/// An event of `session` as the daemon journals it: real JSON with the session id inside.
+fn journaled(session: SessionId, seq: u64, turn: Option<&str>, kind: &str) -> ChatItemRow {
+    ChatItemRow {
+        session_id: session,
+        seq,
+        ts_ms: 20_000 + seq,
+        turn_id: turn.map(str::to_owned),
+        item_id: None,
+        kind: kind.to_owned(),
+        event_json: serde_json::json!({
+            "session_id": session.to_string(),
+            "seq": seq,
+            "ts_ms": 20_000 + seq,
+            "type": kind,
+            "text": format!("{kind} {seq} — “quoted”, ünïcode"),
+        })
+        .to_string(),
+    }
+}
+
+fn turn_row(session: SessionId, id: &str, started: u64) -> ChatTurnRow {
+    ChatTurnRow {
+        session_id: session,
+        turn_id: id.to_owned(),
+        provider_turn_id: Some(format!("provider-{id}")),
+        status: ChatTurnStatus::Completed,
+        started_at_ms: started,
+        ended_at_ms: Some(started + 50),
+        error: None,
+    }
+}
+
+#[test]
+fn a_fork_copies_the_journal_through_the_cut_and_the_two_stay_independent() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let parent = chat_session(&storage);
+    let child = sibling_chat(&storage, parent);
+    // seq has gaps where deltas were; a resume locator and a notice sit between turns.
+    for (seq, turn, kind) in [
+        (1, None, "resume_locator"),
+        (2, Some("t1"), "turn_started"),
+        (4, Some("t1"), "message_end"),
+        (7, Some("t1"), "turn_completed"),
+        (8, None, "notice"),
+        (9, Some("t2"), "turn_started"),
+        (12, Some("t2"), "message_end"),
+        (13, Some("t2"), "turn_completed"),
+        (14, Some("t3"), "turn_started"),
+    ] {
+        storage
+            .chat()
+            .append(journaled(parent, seq, turn, kind))
+            .unwrap();
+    }
+    for (id, started) in [("t1", 100), ("t2", 200), ("t3", 300)] {
+        storage
+            .chat()
+            .upsert_turn(turn_row(parent, id, started))
+            .unwrap();
+    }
+    assert_eq!(
+        storage.chat().turn_last_seq(parent, "t2").unwrap(),
+        Some(13)
+    );
+    assert_eq!(storage.chat().turn_last_seq(parent, "nope").unwrap(), None);
+
+    let notice = journaled(child, 14, None, "notice");
+    let copied = storage
+        .chat()
+        .fork_journal(parent, child, 13, "t2", vec![notice])
+        .unwrap();
+    assert_eq!((copied.events, copied.turns), (7, 2));
+
+    let seqs = |session| -> Vec<u64> {
+        storage
+            .chat()
+            .items(session, None, 100)
+            .unwrap()
+            .iter()
+            .map(|row| row.seq)
+            .collect()
+    };
+    // The cut keeps `seq`, drops the parent's resume locator and what came after turn 2,
+    // and the notice follows the copy.
+    assert_eq!(seqs(child), [2, 4, 7, 8, 9, 12, 13, 14]);
+    assert_eq!(
+        seqs(parent),
+        [1, 2, 4, 7, 8, 9, 12, 13, 14],
+        "the parent is untouched"
+    );
+    for row in storage.chat().items(child, None, 100).unwrap() {
+        let event: serde_json::Value = serde_json::from_str(&row.event_json).unwrap();
+        assert_eq!(event["session_id"], child.to_string(), "seq {}", row.seq);
+        assert_eq!(event["seq"], row.seq);
+        assert_eq!(event["type"], row.kind.as_str());
+        if row.seq == 12 {
+            assert_eq!(event["text"], "message_end 12 — “quoted”, ünïcode");
+            assert_eq!(row.turn_id.as_deref(), Some("t2"));
+        }
+    }
+    let parent_event: serde_json::Value =
+        serde_json::from_str(&storage.chat().items(parent, Some(5), 1).unwrap()[0].event_json)
+            .unwrap();
+    assert_eq!(parent_event["session_id"], parent.to_string());
+    let turns: Vec<_> = storage
+        .chat()
+        .turns(child)
+        .unwrap()
+        .into_iter()
+        .map(|t| (t.turn_id, t.provider_turn_id))
+        .collect();
+    assert_eq!(
+        turns,
+        [
+            ("t1".to_owned(), Some("provider-t1".to_owned())),
+            ("t2".to_owned(), Some("provider-t2".to_owned()))
+        ]
+    );
+    assert_eq!(storage.chat().turns(parent).unwrap().len(), 3);
+
+    // Independence: either can go without the other noticing.
+    storage.sessions().delete(parent).unwrap();
+    storage.flush().unwrap();
+    assert!(storage.chat().items(parent, None, 100).unwrap().is_empty());
+    assert_eq!(seqs(child), [2, 4, 7, 8, 9, 12, 13, 14]);
+    assert_eq!(storage.chat().turns(child).unwrap().len(), 2);
+    storage.close();
+}
+
+#[test]
+fn a_fork_copy_that_fails_leaves_the_child_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let parent = chat_session(&storage);
+    let child = sibling_chat(&storage, parent);
+    for (seq, turn, kind) in [(1, "t1", "turn_started"), (2, "t1", "turn_completed")] {
+        storage
+            .chat()
+            .append(journaled(parent, seq, Some(turn), kind))
+            .unwrap();
+    }
+    storage
+        .chat()
+        .upsert_turn(turn_row(parent, "t1", 100))
+        .unwrap();
+    // The child already has the turn's row: the second statement of the copy fails after the
+    // events were inserted, and the savepoint takes them back.
+    storage
+        .chat()
+        .upsert_turn(turn_row(child, "t1", 100))
+        .unwrap();
+    let error = storage
+        .chat()
+        .fork_journal(
+            parent,
+            child,
+            2,
+            "t1",
+            vec![journaled(child, 3, None, "notice")],
+        )
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("forking a chat journal"),
+        "{error}"
+    );
+    assert!(storage.chat().items(child, None, 10).unwrap().is_empty());
+    assert_eq!(storage.chat().last_seq(child).unwrap(), 0);
+    // A child that does not exist fails too, and nothing of the parent changes.
+    let missing = SessionId::new();
+    assert!(
+        storage
+            .chat()
+            .fork_journal(parent, missing, 2, "t1", Vec::new())
+            .is_err()
+    );
+    assert_eq!(storage.chat().items(parent, None, 10).unwrap().len(), 2);
+    storage.close();
+}
+
+/// How long one transaction takes to copy a long journal (`docs/agents.md` § Fork): run with
+/// `cargo test -p hutan-storage -- --ignored --nocapture fork_copy_is_measured`.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn fork_copy_is_measured() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let parent = chat_session(&storage);
+    let child = sibling_chat(&storage, parent);
+    // About 2 KB per event, 100 events per turn.
+    let padding = "x".repeat(1500);
+    let events = 50_000u64;
+    for seq in 1..=events {
+        let mut row = journaled(parent, seq, Some("t1"), "message_end");
+        row.event_json = serde_json::json!({
+            "session_id": parent.to_string(), "seq": seq, "type": "message_end", "text": padding,
+        })
+        .to_string();
+        storage.chat().append(row).unwrap();
+    }
+    storage
+        .chat()
+        .upsert_turn(turn_row(parent, "t1", 100))
+        .unwrap();
+    storage.flush().unwrap();
+    let started = std::time::Instant::now();
+    let copied = storage
+        .chat()
+        .fork_journal(parent, child, events, "t1", Vec::new())
+        .unwrap();
+    println!(
+        "forked {} events (~{} MB) in {:?}",
+        copied.events,
+        copied.events * 2 / 1000,
+        started.elapsed()
+    );
+    assert_eq!(copied.events, events);
+    storage.close();
+}
+
 #[test]
 fn a_chat_queue_is_replaced_whole_kept_in_order_and_removed_with_its_session() {
     use crate::QueuedRow;

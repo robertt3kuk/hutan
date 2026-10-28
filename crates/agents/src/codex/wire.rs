@@ -67,6 +67,27 @@ pub struct ThreadResumeParams<'a> {
     pub developer_instructions: Option<&'a str>,
 }
 
+/// `thread/fork` (0.162.1 `ThreadForkParams`): a new thread with the history of `thread_id`
+/// through `last_turn_id` (inclusive; omitted: all of it). The server answers like
+/// `thread/start`: [`ThreadResult`].
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkParams<'a> {
+    pub thread_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_turn_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<&'a str>,
+    pub cwd: &'a str,
+    pub approval_policy: &'a str,
+    pub sandbox: &'a str,
+    pub approvals_reviewer: &'static str,
+    /// Hutan's journal is the history; the provider's copy is not sent back.
+    pub exclude_turns: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<&'a str>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStartParams<'a> {

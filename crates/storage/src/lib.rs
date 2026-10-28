@@ -42,9 +42,9 @@ pub use memory::{
 pub use migrate::{BACKUPS_KEPT, MIGRATIONS, Migration};
 pub use rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
-    CreatedBy, EpochEnd, EpochRecord, GrantRow, LspTrustRow, ProviderRow, QuestionOutcome,
-    QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
-    WorktreeSetupTrustRow,
+    CreatedBy, EpochEnd, EpochRecord, ForkedJournal, GrantRow, LspTrustRow, ProviderRow,
+    QuestionOutcome, QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind,
+    WorkspaceRow, WorktreeRow, WorktreeSetupTrustRow,
 };
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
 pub use usage::{USAGE_KEPT_DAYS, Usage, UsageLimitRow, UsageSum, UsageTurnRow};
@@ -523,6 +523,32 @@ impl Chat<'_> {
     /// The highest journaled `seq`; 0 when nothing was journaled.
     pub fn last_seq(&self, session: SessionId) -> Result<u64> {
         self.0.read(move |conn| sql::chat_last_seq(conn, session))
+    }
+
+    /// The highest `seq` journaled for one turn; `None` when the turn has no event.
+    pub fn turn_last_seq(&self, session: SessionId, turn: &str) -> Result<Option<u64>> {
+        let turn = turn.to_owned();
+        self.0
+            .read(move |conn| sql::chat_turn_last_seq(conn, session, &turn))
+    }
+
+    /// Copies the journal of `parent` through `through_seq` into `child` (ADR 0023) and appends
+    /// `extra` to it, in one transaction on the writer thread: the child's rows are all there
+    /// or none. Events keep their `seq` and have their `session_id` rewritten; resume locators
+    /// are not copied; the `chat_turns` rows through `through_turn` are. The copy is
+    /// independent: deleting either session never touches the other. Both rows must exist.
+    pub fn fork_journal(
+        &self,
+        parent: SessionId,
+        child: SessionId,
+        through_seq: u64,
+        through_turn: &str,
+        extra: Vec<ChatItemRow>,
+    ) -> Result<ForkedJournal> {
+        let through_turn = through_turn.to_owned();
+        self.0.read(move |conn| {
+            sql::fork_chat_journal(conn, parent, child, through_seq, &through_turn, &extra)
+        })
     }
 
     pub fn upsert_turn(&self, row: ChatTurnRow) -> Result<()> {

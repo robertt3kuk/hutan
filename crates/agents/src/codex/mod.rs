@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
-use hutan_core::{ApprovalId, ModelInfo, QuestionId, QuestionResponse, TurnId};
+use hutan_core::{ApprovalId, ForkSupport, ModelInfo, QuestionId, QuestionResponse, TurnId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -324,8 +324,44 @@ impl CodexAppServerAdapter {
         let cwd = spec.cwd.to_string_lossy();
         let policy = spec.approval_policy.as_str();
         let sandbox = spec.sandbox.as_str();
-        let (thread_id, model, resumed, reported) = match &spec.resume_thread_id {
-            Some(thread) => {
+        let (thread_id, model, resumed, reported) = match (&spec.fork, &spec.resume_thread_id) {
+            (Some(from), _) => {
+                // A fork is the agent's own copy of the parent's thread, cut at the end of a
+                // turn it names (`lastTurnId`, inclusive; it cannot be running).
+                let last_turn_id = match &from.point {
+                    None => None,
+                    Some(point) => Some(point.provider_turn_id.as_deref().ok_or_else(|| {
+                        AgentError::Unsupported(
+                            "Codex cuts a fork at a turn by the turn's own id, which this turn \
+                             has no record of"
+                                .to_owned(),
+                        )
+                    })?),
+                };
+                let result: wire::ThreadResult = call(
+                    transport,
+                    "thread/fork",
+                    &wire::ThreadForkParams {
+                        thread_id: &from.thread_id,
+                        last_turn_id,
+                        model: spec.model.as_deref(),
+                        cwd: &cwd,
+                        approval_policy: policy,
+                        sandbox,
+                        approvals_reviewer: "user",
+                        exclude_turns: true,
+                        developer_instructions: spec.developer_instructions.as_deref(),
+                    },
+                )
+                .await?;
+                let reported = result.reported_safety();
+                let model = result
+                    .model
+                    .or_else(|| spec.model.clone())
+                    .unwrap_or_default();
+                (result.thread.id, model, false, reported)
+            }
+            (None, Some(thread)) => {
                 let result: wire::ThreadResult = call(
                     transport,
                     "thread/resume",
@@ -349,7 +385,7 @@ impl CodexAppServerAdapter {
                 // The server answers for the thread it resumed; it is the one we asked for.
                 (thread.clone(), model, true, reported)
             }
-            None => {
+            (None, None) => {
                 let catalog = model_catalog(transport).await?;
                 let model = choose_model(&catalog, spec.model.as_deref())?;
                 let result: wire::ThreadResult = call(
@@ -381,6 +417,8 @@ impl CodexAppServerAdapter {
                 // Codex says its approval policy and sandbox instead (`ChatInfo`).
                 mode: None,
                 reported,
+                // The app server cuts at any turn (`thread/fork` `lastTurnId`).
+                fork: Some(ForkSupport::Exact),
             },
             mapper,
         ))

@@ -141,6 +141,15 @@ pub struct ChatTurnRow {
     pub error: Option<String>,
 }
 
+/// What copying a chat's journal prefix into a fork wrote (`Chat::fork_journal`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForkedJournal {
+    /// Events copied (not the rows added after them).
+    pub events: u64,
+    /// `chat_turns` rows copied.
+    pub turns: u64,
+}
+
 /// One message of a chat session's queue (`chat_queue`), in its place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueuedRow {
