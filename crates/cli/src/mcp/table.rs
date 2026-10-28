@@ -465,6 +465,30 @@ static TOOLS: &[Tool] = &[
             )
         },
     },
+    // ---- insight ----------------------------------------------------------------------------
+    Tool {
+        name: "agent_insight",
+        description: "What an agent chat session's context holds and what its turns spent: the \
+                      context now (tokens used, the model's window, and the breakdown by \
+                      category when the user measured it), tokens per turn (input, output, cache \
+                      read and write, reasoning), the cost where the harness reports one (an \
+                      estimate: Codex reports none), tools used with counts and failures, the \
+                      files the agent changed, durations, which source each block came from, and \
+                      `unsupported`: what this harness never reports. A number nobody reported \
+                      is absent, never zero. No message text, tool output or diff. Read-only: it \
+                      never sends anything to the agent.",
+        read_only: true,
+        call: request("agent.insight"),
+        schema: || {
+            object(
+                json!({
+                    "session_id": session_id(),
+                    "node_id": text("The agent of the session (default: its main agent; chats report usage for that one only)."),
+                }),
+                &["session_id"],
+            )
+        },
+    },
     // ---- tasks ------------------------------------------------------------------------------
     Tool {
         name: "task_add",
@@ -1490,6 +1514,7 @@ mod tests {
             "chat_log",
             "approval_list",
             "usage_summary",
+            "agent_insight",
             "task_add",
             "task_list",
             "task_start",

@@ -844,6 +844,21 @@ pub enum ChatCommand {
     /// The extra folders of a session: list, add, remove (you only: an agent cannot)
     #[command(subcommand)]
     Dirs(ChatDirsCommand),
+    /// What the chat's context holds and what its turns spent: context used and window, tokens
+    /// and cost per turn, tools, files, time, and what the agent never reports. `--measure`
+    /// first has OMP or Claude Code print its context by category (/context: a turn in the
+    /// conversation that costs no tokens)
+    Insight(ChatInsightArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ChatInsightArgs {
+    #[arg(help = TARGET_HELP)]
+    pub target: String,
+    /// Ask the agent for its context by category first (OMP and Claude Code; it appears in the
+    /// conversation as the message /context and its answer)
+    #[arg(long)]
+    pub measure: bool,
 }
 
 #[derive(Debug, Subcommand)]

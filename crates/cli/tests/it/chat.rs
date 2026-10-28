@@ -847,3 +847,69 @@ async fn a_terminal_session_takes_dir_and_chat_dirs_too() {
     let text = t.hutan(&["chat", "dirs", "list", &id]).await.ok();
     assert!(text.stdout.contains("has no extra folders"), "{text:?}");
 }
+
+// Agent insight (protocol 0.59, capability `agent.insight`) --------------------------------------
+
+// Codex 0.162.1 reports a cumulative total and the latest request, a context window, and no cost:
+// the command says what it knows and what Codex never reports.
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_insight_prints_the_context_the_tokens_and_what_the_agent_never_reports() {
+    let c = Chat::with_script(&["plain-turn"]).await;
+    let id = c.new_chat(&[]).await;
+
+    // Nothing has happened yet: no number is invented.
+    let empty = c.t.hutan(&["chat", "insight", &id]).await.ok().stdout;
+    assert!(empty.contains("Context    not reported yet"), "{empty}");
+    assert!(
+        empty.contains("Nothing has reported on this chat yet."),
+        "{empty}"
+    );
+
+    c.t.hutan(&["chat", "send", &id, "ping", "--wait"])
+        .await
+        .ok();
+    let text = c.t.hutan(&["chat", "insight", &id]).await.ok().stdout;
+    assert!(text.starts_with("Codex"), "{text}");
+    assert!(
+        text.contains("Context    22.2k tokens of 475k (5%)"),
+        "{text}"
+    );
+    assert!(text.contains("Tokens     1 turn: "), "{text}");
+    assert!(
+        text.contains("Cost       not reported by this agent"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Not reported by Codex: the context by category, a cost"),
+        "{text}"
+    );
+
+    let json =
+        c.t.hutan(&["--json", "chat", "insight", &id])
+            .await
+            .ok()
+            .json();
+    assert_eq!(json["session_id"], id.as_str());
+    assert_eq!(json["harness"], "codex");
+    assert_eq!(json["context"]["used"], 22_178);
+    assert_eq!(json["context"]["window"], 475_000);
+    assert_eq!(json["totals"]["turns"], 1);
+    assert_eq!(
+        json["unsupported"],
+        serde_json::json!(["breakdown", "cost"])
+    );
+    assert!(json["totals"].get("cost_usd").is_none(), "{json}");
+    assert_eq!(json["turns"][0]["outcome"], "completed");
+
+    // Codex has no command that prints its context by category: refused, nothing sent.
+    let measure = c.t.hutan(&["chat", "insight", &id, "--measure"]).await;
+    assert_eq!(measure.code, 1, "{measure:?}");
+    assert!(measure.stderr.contains("unsupported"), "{measure:?}");
+
+    // A terminal session has no insight; an unknown one says so.
+    let terminal = c.t.new_session(&[], &["sh", "-c", "sleep 30"]).await;
+    let refused = c.t.hutan(&["chat", "insight", &terminal]).await;
+    assert_ne!(refused.code, 0);
+    assert!(refused.stderr.contains("terminal session"), "{refused:?}");
+    c.t.stop().await;
+}

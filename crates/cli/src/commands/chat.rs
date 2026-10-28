@@ -82,11 +82,16 @@ impl Ctx {
             ChatCommand::Models(args) => self.chat_models(&args.agent).await,
             ChatCommand::Model(args) => self.chat_model(args).await,
             ChatCommand::Dirs(command) => self.chat_dirs(command).await,
+            ChatCommand::Insight(args) => self.chat_insight(args).await,
         }
     }
 
     /// The session a chat command targets, which must be a chat session.
-    async fn resolve_chat(&self, client: &Client, target: &str) -> Result<SessionInfo, CliError> {
+    pub(super) async fn resolve_chat(
+        &self,
+        client: &Client,
+        target: &str,
+    ) -> Result<SessionInfo, CliError> {
         let session = self.resolve(client, target).await?;
         if session.kind != SessionKind::Harness {
             return Err(CliError::Failed(format!(

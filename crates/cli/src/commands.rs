@@ -39,6 +39,7 @@ mod help;
 mod history;
 mod hooks;
 mod host;
+mod insight;
 mod integration;
 mod lsp;
 mod memory;

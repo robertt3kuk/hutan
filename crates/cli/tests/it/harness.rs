@@ -774,3 +774,65 @@ async fn task_add_takes_a_safety_preset_for_a_chat_and_the_daemon_refuses_what_t
         2
     );
 }
+
+// Agent insight (protocol 0.59): the recorded OMP 18.12.3 exchange, then `/context`.
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_insight_prints_an_omp_chats_numbers_and_measures_its_context_on_request() {
+    let e = Env::start("insight-omp").await;
+    let created =
+        e.t.hutan(&["chat", "new", "--agent", "omp", "--cwd", &e.cwd()])
+            .await
+            .ok();
+    let id = created.stdout.split_whitespace().nth(1).unwrap().to_owned();
+    for text in [
+        "Read hello.txt and tell me what it says.",
+        "Say it again briefly.",
+    ] {
+        e.t.hutan(&["chat", "send", &id, text, "--wait"]).await.ok();
+    }
+
+    let json =
+        e.t.hutan(&["--json", "chat", "insight", &id])
+            .await
+            .ok()
+            .json();
+    assert_eq!(json["harness"], "omp");
+    assert_eq!(json["context"]["used"], 11_200);
+    assert_eq!(json["context"]["window"], 200_000);
+    assert_eq!(json["totals"]["turns"], 2);
+    assert_eq!(json["totals"]["input"], 9_400);
+    assert_eq!(json["totals"]["cache_read"], 24_000);
+    assert_eq!(json["totals"]["cost_kind"], "estimate");
+    assert_eq!(json["can_measure"], true);
+    assert!(
+        json["context"].get("breakdown").is_none(),
+        "not measured yet: {json}"
+    );
+
+    let text = e.t.hutan(&["chat", "insight", &id]).await.ok().stdout;
+    assert!(
+        text.contains("Context    11.2k tokens of 200k (6%)"),
+        "{text}"
+    );
+    assert!(text.contains("by category: not measured"), "{text}");
+    assert!(
+        text.contains("Cost       ≈ $0.0364 (the agent's own estimate)"),
+        "{text}"
+    );
+    assert!(text.contains("Tools      1 call: read ×1"), "{text}");
+
+    let measured =
+        e.t.hutan(&["chat", "insight", &id, "--measure"])
+            .await
+            .ok()
+            .stdout;
+    assert!(measured.contains("by category:"), "{measured}");
+    assert!(measured.contains("System prompt"), "{measured}");
+    assert!(measured.contains("2.6k"), "{measured}");
+    assert!(measured.contains("(reserved for compaction)"), "{measured}");
+    assert!(
+        measured.contains("Tokens     2 turns"),
+        "/context is not a turn: {measured}"
+    );
+    e.t.stop().await;
+}

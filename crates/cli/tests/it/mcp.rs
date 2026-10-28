@@ -761,3 +761,60 @@ async fn an_agent_reads_a_chats_safety_state_but_the_chat_create_tool_cannot_set
     );
     t.stop().await;
 }
+
+/// Agent insight (protocol 0.59): `agent_insight` reads what a chat's context holds and its turns
+/// spent, without sending anything to the agent; it is read-only, and nothing in the table can
+/// ask the agent for `/context` (that is the user's button).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_reads_a_chats_insight_and_no_tool_measures_its_context() {
+    let work = tempfile::tempdir().unwrap();
+    let transcript = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../agents/tests/fixtures/acp-omp-18.11/insight-omp.jsonl");
+    let toml = format!(
+        "[terminal]\nenv_inherit = \"daemon\"\n\n[harness.omp]\nbin = {bin:?}\nargs = [\"replay\", {transcript:?}, \"acp\"]\n",
+        bin = common::acp_fixture_bin(),
+    );
+    let t = TestDaemon::start_toml(&toml, |_| {}).await;
+    let cwd = work.path().display().to_string();
+    let created = t
+        .hutan(&["chat", "new", "--agent", "omp", "--cwd", &cwd, "--json"])
+        .await
+        .ok()
+        .json();
+    let id = created["session"]["id"].as_str().unwrap().to_owned();
+    for text in [
+        "Read hello.txt and tell me what it says.",
+        "Say it again briefly.",
+    ] {
+        t.hutan(&["chat", "send", &id, text, "--wait"]).await.ok();
+    }
+
+    // Inside the chat's own session: an agent asking about itself, under the default policy.
+    let mut mcp = Mcp::start(&t.paths.socket, Some(&id)).await;
+    mcp.initialize().await;
+    let call = mcp
+        .tool_request("agent_insight", json!({"session_id": id}))
+        .await;
+    let answer = mcp.answer(call).await;
+    assert!(!is_error(&answer), "{answer}");
+    let insight = &answer["result"]["structuredContent"]["insight"];
+    assert_eq!(insight["harness"], "omp");
+    assert_eq!(insight["context"]["used"], 11_200);
+    assert_eq!(insight["totals"]["turns"], 2);
+    assert_eq!(insight["totals"]["input"], 9_400);
+    assert_eq!(insight["unsupported"], json!(["reasoning"]));
+
+    let tools = mcp.call("tools/list", json!({})).await;
+    let names: Vec<_> = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(names.iter().any(|n| n == "agent_insight"));
+    assert!(
+        !names.iter().any(|n| n.contains("measure")),
+        "measuring is the user's button: {names:?}"
+    );
+    t.stop().await;
+}
