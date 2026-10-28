@@ -287,6 +287,7 @@ pub struct OverlayEdits {
     pub modal: FieldEdit,
     pub sheet_query: FieldEdit,
     pub sheet_value: FieldEdit,
+    pub fork_branch: FieldEdit,
 }
 
 /// A text field of one of the workbench's overlays.
@@ -304,6 +305,8 @@ pub(crate) enum OverlayField {
     SheetQuery,
     /// The value being edited in the settings sheet.
     SheetValue,
+    /// The branch of the Fork popover's new worktree.
+    ForkBranch,
 }
 
 impl Workbench {
@@ -364,6 +367,9 @@ impl Workbench {
                 let vim = sheet.vim;
                 Some((&mut edits.sheet_value, &mut sheet.edit.as_mut()?.text, vim))
             }
+            OverlayField::ForkBranch => {
+                Some((&mut edits.fork_branch, self.fork.branch_mut()?, true))
+            }
         }
     }
 
@@ -391,6 +397,7 @@ impl Workbench {
                 let sheet = self.sheet.as_ref()?;
                 Some((&edits.sheet_value, &sheet.edit.as_ref()?.text, sheet.vim))
             }
+            OverlayField::ForkBranch => Some((&edits.fork_branch, self.fork.branch()?, true)),
         }
     }
 
@@ -408,6 +415,7 @@ impl Workbench {
             OverlayField::Agent => self.agent_focus.clone(),
             OverlayField::Modal => self.modal_focus.clone(),
             OverlayField::SheetQuery | OverlayField::SheetValue => self.sheet_focus.clone(),
+            OverlayField::ForkBranch => self.fork.focus.clone(),
         }
     }
 
@@ -441,6 +449,7 @@ impl Workbench {
                 }
             }
             OverlayField::Modal => {}
+            OverlayField::ForkBranch => self.fork.clear_problem(),
         }
     }
 
@@ -537,6 +546,8 @@ impl Workbench {
             self.edits.picker.escape(&picker.query)
         } else if let Some(picker) = &self.agent_picker {
             self.edits.agent.escape(&picker.model_query)
+        } else if let Some(branch) = self.fork.branch() {
+            self.edits.fork_branch.escape(branch)
         } else {
             false
         };

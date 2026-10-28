@@ -343,6 +343,8 @@ pub enum Region {
     LauncherItem(&'static str, usize),
     /// The hover × of a session's row in the sidebar or card in the Agent Dashboard.
     SessionClose(hutan_core::SessionId),
+    /// The hover ⑂ of a chat's row in the sidebar: fork at the latest turn (CHAT-FORK-B).
+    SessionFork(hutan_core::SessionId),
     /// A session's row in the Projects sidebar (where its title can be edited in place).
     SessionRow(hutan_core::SessionId),
     /// The muted marker of a session's row (its notifications are muted, `notify.mute`).
@@ -517,6 +519,16 @@ pub enum Region {
     ChatRewind(usize),
     /// The checkpoint line (`3 files changed · +41 −7`) of the footer of chat entry `index`.
     ChatCheckpoint(usize),
+    /// The *Fork…* of the footer of chat entry `index` (CHAT-FORK-B).
+    ChatFork(usize),
+    /// A control of the hover bar of the user message of chat entry `index`: `bar`, `copy`,
+    /// `fork`, `rewind`.
+    ChatMessageAction(usize, &'static str),
+    /// A control of the Fork popover (`popover`, `where-folder`, `where-worktree`, `branch`,
+    /// `restore`, `archive`, `fork`, `cancel`, `problem`, `note`, `skipped`, `cut`, `files`).
+    Fork(&'static str),
+    /// Cut choice `index` of the Fork popover (a fallback the user picks, top to bottom).
+    ForkCut(usize),
     /// A control of the Rewind preview sheet (`sheet`, `cancel`, `restore`, `restore-all`,
     /// `interrupt`, `note`, `diff`, `notice`, `busy`).
     Rewind(&'static str),
@@ -832,6 +844,8 @@ pub struct Workbench {
     pub(crate) daemon_focus: FocusHandle,
     /// The session folders popover (`folders.rs`).
     pub(crate) folders: super::folders::FoldersControl,
+    /// The fork popover (`fork.rs`).
+    pub(crate) fork: super::fork::ForkControl,
     pub(crate) daemon: DaemonControl,
     /// The branch of the active project, for the `workspace` status item.
     pub(crate) status_branch: super::status_branch::StatusBranch,
@@ -1503,6 +1517,7 @@ impl Workbench {
             sheet_focus,
             daemon_focus,
             folders: super::folders::FoldersControl::new(cx.focus_handle()),
+            fork: super::fork::ForkControl::new(cx.focus_handle()),
             daemon: DaemonControl::new(options.own_daemon),
             status_branch: super::status_branch::StatusBranch::default(),
             mac,

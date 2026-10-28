@@ -8,7 +8,7 @@
 
 use crate::workbench::ui::Button;
 use gpui::{
-    AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px,
+    AnyElement, App, Context, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px,
 };
 use hutan_core::TurnId;
 use hutan_core::{CheckpointAvailability, CheckpointInfo, CheckpointState};
@@ -27,6 +27,15 @@ pub fn changed_text(checkpoint: &CheckpointInfo) -> String {
         "{files} {noun} changed · +{} −{}",
         checkpoint.added, checkpoint.removed
     )
+}
+
+/// What a turn's checkpoint says right now.
+enum Peek {
+    /// The daemon has not been asked, or has not answered.
+    Waiting,
+    /// Nothing for this turn: off, unsupported, no files changed, no checkpoint.
+    Nothing,
+    Found(CheckpointInfo, FooterAction),
 }
 
 /// What a turn's footer offers for its checkpoint.
@@ -48,7 +57,36 @@ impl ChatView {
         turn: Option<TurnId>,
         cx: &mut Context<Self>,
     ) -> Option<(CheckpointInfo, FooterAction)> {
-        let turn = turn?;
+        match self.peek_checkpoint(turn, cx) {
+            Peek::Found(checkpoint, action) => Some((checkpoint, action)),
+            Peek::Nothing => None,
+            Peek::Waiting => {
+                // Not asked for yet (or on its way): the store tells this view when it lands.
+                let store = self.sessions.read(cx).checkpoints().clone();
+                let session = self.session;
+                store.update(cx, |store, cx| store.ensure(session, cx));
+                None
+            }
+        }
+    }
+
+    /// [`turn_checkpoint`](Self::turn_checkpoint) for what is already loaded: it never asks the
+    /// daemon (the hover bar of a message draws from here).
+    pub(super) fn turn_checkpoint_loaded(
+        &self,
+        turn: Option<TurnId>,
+        cx: &App,
+    ) -> Option<(CheckpointInfo, FooterAction)> {
+        match self.peek_checkpoint(turn, cx) {
+            Peek::Found(checkpoint, action) => Some((checkpoint, action)),
+            Peek::Nothing | Peek::Waiting => None,
+        }
+    }
+
+    fn peek_checkpoint(&self, turn: Option<TurnId>, cx: &App) -> Peek {
+        let Some(turn) = turn else {
+            return Peek::Nothing;
+        };
         let sessions = self.sessions.read(cx);
         // Off and unsupported chats show nothing per turn.
         let availability = sessions
@@ -60,28 +98,21 @@ impl ChatView {
             availability,
             Some(CheckpointAvailability::Off | CheckpointAvailability::Unsupported)
         ) {
-            return None;
+            return Peek::Nothing;
         }
-        let store = sessions.checkpoints().clone();
+        let store = sessions.checkpoints().read(cx);
         let session = self.session;
-        let (supported, waiting) = {
-            let store = store.read(cx);
-            (
-                store.supported(),
-                !store.loaded(session) && store.error(session).is_none(),
-            )
+        if !store.supported() {
+            return Peek::Nothing;
+        }
+        if !store.loaded(session) && store.error(session).is_none() {
+            return Peek::Waiting;
+        }
+        let Some(checkpoint) = store.of_turn(session, turn).cloned() else {
+            return Peek::Nothing;
         };
-        if !supported {
-            return None;
-        }
-        if waiting {
-            store.update(cx, |store, cx| store.ensure(session, cx));
-            return None;
-        }
-        let store = store.read(cx);
-        let checkpoint = store.of_turn(session, turn)?.clone();
         if checkpoint.files_changed == 0 {
-            return None;
+            return Peek::Nothing;
         }
         let action = if !store.restore_supported() || checkpoint.state != CheckpointState::Ok {
             FooterAction::None
@@ -91,25 +122,72 @@ impl ChatView {
                 None => FooterAction::Rewind,
             }
         };
-        Some((checkpoint, action))
+        Peek::Found(checkpoint, action)
     }
 
-    /// The footer's line about the files the turn changed, with *Rewind…* or *Undo*.
+    /// The footer's line about the files the turn changed, with *Rewind…* or *Undo*, and the
+    /// turn's *Fork…* (CHAT-FORK-B) after it; a turn that changed no file has the fork alone.
     pub(super) fn checkpoint_footer(
         &self,
         index: usize,
         turn: Option<TurnId>,
+        fork: Option<AnyElement>,
         look: &Look,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let (checkpoint, action) = self.turn_checkpoint(turn, cx)?;
+        let checkpoint = self.turn_checkpoint(turn, cx);
+        if checkpoint.is_none() && fork.is_none() {
+            return None;
+        }
         let (theme, tokens) = (&look.theme, &look.tokens);
         let session = self.session;
+        let (checkpoint, control) = match checkpoint {
+            Some((checkpoint, action)) => {
+                let control = self.rewind_control(index, session, &checkpoint, action, look);
+                (Some(checkpoint), control)
+            }
+            None => (None, None),
+        };
+        let separated = checkpoint.is_some();
+        Some(
+            div()
+                .relative()
+                .mt(px(tokens.spacing * 0.5))
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(tokens.spacing * 1.5))
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .when_some(checkpoint, |s, checkpoint| {
+                    s.child(SharedString::from(changed_text(&checkpoint)))
+                        .when_some(control, |s, control| {
+                            s.child(div().child("·")).child(control)
+                        })
+                        .child(probe(&self.regions, Region::ChatCheckpoint(index)))
+                })
+                .when_some(fork, |s, fork| {
+                    s.when(separated, |s| s.child(div().child("·"))).child(fork)
+                })
+                .into_any_element(),
+        )
+    }
+
+    /// *Rewind…* or *Restored — Undo* of a turn's footer.
+    fn rewind_control(
+        &self,
+        index: usize,
+        session: hutan_core::SessionId,
+        checkpoint: &CheckpointInfo,
+        action: FooterAction,
+        look: &Look,
+    ) -> Option<AnyElement> {
+        let (theme, tokens) = (&look.theme, &look.tokens);
         let at = CheckpointAt {
             session,
             checkpoint: checkpoint.id,
         };
-        let control = match action {
+        match action {
             FooterAction::Rewind => Some(
                 Button::new(("chat-rewind", index), "Rewind…", &look.theme, &look.tokens)
                     .ghost()
@@ -150,24 +228,7 @@ impl ChatView {
                 )
             }
             FooterAction::None => None,
-        };
-        Some(
-            div()
-                .relative()
-                .mt(px(tokens.spacing * 0.5))
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(tokens.spacing * 1.5))
-                .text_size(px(tokens.secondary_font_size))
-                .text_color(theme.muted)
-                .child(SharedString::from(changed_text(&checkpoint)))
-                .when_some(control, |s, control| {
-                    s.child(div().child("·")).child(control)
-                })
-                .child(probe(&self.regions, Region::ChatCheckpoint(index)))
-                .into_any_element(),
-        )
+        }
     }
 }
 

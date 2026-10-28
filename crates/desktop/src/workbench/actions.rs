@@ -210,6 +210,9 @@ actions!(
         ShowFileHistory,
         RewindFocusedChat,
         UndoLastRestore,
+        /// Open the Fork popover for the focused chat at the turn in view (⌘K *Chat: Fork from
+        /// Here*).
+        ForkFocusedChat,
         /// Show the Problems panel (the language servers' diagnostics) with the keyboard in it.
         ShowProblems,
         /// Show the language server's trust bar of the focused file's folder again (the status
@@ -346,6 +349,15 @@ pub struct CheckpointAt {
     pub checkpoint: hutan_core::CheckpointId,
 }
 
+/// The turn of a chat the Fork popover opens for, and where it hangs (CHAT-FORK-B). `turn: None`
+/// is the chat's latest turn.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct ForkAt {
+    pub session: hutan_core::SessionId,
+    pub turn: Option<hutan_core::TurnId>,
+    pub position: gpui::Point<gpui::Pixels>,
+}
+
 /// What a "▶ Start" button opens the Start… sheet with.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct LauncherOpen {
@@ -412,6 +424,13 @@ data_actions! {
     RewindCheckpoint(CheckpointAt);
     /// Restore a restore's checkpoint: Undo of `Restored — Undo` and of the toast.
     UndoRestore(CheckpointAt);
+    /// Open the Fork popover of a chat turn (the turn footer's and the message bar's *Fork…*).
+    ForkChat(ForkAt);
+    /// The sidebar row's ⑂: fork the chat at its latest turn (the popover opens by the row
+    /// when a choice is needed).
+    ForkSessionLatest(SessionMenuAt);
+    /// *Fork Session* of a terminal agent: its own CLI's fork in a new terminal.
+    ForkTerminalSession(String);
     /// The Checkpoints list of a chat session (Agents page → ⋯ → Checkpoints…).
     ShowCheckpoints(hutan_core::SessionId);
     StopSessionById(String);
@@ -1010,6 +1029,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Chat: Toggle Send Key", ToggleSendKey),
         command("Chat: Rewind Files to Before This Turn…", RewindFocusedChat),
         command("Chat: Undo Last Restore", UndoLastRestore),
+        command("Chat: Fork from Here", ForkFocusedChat),
     ]);
     if assistant {
         out.push(command("Mawas: Open", OpenAssistant));
@@ -1283,6 +1303,8 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<sheet::Dismiss>("escape", Some("SettingsSheet")),
         bind::<palette::Dismiss>("escape", Some("DaemonPopover")),
         bind::<palette::Dismiss>("escape", Some("FoldersPopover")),
+        bind::<palette::Dismiss>("escape", Some("ForkPopover")),
+        bind::<palette::Confirm>("enter", Some("ForkPopover")),
         // The quick terminal's panel (`quick_terminal.rs`): ⎋ hides it unless the program in the
         // terminal has the alternate screen; ⌘⇧↩ (a split zoom in the terminal) moves the tab
         // into the main window. ⌘T, ⌘W and the tab keys are the main window's own.
@@ -1815,6 +1837,8 @@ mod tests {
             "escape | settings_sheet::Dismiss | SettingsSheet",
             "escape | palette::Dismiss | DaemonPopover",
             "escape | palette::Dismiss | FoldersPopover",
+            "escape | palette::Dismiss | ForkPopover",
+            "enter | palette::Confirm | ForkPopover",
             "escape | quick_terminal::HideOnEscape | QuickTerminal",
             "shift-cmd-enter | quick_terminal::MoveToMain | QuickTerminal",
             "cmd-enter | chat::SendMessage | HutanChat",

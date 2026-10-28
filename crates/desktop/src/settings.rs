@@ -1225,6 +1225,9 @@ pub struct ChatSettings {
     /// Most bytes of a terminal block's output that "Send to agent" attaches to the composer;
     /// longer output is cut (the chip says so).
     pub attach_max_bytes: u64,
+    /// Where a fork of a chat works (the Fork popover's *Where*): `this_folder` or
+    /// `new_worktree`. The popover writes it when you fork, so the next fork starts there.
+    pub fork_where: ForkWhereSetting,
 }
 
 impl Default for ChatSettings {
@@ -1233,6 +1236,28 @@ impl Default for ChatSettings {
             send_key: SendKey::CmdEnter,
             ask_send_key: true,
             attach_max_bytes: 64 * 1024,
+            fork_where: ForkWhereSetting::ThisFolder,
+        }
+    }
+}
+
+/// Where a fork of a chat works (`chat.fork_where`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkWhereSetting {
+    /// The chat's own folder.
+    #[default]
+    ThisFolder,
+    /// A new git worktree with the files of the turn.
+    NewWorktree,
+}
+
+impl ForkWhereSetting {
+    /// The value in `settings.toml`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::ThisFolder => "this_folder",
+            Self::NewWorktree => "new_worktree",
         }
     }
 }
@@ -2430,12 +2455,15 @@ mod tests {
         assert_eq!(defaults.send_key, SendKey::CmdEnter);
         assert!(defaults.ask_send_key);
         assert_eq!(defaults.attach_max_bytes, 65_536);
+        assert_eq!(defaults.fork_where, ForkWhereSetting::ThisFolder);
         let parsed: ChatSettings = toml::from_str("send_key = \"enter\"").unwrap();
         assert_eq!(parsed.send_key, SendKey::Enter);
         assert_eq!(parsed.attach_max_bytes, 65_536);
         let empty: ChatSettings = toml::from_str("").unwrap();
         assert_eq!(empty, defaults);
         assert!(toml::from_str::<ChatSettings>("send_key = \"ctrl-enter\"").is_err());
+        let worktree: ChatSettings = toml::from_str("fork_where = \"new_worktree\"").unwrap();
+        assert_eq!(worktree.fork_where, ForkWhereSetting::NewWorktree);
     }
 
     #[test]

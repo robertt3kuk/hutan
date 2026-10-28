@@ -11,3 +11,4 @@ file-rs.svg, file-js.svg, file-ts.svg, file-py.svg, file-md.svg, file-html.svg, 
 file-plus.svg, folder-plus.svg: Phosphor Regular, the same revision (the Files panel header's *New File* / *New Folder*, EX-7).
 palette.svg, database.svg, keyboard.svg, layout.svg, user.svg, cpu.svg, shield-check.svg, wrench.svg, flask.svg: Phosphor Regular, the same revision (the nav icons of the Settings sheet's pages `settings.*`, UI-RHYTHM; the other pages reuse artwork the catalog already has).
 bold/*.svg: Phosphor Bold, the same revision: the artwork of the `[small]` table of icon-theme.toml, used for icons drawn at 14 px or less (STYLE-TOKENS). Same file names as the Regular set; harness-*.svg, hutan.svg, stop-fill.svg and sidebar-right.svg have no Bold twin (own or solid artwork).
+git-fork.svg (and bold/git-fork.svg): Phosphor Regular and Bold, the same revision (`action.fork`, the fork buttons of CHAT-FORK-B).

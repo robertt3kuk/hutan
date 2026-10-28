@@ -141,7 +141,10 @@ impl ChatView {
         let mut ids = Ids::new(format!("e{}", entry.id)).probing(self.regions.clone(), index);
         let tokens = look.tokens;
         let card = match &entry.body {
-            Body::User(message) => self.user_card(index, entry, message, &look, &mut ids, cx),
+            Body::User(message) => {
+                let turn = super::fork::turn_of_entry(transcript.entries(), index);
+                self.user_card(index, entry, message, turn, &look, &mut ids, cx)
+            }
             Body::Assistant(message) => self.assistant_card(entry, message, &look, &mut ids),
             Body::Reasoning(reasoning) => {
                 self.reasoning_card(index, entry, reasoning, &look, &mut ids, cx)
@@ -178,7 +181,8 @@ impl ChatView {
                 let retry = failed
                     .and_then(|(message, at)| self.footer_retry(index, &message, at, &look, cx));
                 // The files the turn changed, with Rewind… (CK-5).
-                let files = self.checkpoint_footer(index, turn, &look, cx);
+                let fork = self.fork_button(index, turn, &look, cx);
+                let files = self.checkpoint_footer(index, turn, fork, &look, cx);
                 match (card, files) {
                     // A turn that simply completed says so on its cards and in the status line;
                     // its footer is drawn only for what nothing else says (usage, a failure,
@@ -231,6 +235,7 @@ impl ChatView {
         index: usize,
         entry: &Entry,
         message: &Message,
+        turn: Option<hutan_core::TurnId>,
         look: &Look,
         ids: &mut Ids,
         cx: &Context<Self>,
@@ -267,7 +272,12 @@ impl ChatView {
         // No bubble for the agent; the user's message sits in a neutral bubble on the right: a
         // card (`surface`, the card radius), at most 70 % of the column. The accent is not spent
         // on the user's own words.
+        let group = SharedString::from(format!("user-message-{index}"));
+        let bar = self.message_bar(index, turn, typed, group.clone(), look, cx);
         let bubble = div()
+            .id(("user-message", index))
+            .group(group)
+            .relative()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing * 1.5))
@@ -277,6 +287,7 @@ impl ChatView {
             .card(theme, tokens)
             .text_color(theme.fg)
             .child(blocks(&parsed, &look.sans(), ids))
+            .child(bar)
             .when(!meta.is_empty(), |s| s.child(chips))
             .when_some(context, |s, context| {
                 s.child(

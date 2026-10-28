@@ -3484,6 +3484,39 @@ impl SessionsStore {
         )
     }
 
+    /// Whether the daemon can fork chats (capability `chat.fork`, protocol 0.56).
+    pub fn supports_chat_fork(&self) -> bool {
+        self.connection.supports_chat_fork()
+    }
+
+    /// Whether it can fork into a new worktree, restore the folder's files and archive the
+    /// original (capability `chat.fork.worktree`, protocol 0.58).
+    pub fn supports_chat_fork_worktree(&self) -> bool {
+        self.connection.supports_chat_fork_worktree()
+    }
+
+    /// `chat.fork`: a new chat with the conversation of `fork.session_id` up to a turn. The new
+    /// session is remembered until its events arrive, so the window can show it at once; the
+    /// error is the daemon's, whole, because a refusal can ask the user to choose a cut.
+    pub fn fork_chat(
+        &mut self,
+        fork: hutan_protocol::chat::ChatFork,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::chat::ChatForked, hutan_client::ClientError>> {
+        let connection = self.connection.clone();
+        cx.spawn(async move |this, cx| {
+            let forked = connection.chat_fork(fork).await?;
+            let remembered = forked.session.clone();
+            this.update(cx, |this, _| {
+                if !this.state.sessions.iter().any(|s| s.id == remembered.id) {
+                    this.recent.insert(remembered.id, remembered);
+                }
+            })
+            .ok();
+            Ok(forked)
+        })
+    }
+
     pub fn rename(
         &mut self,
         session: SessionId,

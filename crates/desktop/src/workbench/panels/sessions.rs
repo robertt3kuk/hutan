@@ -48,10 +48,11 @@ use crate::settings::{
 };
 use crate::workbench::actions::{CheckoutOpen, OpenCheckout};
 use crate::workbench::actions::{
-    CloseSessionById, DropProjectOnto, MoveWorkspaceOnto, OpenFolder, OpenSession, OpenWorkspace,
-    ProjectDrop, ProjectMenuAt, RenameSessionTo, RenameTo, RenameWorkspaceTo, ReviewChangesAt,
-    SessionMenuAt, SessionRenameTo, ShowPlusMenu, ShowProjectMenu, ShowSessionMenu, ShowSortMenu,
-    ShowWorkspaceMenu, WorkspaceDrop, WorkspaceMenuAt,
+    CloseSessionById, DropProjectOnto, ForkSessionLatest, MoveWorkspaceOnto, OpenFolder,
+    OpenSession, OpenWorkspace, ProjectDrop, ProjectMenuAt, RenameSessionTo, RenameTo,
+    RenameWorkspaceTo, ReviewChangesAt, SessionMenuAt, SessionRenameTo, ShowPlusMenu,
+    ShowProjectMenu, ShowSessionMenu, ShowSortMenu, ShowWorkspaceMenu, WorkspaceDrop,
+    WorkspaceMenuAt,
 };
 use crate::workbench::actions::{LauncherOpen, OpenLauncher, OpenSettingsFor};
 use crate::workbench::chat::vim::Outcome;
@@ -71,7 +72,7 @@ use crate::workbench::{BadgeSite, DragPreview, Region};
 const ROW_ESTIMATE: f32 = 34.0;
 const AGE_REFRESH: Duration = Duration::from_secs(30);
 
-/// What the actions of a card (× close) take on the right: the age shrinks into the same place.
+/// What one action of a card (⑂ fork, × close) takes on the right: the age shrinks into the same place.
 const CARD_ACTIONS: f32 = 20.0;
 
 /// Hover fill of a card: the foreground at 4 % in light, the left sidebar's accent at 40 % in
@@ -1135,21 +1136,24 @@ impl SessionsPanel {
         // the placement badge would only take the name's room.
         let session =
             |entries: &mut Vec<Entry>, list: &[&SessionInfo], depth: usize, in_checkout: bool| {
-                entries.extend(list.iter().map(|info| {
-                    let mut subtitle = subtitle_of(info, false);
-                    if in_checkout && let Some(sub) = subtitle.as_mut() {
-                        sub.badge = None;
-                        if sub.container.is_none() && sub.folder.is_none() {
-                            subtitle = None;
+                // A fork hangs under its parent when both are listed together (CHAT-FORK-B).
+                entries.extend(crate::sessions::fork::nest(list).into_iter().map(
+                    |(info, below)| {
+                        let mut subtitle = subtitle_of(info, false);
+                        if in_checkout && let Some(sub) = subtitle.as_mut() {
+                            sub.badge = None;
+                            if sub.container.is_none() && sub.folder.is_none() {
+                                subtitle = None;
+                            }
                         }
-                    }
-                    Entry::Session(Box::new(SessionRow {
-                        subtitle,
-                        info: (*info).clone(),
-                        depth,
-                        news: None,
-                    }))
-                }));
+                        Entry::Session(Box::new(SessionRow {
+                            subtitle,
+                            info: info.clone(),
+                            depth: depth + below,
+                            news: None,
+                        }))
+                    },
+                ));
             };
         let project = |entries: &mut Vec<Entry>, node: &ProjectNode, depth: usize| {
             let info = &node.info;
@@ -2353,32 +2357,70 @@ impl SessionsPanel {
             .h(px(tokens.sidebar_row))
             .w_full()
             .min_w_0();
-        // The pointer swaps the age for the actions (× close; ⑂ fork joins it with CHAT-FORK-B).
+        // The pointer swaps the age for the actions: ⑂ fork a chat at its latest turn (CHAT-FORK-B),
+        // then × close.
         let row_group = SharedString::from(format!("session-group-{id}"));
-        let mut actions = self.env.sessions.read(cx).supports_close().then(|| {
-            let close_id = id.clone();
+        let can_close = self.env.sessions.read(cx).supports_close();
+        let can_fork = {
+            let store = self.env.sessions.read(cx);
+            store.supports_chat_fork()
+                && info.chat.as_ref().is_some_and(|chat| {
+                    !chat.is_assistant()
+                        && chat
+                            .fork
+                            .as_ref()
+                            .is_none_or(|fork| fork.support != hutan_core::ForkSupport::None)
+                })
+        };
+        let action_count = usize::from(can_close) + usize::from(can_fork);
+        let mut actions = (action_count > 0).then(|| {
             let session = info.id;
+            let fork = can_fork.then(|| {
+                let fork_id = id.clone();
+                ui::IconButton::new(
+                    SharedString::from(format!("session-fork-{id}")),
+                    Icon::ActionFork,
+                    "Fork at the latest turn",
+                    &theme,
+                    &tokens,
+                )
+                .compact()
+                .on_click(move |event, window, cx| {
+                    window.dispatch_action(
+                        Box::new(ForkSessionLatest(SessionMenuAt {
+                            session: fork_id.clone(),
+                            position: event.position(),
+                        })),
+                        cx,
+                    );
+                    cx.stop_propagation();
+                })
+                .child(probe(&self.env.regions, Region::SessionFork(session)))
+            });
+            let close = can_close.then(|| {
+                let close_id = id.clone();
+                ui::IconButton::new(
+                    SharedString::from(format!("session-close-{id}")),
+                    Icon::ActionClose,
+                    "Close session",
+                    &theme,
+                    &tokens,
+                )
+                .compact()
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
+                    cx.stop_propagation();
+                })
+                .child(probe(&self.env.regions, Region::SessionClose(session)))
+            });
             div()
                 .flex_none()
                 .flex()
                 .items_center()
                 .opacity(0.0)
                 .group_hover(row_group.clone(), |s| s.opacity(1.0))
-                .child(
-                    ui::IconButton::new(
-                        SharedString::from(format!("session-close-{id}")),
-                        Icon::ActionClose,
-                        "Close session",
-                        &theme,
-                        &tokens,
-                    )
-                    .compact()
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
-                        cx.stop_propagation();
-                    })
-                    .child(probe(&self.env.regions, Region::SessionClose(session))),
-                )
+                .children(fork)
+                .children(close)
         });
         for field in &settings.row {
             line =
@@ -2449,7 +2491,7 @@ impl SessionsPanel {
                                 .flex()
                                 .items_center()
                                 .justify_end()
-                                .when(swaps, |s| s.min_w(px(CARD_ACTIONS)))
+                                .when(swaps, |s| s.min_w(px(CARD_ACTIONS * action_count as f32)))
                                 .child(age)
                                 .children(actions.take().map(|actions| {
                                     actions.absolute().top_0().bottom_0().right_0()

@@ -637,6 +637,7 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `action.subagents`
 - `action.forward`
 - `action.add-context`
+- `action.fork`
 - `brand.hutan`
 - `brand.mawas`
 - `item.file`

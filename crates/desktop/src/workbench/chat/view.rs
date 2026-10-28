@@ -982,6 +982,7 @@ impl ChatView {
                     .tooltip(tooltip(tip))
                     .child(probe(&self.regions, Region::Chat("mode")))
             }))
+            .children(self.forked_from_chip(info, narrow, theme, tokens, cx))
             .children(
                 crate::sessions::folders::folders_of(info)
                     .filter(|folders| folders.has_chip())

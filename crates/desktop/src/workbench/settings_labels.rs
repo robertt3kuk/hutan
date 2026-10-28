@@ -868,6 +868,16 @@ const FIELDS: &[FieldText] = &[
         "Largest block to attach (bytes)",
         "The most output of a terminal block that “Send to agent” attaches to a message. Longer output is cut, and the attachment says so.",
     ),
+    choice(
+        "chat",
+        "fork_where",
+        "Fork a chat into",
+        "Where the Fork popover starts: the chat's own folder, or a new worktree whose files are the turn's. The popover remembers your last choice here.",
+        &[
+            ("this_folder", "This folder"),
+            ("new_worktree", "A new worktree"),
+        ],
+    ),
     // ---- editing ----
     field(
         "editor",

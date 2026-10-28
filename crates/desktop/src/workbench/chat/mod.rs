@@ -11,6 +11,7 @@ mod attach;
 mod cards;
 mod chip;
 mod context;
+mod fork;
 mod input;
 mod markdown_view;
 mod model;
@@ -31,6 +32,7 @@ pub use context::{
     ContextChip, DEFAULT_HITS, DEFAULT_LINES, DEFAULT_TURNS, Mention, MentionKind, Thumb,
     find_mention, is_gateway_chat, is_harness_chat, kind_label, parse_file_arg, split_context,
 };
+pub(crate) use fork::ended_turns;
 pub use input::{TextInput, utf16_len, utf16_to_byte};
 pub use markdown_view::Look;
 pub use model::{ChatModel, LoadStatus};

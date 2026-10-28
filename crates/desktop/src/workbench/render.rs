@@ -205,6 +205,7 @@ impl Render for Workbench {
         let rewind_sheet = self.render_rewind_sheet(cx);
         let daemon_popover = self.render_daemon_popover(cx);
         let folders_popover = self.render_folders_popover(window, cx);
+        let fork_popover = self.render_fork_popover(window, cx);
         let recovery = self.render_recovery_summary(cx);
         let sheet = self.render_settings_sheet(cx);
         let setup = self.render_setup(window, cx);
@@ -221,6 +222,7 @@ impl Render for Workbench {
             checkpoints_list.is_some(),
             rewind_sheet.is_some(),
             folders_popover.is_some(),
+            fork_popover.is_some(),
         ]
         .contains(&true);
         if overlay && !self.overlay_open {
@@ -313,6 +315,7 @@ impl Render for Workbench {
         .children(collapse_preview)
         .children(daemon_popover)
         .children(folders_popover)
+        .children(fork_popover)
         .children(recovery)
         .children(palette)
         .children(picker)
@@ -1069,12 +1072,17 @@ impl Workbench {
             cx.listener(|this, a: &actions::ShowSessionMenu, window, cx| {
                 if let Ok(id) = a.0.session.parse() {
                     let mut entries = this.session_menu(id, cx);
-                    if let Some(folders) = this.folders_menu_entry(id, a.0.position, cx) {
-                        let after_rename = entries
-                            .iter()
-                            .position(|entry| entry.label.starts_with("Rename"))
-                            .map_or(entries.len(), |at| at + 1);
-                        entries.insert(after_rename, folders);
+                    let after_rename = entries
+                        .iter()
+                        .position(|entry| entry.label.starts_with("Rename"))
+                        .map_or(entries.len(), |at| at + 1);
+                    let mut extra: Vec<_> = this
+                        .folders_menu_entry(id, a.0.position, cx)
+                        .into_iter()
+                        .collect();
+                    extra.extend(this.fork_menu_entries(id, a.0.position, cx));
+                    for (at, entry) in extra.into_iter().enumerate() {
+                        entries.insert(after_rename + at, entry);
                     }
                     this.open_menu(a.0.position, entries, window, cx);
                 }
@@ -1085,6 +1093,28 @@ impl Workbench {
                 if let Ok(id) = a.0.session.parse() {
                     this.show_session_folders(id, a.0.position, window, cx);
                 }
+            }),
+        )
+        .on_action(cx.listener(|this, a: &actions::ForkChat, window, cx| {
+            this.show_fork_popover(a.0.session, a.0.turn, a.0.position, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, a: &actions::ForkSessionLatest, window, cx| {
+                if let Ok(id) = a.0.session.parse() {
+                    this.fork_session_latest(id, a.0.position, false, window, cx);
+                }
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ForkTerminalSession, window, cx| {
+                if let Ok(id) = a.0.parse() {
+                    this.fork_terminal_session(id, window, cx);
+                }
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::ForkFocusedChat, window, cx| {
+                this.fork_focused_chat(window, cx);
             }),
         )
         .on_action(
@@ -1125,6 +1155,7 @@ impl Workbench {
             this.close_agent_picker(window, cx);
             this.close_daemon_popover(window, cx);
             this.close_folders_popover(window, cx);
+            this.close_fork_popover(window, cx);
         }))
         .on_action(cx.listener(|this, _: &actions::Quit, window, cx| {
             this.request_quit(window, cx);
