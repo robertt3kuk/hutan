@@ -905,8 +905,8 @@ mod audit {
         ),
         (
             "desktop/src/workbench/panels/sessions.rs",
-            3,
-            "a project row, a worktree row and a session row",
+            4,
+            "a project row, a worktree row, a session row and the text link of an agent card's hint",
         ),
         (
             "desktop/src/workbench/panels/status.rs",

@@ -72,6 +72,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("resources", "Resources"),
     ("tasks", "Tasks"),
     ("changes", "Changes"),
+    ("panels.changes", "Changes panel"),
     ("assistant", "Mawas"),
     ("integrations", "Agent Integrations"),
     ("automation", "Automation"),
@@ -152,6 +153,10 @@ const NAMESPACE_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     ("tasks", "The Tasks panel and what it shows."),
     ("changes", "Reviewing changes: diffs, comments and merging."),
+    (
+        "panels.changes",
+        "How the Changes panel and view list files.",
+    ),
     (
         "assistant",
         "Mawas, the assistant: models, memory and what it may do.",
