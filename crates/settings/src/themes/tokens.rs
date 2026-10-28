@@ -373,6 +373,13 @@ numbers! {
     ButtonHeightCompact = "button.height-compact", 1.0, 1200.0, "Height of a compact button (inline, card footers).";
     TerminalPadding = "terminal.padding", 0.0, 1200.0, "Space between a terminal view's edge and its text.";
     TerminalBlockGutter = "terminal.block-gutter", 0.0, 16.0, "Width of the block gutter bar at a terminal's left edge.";
+    SidebarCardHeight = "sidebar.card-height", 1.0, 1200.0, "Height of a sidebar card: a row that carries a second, news line.";
+    SidebarInset = "sidebar.inset", 0.0, 64.0, "Space between a sidebar row's fill and the sidebar's edge.";
+    SidebarIndent = "sidebar.indent", 0.0, 64.0, "Indent of one nesting level of the sidebar tree (a worktree sits two levels in).";
+    RadiusRow = "radius.row", 0.0, 1000.0, "Corner radius of a sidebar row's hover and selected fill.";
+    TextRowSize = "text.row.size", 8.0, 40.0, "Size of a sidebar row's name.";
+    TextGroupSize = "text.group.size", 8.0, 40.0, "Size of a group label (uppercase, tracked: REQUESTS, PROJECTS, panel sections).";
+    TextChipSize = "text.chip.size", 8.0, 40.0, "Size of the monospace text of a chip (a model name).";
 }
 
 numbers! {
@@ -400,6 +407,10 @@ numbers! {
     ShadowOffsetY = "shadow.offset-y", -128.0, 128.0, "Vertical offset of the shadow.";
     ShadowBlur = "shadow.blur", 0.0, 128.0, "Blur radius of the shadow.";
     ShadowSpread = "shadow.spread", 0.0, 128.0, "Spread of the shadow.";
+    SidebarLane = "sidebar.lane", 8.0, 64.0, "Width of a sidebar row's lead lane: one harness glyph and its state badge.";
+    TextGroupTracking = "text.group.tracking", 0.0, 0.5, "Letter spacing of a group label, in em.";
+    IconRowSize = "icon.row.size", 8.0, 64.0, "Glyph size in a row, a tab and a chip; at 14 or less the pack's `[small]` artwork is drawn.";
+    IconBadgeSize = "icon.badge.size", 4.0, 32.0, "Size of a state badge on a harness glyph.";
 }
 
 /// A font role of `[fonts]`: an ordered list of installed family names.
@@ -495,8 +506,8 @@ mod tests {
         let required = Color::ALL.iter().filter(|c| c.is_required()).count();
         // 17 chrome colors + shadow + scrim, 4 terminal core colors + 16 ANSI colors.
         assert_eq!(required, 17 + 2 + 4 + 16);
-        assert_eq!(DensityKey::COUNT, 16);
-        assert_eq!(Metric::COUNT, 23);
+        assert_eq!(DensityKey::COUNT, 23);
+        assert_eq!(Metric::COUNT, 27);
     }
 
     #[test]

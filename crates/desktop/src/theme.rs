@@ -48,6 +48,20 @@ pub struct Tokens {
     /// Width of the block gutter bar at a terminal's left edge, inside the terminal padding:
     /// 3 px compact, 4 px comfortable.
     pub block_gutter: f32,
+    /// Height of a sidebar card (a row with a news line): 42 pt compact, 48 pt comfortable.
+    pub sidebar_card: f32,
+    /// Space between a sidebar row's fill and the sidebar's edge: 8 pt.
+    pub sidebar_inset: f32,
+    /// Indent of one nesting level of the sidebar tree: 16 pt.
+    pub sidebar_indent: f32,
+    /// Corner radius of a sidebar row's hover and selected fill: 8 pt.
+    pub row_radius: f32,
+    /// A sidebar row's name: 13 pt.
+    pub row_font_size: f32,
+    /// Group labels (uppercase, tracked): 10 pt semibold.
+    pub group_font_size: f32,
+    /// The monospace text of a chip (a model name): 9.5 pt.
+    pub chip_font_size: f32,
 }
 
 impl Tokens {
@@ -72,6 +86,13 @@ impl Tokens {
             button_height_compact: get(DensityKey::ButtonHeightCompact),
             terminal_padding: get(DensityKey::TerminalPadding),
             block_gutter: get(DensityKey::TerminalBlockGutter),
+            sidebar_card: get(DensityKey::SidebarCardHeight),
+            sidebar_inset: get(DensityKey::SidebarInset),
+            sidebar_indent: get(DensityKey::SidebarIndent),
+            row_radius: get(DensityKey::RadiusRow),
+            row_font_size: get(DensityKey::TextRowSize),
+            group_font_size: get(DensityKey::TextGroupSize),
+            chip_font_size: get(DensityKey::TextChipSize),
         }
     }
 }
@@ -106,6 +127,14 @@ pub struct Metrics {
     /// The pack's terminal font size and line height; the user's `terminal.*` settings win.
     pub terminal_font_size: f32,
     pub terminal_line_height: f32,
+    /// Width of a sidebar row's lead lane (a harness glyph and its state badge): 16 pt.
+    pub sidebar_lane: f32,
+    /// Letter spacing of a group label, in em: 0.075.
+    pub group_tracking: f32,
+    /// Glyph size in a row, a tab and a chip: 14 pt (the `[small]` icon artwork applies).
+    pub icon_row_size: f32,
+    /// Size of a state badge on a harness glyph: 8 pt.
+    pub icon_badge_size: f32,
     shadow_offset: (f32, f32),
     shadow_blur: f32,
     shadow_spread: f32,
@@ -134,6 +163,10 @@ impl Metrics {
             button_disabled_opacity: m(Metric::ButtonDisabledOpacity),
             terminal_font_size: m(Metric::TerminalFontSize),
             terminal_line_height: m(Metric::TerminalLineHeight),
+            sidebar_lane: m(Metric::SidebarLane),
+            group_tracking: m(Metric::TextGroupTracking),
+            icon_row_size: m(Metric::IconRowSize),
+            icon_badge_size: m(Metric::IconBadgeSize),
             shadow_offset: (m(Metric::ShadowOffsetX), m(Metric::ShadowOffsetY)),
             shadow_blur: m(Metric::ShadowBlur),
             shadow_spread: m(Metric::ShadowSpread),

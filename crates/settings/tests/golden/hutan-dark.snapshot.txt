@@ -147,6 +147,13 @@ control.height = 28
 button.height-compact = 24
 terminal.padding = 8
 terminal.block-gutter = 3
+sidebar.card-height = 42
+sidebar.inset = 8
+sidebar.indent = 16
+radius.row = 8
+text.row.size = 13
+text.group.size = 10
+text.chip.size = 9.5
 
 [density.comfortable]
 sidebar.row-height = 30
@@ -165,6 +172,13 @@ control.height = 28
 button.height-compact = 24
 terminal.padding = 12
 terminal.block-gutter = 4
+sidebar.card-height = 48
+sidebar.inset = 8
+sidebar.indent = 16
+radius.row = 8
+text.row.size = 13
+text.group.size = 10
+text.chip.size = 9.5
 
 [metrics]
 titlebar.height = 36
@@ -190,6 +204,10 @@ shadow.offset-x = 0
 shadow.offset-y = 8
 shadow.blur = 24
 shadow.spread = 0
+sidebar.lane = 16
+text.group.tracking = 0.075
+icon.row.size = 14
+icon.badge.size = 8
 
 [fonts]
 ui = [".SystemUIFont"]

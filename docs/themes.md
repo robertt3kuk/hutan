@@ -384,6 +384,13 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `button.height-compact` | 1 to 1200 | 24 | 24 | Height of a compact button (inline, card footers). |
 | `terminal.padding` | 0 to 1200 | 8 | 12 | Space between a terminal view's edge and its text. |
 | `terminal.block-gutter` | 0 to 16 | 3 | 4 | Width of the block gutter bar at a terminal's left edge. |
+| `sidebar.card-height` | 1 to 1200 | 42 | 48 | Height of a sidebar card: a row that carries a second, news line. |
+| `sidebar.inset` | 0 to 64 | 8 | 8 | Space between a sidebar row's fill and the sidebar's edge. |
+| `sidebar.indent` | 0 to 64 | 16 | 16 | Indent of one nesting level of the sidebar tree (a worktree sits two levels in). |
+| `radius.row` | 0 to 1000 | 8 | 8 | Corner radius of a sidebar row's hover and selected fill. |
+| `text.row.size` | 8 to 40 | 13 | 13 | Size of a sidebar row's name. |
+| `text.group.size` | 8 to 40 | 10 | 10 | Size of a group label (uppercase, tracked: REQUESTS, PROJECTS, panel sections). |
+| `text.chip.size` | 8 to 40 | 9.5 | 9.5 | Size of the monospace text of a chip (a model name). |
 
 #### Metrics (`[metrics]`)
 
@@ -412,6 +419,10 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `shadow.offset-y` | -128 to 128 | 8 | Vertical offset of the shadow. |
 | `shadow.blur` | 0 to 128 | 24 | Blur radius of the shadow. |
 | `shadow.spread` | 0 to 128 | 0 | Spread of the shadow. |
+| `sidebar.lane` | 8 to 64 | 16 | Width of a sidebar row's lead lane: one harness glyph and its state badge. |
+| `text.group.tracking` | 0 to 0.5 | 0.075 | Letter spacing of a group label, in em. |
+| `icon.row.size` | 8 to 64 | 14 | Glyph size in a row, a tab and a chip; at 14 or less the pack's `[small]` artwork is drawn. |
+| `icon.badge.size` | 4 to 32 | 8 | Size of a state badge on a harness glyph. |
 
 #### Fonts (`[fonts]`)
 
