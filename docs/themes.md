@@ -220,9 +220,17 @@ The chrome pairs are the workbench's (design direction `docs/spikes/2026-10-21-c
 
 The thumb, the fade and the ticks follow the user's `appearance.scrollbars = system | always | scrolling`, not the pack.
 
+## Style tokens (STYLE-TOKENS)
+
+Eleven tokens carry the sidebar's Superset-like look (spike `docs/spikes/2026-10-28-best-of/README.md` §1.5) so that no view holds the numbers: the per-density `sidebar.card-height`, `sidebar.inset`, `sidebar.indent`, `radius.row`, `text.row.size`, `text.group.size`, `text.chip.size` and the shared `sidebar.lane`, `text.group.tracking`, `icon.row.size`, `icon.badge.size` (values and bounds in the reference below; the design in `docs/design.md` § Style tokens, icon weights and the lead lane). A sparse pack inherits all of them from the built-in pack, a root pack states them in both density tables and `[metrics]`. They are not new colours: the sidebar uses `ui.text.muted`, `ui.text.faint`, `ui.sidebar.selected`, `ui.surface.hover`, `ui.accent` and the `state.*` roles that every pack already has.
+
+`icon.row.size` is the glyph size of rows, tabs and chips (14) and the size from which a pack's `[small]` artwork is *not* wanted is `icons::SMALL_MAX_PX` (14, not a token: it is the contract between the renderer and a pack author, § Weight by size). The nav icon stays `nav.icon.size` (16); the spike's `icon.nav.size` is that token, not a second one.
+
 ## Differences from the hard-coded look
 
 The built-in packs reproduce the previous colors, sizes and fonts. The only deliberate differences are 8-bit alpha quantization of values that were fractions: the dark hairline `#ffffff12` is alpha 0.0706 (was 0.07), the shadow alphas are 0.1216 (light) and 0.4 (dark) (were 0.12, 0.40), and the scrim 0.2784 and 0.5020 (were 0.28, 0.50). Derived tints keep the exact old fractions (0.08, 0.10, 0.16, 0.22, 0.28, 0.13, 0.07). The status bar is 24 px in both densities, as drawn; the unused 22 / 26 table is gone.
+
+The sidebar's inset, indent and row radius changed with STYLE-TOKENS (8 pt inset instead of `spacing × 1.5`, 16 pt per nesting level instead of 12, 8 pt radius instead of `radius.control + 4`), and its group labels are 10 pt tracked capitals instead of 11 pt sentence case; everything else of a row keeps its old value.
 
 Titlebar height, nav row and strip sizes (`titlebar.height`, `nav.*`, `strip.*`) are loaded, validated and resolved, but the layout code that draws them (`render.rs`, `sidebars.rs`) still reads constants equal to the built-in values (a test keeps `titlebar.height` and the constant equal); they take effect once the dock work that owns those files lands.
 
@@ -485,6 +493,22 @@ icon_theme = "canopy-lines" # default: phosphor
 
 Metadata uses the color-pack rules above; `appearance` is optional (normally omit it for currentColor). A declared light/dark polarity must match the window or selection warns and uses embedded Phosphor. Sparse packs require `extends = "builtin:phosphor"`; complete root packs use `root = true`, omit `extends` and cover every registered id. User packs can shadow `phosphor`, but `builtin:phosphor` always means immutable embedded content. Duplicate user ids disable all duplicates. Unknown ids warn and are ignored. Multiple ids may name the same SVG.
 
+### Weight by size (`[small]`)
+
+A pack may carry a second set of files for small icons. The optional `[small]` table has the same grammar as `[icons]` (quoted semantic ids to pack-relative SVG paths) and is used for an icon drawn at **14 points or less** (`icons::SMALL_MAX_PX`; the desktop's row glyphs, tab icons and chips are 12–14, nav and panel headers 16 and up use the regular file):
+
+```toml
+[icons]
+"nav.search" = "icons/search.svg"
+
+[small]
+"nav.search" = "icons/search-14.svg"   # heavier strokes for 12-14 pt
+```
+
+- **The built-in pack** draws Phosphor Regular at 16 points and above and Phosphor Bold (`bold/<name>.svg`, 161 ids) at 14 and below: Bold's 1.12-1.31 px strokes at 12-14 pt are as crisp as a 2/24 stroke (Regular at 13 pt is 0.81 px and looks faint on a dark ground). The harness monograms (`harness.*`), the Hutan silhouette and the solid stop square have no Bold twin: one artwork at every size.
+- **Fallback, per id.** `[small]` is optional and may be partial; an id without an entry (or whose file is missing or unsafe, with a warning under `small.<id>`) draws its `[icons]` file at every size. A pack that replaces an id in `[icons]` and gives no `[small]` entry for it shows its own artwork at every size: it never inherits Phosphor Bold for that id under its own regular icon. Ids a sparse pack does not replace keep Phosphor's small artwork. A root pack has `[small]` artwork only for the ids it lists.
+- **Same rules as `[icons]`**: the same SVG subset, limits (the 512 files and 8 MiB of a pack count both tables), confinement, watcher and last-good behaviour; Settings Problems names the key `small.<id>`. `hutan theme export` writes the `[small]` files too (`--resolved` includes Phosphor's Bold for the ids the pack inherits).
+
 Omitted ids fall back individually: the two-icon example changes only the nav search and close controls, not `action.search`, other icons, colors, control sizes, focus, keyboard bindings or click handlers. Malformed SVG edits warn and preserve the active entry's last-good bytes; on first load they use the built-in for that id. Invalid metadata/TOML rejects the update (previous manifest retained when available); invalid initial packs are listed disabled. Missing selection retains the requested setting and recovers on installation. Errors use the existing Settings Problems list, with file and `icons.<id>` key.
 
 The same debounced, bounded theme worker watches `icon-themes/`, pack folders and nested asset folders, including atomic saves. Validated normalized bytes are immutable; cache keys contain pack identity, SHA-256 content and semantic id. Only the selected pack retains user SVG bytes; inactive catalogs retain paths/hashes. Desktop keeps at most one retired raw generation (two 8 MiB snapshots plus built-in, below the 32 MiB raw limit). A separate 64 MiB LRU owns decoded/raster images and evicts their GPUI atlas entries; current-frame references live through the frame. No pack can force an intrinsic raster size.
@@ -495,7 +519,7 @@ The same debounced, bounded theme worker watches `icon-themes/`, pack folders an
 - Accepted elements: svg, g, path, rect, circle, ellipse, line, polyline, polygon. Accepted attributes: numeric geometry/points/transforms, viewBox, fill/stroke, opacity, fill/clip rules and stroke width/cap/join/miterlimit. Intrinsic root width/height are ignored. Unsupported markup is rejected, not silently stripped. Only reconstructed safe XML is decoded.
 - Refused: scripts, event attributes, DTD/entities/processing instructions, CSS/style, external/data/file URLs, images, text/fonts, foreign namespaces/objects, animation, filters, masks, patterns, use/href and `url(...)`. The loader does not fetch anything.
 - Bounds: 256 pack candidates, 256 KiB manifests / 16 MiB per scan, 512 icon entries/files, asset subdirectory depth 4, 64 KiB per SVG / 8 MiB per pack. XML depth 16, 2,048 elements, 16,384 path segments, 32 KiB attributes, finite coordinates of absolute value ≤1e6, square viewBox side ≤4096. Paths and licenses use descriptor-relative confinement.
-- Root built-in Phosphor Regular comes only from official `phosphor-icons/core`, pinned to `2b75f3ad12b420c9504ef05df8d2564a28f8500e`. Only catalog artwork is included; `assets/icon-themes/phosphor/LICENSE` retains its MIT notice, `PROVENANCE` records the revision and the baked right-sidebar mirror. Harness and Mawas identities use the catalog-approved complete Phosphor fallbacks; the Hutan silhouette is original MIT artwork, not an upstream trademark/logo.
+- Root built-in Phosphor Regular and Bold come only from official `phosphor-icons/core`, pinned to `2b75f3ad12b420c9504ef05df8d2564a28f8500e` (`assets/icon-themes/phosphor/` and its `bold/` folder). Only catalog artwork is included; `assets/icon-themes/phosphor/LICENSE` retains its MIT notice, `PROVENANCE` records the revision and the baked right-sidebar mirror. The harness identities are our own monochrome monograms (π for OMP, an eight-spoke asterisk for Claude Code, a prompt chevron for Codex; vendor marks are trademarks); Mawas uses the catalog-approved Phosphor fallback; the Hutan silhouette is original MIT artwork, not an upstream trademark/logo.
 - macOS traffic lights, native menu notation, app icon, menu-bar template PNGs and notification identity remain fixed system/product surfaces. `brand.menu-bar` is unsupported and warns. Colorful mascot illustrations and user image attachments are not monochrome product icons.
 - Text exceptions: terminal/agent output, code, filenames/user text, prose punctuation, actual diff `+`/`−`/`±`, multiplication dimensions, and real keyboard keycaps (`⌘`, `⇧`, `⌥`, arrows, `↵`) remain text. Tooltip and status-strip sentences cannot embed artwork and keep their own prose marks: the `⚠` that opens the shared-checkout line of a placement tooltip, the `✓` of the History scan strip, and the `▾` that a sentence uses to point at a control. State words, counts, harness names and control labels remain beside icons; custom artwork never replaces their meaning.
 
