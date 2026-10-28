@@ -143,6 +143,8 @@ All gates wrap into one entry point (`just check`) created in M0.
 - **terminal**: replay recorded PTY transcripts (shell, vim, htop, OMP, Codex TUI) → compare grid snapshots; fuzz the input path.
 - **daemon**: integration tests over a real Unix socket in a temp dir; fake agents are scripted stdio fixtures speaking Codex app-server / ACP, so tests are deterministic and free.
 - **desktop**: GPUI `TestAppContext` for view/state logic; visual checks through the milestone demo, not pixel tests.
+  - **Clicks** (FX-FLAKY-6): aim with the bounds of the frame on screen and press and release in one go — `common::click_at(cx, point)`, not `simulate_click` (which runs every ready task between press and release, and under load the daemon's answers re-flow the page there: the release lands beside the button and GPUI, which hit-tests against the frame on screen and drops a click whose button moved after the press, runs no handler; `tests/it/hit_test_gpui.rs` pins that). Never retry a click. Before aiming at a button that is drawn from daemon state (the file rows' buttons, an Undo bar), wait for that state, not for the button.
+  - **Waits** are on state (`wait_until` with the model's answer), never longer; after a step that opens, resumes or focuses something, wait until it holds the focus before sending keys (a new terminal takes the focus when it mounts). "Nothing was rebuilt" is asserted over frames in which the store's revision did not move.
 - Real model calls only in opt-in smoke scripts, never in the default gate.
 
 ## Definition of Ready (slice)
