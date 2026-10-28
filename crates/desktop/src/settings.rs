@@ -590,9 +590,14 @@ pub struct SessionsPanelSettings {
     pub group_by: GroupBy,
     /// Show the Requests, Failed and Ready for review groups on top.
     pub needs_you: bool,
-    /// Fields of a row, in order: `state`, `kind`, `title`, `age` on the first line, `folder`
-    /// (where the session is now) and `placement` (`main` / `wt <branch>`) on the second.
+    /// Fields of a row, in order: `state` and `kind` (one lane: the harness glyph with the
+    /// state's badge on it, drawn once wherever the first of the two stands), `title`, `age`,
+    /// and `folder` (where the session is now) and `placement` (`wt <branch>`) as muted text
+    /// after the title.
     pub row: Vec<String>,
+    /// Show `+N −M` (lines added and removed) on the project and worktree rows. Off by
+    /// default: the count of changed files says how much changed without the noise.
+    pub show_diffstat: bool,
 }
 
 impl Default for SessionsPanelSettings {
@@ -603,12 +608,27 @@ impl Default for SessionsPanelSettings {
             row: ["state", "kind", "title", "folder", "placement", "age"]
                 .map(str::to_owned)
                 .to_vec(),
+            show_diffstat: false,
         }
     }
 }
 
 impl Setting for SessionsPanelSettings {
     const NAMESPACE: &'static str = "panels.sessions";
+}
+
+/// The `panels.changes` namespace: how the Changes panel and view list what changed (shown on
+/// the Changes page of the Settings sheet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ChangesPanelSettings {
+    /// Show `+N −M` (lines added and removed) beside the files and the checkout's summary.
+    /// Off by default: a file's name and status say what changed.
+    pub show_diffstat: bool,
+}
+
+impl Setting for ChangesPanelSettings {
+    const NAMESPACE: &'static str = "panels.changes";
 }
 
 /// How the sidebar organizes sessions.
@@ -2121,6 +2141,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<TerminalSettings>();
     store.register::<LayoutSettings>();
     store.register::<SessionsPanelSettings>();
+    store.register::<ChangesPanelSettings>();
     store.register::<InspectorPanelSettings>();
     store.register::<FilesPanelSettings>();
     store.register::<ProblemsPanelSettings>();
@@ -2698,6 +2719,7 @@ mod tests {
             "terminal",
             "layout",
             "panels.sessions",
+            "panels.changes",
             "panels.inspector",
             "panels.files",
             "panels.problems",

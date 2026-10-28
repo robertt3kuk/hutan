@@ -421,6 +421,8 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<WorkspacesSettings>(),
         CatalogEntry::of::<TasksSettings>(),
         CatalogEntry::of::<crate::settings::ChangesSettings>(),
+        CatalogEntry::of::<crate::settings::ChangesPanelSettings>()
+            .on_page(crate::settings::ChangesSettings::NAMESPACE),
         CatalogEntry::of::<NotificationsSettings>(),
         // Agents
         CatalogEntry::of::<AssistantSettings>(),

@@ -220,6 +220,14 @@ impl ChangesView {
             .unwrap_or_else(|| self.env.settings.get::<ChangesSettings>().list)
     }
 
+    /// `panels.changes.show_diffstat`: `+N −M` beside the files and the summary. Off by default.
+    pub(super) fn show_diffstat(&self) -> bool {
+        self.env
+            .settings
+            .get::<crate::settings::ChangesPanelSettings>()
+            .show_diffstat
+    }
+
     /// Switches the list between flat and tree for this view (the setting is not written).
     pub fn set_list_mode(&mut self, mode: ChangesList, cx: &mut Context<Self>) {
         self.list_override = Some(mode);
@@ -527,7 +535,9 @@ impl ChangesView {
                     .text_color(theme.muted)
                     .child(SharedString::from(files.to_string())),
             )
-            .child(counts_of(added as usize, removed as usize, look))
+            .when(self.show_diffstat(), |s| {
+                s.child(counts_of(added as usize, removed as usize, look))
+            })
             .into_any_element()
     }
 
@@ -668,15 +678,18 @@ impl ChangesView {
                     })),
             )
             .children(index_glyph)
-            .child(if file.binary {
-                div()
-                    .flex_none()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child("binary")
-                    .into_any_element()
+            .children(if file.binary {
+                Some(
+                    div()
+                        .flex_none()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .child("binary")
+                        .into_any_element(),
+                )
             } else {
-                counts_of(file.additions as usize, file.deletions as usize, look)
+                self.show_diffstat()
+                    .then(|| counts_of(file.additions as usize, file.deletions as usize, look))
             })
             .children(open)
             .child(probe(&self.env.regions, Region::ChangesFile(index)))

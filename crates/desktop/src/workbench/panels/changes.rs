@@ -610,6 +610,11 @@ impl ChangesPanel {
             && worktree.branch.is_some()
             && self.env.sessions.read(cx).connection().supports_finish();
         let foldable = counted.is_some();
+        let diffstat = self
+            .env
+            .settings
+            .get::<crate::settings::ChangesPanelSettings>()
+            .show_diffstat;
         div()
             .id(SharedString::from(format!("changes-row-{click_path}")))
             .relative()
@@ -686,8 +691,14 @@ impl ChangesPanel {
                                     .gap(px(tokens.spacing))
                                     .text_size(px(tokens.secondary_font_size))
                                     .text_color(theme.muted)
-                                    .child(SharedString::from(format!("{} ·", c.files_text())))
-                                    .child(counts_of(c.added, c.removed, &look))
+                                    .child(SharedString::from(if diffstat {
+                                        format!("{} ·", c.files_text())
+                                    } else {
+                                        c.files_text()
+                                    }))
+                                    .when(diffstat, |s| {
+                                        s.child(counts_of(c.added, c.removed, &look))
+                                    })
                             })),
                     )
                     .child(
@@ -861,15 +872,21 @@ impl ChangesPanel {
                         }),
                     ),
             )
-            .child(if file.binary {
-                div()
-                    .flex_none()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child("binary")
-                    .into_any_element()
+            .children(if file.binary {
+                Some(
+                    div()
+                        .flex_none()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .child("binary")
+                        .into_any_element(),
+                )
             } else {
-                counts_of(file.additions as usize, file.deletions as usize, &look)
+                self.env
+                    .settings
+                    .get::<crate::settings::ChangesPanelSettings>()
+                    .show_diffstat
+                    .then(|| counts_of(file.additions as usize, file.deletions as usize, &look))
             })
             .child(probe(
                 &self.env.regions,

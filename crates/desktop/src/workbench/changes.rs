@@ -1230,7 +1230,9 @@ impl ChangesView {
                                     "files",
                                 ))),
                         )
-                        .child(counts_of(added, removed, &look))
+                        .when(self.show_diffstat(), |s| {
+                            s.child(counts_of(added, removed, &look))
+                        })
                     }),
             )
             .child(
@@ -1449,16 +1451,19 @@ impl ChangesView {
         let counts = current
             .and_then(|at| files.get(at))
             .filter(|_| !self.files_open)
-            .map(|f| {
+            .and_then(|f| {
                 if f.binary {
-                    div()
-                        .flex_none()
-                        .text_size(px(tokens.secondary_font_size))
-                        .text_color(theme.muted)
-                        .child("binary")
-                        .into_any_element()
+                    Some(
+                        div()
+                            .flex_none()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .child("binary")
+                            .into_any_element(),
+                    )
                 } else {
-                    counts_of(f.additions as usize, f.deletions as usize, &look)
+                    self.show_diffstat()
+                        .then(|| counts_of(f.additions as usize, f.deletions as usize, &look))
                 }
             });
         strip = strip.child(

@@ -552,7 +552,7 @@ const FIELDS: &[FieldText] = &[
         "panels.sessions",
         "row",
         "Row contents",
-        "What each row shows, in order. The row is one line of state, kind, title and age. A second line appears only when it has news: folder (where the session is now, once it has left its checkout) and placement (a worktree branch, or a shared main checkout). Pick the parts from the menu.",
+        "What each row shows, in order. State and Kind are one lane: the harness glyph with the state's badge on it. A coding agent's row has a second line only when there is news (a question, a failure, the tool it runs, an unread reply); folder (where the session is now, once it has left its checkout) and placement (a worktree branch) are muted text after the title. Pick the parts from the menu.",
         &[
             ("state", "State"),
             ("kind", "Kind"),
@@ -561,6 +561,12 @@ const FIELDS: &[FieldText] = &[
             ("placement", "Placement"),
             ("age", "Age"),
         ],
+    ),
+    field(
+        "panels.sessions",
+        "show_diffstat",
+        "Show added and removed line counts",
+        "Off by default. On adds +N −M (lines added and removed since the last commit) to the project and worktree rows that have changes.",
     ),
     choice(
         "sidebar",
@@ -1084,6 +1090,12 @@ const FIELDS: &[FieldText] = &[
         "Changes view lists files",
         "One row per file with its name first, or grouped by folder with folders you can fold. The list's own toggle changes it for the open view.",
         &[("flat", "Flat"), ("tree", "As a tree")],
+    ),
+    field(
+        "panels.changes",
+        "show_diffstat",
+        "Show added and removed line counts",
+        "Off by default: the Changes panel and view list the files and their status. On adds +N −M beside each file and on the checkout's summary.",
     ),
     // ---- assistant ----
     field(
