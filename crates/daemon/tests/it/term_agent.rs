@@ -15,8 +15,8 @@ use common::*;
 use hutan_client::Client;
 use hutan_core::SessionId;
 use hutan_protocol::messages::{
-    AgentApplied, AgentReportRequest, AgentState, Empty, Request, SessionInfo, SessionSnapshot,
-    TerminalAgentSource, TerminalAgentState,
+    AgentApplied, AgentReportRequest, AgentState, Empty, Request, SessionInfo, SessionRename,
+    SessionResult, SessionSnapshot, TerminalAgentSource, TerminalAgentState,
 };
 use hutan_protocol::tree::{AgentTree, AgentTreeRequest};
 use tokio::time::{sleep, timeout};
@@ -312,5 +312,64 @@ async fn the_program_in_the_foreground_shows_the_agent_before_it_reports() {
         s.terminal_agent.is_none() && !s.state.is_live()
     })
     .await;
+    t.stop().await;
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_names_its_session_unless_the_user_did() {
+    let t = TestDaemon::start().await;
+    let client = t.connect().await;
+    let session = echo_session(&client).await;
+    let renamed = echo_session(&client).await;
+    client
+        .call::<SessionResult>(Request::SessionRename(SessionRename {
+            session_id: renamed.id,
+            title: "my build".into(),
+        }))
+        .await
+        .unwrap();
+
+    for target in [&session, &renamed] {
+        status(&client, target, "state=working:app=omp").await;
+        // OMP's title while a turn runs: its mark, a spinner frame, then its session's name.
+        osc(&client, target, "0;π ⠋ 👷 WORKER: worker").await;
+    }
+    let named = wait_session(&client, session.id, "named by the agent", |s| {
+        s.title == "👷 WORKER: worker"
+    })
+    .await;
+    assert_eq!(
+        named.terminal_agent.unwrap().title.as_deref(),
+        Some("👷 WORKER: worker")
+    );
+    // A spinner frame is no new name.
+    osc(&client, &session, "0;π ⠙ 👷 WORKER: worker").await;
+    status(&client, &session, "state=done:app=omp").await;
+    let after = wait_session(
+        &client,
+        session.id,
+        "done",
+        in_state(TerminalAgentState::Done),
+    )
+    .await;
+    assert_eq!(after.title, "👷 WORKER: worker");
+
+    // The user's name stays; the agent's own is the subtitle.
+    let kept = wait_session(&client, renamed.id, "the agent's title", |s| {
+        s.terminal_agent.as_ref().is_some_and(|a| a.title.is_some())
+    })
+    .await;
+    assert_eq!(kept.title, "my build");
+    assert_eq!(
+        kept.terminal_agent.unwrap().title.as_deref(),
+        Some("👷 WORKER: worker")
+    );
+
+    // When the agent leaves, its title goes with it: the session is named by its place again.
+    status(&client, &session, "state=clear").await;
+    let left = wait_session(&client, session.id, "named by its place", |s| {
+        s.terminal_agent.is_none() && s.title != "👷 WORKER: worker"
+    })
+    .await;
+    assert!(!left.title.contains('π'), "{}", left.title);
     t.stop().await;
 }

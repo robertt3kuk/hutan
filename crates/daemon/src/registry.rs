@@ -2183,6 +2183,8 @@ impl SessionRegistry {
                     folder: spec.cwd.clone(),
                     branch: placement.as_ref().and_then(|p| p.branch.clone()),
                     osc_title: None,
+                    has_agent: false,
+                    agent_title: None,
                     default_title: default_title.clone(),
                     running_command: None,
                 };
@@ -4891,6 +4893,12 @@ impl SessionRegistry {
                         .as_ref()
                         .and_then(|p| p.branch.clone()),
                     osc_title: session.osc_title.clone(),
+                    has_agent: session.info.terminal_agent.is_some(),
+                    agent_title: session
+                        .info
+                        .terminal_agent
+                        .as_ref()
+                        .and_then(|agent| agent.title.clone()),
                     default_title: session.default_title.clone(),
                     running_command: session.running_command.clone(),
                 })

@@ -5,7 +5,8 @@
 //! other terminal is called after **where it is** — the folder it is in now,
 //! the branch when sessions in the same folder are on different ones, the command it is running — and a title the program set is used only when it says more
 //! than a path: fish's `~/h/u/proj` and zsh's `user@host:~/proj` name nothing the folder does
-//! not. Sessions of one workspace that would read the same are told apart by a number in the
+//! not. A terminal with a coding agent in it (AGENT-TERM-1) is named by the agent's own title —
+//! the terminal title without the program's mark and spinner — and never by the raw title. Sessions of one workspace that would read the same are told apart by a number in the
 //! order they were created (`proj`, `proj 2`).
 
 use std::path::{Path, PathBuf};
@@ -38,6 +39,11 @@ pub struct Facts {
     pub branch: Option<String>,
     /// The last title the program set (OSC 0/2).
     pub osc_title: Option<String>,
+    /// A coding agent runs in the terminal (`SessionInfo.terminal_agent`): the title is its,
+    /// with the program's mark and spinner in front of it, and only `agent_title` is used.
+    pub has_agent: bool,
+    /// What the agent calls its session (`terminal_agent.title`).
+    pub agent_title: Option<String>,
     /// The program's name: what a terminal is called when nothing better is known.
     pub default_title: String,
     /// The command line running in the foreground (OSC 133), secrets removed.
@@ -110,7 +116,14 @@ fn identity(parts: &Parts, with_branch: bool) -> String {
 }
 
 fn parts_of(facts: &Facts, home: Option<&Path>) -> Parts {
-    if let Some(title) = facts.osc_title.as_deref().map(str::trim)
+    let title = if facts.has_agent {
+        // The raw title carries the agent's mark and a spinner that changes every frame: only
+        // the agent's own name counts, and without one the session is named by its place.
+        facts.agent_title.as_deref()
+    } else {
+        facts.osc_title.as_deref()
+    };
+    if let Some(title) = title.map(str::trim)
         && !title.is_empty()
         && !is_path_title(title)
         && title != facts.default_title
@@ -237,6 +250,23 @@ mod tests {
         assert_eq!(names(&[entry(1, facts.clone())]), ["vim main.rs"]);
         facts.osc_title = Some("fish".to_owned());
         assert_eq!(names(&[entry(1, facts)]), ["proj · vim main.rs"]);
+    }
+
+    #[test]
+    fn an_agent_names_its_session_by_its_own_title_not_the_terminal_title() {
+        let mut facts = auto("/Users/me/proj", None);
+        facts.has_agent = true;
+        facts.osc_title = Some("π ⠋ 👷 WORKER: worker".to_owned());
+        facts.agent_title = Some("👷 WORKER: worker".to_owned());
+        facts.running_command = Some("omp".to_owned());
+        assert_eq!(names(&[entry(1, facts.clone())]), ["👷 WORKER: worker"]);
+        // Without a title of its own the raw one is never the name: the place is.
+        facts.agent_title = None;
+        assert_eq!(names(&[entry(1, facts.clone())]), ["proj · omp"]);
+        // Two agents with the same title are told apart like any namesakes.
+        facts.agent_title = Some("Fix the build".to_owned());
+        let entries = [entry(1, facts.clone()), entry(2, facts)];
+        assert_eq!(names(&entries), ["Fix the build", "Fix the build 2"]);
     }
 
     #[test]
