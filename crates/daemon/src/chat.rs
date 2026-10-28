@@ -15,6 +15,8 @@
 //! Streaming text is journaled as coalesced snapshots of the open message ([`crate::partial`]),
 //! so a client that joins mid-stream starts from the text so far.
 
+mod fork;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -31,7 +33,8 @@ use hutan_core::agent::{DecidedBy, NoticeLevel, PermissionOutcome};
 use hutan_core::question::{self, QuestionResponse};
 use hutan_core::{
     AgentEvent, AgentEventDraft, AgentEventKind, ApprovalId, ApprovalPolicy, Contain, Containment,
-    ItemId, ModelInfo, QuestionId, QuestionOutcome, SafetyPreset, SandboxMode, SessionId, TurnId,
+    ForkSupport, ItemId, ModelInfo, QuestionId, QuestionOutcome, SafetyPreset, SandboxMode,
+    SessionId, TurnId,
 };
 use hutan_protocol::assistant::{ATTACHMENTS_META_KEY, AttachmentMeta};
 use hutan_protocol::chat::{
@@ -66,6 +69,10 @@ use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
 use crate::providers::ProviderService;
 use crate::registry::{self, ChatNotifier};
 use crate::usage::{Attribution, TurnUsage, UsageService};
+
+use fork::fork_from;
+pub use fork::{ChatForkSpec, FORK_MAX_EVENTS, ForkPending, JournalCopy};
+pub(crate) use fork::{ForkParent, ForkPlan, support_note};
 
 /// The Codex app-server agent.
 pub const AGENT_CODEX: &str = "codex";
@@ -156,6 +163,10 @@ pub struct ChatSpec {
     /// again at every start, so a restart or a restore applies it again — or fails closed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contain: Option<Contain>,
+    /// Protocol 0.56 (ADR 0023): where the chat was forked from, and what its first start still
+    /// has to do. Absent for chats that are not forks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<ChatForkSpec>,
 }
 
 /// What runs a session: an agent process, or the model gateway.
@@ -319,6 +330,9 @@ struct Live {
     /// channel of its own (Claude Code): taken by the first `chat.send`, put back when that
     /// send fails.
     first_turn: Mutex<Option<String>>,
+    /// A summary fork's digest, carried by the conversation's first message: taken by it, put
+    /// back when that message is not sent, and reported delivered once it was.
+    seed: Mutex<Option<String>>,
     /// What this session's turns used, and who they are charged to (`docs/agents.md` § Usage).
     usage: LiveUsage,
 }
@@ -366,6 +380,7 @@ impl Live {
             active_at: Mutex::new(Instant::now()),
             mawas,
             first_turn: Mutex::new(None),
+            seed: Mutex::new(None),
             usage,
         })
     }
@@ -400,12 +415,17 @@ struct Delivery {
 #[derive(Debug, Default)]
 struct TurnMemory {
     blocks: Vec<ContextBlock>,
+    /// Context the agent is given without the journal showing it as the user's words (a summary
+    /// fork's digest): ACP agents take it as resources of their own.
+    hidden: Vec<ContextBlock>,
     /// What the journal says about them.
     notices: Vec<String>,
     /// The delta to record once the turn is accepted.
     delta: Option<PreparedDelta>,
     /// The first-turn block taken from the session, put back when the send fails.
     first_turn: Option<String>,
+    /// A summary fork's digest taken from the session, put back when the send fails.
+    seed: Option<String>,
 }
 
 impl TurnMemory {
@@ -422,6 +442,9 @@ impl TurnMemory {
     fn undo(&self, live: &Live) {
         if let Some(text) = &self.first_turn {
             *lock(&live.first_turn) = Some(text.clone());
+        }
+        if let Some(text) = &self.seed {
+            *lock(&live.seed) = Some(text.clone());
         }
     }
 }
@@ -1078,6 +1101,15 @@ impl ChatManager {
         spec: &ChatSpec,
         scope: Scope,
     ) -> Result<Started, ErrorBody> {
+        // A fork's journal prefix is there before its agent (or its direct session) starts.
+        if let Some(copy) = spec
+            .fork
+            .as_ref()
+            .and_then(|fork| fork.pending.as_ref())
+            .and_then(|pending| pending.copy.as_ref())
+        {
+            self.copy_fork_journal(id, copy).await?;
+        }
         if is_gateway_agent(&spec.agent) {
             return self.start_direct(id, spec).await;
         }
@@ -1127,13 +1159,21 @@ impl ChatManager {
         } else {
             None
         };
+        let forking = fork_from(spec).is_some();
         let start = StartSpec {
             cwd,
             model: spec.model.clone(),
             approval_policy: spec.approval_policy,
             sandbox: spec.sandbox,
             resume_thread_id: spec.thread_id.clone(),
-            developer_instructions: memory.map(|memory| memory.text),
+            fork: fork_from(spec),
+            developer_instructions: memory.map(|memory| memory.text).or_else(|| {
+                // A summary fork's fresh thread is given the digest as its instructions: it is
+                // not the user's words, and the thread keeps it from then on.
+                (spec.thread_id.is_none())
+                    .then(|| spec.fork.as_ref().and_then(|fork| fork.seed.clone()))
+                    .flatten()
+            }),
             session_meta: None,
         };
         let codex = self.codex_for(id, spec.account.as_deref()).await?;
@@ -1143,7 +1183,10 @@ impl ChatManager {
             events,
         } = CodexAppServerAdapter::start(&codex, &start)
             .await
-            .map_err(|e| StartFailure::agent(&e, provider_error(&e, &codex.program)))?;
+            .map_err(|e| {
+                let error = fork::forked_error(forking, &e, provider_error(&e, &codex.program));
+                StartFailure::agent(&e, error)
+            })?;
         let live = Live::new(
             id,
             Backend::Agent(adapter),
@@ -1157,6 +1200,7 @@ impl ChatManager {
                 !started.resumed,
             ),
         );
+        // A summary fork's digest went in as the thread's developer instructions, above.
         self.adopt(&live);
         info!(session = %id, model = %started.model, resumed = started.resumed, "chat agent started");
         tokio::spawn(self.clone().pump(live, events));
@@ -1229,6 +1273,7 @@ impl ChatManager {
             }
         };
         let last = self.journal_end(id).await?;
+        let forking = fork_from(spec).is_some();
         let start = StartSpec {
             cwd,
             model: spec.model.clone(),
@@ -1236,6 +1281,7 @@ impl ChatManager {
             sandbox: spec.sandbox,
             resume_thread_id: spec.thread_id.clone(),
             developer_instructions: None,
+            fork: fork_from(spec),
             session_meta: spec
                 .safety
                 .and_then(|preset| crate::safety::claude_session_meta(&spec.agent, preset)),
@@ -1251,7 +1297,11 @@ impl ChatManager {
             models,
         } = AcpAdapter::start(&config, &start, spec.mode.as_deref(), &servers)
             .await
-            .map_err(|e| StartFailure::agent(&e, harness_error(&e, &spec.agent, &program)))?;
+            .map_err(|e| {
+                let error =
+                    fork::forked_error(forking, &e, harness_error(&e, &spec.agent, &program));
+                StartFailure::agent(&e, error)
+            })?;
         if !models.is_empty() {
             lock(&self.models).insert(spec.agent.clone(), (Instant::now(), models));
         }
@@ -1276,6 +1326,7 @@ impl ChatManager {
             // conversation's first turn, labelled as Hutan's.
             *lock(&live.first_turn) = Some(memory.text);
         }
+        *lock(&live.seed) = spec.fork.as_ref().and_then(|fork| fork.seed.clone());
         self.adopt(&live);
         info!(session = %id, agent = %spec.agent, model = %started.model, resumed = started.resumed, "chat harness started");
         tokio::spawn(self.clone().pump(live, events));
@@ -1406,6 +1457,8 @@ impl ChatManager {
             images: None,
             mode: None,
             reported: None,
+            // The journal is the conversation: any turn is a cut.
+            fork: Some(ForkSupport::Exact),
         })
     }
 
@@ -1608,6 +1661,7 @@ impl ChatManager {
                         MessageExtras {
                             context: Vec::new(),
                             images: attached.images,
+                            ..Default::default()
                         },
                         Some(attached.meta),
                     ),
@@ -1616,6 +1670,7 @@ impl ChatManager {
                         MessageExtras {
                             context: attached.blocks,
                             images: attached.images,
+                            ..Default::default()
                         },
                         Some(attached.meta),
                     ),
@@ -1628,6 +1683,7 @@ impl ChatManager {
                     memory.appended_to(text)
                 } else {
                     extras.context.splice(0..0, memory.blocks.iter().cloned());
+                    extras.unjournaled.clone_from(&memory.hidden);
                     text
                 };
                 let prepared = if codex {
@@ -1689,6 +1745,19 @@ impl ChatManager {
     /// What Hutan adds to the turn `live` is about to start.
     async fn turn_memory(&self, live: &Live) -> TurnMemory {
         let mut memory = TurnMemory::default();
+        // A summary fork's digest rides with the conversation's first message, labelled as
+        // Hutan's, apart from what the user typed (the same channel as Mawas's memory).
+        if let Some(text) = lock(&live.seed).take() {
+            memory.hidden.push(ContextBlock {
+                label: "Earlier conversation (summary)".to_owned(),
+                text: text.clone(),
+            });
+            memory.notices.push(
+                "Hutan gave the agent the summary of the parent chat's turns with this first message."
+                    .to_owned(),
+            );
+            memory.seed = Some(text);
+        }
         if !live.mawas {
             return memory;
         }
@@ -1722,6 +1791,9 @@ impl ChatManager {
             && let Some(context) = self.memory_context()
         {
             context.commit_delta(delta).await;
+        }
+        if memory.seed.is_some() {
+            self.notifier.seed_delivered(live.id).await;
         }
         for message in memory.notices {
             let notice = AgentEventDraft::new(AgentEventKind::Notice {

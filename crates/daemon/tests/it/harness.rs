@@ -14,14 +14,15 @@ use common::{TestDaemon, WAIT, remote_code, stop, wait_event};
 use hutan_client::Client;
 use hutan_core::agent::{MessageRole, PermissionOutcome};
 use hutan_core::{
-    AgentEvent, AgentEventKind, ApprovalPolicy, Seq, SessionKind, SessionState, TaskRun, TaskState,
+    AgentEvent, AgentEventKind, ApprovalPolicy, ForkMode, ForkSupport, Seq, SessionKind,
+    SessionState, TaskRun, TaskState, TurnId,
 };
 use hutan_protocol::ErrorCode;
 use hutan_protocol::account::AccountStatus;
 use hutan_protocol::assistant::Attachment;
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistory,
-    ChatHistoryRequest, ChatSent,
+    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatFork,
+    ChatForked, ChatHistory, ChatHistoryRequest, ChatSent, ForkWhere,
 };
 use hutan_protocol::messages::{
     Empty, Event, Request, SessionInfo, SessionList, SessionListFilter, SessionRef, SessionResult,
@@ -1796,5 +1797,294 @@ async fn omp_is_asked_for_its_limits_only_when_a_refresh_is_asked() {
     ] {
         assert!(!text.contains(private), "{private} in {text}");
     }
+    t.stop().await;
+}
+
+// Fork (ADR 0023). The transcripts are in `crates/agents/tests/fixtures/acp-omp-18.11`, built
+// from the ACP `session/fork` schema, OMP's recorded handshake and what `claude-agent-acp`
+// 0.98.0 answers (read in its source; no login here).
+
+fn fork_request(session: hutan_core::SessionId, turn: Option<TurnId>, mode: ForkMode) -> Request {
+    Request::ChatFork(ChatFork {
+        session_id: session,
+        turn_id: turn,
+        mode,
+        title: None,
+        where_: ForkWhere::ThisFolder,
+    })
+}
+
+/// A harness that replays `names`, one transcript per spawn.
+async fn forking(agent: &str, names: &'static [&'static str]) -> H {
+    let agent = agent.to_owned();
+    H::with(
+        move |work| {
+            let scripted = script(work, names);
+            harness_toml(&agent, &scripted, &work.join("received.jsonl"))
+        },
+        |_| {},
+    )
+    .await
+}
+
+/// Two answered turns, `first` and `second`.
+async fn two_answered_turns(t: &mut H, agent: &str) -> (SessionInfo, Vec<TurnId>) {
+    let created = t.create(agent).await;
+    for text in ["first", "second"] {
+        t.send(created.id, text).await;
+        chat_event(&mut t.events, "the turn to end", |e| e.kind.ends_turn()).await;
+        t.wait_state(created.id, SessionState::Idle).await;
+    }
+    let turns = t
+        .history(created.id)
+        .await
+        .events
+        .iter()
+        .filter(|e| matches!(e.kind, AgentEventKind::TurnStarted))
+        .filter_map(|e| e.turn_id)
+        .collect();
+    (created, turns)
+}
+
+async fn try_fork(
+    t: &H,
+    session: hutan_core::SessionId,
+    turn: Option<TurnId>,
+    mode: ForkMode,
+) -> Result<ChatForked, hutan_client::ClientError> {
+    t.client.call(fork_request(session, turn, mode)).await
+}
+
+fn users(history: &ChatHistory) -> Vec<&str> {
+    history
+        .events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            AgentEventKind::MessageEnd {
+                role: MessageRole::User,
+                text,
+                ..
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_omp_chat_forks_at_its_latest_turn_and_says_why_an_earlier_one_cannot() {
+    let mut t = forking("omp", &["two-turns", "fork-head", "fork-head"]).await;
+    let (parent, turns) = two_answered_turns(&mut t, "omp").await;
+    let support = t.session(parent.id).await.chat.unwrap().fork.unwrap();
+    assert_eq!(support.support, ForkSupport::Head, "what OMP advertised");
+    assert!(support.note.unwrap().contains("newest turn"));
+    let sessions = |t: &H| {
+        let client = t.client.clone();
+        async move {
+            client
+                .call::<SessionList>(Request::SessionList(SessionListFilter::default()))
+                .await
+                .unwrap()
+                .sessions
+                .len()
+        }
+    };
+    assert_eq!(sessions(&t).await, 1);
+
+    // An earlier turn: refused, and the answer names what would work. Nothing was started.
+    let error = try_fork(&t, parent.id, Some(turns[0]), ForkMode::Exact)
+        .await
+        .unwrap_err();
+    let hutan_client::ClientError::Remote(error) = error else {
+        panic!("{error:?}")
+    };
+    assert_eq!(error.code, ErrorCode::Unsupported);
+    assert!(error.message.contains("latest turn"), "{}", error.message);
+    let data = error.data.unwrap();
+    assert_eq!(data["support"], "head");
+    assert_eq!(data["alternatives"], serde_json::json!(["head", "summary"]));
+    assert!(t.received_of("session/fork").is_empty());
+    assert_eq!(sessions(&t).await, 1);
+
+    // The latest turn, by `head`.
+    let forked = try_fork(&t, parent.id, None, ForkMode::Head).await.unwrap();
+    let child = forked.session;
+    assert_eq!(forked.fork.mode, ForkMode::Head);
+    assert_eq!((forked.fork.ordinal, forked.fork.turn_id), (2, turns[1]));
+    assert_eq!(forked.fork.support, ForkSupport::Head);
+    assert_eq!(child.state, SessionState::Idle);
+    assert_eq!(child.forked_from.as_ref().unwrap().session_id, parent.id);
+    assert_eq!(
+        child.chat.as_ref().unwrap().agent_session_id.as_deref(),
+        Some("sess_fixture_2"),
+        "the harness's own copy of the conversation"
+    );
+    let fork = &t.received_of("session/fork")[0]["params"];
+    assert_eq!(fork["sessionId"], SESSION);
+    assert_eq!(
+        fork["cwd"],
+        parent.cwd.as_ref().unwrap().display().to_string()
+    );
+    assert!(fork.get("_meta").is_none(), "{fork}");
+    let copied = t.history(child.id).await;
+    assert_eq!(users(&copied), ["first", "second"]);
+    assert_eq!(answers(&copied), ["one", "two"]);
+
+    // The fork takes turns; the parent does not hear of them.
+    t.send(child.id, "hi").await;
+    chat_event(&mut t.events, "the fork's turn to end", |e| {
+        e.session_id == child.id && e.kind.ends_turn()
+    })
+    .await;
+    assert_eq!(
+        answers(&t.history(child.id).await),
+        ["one", "two", "Hello, world."]
+    );
+    assert_eq!(answers(&t.history(parent.id).await), ["one", "two"]);
+    assert_eq!(
+        t.received_of("session/prompt").last().unwrap()["params"]["sessionId"],
+        "sess_fixture_2"
+    );
+
+    // `exact` at the newest turn is the same cut: OMP can make it.
+    let exact = try_fork(&t, parent.id, Some(turns[1]), ForkMode::Exact)
+        .await
+        .unwrap();
+    assert_eq!(exact.fork.mode, ForkMode::Exact);
+    assert_eq!(sessions(&t).await, 3);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claude_chat_cuts_at_a_message_through_the_adapters_fork_point() {
+    use sha2::{Digest as _, Sha256};
+    let mut t = forking("claude", &["claude-two-turns", "claude-fork-exact"]).await;
+    let (parent, turns) = two_answered_turns(&mut t, "claude").await;
+    assert_eq!(
+        t.session(parent.id)
+            .await
+            .chat
+            .unwrap()
+            .fork
+            .unwrap()
+            .support,
+        ForkSupport::Exact,
+        "an adapter new enough to read a fork point"
+    );
+    // The journal kept the agent's own id of each assistant message.
+    let history = t.history(parent.id).await;
+    let ids: Vec<_> = history
+        .events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                AgentEventKind::MessageEnd {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            )
+        })
+        .map(|e| e.provider.item_id.clone().unwrap())
+        .collect();
+    assert_eq!(ids, ["msg-1", "msg-2"]);
+
+    let forked = try_fork(&t, parent.id, Some(turns[0]), ForkMode::Exact)
+        .await
+        .unwrap();
+    assert_eq!(forked.fork.ordinal, 1);
+    assert_eq!(forked.fork.support, ForkSupport::Exact);
+    let meta = &t.received_of("session/fork")[0]["params"]["_meta"];
+    assert_eq!(
+        meta["jetbrains"]["air"]["fork"],
+        serde_json::json!({
+            "version": 1,
+            "messageId": "msg-1",
+            "messageFingerprint": format!("sha256:{:x}", Sha256::digest(b"one")),
+            "messageOccurrence": 1,
+        })
+    );
+    let copied = t.history(forked.session.id).await;
+    assert_eq!(users(&copied), ["first"]);
+    assert_eq!(answers(&copied), ["one"]);
+    assert_eq!(
+        forked.session.chat.unwrap().agent_session_id.as_deref(),
+        Some("sess_fixture_2")
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_summary_fork_starts_a_new_conversation_and_hands_it_a_digest_with_its_first_message() {
+    let mut t = forking("omp", &["two-turns", "plain-turn"]).await;
+    let (parent, turns) = two_answered_turns(&mut t, "omp").await;
+    let forked = try_fork(&t, parent.id, Some(turns[0]), ForkMode::Summary)
+        .await
+        .unwrap();
+    let child = forked.session;
+    assert_eq!(forked.fork.mode, ForkMode::Summary);
+    assert_eq!(child.forked_from.as_ref().unwrap().mode, ForkMode::Summary);
+    assert!(
+        t.received_of("session/fork").is_empty(),
+        "a fresh conversation, not a fork"
+    );
+    assert_eq!(t.received_of("session/new").len(), 2);
+    // The history shown is Hutan's copy of turn 1, and says what the agent knows of it.
+    let copied = t.history(child.id).await;
+    assert_eq!(users(&copied), ["first"]);
+    assert!(copied.events.iter().any(|e| matches!(
+        &e.kind,
+        AgentEventKind::Notice { message, .. } if message.contains("summary of turns 1–1")
+    )));
+
+    t.send(child.id, "continue").await;
+    chat_event(&mut t.events, "the fork's turn to end", |e| {
+        e.session_id == child.id && e.kind.ends_turn()
+    })
+    .await;
+    let prompt = t.received_of("session/prompt").pop().unwrap()["params"]["prompt"].to_string();
+    assert!(prompt.contains("continue"), "{prompt}");
+    assert!(prompt.contains("Turn 1"), "the digest of turn 1: {prompt}");
+    assert!(prompt.contains("not by a model"), "{prompt}");
+    assert!(
+        !prompt.contains("Turn 2") && !prompt.contains("second"),
+        "only the turns kept: {prompt}"
+    );
+    let journal = t.history(child.id).await;
+    assert_eq!(
+        users(&journal),
+        ["first", "continue"],
+        "the user's words, not the digest"
+    );
+    assert!(journal.events.iter().any(|e| matches!(
+        &e.kind,
+        AgentEventKind::Notice { message, .. } if message.contains("gave the agent the summary")
+    )));
+    t.wait_state(child.id, SessionState::Idle).await;
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fork_the_agent_refuses_leaves_no_session_behind() {
+    let mut t = forking("omp", &["two-turns", "fork-error"]).await;
+    let (parent, _) = two_answered_turns(&mut t, "omp").await;
+    let error = try_fork(&t, parent.id, None, ForkMode::Head)
+        .await
+        .unwrap_err();
+    let hutan_client::ClientError::Remote(error) = error else {
+        panic!("{error:?}")
+    };
+    assert_eq!(error.code, ErrorCode::ProviderError);
+    assert!(
+        error.message.contains("fork was cancelled"),
+        "{}",
+        error.message
+    );
+    let listed = t
+        .client
+        .call::<SessionList>(Request::SessionList(SessionListFilter::default()))
+        .await
+        .unwrap();
+    assert_eq!(listed.sessions.len(), 1, "no half-made fork");
+    assert_eq!(answers(&t.history(parent.id).await), ["one", "two"]);
     t.stop().await;
 }

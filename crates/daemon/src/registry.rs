@@ -17,10 +17,13 @@ use tokio::time::{Instant, sleep_until};
 
 use hutan_agents::{CodexConfig, ExitInfo, SessionMode, Started};
 use hutan_core::{
-    AgentNode, Contain, ContainKind, Containment, NodeOutcome, NodeUpdate, ObservationTree, Patch,
-    SessionEvent, SessionId, SessionKind, SessionState, TerminalId, WorkspaceId,
+    AgentNode, Contain, ContainKind, Containment, ForkSupport, NodeOutcome, NodeUpdate,
+    ObservationTree, Patch, SessionEvent, SessionId, SessionKind, SessionState, TerminalId,
+    WorkspaceId,
 };
-use hutan_protocol::chat::{ChatCreate, ChatInfo, ChatMode};
+use hutan_protocol::chat::{
+    ChatCreate, ChatFork, ChatForkSupport, ChatForked, ChatInfo, ChatMode, ForkDone,
+};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, AgentState, CreatedBy, Event,
@@ -48,8 +51,8 @@ use tracing::{debug, error, info, warn};
 use crate::agent;
 use crate::bus::{EventBus, PublishError};
 use crate::chat::{
-    AGENT_ASSISTANT, AGENT_CODEX, AGENT_DIRECT, AssistantPolicy, ChatManager, ChatSpec,
-    is_gateway_agent,
+    AGENT_ASSISTANT, AGENT_CODEX, AGENT_DIRECT, AssistantPolicy, ChatManager, ChatSpec, ForkParent,
+    ForkPlan, is_gateway_agent, support_note,
 };
 use crate::config::RestoreMode;
 use crate::contain::{Fragment, Plan};
@@ -237,6 +240,15 @@ enum Command {
     },
     /// Whether the session is a chat session, and live.
     ChatTarget(SessionId, Reply<bool>),
+    /// What the registry knows of a chat that is to be forked (`chat.fork`).
+    ForkParent(SessionId, Reply<ForkParent>),
+    /// A decided fork: add its session next to the parent's and start it; answered once its
+    /// agent is up (or failed, and nothing is left).
+    ForkChat(Box<ForkChat>, Reply<SessionInfo>),
+    /// From a chat session's pump: a summary fork's first message carried its digest.
+    ChatSeedDelivered {
+        session: SessionId,
+    },
     /// `chat.set_model`: answered once the switch is journaled.
     SetChatModel(ChatSetModel, Reply<SessionInfo>),
     /// From the task that switched the model of a harness chat: the agent's answer.
@@ -283,6 +295,11 @@ impl ChatNotifier {
 
     pub(crate) async fn exited(&self, session: SessionId, exit: ExitInfo) {
         self.send(Command::ChatExited { session, exit }).await;
+    }
+
+    /// A summary fork's first message carried its digest.
+    pub(crate) async fn seed_delivered(&self, session: SessionId) {
+        self.send(Command::ChatSeedDelivered { session }).await;
     }
 
     pub(crate) async fn slept(&self, session: SessionId) {
@@ -624,6 +641,52 @@ impl RegistryHandle {
             .await
     }
 
+    /// `chat.fork` (protocol 0.56, ADR 0023): a new chat session that starts with the
+    /// conversation of `req.session_id` up to a turn. Everything is decided before a session
+    /// exists, so a refusal leaves nothing behind; answered once the new session's agent is up.
+    pub async fn fork_chat(&self, req: ChatFork) -> Result<ChatForked, ErrorBody> {
+        let parent = self.ask(|r| Command::ForkParent(req.session_id, r)).await?;
+        let plan = self.chats.plan_fork(&parent, &req).await?;
+        let (origin, copied_events, support) =
+            (plan.origin.clone(), plan.copied_events, plan.support);
+        let title = req
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned);
+        let session = self
+            .ask(|r| {
+                Command::ForkChat(
+                    Box::new(ForkChat {
+                        parent: parent.id,
+                        title,
+                        plan,
+                    }),
+                    r,
+                )
+            })
+            .await?;
+        // What the new agent said it can do, else what the parent's did.
+        let support = session
+            .chat
+            .as_ref()
+            .and_then(|chat| chat.fork.as_ref())
+            .map(|fork| fork.support)
+            .or(support)
+            .unwrap_or(ForkSupport::None);
+        Ok(ChatForked {
+            session,
+            fork: ForkDone {
+                mode: origin.mode,
+                support,
+                turn_id: origin.turn_id,
+                ordinal: origin.ordinal,
+                copied_events,
+            },
+        })
+    }
+
     /// Whether `id` is a chat session (else an error), and whether it is live.
     pub async fn chat_target(&self, id: SessionId) -> Result<bool, ErrorBody> {
         self.ask(|r| Command::ChatTarget(id, r)).await
@@ -682,6 +745,15 @@ struct SessionEntry {
     running_command: Option<String>,
     /// `session.close` is waiting for the session to end: it is removed once it has.
     close: Option<CloseRequest>,
+}
+
+/// A decided fork on its way to the registry (`chat.fork`).
+#[derive(Debug)]
+struct ForkChat {
+    parent: SessionId,
+    /// The name the user gave; else the parent's with " (fork)".
+    title: Option<String>,
+    plan: ForkPlan,
 }
 
 /// A `session.close` that stopped a live session and waits for its exit.
@@ -1370,6 +1442,11 @@ impl SessionRegistry {
                     self.invalidate_placements();
                     let _ = reply.send(Ok(()));
                 }
+                Command::ForkParent(id, reply) => {
+                    let _ = reply.send(self.fork_parent(id));
+                }
+                Command::ForkChat(fork, reply) => self.create_fork(*fork, reply),
+                Command::ChatSeedDelivered { session } => self.on_chat_seed_delivered(session),
                 Command::ChatTarget(id, reply) => {
                     let _ = reply.send(self.chat_target(id));
                 }
@@ -2199,6 +2276,7 @@ impl SessionRegistry {
             }
         };
         let info = SessionInfo {
+            forked_from: None,
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Terminal,
@@ -3517,6 +3595,7 @@ impl SessionRegistry {
         let (account, account_label) = account.unzip();
         let spec = match direct {
             Some((provider_id, model, system_prompt)) => ChatSpec {
+                fork: None,
                 agent: req.agent,
                 model: Some(model),
                 approval_policy: Default::default(),
@@ -3532,6 +3611,7 @@ impl SessionRegistry {
                 contain: None,
             },
             None => ChatSpec {
+                fork: None,
                 agent: req.agent,
                 model: req.model.filter(|m| !m.trim().is_empty()),
                 approval_policy: safety_plan
@@ -3575,6 +3655,19 @@ impl SessionRegistry {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .map(str::to_owned);
+        self.add_chat_session(workspace_id, req.cwd, spec, default_title, chosen)
+    }
+
+    /// Adds a chat session in state `starting` (published and stored, so that the journal's
+    /// rows have a session to refer to); the agent is started by the caller.
+    fn add_chat_session(
+        &mut self,
+        workspace_id: WorkspaceId,
+        cwd: PathBuf,
+        spec: ChatSpec,
+        default_title: String,
+        chosen: Option<String>,
+    ) -> Result<usize, ErrorBody> {
         let info = SessionInfo {
             id: SessionId::new(),
             workspace_id,
@@ -3582,18 +3675,19 @@ impl SessionRegistry {
             title: chosen.clone().unwrap_or_else(|| default_title.clone()),
             state: SessionState::Starting,
             command: vec![spec.agent.clone()],
-            cwd: Some(req.cwd.clone()),
+            cwd: Some(cwd.clone()),
             terminal_id: None,
             agent: None,
             created_at_ms: now_ms(),
             restored: false,
             chat: Some(chat_info(&spec)),
-            placement: self.placement_of(Some(&req.cwd)),
-            folder: Some(req.cwd.clone()),
+            placement: self.placement_of(Some(&cwd)),
+            folder: Some(cwd.clone()),
             recovery: None,
             muted: false,
             containment: None,
             terminal_agent: None,
+            forked_from: spec.fork.as_ref().map(|fork| fork.origin.clone()),
         };
         self.publish(&Event::SessionUpdated {
             session: info.clone(),
@@ -3603,7 +3697,7 @@ impl SessionRegistry {
             info,
             spec: TerminalSpec {
                 command: vec![spec.agent.clone()],
-                cwd: Some(req.cwd),
+                cwd: Some(cwd),
                 ..TerminalSpec::default()
             },
             default_title,
@@ -3934,6 +4028,15 @@ impl SessionRegistry {
                 if let Some(spec) = &mut session.chat {
                     spec.thread_id = Some(started.thread_id.clone());
                     spec.model = Some(started.model.clone());
+                    // A fork's first start is done: the copy and the fork point are history.
+                    let codex = spec.agent == AGENT_CODEX;
+                    if let Some(fork) = &mut spec.fork {
+                        fork.pending = None;
+                        // Codex got the digest with its thread (`developerInstructions`).
+                        if codex {
+                            fork.seed = None;
+                        }
+                    }
                 }
                 let preset = session.chat.as_ref().and_then(|spec| spec.safety);
                 // What was applied to the process, not what the spec asked for.
@@ -3964,6 +4067,14 @@ impl SessionRegistry {
                     if !is_gateway_agent(&chat.agent) {
                         chat.agent_session_id = Some(started.thread_id);
                     }
+                    // What the agent advertised for a fork (an assistant is never forked).
+                    chat.fork = started
+                        .fork
+                        .filter(|_| !chat.is_assistant())
+                        .map(|support| ChatForkSupport {
+                            support,
+                            note: support_note(&chat.agent, support),
+                        });
                 }
                 if !wake {
                     session.advance(SessionEvent::Ready);
@@ -3991,6 +4102,19 @@ impl SessionRegistry {
                     self.emit_session(index);
                 }
                 self.persist_session(index);
+            }
+            Err(error)
+                if session
+                    .chat
+                    .as_ref()
+                    .and_then(|spec| spec.fork.as_ref())
+                    .is_some_and(|fork| fork.pending.is_some()) =>
+            {
+                // A fork that never came up leaves nothing behind: no session, no copied
+                // journal; the request says why.
+                warn!(session = %id, message = %error.message, "a forked chat failed to start; it is discarded");
+                self.discard_session(index);
+                respond(reply, Err(error));
             }
             Err(error) if wake && !session.stopping => {
                 // The session stays asleep and usable for a retry: nothing about it changed.
@@ -4208,6 +4332,105 @@ impl SessionRegistry {
         self.spawn_chat_start(index, Some(reply), true);
     }
 
+    /// A fork's first turn carried its summary: it is not owed again.
+    fn on_chat_seed_delivered(&mut self, id: SessionId) {
+        let Ok(index) = self.session_index(id) else {
+            return;
+        };
+        if let Some(fork) = self.sessions[index]
+            .chat
+            .as_mut()
+            .and_then(|spec| spec.fork.as_mut())
+        {
+            fork.seed = None;
+            self.persist_session(index);
+        }
+    }
+
+    /// What the registry knows of a chat that is going to be forked, or why it cannot be.
+    fn fork_parent(&self, id: SessionId) -> Result<ForkParent, ErrorBody> {
+        let session = &self.sessions[self.session_index(id)?];
+        let Some(spec) = &session.chat else {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                format!("session {id} is not a chat session"),
+            ));
+        };
+        if spec.assistant || spec.agent == AGENT_ASSISTANT {
+            return Err(ErrorBody::new(
+                ErrorCode::Unsupported,
+                "an assistant's conversation belongs to its memory and is not forked",
+            ));
+        }
+        let chat = session.info.chat.as_ref();
+        Ok(ForkParent {
+            id,
+            title: session.info.title.clone(),
+            spec: spec.clone(),
+            turn_active: chat.is_some_and(|chat| chat.turn_active),
+            support: chat
+                .and_then(|chat| chat.fork.as_ref())
+                .map(|fork| fork.support),
+        })
+    }
+
+    /// Adds the fork's session next to its parent's (same workspace and folder) and starts its
+    /// agent: the journal prefix is copied and the agent forked by that first start
+    /// (`ChatManager::start`). A start that fails leaves nothing behind ([`Self::on_chat_started`]).
+    fn create_fork(&mut self, fork: ForkChat, reply: Reply<SessionInfo>) {
+        let ForkChat {
+            parent,
+            title,
+            plan,
+        } = fork;
+        let Ok(parent_index) = self.session_index(parent) else {
+            let _ = reply.send(Err(ErrorBody::new(
+                ErrorCode::NotFound,
+                format!("session {parent} not found"),
+            )));
+            return;
+        };
+        let source = &self.sessions[parent_index];
+        let workspace_id = source.info.workspace_id;
+        let cwd = source.info.cwd.clone().unwrap_or_default();
+        let name = title.unwrap_or_else(|| format!("{} (fork)", source.info.title));
+        match self.add_chat_session(workspace_id, cwd, plan.spec, name.clone(), Some(name)) {
+            Ok(index) => self.spawn_chat_start(index, Some(reply), false),
+            Err(error) => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+
+    /// Takes a session that never came up out of the registry and the database, as if it had
+    /// not been made: a fork whose first start failed (the request answers with the reason).
+    fn discard_session(&mut self, index: usize) {
+        let entry = self.sessions.remove(index);
+        let id = entry.info.id;
+        log_write(
+            self.storage.sessions().delete(id),
+            "a forked chat that did not start",
+        );
+        for waiter in entry.stop_waiters {
+            let _ = waiter.send(Ok(entry.info.clone()));
+        }
+        if let Some(close) = entry.close {
+            for waiter in close.waiters {
+                let _ = waiter.send(Ok(()));
+            }
+        }
+        self.emit(&Event::SessionClosed { session_id: id });
+        self.retitle_workspace(entry.info.workspace_id, None);
+        self.sync_workspace(entry.info.workspace_id);
+        for other in self.sync_shared() {
+            self.emit(&Event::SessionUpdated {
+                session: self.sessions[other].info.clone(),
+            });
+        }
+        self.schedule_tree_events();
+        self.settle_stop_all();
+    }
+
     /// The idle sleeper stopped the agent of an assistant. For its clients the session is what
     /// it was, idle; only what the dead process knew (its agents) is let go.
     fn on_chat_slept(&mut self, id: SessionId) {
@@ -4316,6 +4539,7 @@ impl SessionRegistry {
                 warn!(session = %row.id, %error, "stored chat spec is unreadable");
                 (
                     ChatSpec {
+                        fork: None,
                         agent: AGENT_CODEX.to_owned(),
                         model: None,
                         approval_policy: Default::default(),
@@ -4383,6 +4607,7 @@ impl SessionRegistry {
         let default_title = format!("{} · chat", spec.agent);
         self.sessions.push(SessionEntry {
             info: SessionInfo {
+                forked_from: spec.fork.as_ref().map(|fork| fork.origin.clone()),
                 id: row.id,
                 workspace_id: row.workspace_id,
                 kind: SessionKind::Harness,
@@ -4613,6 +4838,7 @@ impl SessionRegistry {
             let state_is_live = state.is_live();
             self.sessions.push(SessionEntry {
                 info: SessionInfo {
+                    forked_from: None,
                     id: row.id,
                     workspace_id: row.workspace_id,
                     kind: row.kind,
@@ -5279,6 +5505,7 @@ struct Restoring {
 
 fn chat_info(spec: &ChatSpec) -> ChatInfo {
     ChatInfo {
+        fork: None,
         agent: spec.agent.clone(),
         model: spec.model.clone().unwrap_or_default(),
         approval_policy: spec.approval_policy,

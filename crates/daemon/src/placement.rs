@@ -467,6 +467,7 @@ mod tests {
 
     fn session() -> SessionInfo {
         SessionInfo {
+            forked_from: None,
             containment: None,
             terminal_agent: None,
             id: SessionId::new(),
@@ -502,6 +503,7 @@ mod tests {
 
     fn chat(agent: &str, turn_active: bool) -> hutan_protocol::chat::ChatInfo {
         hutan_protocol::chat::ChatInfo {
+            fork: None,
             agent: agent.to_owned(),
             model: String::new(),
             approval_policy: hutan_core::ApprovalPolicy::default(),

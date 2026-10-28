@@ -93,6 +93,7 @@ pub const CAPABILITIES: &[&str] = &[
     "worktree.stage",
     "fs.ops",
     "terminal.agent",
+    "chat.fork",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

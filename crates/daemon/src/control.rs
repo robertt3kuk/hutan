@@ -990,6 +990,7 @@ fn target_session(request: &Request) -> Option<SessionId> {
         Request::SessionSendText(r) => Some(r.session_id),
         Request::ChatSend(r) => Some(r.session_id),
         Request::ChatRetry(r) => Some(r.session_id),
+        Request::ChatFork(r) => Some(r.session_id),
         Request::ChatSetModel(r) => Some(r.session_id),
         Request::CheckpointRemove(r) => r.session_id,
         _ => None,
@@ -1135,6 +1136,12 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
         Request::ChatRetry(r) => format!(
             "send the last message of the chat {} again",
             session(r.session_id)
+        ),
+        Request::ChatFork(r) => format!(
+            "start a new chat with the conversation of {} up to {}",
+            session(r.session_id),
+            r.turn_id
+                .map_or_else(|| "its latest turn".to_owned(), |t| format!("turn {t}"))
         ),
         Request::ChatInterrupt(r) => format!(
             "interrupt the turn of {}{}",
@@ -1311,6 +1318,7 @@ mod tests {
 
     fn session(kind: SessionKind, state: SessionState, agent: bool) -> SessionInfo {
         SessionInfo {
+            forked_from: None,
             containment: None,
             terminal_agent: None,
             id: SessionId::new(),

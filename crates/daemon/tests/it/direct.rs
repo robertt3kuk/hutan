@@ -13,13 +13,14 @@ use std::time::Duration;
 use common::{TestDaemon, WAIT, remote_code, wait_event};
 use hutan_client::Client;
 use hutan_core::agent::MessageRole;
-use hutan_core::{AgentEvent, AgentEventKind, Seq, SessionId, SessionState};
+use hutan_core::{AgentEvent, AgentEventKind, ForkMode, Seq, SessionId, SessionState, TurnId};
 use hutan_daemon::GatewayConfig;
 use hutan_gateway::testing::{MockServer, Reply};
 use hutan_gateway::{CredentialStore, HttpConfig, MemoryStore, ProbeTarget, ProviderKind};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::{
-    ChatCreate, ChatHistory, ChatHistoryRequest, ChatInterrupt, ChatRetry, ChatSend, ChatSent,
+    ChatCreate, ChatFork, ChatForked, ChatHistory, ChatHistoryRequest, ChatInterrupt, ChatRetry,
+    ChatSend, ChatSent, ForkWhere,
 };
 use hutan_protocol::messages::{
     Empty, Event, Request, SessionInfo, SessionList, SessionListFilter, SessionResult,
@@ -1652,4 +1653,301 @@ async fn a_credential_is_used_but_appears_nowhere_it_must_not() {
         "the daemon logged the event, not the secret"
     );
     assert!(!log.contains("LEAKCHECK"), "a log line carries the secret");
+}
+
+// Fork (ADR 0023, protocol 0.56) ---------------------------------------------------------------
+
+/// The ids of the turns a chat's history shows, oldest first.
+fn turn_ids(events: &[AgentEvent]) -> Vec<TurnId> {
+    events
+        .iter()
+        .filter(|e| matches!(e.kind, AgentEventKind::TurnStarted))
+        .filter_map(|e| e.turn_id)
+        .collect()
+}
+
+fn fork_request(session: SessionId, turn: Option<TurnId>, mode: ForkMode) -> Request {
+    Request::ChatFork(ChatFork {
+        session_id: session,
+        turn_id: turn,
+        mode,
+        title: None,
+        where_: ForkWhere::ThisFolder,
+    })
+}
+
+/// A direct chat with three answered turns (`q1`..`q3` answered `a1`..`a3`) and the mock behind
+/// it, which will answer `more` next.
+async fn three_turns(more: &[&str]) -> (MockServer, Direct, SessionInfo) {
+    let mock = MockServer::start().await;
+    for answer in ["a1", "a2", "a3"].iter().chain(more) {
+        mock.route("POST", OPENAI_PATH, openai_reply(&[answer], (1, 1)));
+    }
+    let mut t = Direct::start().await;
+    let p = t
+        .add_provider(
+            "openai-compatible",
+            "mock",
+            Some(format!("{}/v1", mock.url())),
+            Some("m"),
+        )
+        .await;
+    let created = t.create(&p.id, None, None).await;
+    for q in ["q1", "q2", "q3"] {
+        t.send(created.id, q).await;
+        t.turn_events(created.id).await;
+        t.wait_state(created.id, SessionState::Idle).await;
+    }
+    (mock, t, created)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_direct_chat_forks_after_any_turn_and_the_two_chats_go_on_apart() {
+    let (mock, mut t, parent) = three_turns(&["f1", "a4"]).await;
+    let history = t.history(parent.id).await;
+    let turns = turn_ids(&history.events);
+    assert_eq!(turns.len(), 3);
+    assert!(t.client.supports_chat_fork());
+
+    let forked: ChatForked = t
+        .call(Request::ChatFork(ChatFork {
+            session_id: parent.id,
+            turn_id: Some(turns[1]),
+            mode: ForkMode::Exact,
+            title: Some("Try it again".into()),
+            where_: ForkWhere::ThisFolder,
+        }))
+        .await;
+    let child = forked.session;
+    assert_ne!(child.id, parent.id);
+    assert_eq!(child.title, "Try it again");
+    assert_eq!(child.state, SessionState::Idle);
+    assert_eq!(child.cwd, parent.cwd);
+    assert_eq!(child.workspace_id, parent.workspace_id);
+    let origin = child
+        .forked_from
+        .clone()
+        .expect("a fork says where it came from");
+    assert_eq!(
+        (
+            origin.session_id,
+            origin.turn_id,
+            origin.ordinal,
+            origin.mode
+        ),
+        (parent.id, turns[1], 2, ForkMode::Exact)
+    );
+    assert_eq!(forked.fork.mode, ForkMode::Exact);
+    assert_eq!(forked.fork.ordinal, 2);
+    assert_eq!(forked.fork.support, hutan_core::ForkSupport::Exact);
+    let chat = child.chat.clone().unwrap();
+    assert_eq!(chat.provider_id, parent.chat.as_ref().unwrap().provider_id);
+    assert_eq!(chat.model, "m");
+    assert_eq!(
+        chat.fork.as_ref().map(|f| f.support),
+        Some(hutan_core::ForkSupport::Exact)
+    );
+    assert!(parent.forked_from.is_none());
+
+    // The journal through turn 2 was copied, session ids rewritten, and a notice says so.
+    let copied = t.history(child.id).await;
+    assert_eq!(forked.fork.copied_events, copied.events.len() as u64 - 1);
+    assert!(copied.events.iter().all(|e| e.session_id == child.id));
+    assert_eq!(
+        message_texts(&copied.events, MessageRole::User),
+        ["q1", "q2"]
+    );
+    assert_eq!(
+        message_texts(&copied.events, MessageRole::Assistant),
+        ["a1", "a2"]
+    );
+    assert_eq!(turn_ids(&copied.events), turns[..2]);
+    let notice = copied.events.last().unwrap();
+    assert!(
+        matches!(&notice.kind, AgentEventKind::Notice { message, .. } if message.contains("after turn 2 of 3")),
+        "{:?}",
+        notice.kind
+    );
+    // The parent is untouched.
+    let parent_history = t.history(parent.id).await;
+    assert_eq!(parent_history, history);
+
+    // The fork answers from the conversation it kept: no `q3`, no `a3`.
+    t.send(child.id, "q-fork").await;
+    t.turn_events(child.id).await;
+    assert_eq!(
+        sent_messages(&mock, OPENAI_PATH, 3),
+        pairs(&[
+            ("user", "q1"),
+            ("assistant", "a1"),
+            ("user", "q2"),
+            ("assistant", "a2"),
+            ("user", "q-fork"),
+        ])
+    );
+    // And the parent goes on with its own, not hearing of the fork.
+    t.wait_state(child.id, SessionState::Idle).await;
+    t.send(parent.id, "q4").await;
+    t.turn_events(parent.id).await;
+    assert_eq!(
+        sent_messages(&mock, OPENAI_PATH, 4),
+        pairs(&[
+            ("user", "q1"),
+            ("assistant", "a1"),
+            ("user", "q2"),
+            ("assistant", "a2"),
+            ("user", "q3"),
+            ("assistant", "a3"),
+            ("user", "q4"),
+        ])
+    );
+    let child_now = t.history(child.id).await;
+    assert_eq!(
+        message_texts(&child_now.events, MessageRole::User),
+        ["q1", "q2", "q-fork"]
+    );
+
+    // A daemon restart keeps the lineage and the conversation.
+    let t = t.restart().await;
+    let listed = t.session(child.id).await;
+    assert_eq!(listed.forked_from, child.forked_from);
+    assert_eq!(listed.title, "Try it again");
+    assert_eq!(
+        message_texts(&t.history(child.id).await.events, MessageRole::User),
+        ["q1", "q2", "q-fork"]
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn head_forks_the_whole_conversation_and_a_fork_of_a_fork_is_a_fork() {
+    let (_mock, mut t, parent) = three_turns(&[]).await;
+    let turns = turn_ids(&t.history(parent.id).await.events);
+    let head: ChatForked = t.call(fork_request(parent.id, None, ForkMode::Head)).await;
+    assert_eq!(head.fork.ordinal, 3);
+    assert_eq!(head.fork.turn_id, turns[2]);
+    assert_eq!(head.fork.mode, ForkMode::Head);
+    assert_eq!(
+        head.session.title,
+        format!("{} (fork)", parent.title),
+        "named after its parent by default"
+    );
+    let copied = t.history(head.session.id).await;
+    assert_eq!(
+        message_texts(&copied.events, MessageRole::Assistant),
+        ["a1", "a2", "a3"]
+    );
+    assert!(
+        matches!(&copied.events.last().unwrap().kind, AgentEventKind::Notice { message, .. } if message.contains("latest turn")),
+    );
+
+    // Forking the fork cuts what the fork has: its three copied turns.
+    let again: ChatForked = t
+        .call(fork_request(
+            head.session.id,
+            Some(turns[0]),
+            ForkMode::Exact,
+        ))
+        .await;
+    let origin = again.session.forked_from.unwrap();
+    assert_eq!(
+        (origin.session_id, origin.turn_id, origin.ordinal),
+        (head.session.id, turns[0], 1)
+    );
+    assert_eq!(
+        message_texts(&t.history(again.session.id).await.events, MessageRole::User),
+        ["q1"]
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fork_is_refused_with_the_reason_and_leaves_nothing_behind() {
+    let mock = MockServer::start().await;
+    mock.route("POST", OPENAI_PATH, openai_reply(&["a1"], (1, 1)));
+    mock.route(
+        "POST",
+        OPENAI_PATH,
+        Reply::sse(["data: {\"choices\":[{\"delta\":{\"content\":\"half\"}}]}\n\n"]).then_hold(),
+    );
+    let mut t = Direct::start().await;
+    let p = t
+        .add_provider(
+            "openai-compatible",
+            "mock",
+            Some(format!("{}/v1", mock.url())),
+            Some("m"),
+        )
+        .await;
+    let chat = t.create(&p.id, None, None).await;
+    let sessions_before = t
+        .call::<SessionList>(Request::SessionList(SessionListFilter::default()))
+        .await
+        .sessions
+        .len();
+    let refused = |error: Result<ChatForked, hutan_client::ClientError>| remote_code(error);
+
+    // No turn yet.
+    let early = t
+        .try_call::<ChatForked>(fork_request(chat.id, None, ForkMode::Exact))
+        .await;
+    assert_eq!(refused(early), ErrorCode::InvalidState);
+
+    t.send(chat.id, "q1").await;
+    t.turn_events(chat.id).await;
+    t.wait_state(chat.id, SessionState::Idle).await;
+    let turns = turn_ids(&t.history(chat.id).await.events);
+
+    // Not a turn of this chat.
+    let unknown = t
+        .try_call::<ChatForked>(fork_request(chat.id, Some(TurnId::new()), ForkMode::Exact))
+        .await;
+    assert_eq!(refused(unknown), ErrorCode::InvalidState);
+    // A summary is for agents that cannot cut their conversation; a direct chat can.
+    let summary = t
+        .try_call::<ChatForked>(fork_request(chat.id, None, ForkMode::Summary))
+        .await;
+    assert_eq!(refused(summary), ErrorCode::BadRequest);
+    // Not a session.
+    let missing = t
+        .try_call::<ChatForked>(fork_request(SessionId::new(), None, ForkMode::Exact))
+        .await;
+    assert_eq!(refused(missing), ErrorCode::NotFound);
+
+    // While a turn runs.
+    t.send(chat.id, "q2").await;
+    wait_event(&mut t.events, "the first delta", |e| match e {
+        Event::ChatEvent { event, .. }
+            if matches!(event.kind, AgentEventKind::MessageDelta { .. }) =>
+        {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+    let running = t
+        .try_call::<ChatForked>(fork_request(chat.id, Some(turns[0]), ForkMode::Exact))
+        .await;
+    assert_eq!(refused(running), ErrorCode::InvalidState);
+
+    // `head` names no earlier turn.
+    t.call::<Empty>(Request::ChatInterrupt(ChatInterrupt {
+        session_id: chat.id,
+        keep_queue: false,
+    }))
+    .await;
+    t.wait_state(chat.id, SessionState::Idle).await;
+    let turns = turn_ids(&t.history(chat.id).await.events);
+    assert_eq!(turns.len(), 2);
+    let head = t
+        .try_call::<ChatForked>(fork_request(chat.id, Some(turns[0]), ForkMode::Head))
+        .await;
+    assert_eq!(refused(head), ErrorCode::BadRequest);
+
+    // Nothing was made by any of it.
+    let after = t
+        .call::<SessionList>(Request::SessionList(SessionListFilter::default()))
+        .await;
+    assert_eq!(after.sessions.len(), sessions_before);
+    t.stop().await;
 }

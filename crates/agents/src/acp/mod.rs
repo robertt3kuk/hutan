@@ -993,7 +993,11 @@ impl AgentAdapter for AcpAdapter {
     ) -> BoxFuture<'_, Result<TurnRef, AgentError>> {
         Box::pin(async move {
             let shared = &self.shared;
-            let MessageExtras { context, images } = extras;
+            let MessageExtras {
+                context,
+                images,
+                unjournaled,
+            } = extras;
             if !images.is_empty() && !shared.images {
                 return Err(AgentError::Unsupported(format!(
                     "{} does not accept images (its handshake offers no `promptCapabilities.image`)",
@@ -1022,7 +1026,7 @@ impl AgentAdapter for AcpAdapter {
                 if !text.trim().is_empty() {
                     prompt.push(json!({"type": "text", "text": text}));
                 }
-                for (index, block) in context.iter().enumerate() {
+                for (index, block) in context.iter().chain(&unjournaled).enumerate() {
                     prompt.push(json!({
                         "type": "resource",
                         "resource": {
@@ -1034,7 +1038,7 @@ impl AgentAdapter for AcpAdapter {
                 }
             } else {
                 let mut quoted = text.clone();
-                for block in &context {
+                for block in context.iter().chain(&unjournaled) {
                     quoted.push_str("\n\n");
                     quoted.push_str(&block.text);
                 }

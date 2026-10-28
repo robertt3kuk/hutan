@@ -525,6 +525,26 @@ impl Chat<'_> {
         self.0.read(move |conn| sql::chat_last_seq(conn, session))
     }
 
+    /// The newest `limit` events of one `kind` with `seq <= through_seq`, oldest first.
+    pub fn items_of_kind_through(
+        &self,
+        session: SessionId,
+        kind: &str,
+        through_seq: u64,
+        limit: u32,
+    ) -> Result<Vec<ChatItemRow>> {
+        let kind = kind.to_owned();
+        self.0.read(move |conn| {
+            sql::chat_items_of_kind_through(conn, session, &kind, through_seq, limit)
+        })
+    }
+
+    /// How many events the journal holds with `seq <= through_seq`.
+    pub fn events_through(&self, session: SessionId, through_seq: u64) -> Result<u64> {
+        self.0
+            .read(move |conn| sql::chat_events_through(conn, session, through_seq))
+    }
+
     /// The highest `seq` journaled for one turn; `None` when the turn has no event.
     pub fn turn_last_seq(&self, session: SessionId, turn: &str) -> Result<Option<u64>> {
         let turn = turn.to_owned();

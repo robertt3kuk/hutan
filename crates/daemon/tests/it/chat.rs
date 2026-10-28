@@ -21,9 +21,9 @@ use hutan_core::{
 use hutan_core::{Seq, SessionState};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistory,
-    ChatHistoryRequest, ChatModels, ChatModelsRequest, ChatSend, ChatSent, QuestionAnswer,
-    QuestionInfo, QuestionList, QuestionListRequest,
+    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatFork,
+    ChatForked, ChatHistory, ChatHistoryRequest, ChatModels, ChatModelsRequest, ChatSend, ChatSent,
+    ForkWhere, QuestionAnswer, QuestionInfo, QuestionList, QuestionListRequest,
 };
 use hutan_protocol::messages::{
     ClientKind, Empty, Event, Request, SessionInfo, SessionList, SessionListFilter, SessionRef,
@@ -111,6 +111,15 @@ impl Chat {
     /// Everything the fake server received, as `(method or "response", message)`.
     fn received(&self) -> Vec<(String, Value)> {
         received_in(&self.received_path())
+    }
+
+    /// What the fake server received of one method.
+    fn received_of(&self, method: &str) -> Vec<Value> {
+        self.received()
+            .into_iter()
+            .filter(|(name, _)| name == method)
+            .map(|(_, msg)| msg)
+            .collect()
     }
 
     fn cwd(&self) -> PathBuf {
@@ -2384,6 +2393,144 @@ async fn a_refresh_asks_a_codex_that_ran_through_hutan_for_its_rate_limits() {
             .count(),
         1,
         "asked once"
+    );
+    t.stop().await;
+}
+
+// Fork (ADR 0023) ------------------------------------------------------------------------------
+
+/// `fork-turn` is built from the 0.162.1 schema (`ThreadForkParams`/`ThreadForkResponse`) on the
+/// shape of a recorded `thread/resume`; `two-turns` is two recorded turns of `plain-turn`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_codex_chat_forks_after_a_turn_with_thread_fork_and_a_copy_of_its_journal() {
+    use hutan_core::agent::MessageRole;
+    let work = tempfile::tempdir().unwrap();
+    let scripted = script(work.path(), &["two-turns", "fork-turn"]);
+    let config = replay(&scripted, &work.path().join("received.jsonl"));
+    let daemon = TestDaemon::start_with("", move |c| c.codex = Some(config)).await;
+    let (client, mut events) = daemon.connect_subscribed().await;
+    let t = Chat {
+        daemon,
+        work,
+        client,
+        events: events.resubscribe(),
+    };
+    let created = t.create().await;
+    assert_eq!(created.forked_from, None);
+    for text in ["first", "second"] {
+        t.send(created.id, text).await;
+        next_chat_event(&mut events, "the turn to end", is_turn_end).await;
+        t.wait_state(created.id, SessionState::Idle).await;
+    }
+    let parent = t.history(created.id, None, 500).await;
+    let started: Vec<&AgentEvent> = parent
+        .events
+        .iter()
+        .filter(|e| matches!(e.kind, AgentEventKind::TurnStarted))
+        .collect();
+    assert_eq!(started.len(), 2);
+    let first = started[0].turn_id.unwrap();
+    let provider_first = started[0]
+        .provider
+        .turn_id
+        .clone()
+        .expect("Codex's own turn id");
+    let parent_thread = created
+        .chat
+        .as_ref()
+        .unwrap()
+        .agent_session_id
+        .clone()
+        .unwrap();
+    assert_eq!(
+        t.session(created.id)
+            .await
+            .chat
+            .unwrap()
+            .fork
+            .map(|f| f.support),
+        Some(hutan_core::ForkSupport::Exact),
+        "Codex cuts at any turn"
+    );
+
+    let forked: ChatForked = t
+        .client
+        .call(Request::ChatFork(ChatFork {
+            session_id: created.id,
+            turn_id: Some(first),
+            mode: hutan_core::ForkMode::Exact,
+            title: None,
+            where_: ForkWhere::ThisFolder,
+        }))
+        .await
+        .unwrap();
+    let child = forked.session;
+    assert_eq!(forked.fork.ordinal, 1);
+    assert_eq!(forked.fork.support, hutan_core::ForkSupport::Exact);
+    let origin = child.forked_from.clone().unwrap();
+    assert_eq!((origin.session_id, origin.turn_id), (created.id, first));
+    // Codex was asked to fork its thread after the turn the journal names.
+    let fork = &t.received_of("thread/fork")[0]["params"];
+    assert_eq!(fork["threadId"], parent_thread.as_str());
+    assert_eq!(fork["lastTurnId"], provider_first.as_str());
+    assert_eq!(
+        fork["cwd"],
+        created.cwd.as_ref().unwrap().display().to_string()
+    );
+    assert!(
+        t.received_of("thread/start").len() == 1,
+        "only the parent was started"
+    );
+    let child_thread = child
+        .chat
+        .as_ref()
+        .unwrap()
+        .agent_session_id
+        .clone()
+        .unwrap();
+    assert_ne!(
+        child_thread, parent_thread,
+        "the fork is a thread of its own"
+    );
+
+    let copied = t.history(child.id, None, 500).await;
+    assert!(copied.events.iter().all(|e| e.session_id == child.id));
+    let users = |history: &ChatHistory| -> Vec<String> {
+        history
+            .events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                AgentEventKind::MessageEnd {
+                    role: MessageRole::User,
+                    text,
+                    ..
+                } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let first_user = users(&parent)[0].clone();
+    assert_eq!(users(&copied), [first_user.as_str()]);
+    assert_eq!(users(&parent).len(), 2);
+    assert!(copied.events.iter().any(|e| matches!(
+        &e.kind,
+        AgentEventKind::Notice { message, .. } if message.contains("after turn 1 of 2")
+    )));
+
+    // The fork takes turns on its own thread.
+    t.send(child.id, "again").await;
+    next_chat_event(&mut events, "the fork's turn to end", |e| {
+        e.session_id == child.id && e.kind.ends_turn()
+    })
+    .await;
+    assert_eq!(
+        t.received_of("turn/start").last().unwrap()["params"]["threadId"],
+        child_thread.as_str()
+    );
+    assert_eq!(
+        users(&t.history(created.id, None, 500).await).len(),
+        2,
+        "the parent is untouched"
     );
     t.stop().await;
 }

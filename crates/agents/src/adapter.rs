@@ -170,11 +170,15 @@ pub struct MessageExtras {
     /// Text attachments, one by one (ACP embedded context).
     pub context: Vec<ContextBlock>,
     pub images: Vec<ImageBlock>,
+    /// Context the agent is given **without** the journal showing it as the user's words: what
+    /// Hutan adds on its own (a summary fork's digest, ADR 0023). ACP agents take each block as
+    /// a resource of its own.
+    pub unjournaled: Vec<ContextBlock>,
 }
 
 impl MessageExtras {
     pub fn is_empty(&self) -> bool {
-        self.context.is_empty() && self.images.is_empty()
+        self.context.is_empty() && self.images.is_empty() && self.unjournaled.is_empty()
     }
 }
 

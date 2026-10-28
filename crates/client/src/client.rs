@@ -23,11 +23,11 @@ use hutan_protocol::blocks::{
     BlockPart, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks, TerminalBlocksResult,
 };
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistory,
-    ChatHistoryRequest, ChatInterrupt, ChatModels, ChatModelsRequest, ChatQueue, ChatQueueAdd,
-    ChatQueueEdit, ChatQueueItemRef, ChatQueued, ChatRetry, ChatSend, ChatSendNow, ChatSent,
-    ChatSentNow, HISTORY_MAX_LIMIT, QuestionAnswer, QuestionInfo, QuestionList,
-    QuestionListRequest, QueuedMessage,
+    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatFork,
+    ChatForked, ChatHistory, ChatHistoryRequest, ChatInterrupt, ChatModels, ChatModelsRequest,
+    ChatQueue, ChatQueueAdd, ChatQueueEdit, ChatQueueItemRef, ChatQueued, ChatRetry, ChatSend,
+    ChatSendNow, ChatSent, ChatSentNow, HISTORY_MAX_LIMIT, QuestionAnswer, QuestionInfo,
+    QuestionList, QuestionListRequest, QueuedMessage,
 };
 use hutan_protocol::checkpoint::{
     CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest,
@@ -230,6 +230,8 @@ pub(crate) const SANDBOX_CAPABILITY: &str = "sandbox";
 pub(crate) const WORKTREE_STAGE_CAPABILITY: &str = "worktree.stage";
 /// Capability for `fs.create|rename|move|copy|trash|restore` (protocol 0.54).
 pub(crate) const FS_OPS_CAPABILITY: &str = "fs.ops";
+/// Capability for `chat.fork` (protocol 0.56).
+pub(crate) const CHAT_FORK_CAPABILITY: &str = "chat.fork";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -288,6 +290,7 @@ const CAPABILITIES: &[&str] = &[
     WORKTREE_SETUP_CAPABILITY,
     WORKTREE_STAGE_CAPABILITY,
     FS_OPS_CAPABILITY,
+    CHAT_FORK_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -924,6 +927,20 @@ impl Client {
     pub async fn chat_retry(&self, session_id: SessionId) -> Result<ChatSent, ClientError> {
         self.call(Request::ChatRetry(ChatRetry { session_id }))
             .await
+    }
+
+    /// True when the daemon advertised capability `chat.fork` (protocol 0.56).
+    pub fn supports_chat_fork(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CHAT_FORK_CAPABILITY)
+    }
+
+    /// `chat.fork`: a new chat that starts with the chat's conversation up to a turn (ADR
+    /// 0023). The parent is untouched; answered once the new chat's agent is up.
+    pub async fn chat_fork(&self, fork: ChatFork) -> Result<ChatForked, ClientError> {
+        self.call(Request::ChatFork(fork)).await
     }
 
     /// True when the daemon advertised capability `assistant` (protocol 0.12).

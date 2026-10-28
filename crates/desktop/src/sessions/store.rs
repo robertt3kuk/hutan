@@ -3918,6 +3918,7 @@ mod tests {
 
     fn info(state: hutan_core::SessionState) -> SessionInfo {
         SessionInfo {
+            forked_from: None,
             containment: None,
             terminal_agent: None,
             id: SessionId::new(),

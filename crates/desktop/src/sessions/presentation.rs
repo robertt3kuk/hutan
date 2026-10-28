@@ -1312,6 +1312,7 @@ mod tests {
 
     fn session(workspace: WorkspaceId, title: &str) -> SessionInfo {
         SessionInfo {
+            forked_from: None,
             containment: None,
             terminal_agent: None,
             id: SessionId::new(),
@@ -1335,6 +1336,7 @@ mod tests {
 
     fn chat(agent: &str, assistant: bool, exact: bool) -> ChatInfo {
         ChatInfo {
+            fork: None,
             agent: agent.into(),
             model: String::new(),
             approval_policy: Default::default(),

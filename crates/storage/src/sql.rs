@@ -865,6 +865,58 @@ pub fn chat_items_of_kind(
     Ok(items)
 }
 
+/// The newest `limit` events of one `kind` with `seq <= through_seq`, oldest first (what a fork
+/// reads of the prefix it keeps).
+pub fn chat_items_of_kind_through(
+    conn: &Connection,
+    session: SessionId,
+    kind: &str,
+    through_seq: u64,
+    limit: u32,
+) -> Result<Vec<ChatItemRow>> {
+    let context = "reading chat events of one kind through a seq";
+    let mut stmt = conn
+        .prepare(
+            "SELECT seq, ts_ms, turn_id, item_id, kind, event_json FROM chat_items \
+             WHERE session_id = ?1 AND kind = ?2 AND seq <= ?3 ORDER BY seq DESC LIMIT ?4",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map(
+            params![session.to_string(), kind, ms(through_seq), i64::from(limit)],
+            |row| {
+                Ok(ChatItemRow {
+                    session_id: session,
+                    seq: unms(row.get(0)?),
+                    ts_ms: unms(row.get(1)?),
+                    turn_id: row.get(2)?,
+                    item_id: row.get(3)?,
+                    kind: row.get(4)?,
+                    event_json: row.get(5)?,
+                })
+            },
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let mut items = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(StorageError::sqlite(context))?;
+    items.reverse();
+    Ok(items)
+}
+
+/// How many events the session's journal holds with `seq <= through_seq` (what a fork would
+/// copy, resume locators aside).
+pub fn chat_events_through(conn: &Connection, session: SessionId, through_seq: u64) -> Result<u64> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chat_items WHERE session_id = ?1 AND seq <= ?2",
+            params![session.to_string(), ms(through_seq)],
+            |row| row.get(0),
+        )
+        .map_err(StorageError::sqlite("counting chat events"))?;
+    Ok(unms(count))
+}
+
 /// The highest journaled `seq` of the session (0 for an empty journal).
 pub fn chat_last_seq(conn: &Connection, session: SessionId) -> Result<u64> {
     let last: Option<i64> = conn

@@ -374,6 +374,7 @@ impl Router {
                 }
                 ok(&ChatSent { turn_id })
             }
+            Request::ChatFork(req) => ok(&self.registry.fork_chat(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
                 self.registry
@@ -1042,6 +1043,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::ChatSend(_) => ("chat.send", Mutate),
         // Sends the same message again: what `chat.send` would do.
         Request::ChatRetry(_) => ("chat.retry", Mutate),
+        // A new chat that starts with another's conversation: what `chat.create` would do.
+        Request::ChatFork(_) => ("chat.fork", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.
         Request::ChatQueueAdd(_) => ("chat.queue.add", Mutate),

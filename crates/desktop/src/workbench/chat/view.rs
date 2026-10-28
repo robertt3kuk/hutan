@@ -2029,6 +2029,7 @@ mod safety_chip_tests {
         note: Option<&str>,
     ) -> ChatInfo {
         ChatInfo {
+            fork: None,
             agent: agent.into(),
             model: "m".into(),
             approval_policy: Default::default(),
@@ -2249,6 +2250,7 @@ mod mode_chip_tests {
 
     fn chat(mode: Option<ChatMode>) -> ChatInfo {
         ChatInfo {
+            fork: None,
             agent: "claude".into(),
             model: "sonnet".into(),
             approval_policy: Default::default(),

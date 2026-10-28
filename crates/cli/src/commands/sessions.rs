@@ -711,6 +711,7 @@ mod tests {
 
     fn session(id: &str, terminal: u64, title: &str) -> SessionInfo {
         SessionInfo {
+            forked_from: None,
             containment: None,
             terminal_agent: None,
             id: id.parse().unwrap(),

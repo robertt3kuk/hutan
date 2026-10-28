@@ -590,6 +590,7 @@ mod tests {
         terminal: Option<u64>,
     ) -> SessionInfo {
         SessionInfo {
+            forked_from: None,
             containment: None,
             terminal_agent: None,
             id: SessionId::new(),

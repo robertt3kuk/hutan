@@ -22,8 +22,8 @@ use hutan_protocol::blocks::{
     BlockPart, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks, TerminalBlocksResult,
 };
 use hutan_protocol::chat::{
-    ApprovalInfo, ChatCreate, ChatHistory, ChatModels, ChatQueue, ChatSent, ChatSentNow,
-    QuestionInfo, QueuedMessage,
+    ApprovalInfo, ChatCreate, ChatFork, ChatForked, ChatHistory, ChatModels, ChatQueue, ChatSent,
+    ChatSentNow, QuestionInfo, QueuedMessage,
 };
 use hutan_protocol::daemon_settings::DaemonSettings;
 use hutan_protocol::history::{HistoryHits, HistorySearch, HistorySetEnabled, HistoryStatusInfo};
@@ -888,6 +888,20 @@ impl Connection {
     pub async fn chat_retry(&self, session: SessionId) -> Result<ChatSent, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
         client.chat_retry(session).await
+    }
+
+    /// True while connected to a daemon that advertised capability `chat.fork`
+    /// ([`Client::supports_chat_fork`]); false when disconnected.
+    pub fn supports_chat_fork(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_chat_fork())
+    }
+
+    /// `chat.fork` ([`Client::chat_fork`]).
+    pub async fn chat_fork(&self, fork: ChatFork) -> Result<ChatForked, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.chat_fork(fork).await
     }
 
     /// True while connected to a daemon that advertised capability `assistant`

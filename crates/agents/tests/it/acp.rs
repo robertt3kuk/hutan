@@ -1145,6 +1145,7 @@ async fn attached_context_is_sent_as_embedded_resources() {
                     text: "[shell: cargo test · exit 1]\n1 failed".into(),
                 }],
                 images: Vec::new(),
+                ..Default::default()
             },
         )
         .await
@@ -1198,6 +1199,7 @@ async fn images_are_sent_as_image_blocks_when_the_agent_takes_them() {
                     text: "[pasted text: 1 line]\nhello".into(),
                 }],
                 images: vec![png()],
+                ..Default::default()
             },
         )
         .await
@@ -1244,6 +1246,7 @@ async fn images_are_refused_when_the_agent_does_not_take_them() {
             MessageExtras {
                 context: Vec::new(),
                 images: vec![png()],
+                ..Default::default()
             },
         )
         .await

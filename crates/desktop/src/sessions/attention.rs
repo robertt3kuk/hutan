@@ -867,6 +867,7 @@ mod tests {
 
     fn info(id: SessionId, state: SessionState) -> SessionInfo {
         SessionInfo {
+            forked_from: None,
             containment: None,
             terminal_agent: None,
             id,
@@ -1155,6 +1156,7 @@ mod tests {
         let mut session = info(SessionId::new(), state);
         session.kind = hutan_core::SessionKind::Harness;
         session.chat = Some(hutan_protocol::chat::ChatInfo {
+            fork: None,
             agent: "codex".into(),
             model: "gpt-6.1-sol".into(),
             approval_policy: hutan_core::ApprovalPolicy::OnRequest,
