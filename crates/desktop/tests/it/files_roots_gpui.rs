@@ -564,9 +564,21 @@ fn files_dropped_from_finder_on_a_root_row_are_copied_into_that_project(cx: &mut
     let fx = Fx::new();
     let (view, cx) = open(cx, &fx, WORKSPACE);
     let panel = files_panel(&view, cx);
-    wait_until(cx, "both roots listed", |cx| {
-        rows(&panel, cx).contains(&"  new.txt".to_owned())
-    });
+    // Both roots listed, all seven rows: the drop point below is a row count away from the top,
+    // and beta's rows can be there before alpha's are.
+    wait_rows(
+        &panel,
+        cx,
+        &[
+            "alpha",
+            "  src",
+            "  alpha.txt",
+            "beta",
+            "  src",
+            "  beta.txt",
+            "  new.txt",
+        ],
+    );
     draw(cx);
     let outside = tempfile::tempdir().unwrap();
     let logo = outside.path().join("logo.png");
@@ -598,9 +610,47 @@ fn files_dropped_from_finder_on_a_root_row_are_copied_into_that_project(cx: &mut
     });
     assert!(!fx.alpha.join("logo.png").exists());
     assert!(logo.exists(), "copied, not moved");
-    wait_until(cx, "beta's new row", |cx| {
-        rows(&panel, cx).contains(&"  logo.png".to_owned())
+    wait_rows(
+        &panel,
+        cx,
+        &[
+            "alpha",
+            "  src",
+            "  alpha.txt",
+            "beta",
+            "  src",
+            "  beta.txt",
+            "  logo.png",
+            "  new.txt",
+        ],
+    );
+
+    // A second drop in the same window, on the first root's row, is copied in too: the drag
+    // state a drop leaves behind (`Exited`, `Ended`) does not swallow the next one.
+    let poster = outside.path().join("poster.png");
+    fs::write(&poster, "png\n").unwrap();
+    let on_alpha = gpui::point(
+        tree.origin.x + gpui::px(80.0),
+        tree.origin.y + gpui::px(row * 0.5),
+    );
+    cx.simulate_event(FileDropEvent::Entered {
+        position: on_alpha,
+        paths: ExternalPaths([poster.clone()].into_iter().collect()),
     });
+    draw(cx);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.drop_target().map(Path::to_owned)),
+        Some(fx.alpha.clone()),
+        "the first root's row is a drop target"
+    );
+    cx.simulate_event(FileDropEvent::Submit { position: on_alpha });
+    cx.simulate_event(FileDropEvent::Exited);
+    cx.simulate_event(FileDropEvent::Ended);
+    draw(cx);
+    wait_until(cx, "the second copy in alpha", |_| {
+        fx.alpha.join("poster.png").exists()
+    });
+    assert!(!fx.beta.join("poster.png").exists());
 }
 
 #[gpui::test]
