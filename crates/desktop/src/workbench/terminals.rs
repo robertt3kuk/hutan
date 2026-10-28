@@ -1357,25 +1357,32 @@ impl Workbench {
     }
 
     /// The folders chip of a terminal with a coding agent (or with folders), at the foot of the
-    /// pane on the right: the working folder, `+N`, and the popover that adds one (the agent
+    /// pane on the left, above the Contain chip when there is one (the right-hand corner is the
+    /// *Track as* strip's): the working folder, `+N`, and the popover that adds one (the agent
     /// is typed `/add-dir <path>` for the user to confirm).
     fn render_terminal_folders(
         &mut self,
         id: SessionId,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let folders = self
-            .sessions
-            .read(cx)
+        /// The height of the Contain chip and the gap above it.
+        const CONTAIN_CHIP: f32 = 34.0;
+        let store = self.sessions.read(cx);
+        let folders = store
             .session_folders(id)
             .filter(|folders| folders.has_chip())?;
+        let lift = if store.session(id)?.containment.is_some() {
+            CONTAIN_CHIP
+        } else {
+            0.0
+        };
         let theme = self.theme;
         let tokens = self.density.ui();
         Some(
             div()
                 .absolute()
-                .bottom(px(tokens.spacing * 2.0))
-                .right(px(tokens.spacing * 5.0))
+                .bottom(px(tokens.spacing * 2.0 + lift))
+                .left(px(tokens.spacing * 3.0))
                 .px(px(tokens.spacing))
                 .py(px(tokens.spacing / 2.0))
                 .rounded(px(tokens.radius))
