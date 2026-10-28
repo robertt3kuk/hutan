@@ -192,6 +192,7 @@ fn size() -> TerminalSize {
 fn session_info() -> SessionInfo {
     SessionInfo {
         forked_from: None,
+        extra_dirs: Vec::new(),
         containment: None,
         terminal_agent: None,
         id: sid(),
@@ -272,6 +273,7 @@ fn approval() -> ApprovalId {
 fn chat_info() -> ChatInfo {
     ChatInfo {
         fork: None,
+        dirs: Vec::new(),
         agent: "codex".into(),
         model: "gpt-6.1-sol".into(),
         approval_policy: ApprovalPolicy::Untrusted,
@@ -297,6 +299,7 @@ fn harness_chat_session_info() -> SessionInfo {
         command: vec!["omp".into()],
         chat: Some(ChatInfo {
             fork: None,
+            dirs: Vec::new(),
             agent: "omp".into(),
             model: "anthropic/claude-sonnet-4-5".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -324,6 +327,7 @@ fn harness_assistant_session_info() -> SessionInfo {
         command: vec!["omp".into()],
         chat: Some(ChatInfo {
             fork: None,
+            dirs: Vec::new(),
             agent: "omp".into(),
             model: "anthropic/claude-sonnet-4-5".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -351,6 +355,7 @@ fn direct_chat_session_info() -> SessionInfo {
         command: vec!["direct".into()],
         chat: Some(ChatInfo {
             fork: None,
+            dirs: Vec::new(),
             agent: "direct".into(),
             model: "meta-llama/llama-3.3-70b-instruct".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -440,6 +445,7 @@ fn assistant_session_info() -> SessionInfo {
         command: vec!["assistant".into()],
         chat: Some(ChatInfo {
             fork: None,
+            dirs: Vec::new(),
             agent: AGENT_ASSISTANT.into(),
             model: "llama3.3:70b".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -1439,6 +1445,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::SessionCreate(SessionCreate {
                 workspace_id: Some(ws()),
                 spec: SessionSpec::Terminal(TerminalSpec {
+                    extra_dirs: Vec::new(),
                     contain: None,
                     command: vec!["omp".into()],
                     cwd: Some("/repo".into()),
@@ -1698,6 +1705,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create",
             Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: None,
                 workspace_id: Some(ws()),
                 cwd: "/repo".into(),
@@ -1716,6 +1724,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_minimal",
             Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: None,
                 workspace_id: None,
                 cwd: "/repo".into(),
@@ -1866,6 +1875,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_direct",
             Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: None,
                 workspace_id: None,
                 cwd: "/repo".into(),
@@ -2237,6 +2247,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_harness",
             Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: None,
                 workspace_id: None,
                 cwd: "/repo".into(),
@@ -2373,6 +2384,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_account",
             Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: None,
                 workspace_id: None,
                 cwd: "/work/repo".into(),
@@ -2391,6 +2403,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_safety",
             Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: None,
                 workspace_id: None,
                 cwd: "/work/repo".into(),
@@ -2409,6 +2422,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_contain",
             Request::ChatCreate(ChatCreate {
+                extra_dirs: Vec::new(),
                 contain: Some(hutan_core::Contain {
                     network: Some(false),
                     extra_write: vec!["/work/cache".into()],
@@ -3825,6 +3839,51 @@ fn requests() -> Vec<(&'static str, Request)> {
                 where_: ForkWhere::ThisFolder,
             }),
         ),
+        (
+            "chat_create_dirs",
+            Request::ChatCreate(ChatCreate {
+                extra_dirs: vec!["/work/api".into(), "/work/shared".into()],
+                contain: None,
+                workspace_id: None,
+                cwd: "/work/repo".into(),
+                agent: "claude".into(),
+                model: None,
+                approval_policy: None,
+                sandbox: None,
+                title: None,
+                mode: None,
+                provider_id: None,
+                system_prompt: None,
+                account: None,
+                safety: None,
+            }),
+        ),
+        (
+            "session_create_dirs",
+            Request::SessionCreate(SessionCreate {
+                workspace_id: None,
+                spec: SessionSpec::Terminal(TerminalSpec {
+                    command: vec!["claude".into()],
+                    cwd: Some("/work/repo".into()),
+                    extra_dirs: vec!["/work/api".into()],
+                    ..TerminalSpec::default()
+                }),
+            }),
+        ),
+        (
+            "chat_add_dir",
+            Request::ChatAddDir(ChatAddDir {
+                session_id: sid(),
+                path: "/work/api".into(),
+            }),
+        ),
+        (
+            "chat_remove_dir",
+            Request::ChatRemoveDir(ChatRemoveDir {
+                session_id: sid(),
+                path: "/work/api".into(),
+            }),
+        ),
     ]
 }
 
@@ -5146,6 +5205,59 @@ fn events() -> Vec<(&'static str, Event)> {
                         title: None,
                         source: hutan_protocol::messages::TerminalAgentSource::Process,
                     }),
+                    ..session_info()
+                },
+            },
+        ),
+        (
+            "session_updated_chat_dirs",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                        dirs: vec![
+                            ChatDir {
+                                path: "/work/repo".into(),
+                                role: ChatDirRole::Primary,
+                                applied: ChatDirApplied::Now,
+                            },
+                            ChatDir {
+                                path: "/work/api".into(),
+                                role: ChatDirRole::Extra,
+                                applied: ChatDirApplied::Now,
+                            },
+                            ChatDir {
+                                path: "/work/shared".into(),
+                                role: ChatDirRole::Extra,
+                                applied: ChatDirApplied::Restart,
+                            },
+                            ChatDir {
+                                path: "/work/docs".into(),
+                                role: ChatDirRole::Extra,
+                                applied: ChatDirApplied::NextTurn,
+                            },
+                        ],
+                        ..chat
+                    }),
+                    ..harness_chat_session_info()
+                },
+            },
+        ),
+        (
+            "session_updated_terminal_dirs",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    extra_dirs: vec![
+                        ChatDir {
+                            path: "/work/api".into(),
+                            role: ChatDirRole::Extra,
+                            applied: ChatDirApplied::Now,
+                        },
+                        ChatDir {
+                            path: "/work/shared".into(),
+                            role: ChatDirRole::Extra,
+                            applied: ChatDirApplied::Paste,
+                        },
+                    ],
                     ..session_info()
                 },
             },
@@ -8493,6 +8605,25 @@ fn sessions_of_an_older_daemon_have_no_placement() {
     let decoded: SessionInfo = serde_json::from_value(old).unwrap();
     assert_eq!(decoded.placement, None);
     assert_eq!(decoded.folder, None);
+}
+
+#[test]
+fn sessions_and_chat_requests_of_an_older_peer_have_no_folders() {
+    let old = serde_json::json!({
+        "id": sid(), "workspace_id": ws(), "kind": "terminal", "title": "t",
+        "state": {"state": "running"}, "command": [], "cwd": null, "terminal_id": 1,
+        "created_at_ms": 1
+    });
+    let decoded: SessionInfo = serde_json::from_value(old).unwrap();
+    assert!(decoded.extra_dirs.is_empty());
+    let chat: ChatCreate =
+        serde_json::from_value(serde_json::json!({"cwd": "/work/repo", "agent": "omp"})).unwrap();
+    assert!(chat.extra_dirs.is_empty());
+    let terminal: TerminalSpec = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert!(terminal.extra_dirs.is_empty());
+    // And nothing of the new fields is written when there are no folders.
+    let json = serde_json::to_string(&chat).unwrap();
+    assert!(!json.contains("extra_dirs"), "{json}");
 }
 
 #[test]

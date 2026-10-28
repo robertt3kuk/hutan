@@ -18,10 +18,10 @@ use crate::account::{AccountAdd, AccountDefaultSet, AccountLogin, AccountLogout,
 use crate::assistant::{AssistantConfigure, AssistantListRequest, AssistantOpen, AssistantReset};
 use crate::blocks::{Block, TerminalBlockText, TerminalBlocks};
 use crate::chat::{
-    ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatFork, ChatHistoryRequest,
-    ChatInfo, ChatInterrupt, ChatModelsRequest, ChatQueue, ChatQueueAdd, ChatQueueEdit,
-    ChatQueueItemRef, ChatRetry, ChatSend, ChatSendNow, QuestionAnswer, QuestionInfo,
-    QuestionListRequest, QueueChange,
+    ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatAddDir, ChatCreate, ChatDir, ChatFork,
+    ChatHistoryRequest, ChatInfo, ChatInterrupt, ChatModelsRequest, ChatQueue, ChatQueueAdd,
+    ChatQueueEdit, ChatQueueItemRef, ChatRemoveDir, ChatRetry, ChatSend, ChatSendNow,
+    QuestionAnswer, QuestionInfo, QuestionListRequest, QueueChange,
 };
 use crate::checkpoint::{
     CheckpointDiffRequest, CheckpointListRequest, CheckpointPreviewRequest, CheckpointRemove,
@@ -248,6 +248,15 @@ pub enum Request {
     /// interrupts it and goes next); answered with `ChatSentNow`.
     #[serde(rename = "chat.send_now")]
     ChatSendNow(ChatSendNow),
+    /// Capability `session.dirs` (protocol 0.57): add a folder to a chat or terminal session;
+    /// answered with `SessionResult`. User-only: an agent-originated connection gets
+    /// `forbidden`.
+    #[serde(rename = "chat.add_dir")]
+    ChatAddDir(ChatAddDir),
+    /// Capability `session.dirs`: take an extra folder out of a session; answered with
+    /// `SessionResult`. User-only.
+    #[serde(rename = "chat.remove_dir")]
+    ChatRemoveDir(ChatRemoveDir),
     /// Capability `chat.codex`: the journal of a session; answered with `ChatHistory`.
     #[serde(rename = "chat.history")]
     ChatHistory(ChatHistoryRequest),
@@ -961,6 +970,16 @@ pub struct TerminalSpec {
     /// `session.restart`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contain: Option<hutan_core::Contain>,
+    /// Protocol 0.57 (capability `session.dirs`, ADR 0023): further folders the session's
+    /// program works in besides `cwd`: absolute, existing directories (made canonical), at most
+    /// [`crate::chat::SESSION_DIRS_MAX`], without duplicates and none equal to `cwd`. When the
+    /// program is a known agent (`claude`, `codex`, `omp`) the daemon starts it with
+    /// `--add-dir <path>` for each; for other programs (a shell) the list is only kept, readable
+    /// by the file service and, with `contain`, writable (`bad_request` otherwise). **User-only**:
+    /// an agent-originated connection that sends any gets `forbidden`. Kept by
+    /// `session.restart`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1306,6 +1325,12 @@ pub struct SessionInfo {
     /// and when. Absent for chats that are not forks; stays when the parent is deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<hutan_core::ForkOrigin>,
+    /// Protocol 0.57 (capability `session.dirs`): the extra folders of a **terminal** session
+    /// (`TerminalSpec.extra_dirs`, `chat.add_dir`), each with how a running agent takes it
+    /// (`applied`: `now` for a folder the program was started with, `paste` for one pasted to
+    /// a running agent, `restart` otherwise). A chat's folders are in `ChatInfo.dirs`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_dirs: Vec<ChatDir>,
 }
 
 /// What a terminal session's coding agent is, and does (protocol 0.55, capability

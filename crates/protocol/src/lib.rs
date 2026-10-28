@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`chat`] also carries session folders — `ChatCreate.extra_dirs`, `TerminalSpec.extra_dirs`,
+//!   `chat.add_dir`, `chat.remove_dir`, `ChatInfo.dirs` and `SessionInfo.extra_dirs` (protocol
+//!   0.57, capability `session.dirs`, ADR 0023).
 //! - [`messages`] also carries `SessionInfo.terminal_agent` — the coding agent recognised in a
 //!   terminal session, from OSC 7501 or its program (protocol 0.55, capability `terminal.agent`).
 //! - [`chat`] also carries `chat.fork` — a new chat that starts with a chat's conversation up to
@@ -134,7 +137,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 56,
+    minor: 57,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

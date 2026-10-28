@@ -1,0 +1,1 @@
+{"id":293,"method":"session.create","params":{"command":["claude"],"cwd":"/work/repo","extra_dirs":["/work/api"],"kind":"terminal"}}

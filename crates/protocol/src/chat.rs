@@ -91,6 +91,85 @@ pub struct ChatCreate {
     /// uncontained).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contain: Option<hutan_core::Contain>,
+    /// Protocol 0.57 (capability `session.dirs`, ADR 0023 decision 4), `codex`, `omp` and
+    /// `claude` only: further folders the agent works in besides `cwd`, in this order. Each is
+    /// an absolute, existing directory the daemon makes canonical; at most
+    /// [`SESSION_DIRS_MAX`], without duplicates and none equal to `cwd` (`bad_request` with the
+    /// reason otherwise; also for a `direct` chat or an assistant, which have no tools to give
+    /// folders to). Folders are **user-only**: an agent-originated connection that sends any
+    /// gets `forbidden`. They are kept across restarts and restores and listed in
+    /// [`ChatInfo::dirs`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_dirs: Vec<PathBuf>,
+}
+
+/// Most extra folders one session holds (`chat.create`'s `extra_dirs`, `chat.add_dir`, a
+/// terminal's `extra_dirs`).
+pub const SESSION_DIRS_MAX: usize = 8;
+
+/// `chat.add_dir` (protocol 0.57, capability `session.dirs`): adds a folder to a session.
+/// Answered with `SessionResult`: the session as it is now (`ChatInfo.dirs` for a chat,
+/// `SessionInfo.extra_dirs` for a terminal). **User-only** (`forbidden` for an agent-originated
+/// connection). `path` must be an absolute, existing directory outside Hutan's data folder and
+/// the `[sandbox] read_deny` set, not the session's own folder and not already in the list;
+/// `bad_request` otherwise, `invalid_state` when the session already holds
+/// [`SESSION_DIRS_MAX`] extra folders, for a session that has ended and for a direct chat or an
+/// assistant. A running Codex or OMP chat takes it at once or with its next turn
+/// ([`ChatDirApplied`]); Claude Code and a contained OMP need a restart; a terminal agent
+/// (OMP, Claude Code) is *pasted* `/add-dir <path>` at its prompt, without the Enter, for the
+/// user to confirm.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatAddDir {
+    pub session_id: SessionId,
+    pub path: PathBuf,
+}
+
+/// `chat.remove_dir` (protocol 0.57, capability `session.dirs`): takes an extra folder out of a
+/// session; answered like [`ChatAddDir`]. User-only. `not_found` for a folder that is not in
+/// the list (the session's own folder cannot be removed: `bad_request`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatRemoveDir {
+    pub session_id: SessionId,
+    pub path: PathBuf,
+}
+
+/// Which folder of a session this is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatDirRole {
+    /// The session's working directory: always first, cannot be removed.
+    Primary,
+    /// A folder added with `extra_dirs` or `chat.add_dir`.
+    Extra,
+}
+
+/// How far the agent has taken a folder, **as the daemon knows it** (never pretended).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatDirApplied {
+    /// The running agent has it.
+    Now,
+    /// The agent is given it with its next turn (Codex's per-turn sandbox policy, an OMP
+    /// `/add-dir` that waits for the running turn).
+    NextTurn,
+    /// Only a restart gives it to the agent: ACP agents take their folders when the session
+    /// opens (Claude Code), and a Contain boundary is fixed when the process starts. Also what
+    /// a session without a running agent says: the folder is given at the next start.
+    Restart,
+    /// A terminal agent was *pasted* `/add-dir <path>` at its prompt; it applies when the user
+    /// confirms.
+    Paste,
+    /// This agent cannot take it (a Codex chat in a read-only sandbox may not write there).
+    Unsupported,
+}
+
+/// One folder of a session (`ChatInfo.dirs`, `SessionInfo.extra_dirs`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatDir {
+    /// Absolute and canonical.
+    pub path: PathBuf,
+    pub role: ChatDirRole,
+    pub applied: ChatDirApplied,
 }
 
 /// `chat.send`: the user's message; the turn's events follow as `chat.event`.
@@ -543,6 +622,12 @@ pub struct ChatInfo {
     /// the last answer once the agent stopped) and for chats that cannot be forked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork: Option<ChatForkSupport>,
+    /// Protocol 0.57 (capability `session.dirs`): the folders the agent works in — the
+    /// session's `cwd` first (`primary`), then the extra ones in the order they were added —
+    /// each with how far the agent has taken it. Absent (empty) for direct chats and
+    /// assistants.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirs: Vec<ChatDir>,
 }
 
 /// What a chat's safety preset amounts to, **as the harness reported it** (protocol 0.51,
