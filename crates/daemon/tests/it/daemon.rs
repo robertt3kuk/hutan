@@ -246,7 +246,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "fs.ops",
             "terminal.agent",
             "chat.fork",
-            "session.dirs"
+            "session.dirs",
+            "chat.fork.worktree"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

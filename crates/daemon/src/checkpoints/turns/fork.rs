@@ -217,11 +217,11 @@ impl TurnCheckpoints {
         else {
             return Err(self.no_checkpoint(session, turn));
         };
-        let after = rows[at + 1..]
+        let mut after = rows[at + 1..]
             .iter()
             .filter(|row| matches!(row.state, CheckpointState::Ok | CheckpointState::Late));
-        let first = after.clone().next().map(|row| row.id);
-        let last = after.last().map(|row| row.id);
+        let first = after.next().map(|row| row.id);
+        let last = after.next_back().map(|row| row.id).or(first);
         Ok(first.zip(last))
     }
 }
