@@ -902,43 +902,20 @@ impl Workbench {
     pub(crate) fn render_run_setup_row(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
-        div()
-            .id("field-run-setup")
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(tokens.spacing * 3.0))
-            .py(px(tokens.spacing * 2.0))
-            .border_b_1()
-            .border_color(theme.border)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Run setup again…"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.muted)
-                            .child(
-                                "Look, editing, agents, history, the daemon in the background, \
-                                 the command line. Every answer starts at today's value; \
-                                 nothing changes unless you change it.",
-                            ),
-                    ),
-            )
-            .child(
-                Button::new("run-setup", "Run setup again…", &theme, &tokens)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_setup(window, cx)))
-                    .child(probe(&self.regions, Region::Setup("run-setup"))),
-            )
-            .into_any_element()
+        let button = Button::new("run-setup", "Run setup again…", &theme, &tokens)
+            .min_width(ui::CONTROL_WIDTH)
+            .on_click(cx.listener(|this, _, window, cx| this.open_setup(window, cx)))
+            .child(probe(&self.regions, Region::Setup("run-setup")));
+        super::settings_rows::sheet_row(
+            "field-run-setup",
+            "Run setup again…",
+            "Look, editing, agents, history, the daemon in the background, the command line. \
+             Every answer starts at today's value; nothing changes unless you change it.",
+            Vec::new(),
+            button.into_any_element(),
+            &theme,
+            &tokens,
+        )
     }
 
     pub(crate) fn render_setup(

@@ -32,7 +32,7 @@ use super::model::PanelId;
 use super::panels::{HistoryPanel, format_bytes};
 use super::render::probe;
 use super::settings_labels::words;
-use super::settings_rows::{note, sheet_row};
+use super::settings_rows::{SheetRow, note, sheet_row};
 use super::settings_schema::Field;
 use super::ui::{self, Button, FocusRingExt as _, IconButton};
 use super::view::{Region, Workbench};
@@ -1061,15 +1061,15 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        sheet_row(
+        SheetRow::new(
             "field-vim-keys",
             words::VIM_KEYS_TITLE,
             words::VIM_KEYS_HELP,
-            under,
             div().into_any_element(),
-            &theme,
-            &tokens,
         )
+        .under(under)
+        .under_full()
+        .build(&theme, &tokens)
     }
 
     // ---- terminal.env: rows of variables -------------------------------------------------------

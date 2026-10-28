@@ -697,6 +697,7 @@ impl Workbench {
             &tokens,
         )
         .compact()
+        .min_width(super::ui::CONTROL_WIDTH)
         .selected(open)
         .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
         .on_click(cx.listener(move |this, _, _, cx| this.toggle_pack_picker(pack_field, cx)))
@@ -719,6 +720,10 @@ impl Workbench {
         .marked(probe(
             &self.regions,
             Region::SettingsItem("row", self.field_index(field)),
+        ))
+        .control_marked(probe(
+            &self.regions,
+            Region::SettingsItem("control", self.field_index(field)),
         ))
         .build(&theme, &tokens);
         self.sheet_row_focus(&row_tag, row)

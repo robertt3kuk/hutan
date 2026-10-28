@@ -53,6 +53,7 @@ pub(super) struct SheetRow {
     top: bool,
     mark: Option<AnyElement>,
     control_mark: Option<AnyElement>,
+    under_full: bool,
 }
 
 impl SheetRow {
@@ -73,6 +74,7 @@ impl SheetRow {
             top: false,
             mark: None,
             control_mark: None,
+            under_full: false,
         }
     }
 
@@ -104,6 +106,14 @@ impl SheetRow {
         self
     }
 
+    /// The lines under the help take the row's whole width instead of the label's column (a
+    /// table).
+    #[must_use]
+    pub(super) fn under_full(mut self) -> Self {
+        self.under_full = true;
+        self
+    }
+
     /// An invisible probe child, to find the row in tests.
     #[must_use]
     pub(super) fn marked(mut self, probe: impl IntoElement) -> Self {
@@ -126,7 +136,12 @@ impl SheetRow {
         let tip = (self.help.chars().count() > HELP_TIP_CHARS).then(|| self.help.clone());
         // A row with something under its help, or a control taller than a line, grows; every
         // other row is exactly `ROW_HEIGHT`.
-        let grows = self.top || !self.under.is_empty();
+        let (under_in, under_below) = if self.under_full {
+            (Vec::new(), self.under)
+        } else {
+            (self.under, Vec::new())
+        };
+        let grows = self.top || !under_in.is_empty() || !under_below.is_empty();
         let label = div()
             .flex()
             .flex_col()
@@ -159,7 +174,7 @@ impl SheetRow {
                         .child(self.help),
                 )
             })
-            .children(self.under);
+            .children(under_in);
         let control = match self.control_mark {
             Some(mark) => div()
                 .relative()
@@ -171,12 +186,30 @@ impl SheetRow {
             None => self.control,
         };
         let controls: Vec<AnyElement> = self.reset.into_iter().chain([control]).collect();
-        row_fixed(self.id, label, controls, theme)
+        let row_id = self.id.clone();
+        let head_id = if under_below.is_empty() {
+            self.id.clone()
+        } else {
+            gpui::ElementId::from((self.id.clone(), "head"))
+        };
+        let row = row_fixed(head_id, label, controls, theme)
             .when(self.top, |s| s.items_start())
             .when(grows, |s| {
                 s.h_auto().min_h(px(ROW_HEIGHT)).py(px(space::SM))
-            })
+            });
+        if under_below.is_empty() {
+            return row.children(self.mark).into_any_element();
+        }
+        // The block under the row is as wide as the row, not as wide as its label: the
+        // hairline is the whole row's.
+        div()
+            .id(row_id)
+            .relative()
+            .border_b_1()
+            .border_color(theme.border)
             .children(self.mark)
+            .child(row.border_0())
+            .child(div().pb(px(space::SM)).children(under_below))
             .into_any_element()
     }
 }
