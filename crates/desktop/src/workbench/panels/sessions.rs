@@ -26,7 +26,7 @@ use hutan_protocol::messages::{SessionInfo, WorkspaceInfo, WorkspaceKind};
 
 use super::common::{
     age_label, agent_badge, panel_header_controls, placement, placement_badge, recovery_chip,
-    session_icon, shared_checkout_marker, state_mark, time_tooltip,
+    session_icon, shared_checkout_marker, state_dot, time_tooltip,
 };
 use crate::icons::{Icon, icon};
 use crate::sessions::tree::{
@@ -2175,11 +2175,7 @@ impl SessionsPanel {
                                 s.tooltip(move |_, cx| {
                                     cx.new(|_| TextTooltip::new(tip.clone())).into()
                                 })
-                                .child(state_mark(
-                                    SharedString::from(format!("row-spinner-{id}")),
-                                    &theme,
-                                    &presentation,
-                                ))
+                                .child(state_dot(&theme, &presentation))
                             })
                             .when(unread, |s| {
                                 let dot = div()

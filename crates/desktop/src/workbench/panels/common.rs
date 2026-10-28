@@ -99,20 +99,6 @@ pub fn agent_lead_glyph(record: &AgentRecord, theme: &Theme) -> gpui::Div {
         .child(crate::icons::glyph(icon_id))
 }
 
-/// [`state_dot`] for a row or tab: a turn in progress is a turning arc (`id` keeps its
-/// animation), every other state its shape.
-pub fn state_mark(
-    id: impl Into<gpui::ElementId>,
-    theme: &Theme,
-    presentation: &Presentation,
-) -> AnyElement {
-    if presentation.label == "working" {
-        return crate::workbench::ui::spinner(id, 12.0, tone_color(theme, presentation.tone))
-            .into_any_element();
-    }
-    state_dot(theme, presentation)
-}
-
 /// State shape and tone from the same presentation used by the adjacent label/tooltip.
 pub fn state_dot(theme: &Theme, presentation: &Presentation) -> AnyElement {
     icon(

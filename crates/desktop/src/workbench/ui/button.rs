@@ -75,6 +75,12 @@ type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 /// A spinner: a 270 degree arc, `size` px square, in `color`, turning once per 0.9 s (still
 /// under Reduce Motion, which GPUI applies to every animation).
 pub fn spinner(id: impl Into<ElementId>, size: f32, color: Hsla) -> impl IntoElement {
+    spinner_at(id, size, color, 30.0)
+}
+
+/// [`spinner`] redrawn at most `fps` times a second: a mark that stays on screen for as long as an
+/// agent works (the tab's) turns in coarser steps, since every frame draws the whole window.
+pub fn spinner_at(id: impl Into<ElementId>, size: f32, color: Hsla, fps: f32) -> impl IntoElement {
     const STROKE: f32 = 1.5;
     const SEGMENTS: usize = 24;
     let id = id.into();
@@ -82,7 +88,7 @@ pub fn spinner(id: impl Into<ElementId>, size: f32, color: Hsla) -> impl IntoEle
         id,
         Animation::new(Duration::from_millis(900))
             .repeat()
-            .with_max_fps(30.0),
+            .with_max_fps(fps),
         move |element, delta| {
             element.child(
                 canvas(

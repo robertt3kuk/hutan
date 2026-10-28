@@ -45,6 +45,9 @@ const LEFT_HANDLE_OUTSET: f32 = 4.0;
 const TAB_TOP_INSET: f32 = 6.0;
 /// A tab's title is cut with an ellipsis beyond this width (the tooltip has it in full).
 const TAB_TITLE_MAX: f32 = 180.0;
+/// How often a tab's working spinner is redrawn: it stays on screen for as long as an agent
+/// works, and every frame draws the whole window.
+const TAB_SPINNER_FPS: f32 = 8.0;
 /// How far down the palette's panel starts, and the margin it keeps at the window's bottom.
 const PALETTE_TOP: f32 = 80.0;
 const PALETTE_BOTTOM_MARGIN: f32 = 24.0;
@@ -2583,10 +2586,11 @@ impl Workbench {
                 .child(probe(&self.regions, Region::TabState(pane_id, index)));
             match glyph {
                 Some(glyph) => mark.child(crate::icons::glyph(glyph)),
-                None => mark.child(super::ui::spinner(
+                None => mark.child(super::ui::spinner_at(
                     id(format!("tab-spinner-{pane_id}-{index}")),
                     12.0,
                     color,
+                    TAB_SPINNER_FPS,
                 )),
             }
         });

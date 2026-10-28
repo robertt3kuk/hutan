@@ -819,7 +819,8 @@ mod tests {
         assert_eq!(
             header,
             [
-                "ID", "TERMINAL", "STATE", "RECOVERY", "PROJECT", "PLACE", "TITLE", "FOLDER", "AGE"
+                "ID", "TERMINAL", "STATE", "AGENT", "RECOVERY", "PROJECT", "PLACE", "TITLE",
+                "FOLDER", "AGE"
             ]
         );
         let row = table.lines().nth(1).unwrap();
