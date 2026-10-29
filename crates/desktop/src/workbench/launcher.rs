@@ -900,12 +900,12 @@ impl Workbench {
     }
 
     /// The model a start names in place of the harness's default when Hutan runs on a test home
-    /// (`HUTAN_HOME` set; FX-UI-B): where the default is an Opus or a Sonnet the first Haiku the
+    /// (the app turns `safe_model_default` on with `HUTAN_HOME` set; FX-UI-B): where the default is an Opus or a Sonnet the first Haiku the
     /// harness lists, so a check in a scratch home never spends the big models by leaving the
     /// model alone. On the user's own home nothing changes, whatever the default is.
     fn test_home_model(&self, models: &[ModelInfo]) -> Option<String> {
         let launcher = self.launcher.as_ref()?;
-        if !self.integrations_custom_home()
+        if !self.safe_model_default
             || launcher.kind != LaunchKind::Chat
             || launcher.model.is_some()
             || launcher.is_direct()

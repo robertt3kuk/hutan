@@ -3449,13 +3449,9 @@ mod empty_centre_tests {
 mod divider_tests {
     use super::{HANDLE_LINE, HANDLE_THICKNESS};
 
-    #[test]
-    fn a_hovered_divider_draws_a_hairline_inside_its_wider_hit_area() {
-        // FX-UI-B: 1–2 px, not the 6 px tinted bar of the hit area.
-        assert!((1.0..=2.0).contains(&HANDLE_LINE), "{HANDLE_LINE}");
-        assert!(
-            HANDLE_THICKNESS >= 3.0 * HANDLE_LINE,
-            "the hit area stays easy to catch"
-        );
-    }
+    // FX-UI-B: a hovered divider draws a hairline of 1–2 px inside its wider hit area, not
+    // the 6 px tinted bar the hit area is.
+    const _: () = assert!(HANDLE_LINE >= 1.0);
+    const _: () = assert!(HANDLE_LINE <= 2.0);
+    const _: () = assert!(HANDLE_THICKNESS >= 3.0 * HANDLE_LINE);
 }

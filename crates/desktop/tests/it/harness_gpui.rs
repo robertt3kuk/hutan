@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use common::{TestDaemon, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_desktop::workbench::model::ItemRef;
-use hutan_desktop::workbench::{Detection, LaunchAgent, Models, Region, Workbench};
+use hutan_desktop::workbench::{
+    Detection, LaunchAgent, Models, Region, Workbench, WorkbenchOptions,
+};
 use hutan_protocol::chat::{ChatCreate, ChatModels, ChatModelsRequest};
 use hutan_protocol::messages::{Request, SessionResult};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -726,6 +728,43 @@ fn model_names_survive_an_app_restart_with_no_harness_spawn(cx: &mut TestAppCont
         before,
         "no harness was started for the names"
     );
+}
+
+/// FX-UI-B (P3-22): on a test home (the app sets `safe_model_default` with a custom `HUTAN_HOME`)
+/// an Opus default is not what a start would use: the first Haiku of the list is, shown as the
+/// current model and sent with the chat. Without the option the default stays.
+#[gpui::test]
+fn on_a_test_home_the_start_sheet_would_use_a_haiku_not_the_opus_default(cx: &mut TestAppContext) {
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = daemon(scripts.path(), "plain-turn", "");
+    let options = WorkbenchOptions::builtin(
+        common::with_assistant(SettingsStore::new(SettingsPaths::in_dir(daemon.home()))),
+        daemon.connection(),
+        None,
+    )
+    .with_safe_model_default(true);
+    let (view, cx) = common::open_options(cx, options);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    cx.simulate_keystrokes("cmd-shift-t");
+    view.update(cx, |wb, cx| {
+        wb.launcher_set_kind(hutan_desktop::sessions::launch::LaunchKind::Chat, cx);
+    });
+    wait_until(cx, "the OMP models", |cx| {
+        view.read_with(cx, |wb, cx| {
+            matches!(wb.launcher_models(cx), Models::Ready(_))
+        })
+    });
+    let current = view.read_with(cx, |wb, cx| wb.launcher_chosen_model(cx).map(|m| m.id));
+    assert_eq!(
+        current.as_deref(),
+        Some("gitlab-duo/duo-chat-haiku-4-5"),
+        "not {FIXTURE_MODEL}"
+    );
+    assert_ne!(current.as_deref(), Some(FIXTURE_MODEL));
 }
 
 #[gpui::test]

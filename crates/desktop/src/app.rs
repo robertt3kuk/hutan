@@ -493,6 +493,11 @@ fn open_main(cx: &mut App) -> gpui::Result<WindowHandle<Workbench>> {
             .with_install(crate::install::Install::current())
             .with_installer(Arc::new(CliInstaller::new(hutan_path())))
             .with_package_runner(Arc::new(SystemRunner))
+            // A scratch `HUTAN_HOME` is a test: never an Opus or a Sonnet by leaving the model
+            // alone (the user's own home keeps the harness's default).
+            .with_safe_model_default(
+                std::env::var_os("HUTAN_HOME").is_some_and(|home| !home.is_empty()),
+            )
             .with_own_daemon(own_daemon());
     open_workbench(cx, options)
 }

@@ -1041,16 +1041,14 @@ impl Workbench {
         /// A reason longer than this leaves the label for the tooltip.
         const SHORT_REASON: usize = 14;
         const GROUP_STARTS: [&str; 4] = ["Mark as", "Rename", "Restart", "Show in Resources"];
-        let mut grouped = 0;
-        for entry in entries.iter_mut() {
-            if grouped > 0
+        for (at, entry) in entries.iter_mut().enumerate() {
+            if at > 0
                 && GROUP_STARTS
                     .iter()
                     .any(|start| entry.label.starts_with(start))
             {
                 entry.separator = true;
             }
-            grouped += 1;
             if !entry.disabled || entry.tip.is_some() {
                 continue;
             }
