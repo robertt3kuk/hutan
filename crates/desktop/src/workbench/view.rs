@@ -81,10 +81,6 @@ pub struct WorkbenchOptions {
     /// Hutan runs with its own data directory (`HUTAN_HOME`): the agents' hooks still go into
     /// their real configuration directories, which the setup says.
     pub custom_home: bool,
-    /// The Start sheet names a Haiku in place of an Opus or Sonnet default (FX-UI-B): the
-    /// app sets it with a custom `HUTAN_HOME`, where a check should not spend the big models by
-    /// leaving the model alone. Off for `builtin`, so a test runs on the catalog's own default.
-    pub safe_model_default: bool,
     /// The `hutand` this app starts, and its build (`app::own_daemon`): a daemon of another
     /// build or from elsewhere is restarted onto it or reported (`lifecycle.rs`). `None` checks
     /// nothing.
@@ -112,7 +108,6 @@ impl WorkbenchOptions {
             installer: None,
             package_runner: None,
             custom_home: std::env::var_os("HUTAN_HOME").is_some_and(|home| !home.is_empty()),
-            safe_model_default: false,
             own_daemon: None,
         }
     }
@@ -163,13 +158,6 @@ impl WorkbenchOptions {
     /// The same options saying (or not) that Hutan runs from a custom `HUTAN_HOME`.
     pub fn with_custom_home(mut self, custom_home: bool) -> Self {
         self.custom_home = custom_home;
-        self
-    }
-
-    /// The same options with the Start sheet's Haiku in place of a big default (see
-    /// [`WorkbenchOptions::safe_model_default`]).
-    pub fn with_safe_model_default(mut self, safe: bool) -> Self {
-        self.safe_model_default = safe;
         self
     }
 }
@@ -898,8 +886,6 @@ pub struct Workbench {
     /// The one-time offer of the clean default layout is on screen (`layout_offer.rs`).
     pub(crate) layout_offer: bool,
     pub(crate) integrations: super::integrations::IntegrationControl,
-    /// See [`WorkbenchOptions::safe_model_default`].
-    pub(crate) safe_model_default: bool,
     pub(crate) harness_install: super::harness_install::HarnessInstallControl,
     pub(crate) palette: Option<PaletteState>,
     /// The scroll of the palette's list; the highlighted row follows the keyboard.
@@ -1571,7 +1557,6 @@ impl Workbench {
                 options.installer,
                 options.custom_home,
             ),
-            safe_model_default: options.safe_model_default,
             harness_install: super::harness_install::HarnessInstallControl::new(
                 options.package_runner,
             ),

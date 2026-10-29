@@ -885,9 +885,6 @@ impl Workbench {
         match &launcher.model {
             Some(id) => models.into_iter().find(|m| &m.id == id),
             None => {
-                if let Some(safe) = self.test_home_model(&models) {
-                    return models.into_iter().find(|m| m.id == safe);
-                }
                 let default = models.iter().find(|m| m.is_default).cloned();
                 default.or_else(|| {
                     launcher
@@ -897,22 +894,6 @@ impl Workbench {
                 })
             }
         }
-    }
-
-    /// The model a start names in place of the harness's default when Hutan runs on a test home
-    /// (the app turns `safe_model_default` on with `HUTAN_HOME` set; FX-UI-B): where the default is an Opus or a Sonnet the first Haiku the
-    /// harness lists, so a check in a scratch home never spends the big models by leaving the
-    /// model alone. On the user's own home nothing changes, whatever the default is.
-    fn test_home_model(&self, models: &[ModelInfo]) -> Option<String> {
-        let launcher = self.launcher.as_ref()?;
-        if !self.safe_model_default
-            || launcher.kind != LaunchKind::Chat
-            || launcher.model.is_some()
-            || launcher.is_direct()
-        {
-            return None;
-        }
-        haiku_for_a_big_default(models)
     }
 
     /// The rows of the Start sheet's model menu over `list` (what [`launcher_models`] gave): in
@@ -2153,14 +2134,6 @@ impl Workbench {
     /// ⌘↩ starts what the sheet describes; ⌥⌘↩ (`and_new`) starts it and keeps the sheet open
     /// for the next one, with the project, what and where kept and the prompt and title cleared.
     pub fn launcher_start(&mut self, and_new: bool, window: &mut Window, cx: &mut Context<Self>) {
-        // What the sheet shows as the model is what starts (a test home's Haiku in place of a
-        // big default, `test_home_model`).
-        if let Models::Ready(models) = self.launcher_models(cx)
-            && let Some(model) = self.test_home_model(&models)
-            && let Some(launcher) = &mut self.launcher
-        {
-            launcher.model = Some(model);
-        }
         let Some(launcher) = &mut self.launcher else {
             return;
         };
@@ -2938,64 +2911,5 @@ mod contain_tests {
             }
         }
         assert_eq!(preset_unavailable("omp", SafetyPreset::Ask, false), None);
-    }
-}
-
-/// The first Haiku of `models` when the default of the list is an Opus or a Sonnet (the
-/// models a check must not spend by leaving the model alone); else `None`.
-pub(crate) fn haiku_for_a_big_default(models: &[ModelInfo]) -> Option<String> {
-    let id = |m: &ModelInfo| m.id.to_ascii_lowercase();
-    let default = models.iter().find(|m| m.is_default)?;
-    let big = id(default).contains("opus") || id(default).contains("sonnet");
-    big.then(|| models.iter().find(|m| id(m).contains("haiku")))
-        .flatten()
-        .map(|m| m.id.clone())
-}
-
-#[cfg(test)]
-mod test_home_tests {
-    use super::*;
-
-    fn model(id: &str, default: bool) -> ModelInfo {
-        ModelInfo {
-            id: id.to_owned(),
-            display_name: id.to_owned(),
-            description: String::new(),
-            is_default: default,
-            hidden: false,
-            default_reasoning_effort: None,
-            reasoning_efforts: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn a_big_default_gives_way_to_the_first_haiku_and_nothing_else_does() {
-        let list = |default: &str| {
-            [
-                "anthropic/claude-opus-5-5",
-                "anthropic/claude-sonnet-5-5",
-                "anthropic/claude-haiku-5-5",
-                "anthropic/claude-haiku-4-5",
-            ]
-            .map(|id| model(id, id == default))
-            .to_vec()
-        };
-        assert_eq!(
-            haiku_for_a_big_default(&list("anthropic/claude-opus-5-5")).as_deref(),
-            Some("anthropic/claude-haiku-5-5")
-        );
-        assert_eq!(
-            haiku_for_a_big_default(&list("anthropic/claude-sonnet-5-5")).as_deref(),
-            Some("anthropic/claude-haiku-5-5")
-        );
-        // A Haiku default, or no default at all, stays as it is.
-        assert_eq!(
-            haiku_for_a_big_default(&list("anthropic/claude-haiku-4-5")),
-            None
-        );
-        assert_eq!(haiku_for_a_big_default(&list("")), None);
-        // No Haiku to offer: the default stays (nothing else is cheaper than a guess).
-        let only_big = [model("anthropic/claude-opus-5-5", true)];
-        assert_eq!(haiku_for_a_big_default(&only_big), None);
     }
 }
