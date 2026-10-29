@@ -448,6 +448,78 @@ fn a_measurement_never_leaves_a_chat_unread_but_the_next_turn_does(cx: &mut Test
     });
 }
 
+/// FX-UI-A 3: an agent chat wears its harness's monogram like an agent in a terminal (never the
+/// generic robot), and its tab leads with that glyph and the state's badge — the arc while a turn
+/// runs, the check once it ended unseen — as the sidebar's row does.
+#[gpui::test]
+fn a_chat_wears_its_harness_monogram_and_its_tab_the_state_badge(cx: &mut TestAppContext) {
+    use hutan_desktop::icons::Icon;
+    use hutan_desktop::workbench::panels::{harness_icon, session_icon};
+
+    let env = ChatEnv::new();
+    let gate = env.work.path().join("go");
+    let transcript = held_turns(env.work.path(), std::slice::from_ref(&gate));
+    let daemon = TestDaemon::start_with_codex(env.replay(&transcript));
+    let chat = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    let sidebar = panel(&view, cx);
+    wait_until(cx, "the chat's row", |cx| {
+        rows(&sidebar, cx)
+            .iter()
+            .any(|r| r.kind == RowKind::Session)
+    });
+
+    // The monogram of the harness behind the chat; a hook's own spelling is the same harness.
+    let info = view
+        .read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).session(chat.id).cloned()
+        })
+        .unwrap();
+    assert_eq!(session_icon(&info), Icon::HarnessCodex);
+    assert_eq!(harness_icon("Claude Code"), Icon::HarnessClaude);
+    assert_eq!(harness_icon("omp"), Icon::HarnessOmp);
+    assert_eq!(harness_icon("zsh"), Icon::HarnessUnknown);
+    let item = hutan_desktop::workbench::model::ItemRef::Chat {
+        session: chat.id.to_string(),
+    };
+    view.update_in(cx, |wb, window, cx| wb.open_session(chat.id, window, cx));
+    settle(cx);
+    let pane = view.read_with(cx, |wb, _| wb.state().first_pane_id());
+    let (glyph, _) = view.read_with(cx, |wb, cx| wb.item_icon_and_title(&item, cx));
+    assert_eq!(glyph, Icon::HarnessCodex);
+
+    // Idle: the glyph alone. A turn: the arc on the glyph of the tab.
+    assert!(!drawn(&view, cx, Region::TabState(pane, 0)));
+    let _: hutan_protocol::chat::ChatSent =
+        daemon.call(Request::ChatSend(hutan_protocol::chat::ChatSend {
+            session_id: chat.id,
+            text: "Reply with the single word pong and nothing else.".to_owned(),
+            attachments: Vec::new(),
+        }));
+    wait_until(
+        cx,
+        "the badge on the tab's glyph while the turn runs",
+        |cx| drawn(&view, cx, Region::TabState(pane, 0)),
+    );
+    // The sidebar says the same of the same session.
+    let title = rows(&sidebar, cx)
+        .into_iter()
+        .find(|r| r.kind == RowKind::Session)
+        .unwrap()
+        .title;
+    assert_eq!(row(&sidebar, cx, &title).lane, BadgeState::Working);
+    std::fs::write(&gate, "").unwrap();
+    wait_until(cx, "the turn to end", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .session(chat.id)
+                .and_then(|s| s.chat.as_ref())
+                .is_some_and(|c| !c.turn_active)
+        })
+    });
+}
+
 // ---- diffstat -------------------------------------------------------------------------------
 
 fn git(dir: &Path, args: &[&str]) {

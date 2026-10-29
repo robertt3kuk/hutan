@@ -164,6 +164,30 @@ pub fn changes_link(record: &AgentRecord) -> bool {
     record.changes_to_review && record.checkout.is_some()
 }
 
+/// The badge of the lane of a row on the Agents page: the same state as the sidebar's card says,
+/// from the record — a request, a failure, work in progress, finished work nobody has seen, the
+/// end of the session, else nothing.
+pub fn lane_state(record: &AgentRecord) -> crate::workbench::ui::BadgeState {
+    use crate::workbench::ui::BadgeState;
+    match record.headline().map(|reason| reason.kind) {
+        Some(
+            ReasonKind::Approval | ReasonKind::Blocked | ReasonKind::Question | ReasonKind::Plan,
+        ) => BadgeState::Request,
+        Some(ReasonKind::Failed) => BadgeState::Failed,
+        Some(ReasonKind::Review | ReasonKind::CompletedUnread | ReasonKind::MarkedUnread) => {
+            BadgeState::DoneUnread
+        }
+        None => match record.state {
+            State::Working => BadgeState::Working,
+            State::Failed => BadgeState::Failed,
+            State::Completed | State::Stopped | State::Interrupted | State::Disconnected => {
+                BadgeState::Ended
+            }
+            State::Blocked | State::Idle | State::Unconfirmed => BadgeState::Idle,
+        },
+    }
+}
+
 /// The leading glyph of a row and the tone of the state word: attention first (each kind of
 /// request, a failure and finished work have a shape of their own), else the state's own shape.
 /// Never colour alone.

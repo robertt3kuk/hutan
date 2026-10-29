@@ -48,9 +48,6 @@ const LEFT_HANDLE_OUTSET: f32 = 4.0;
 const TAB_TOP_INSET: f32 = 6.0;
 /// A tab's title is cut with an ellipsis beyond this width (the tooltip has it in full).
 const TAB_TITLE_MAX: f32 = 180.0;
-/// How often a tab's working spinner is redrawn: it stays on screen for as long as an agent
-/// works, and every frame draws the whole window.
-const TAB_SPINNER_FPS: f32 = 8.0;
 /// How far down the palette's panel starts, and the margin it keeps at the window's bottom.
 const PALETTE_TOP: f32 = 80.0;
 const PALETTE_BOTTOM_MARGIN: f32 = 24.0;
@@ -2652,52 +2649,61 @@ impl Workbench {
                 cx,
             )
         });
-        // The attention of any split of a tab of splits shows on the tab.
-        let attention = tab_sessions
-            .iter()
-            .find_map(|id| {
-                let store = self.sessions.read(cx);
-                store
-                    .session(*id)
-                    .map(|info| store.presentation(info))
-                    .filter(|p| p.attention.is_some())
-            })
-            .filter(|_| !bell && marks.state != Some(crate::sessions::TabState::Failed));
-        let state_mark = marks.state.map(|state| {
-            use crate::sessions::{TabState, Tone};
-            let (glyph, tone, tip) = match state {
-                TabState::Working => (None, Tone::Accent, "Working"),
-                TabState::Done => (
-                    Some(crate::icons::Icon::StateCompleted),
-                    Tone::Success,
-                    "Done: nobody has looked yet",
-                ),
-                TabState::Failed => (Some(crate::icons::Icon::StateFailed), Tone::Error, "Failed"),
+        // The glyph leads the tab with the state's badge on it, as on the sidebar's row: the
+        // strongest state of the tab's sessions (every split of a tab of splits). A bell says
+        // that something waits or rang, so the badge does not say it twice.
+        let lane_state = {
+            use super::ui::BadgeState;
+            let rank = |state: BadgeState| match state {
+                BadgeState::Request => 5,
+                BadgeState::Failed => 4,
+                BadgeState::Working => 3,
+                BadgeState::DoneUnread => 2,
+                BadgeState::Ended => 1,
+                BadgeState::Idle => 0,
             };
-            let color = super::panels::tone_color(&theme, tone);
-            let mark = div()
+            let store = self.sessions.read(cx);
+            let state = tab_sessions
+                .iter()
+                .filter_map(|id| {
+                    let info = store.session(*id)?;
+                    Some(crate::sessions::card::badge_state(
+                        info,
+                        &store.presentation(info),
+                        store.unread(*id),
+                    ))
+                })
+                .max_by_key(|state| rank(*state))
+                .unwrap_or(BadgeState::Idle);
+            match state {
+                BadgeState::Request | BadgeState::DoneUnread if bell => BadgeState::Idle,
+                state => state,
+            }
+        };
+        let lane = (!tab_sessions.is_empty()).then(|| {
+            let ground = look.fill.unwrap_or(theme.sidebar);
+            let tip = lane_state.word().map(SharedString::from);
+            div()
                 .id(id(format!("tab-state-{pane_id}-{index}")))
                 .relative()
                 .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(14.0))
-                .text_color(color)
-                .tooltip(move |_, cx| {
-                    cx.new(|_| super::style::TextTooltip::new(tip.into()))
-                        .into()
+                .when_some(tip, |s, tip| {
+                    s.tooltip(move |_, cx| {
+                        cx.new(|_| super::style::TextTooltip::new(tip.clone()))
+                            .into()
+                    })
                 })
-                .child(probe(&self.regions, Region::TabState(pane_id, index)));
-            match glyph {
-                Some(glyph) => mark.child(crate::icons::glyph(glyph)),
-                None => mark.child(super::ui::spinner_at(
-                    id(format!("tab-spinner-{pane_id}-{index}")),
-                    12.0,
-                    color,
-                    TAB_SPINNER_FPS,
-                )),
-            }
+                .child(super::ui::row_lane(
+                    id(format!("tab-lane-{pane_id}-{index}")),
+                    icon,
+                    lane_state,
+                    ground,
+                    active,
+                    &theme,
+                ))
+                .when(marks.state.is_some(), |s| {
+                    s.child(probe(&self.regions, Region::TabState(pane_id, index)))
+                })
         });
         // A fork nobody renamed: its name and the mark that sets it apart from its parent.
         let (name, mark) = match session_of_item(item) {
@@ -2795,7 +2801,10 @@ impl Workbench {
                     cx,
                 );
             }))
-            .child(crate::icons::glyph(icon))
+            .child(match lane {
+                Some(lane) => lane.into_any_element(),
+                None => crate::icons::glyph(icon).into_any_element(),
+            })
             .child(
                 div()
                     .max_w(px(TAB_TITLE_MAX))
@@ -2826,7 +2835,6 @@ impl Workbench {
             )
             .children(split_badge)
             .children(badge)
-            .children(state_mark)
             // A bell: an agent waits for an answer (or asked for you while the tab was out of
             // sight), or the terminal rang or sent a notification while it was. It goes when
             // the tab is shown or the question answered.
@@ -2852,15 +2860,6 @@ impl Workbench {
                     .when(called, |s| {
                         s.child(probe(&self.regions, Region::TabCall(pane_id, index)))
                     })
-            }))
-            .children(attention.map(|p| {
-                div()
-                    .relative()
-                    .flex_none()
-                    .size(px(7.0))
-                    .rounded_full()
-                    .bg(super::panels::tone_color(&theme, p.tone))
-                    .child(probe(&self.regions, Region::TabAttention(pane_id, index)))
             }))
             // A file with unsaved changes: a dot in the text color (not a status hue).
             .children(

@@ -16,9 +16,7 @@ use crate::workbench::actions::{
     InterruptSessionById, SessionMenuAt, ShowAgentMenu, StopSessionById,
 };
 use crate::workbench::agents_page::primary_action;
-use crate::workbench::panels::common::{
-    agent_lead_glyph, agent_state_word, agent_title_line, now_ms,
-};
+use crate::workbench::panels::common::{agent_lane, agent_state_word, agent_title_line, now_ms};
 use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
 use crate::workbench::ui::{self, FocusRingExt as _};
@@ -418,7 +416,16 @@ impl AgentsPage {
                     );
                 }),
             )
-            .child(agent_lead_glyph(record, &theme))
+            .child(agent_lane(
+                record,
+                selected,
+                if selected {
+                    theme.accent_soft
+                } else {
+                    theme.bg
+                },
+                &theme,
+            ))
             .child(identity)
             .children(location_column)
             .children(harness_column)

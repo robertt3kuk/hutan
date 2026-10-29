@@ -99,6 +99,31 @@ pub fn agent_lead_glyph(record: &AgentRecord, theme: &Theme) -> gpui::Div {
         .child(crate::icons::glyph(icon_id))
 }
 
+/// The icon of an agent record, as the sidebar's row of the same session draws it: its
+/// harness's monogram (an agent chat the same as an agent in a terminal), the bubble of a direct
+/// chat, Mawas's sparkle.
+pub fn record_icon(record: &AgentRecord) -> Icon {
+    use crate::sessions::presentation::Role;
+    match (record.role, record.agent.as_str()) {
+        (Role::Assistant, _) => Icon::PanelAssistant,
+        (_, "direct") => Icon::SessionDirect,
+        (_, app) => harness_icon(app),
+    }
+}
+
+/// The lead lane of a row on the Agents page: the harness monogram with the state's badge on
+/// it, the same lane as the sidebar's (`ui::row_lane`); `ground` is what the row is filled with.
+pub fn agent_lane(record: &AgentRecord, selected: bool, ground: Hsla, theme: &Theme) -> gpui::Div {
+    crate::workbench::ui::row_lane(
+        SharedString::from(format!("agents-lane-{}", record.session)),
+        record_icon(record),
+        crate::sessions::agents_text::lane_state(record),
+        ground,
+        selected,
+        theme,
+    )
+}
+
 /// State shape and tone from the same presentation used by the adjacent label/tooltip.
 pub fn state_dot(theme: &Theme, presentation: &Presentation) -> AnyElement {
     icon(
@@ -322,32 +347,64 @@ pub fn title_mark(
     mark
 }
 
-/// The glyph of a coding agent by its program (`omp`, `claude`, `codex`); another harness wears
-/// the generic one.
+/// The glyph of a coding agent by its program (`omp`, `claude`, `codex`; a hook may say
+/// `Claude Code`); another harness wears the generic one.
 pub fn harness_icon(app: &str) -> Icon {
-    match app {
-        "omp" => Icon::HarnessOmp,
-        "claude" => Icon::HarnessClaude,
-        "codex" => Icon::HarnessCodex,
-        _ => Icon::HarnessUnknown,
+    let app = app.trim().to_ascii_lowercase();
+    if app.starts_with("omp") {
+        Icon::HarnessOmp
+    } else if app.starts_with("claude") {
+        Icon::HarnessClaude
+    } else if app.starts_with("codex") {
+        Icon::HarnessCodex
+    } else {
+        Icon::HarnessUnknown
     }
 }
 
 /// The icon of a session on every surface (tab, sidebar row, picker): Mawas's conversations
-/// wear the Mawas sparkle whatever backend runs them, every other session its kind's icon.
+/// wear the Mawas sparkle whatever backend runs them, every other session its harness's
+/// monogram (an agent chat the same as an agent in a terminal), a direct chat the bubble, a
+/// plain terminal the prompt.
 pub fn session_icon(info: &SessionInfo) -> Icon {
+    session_icon_with(info, None)
+}
+
+/// [`session_icon`] for a terminal whose agent is no longer reported (the session ended: the
+/// daemon forgets what ran in it): `remembered` is the program the window saw in it.
+pub fn session_icon_with(info: &SessionInfo, remembered: Option<&str>) -> Icon {
     if info.chat.as_ref().is_some_and(|chat| chat.is_assistant()) {
         return Icon::PanelAssistant;
     }
     match info.kind {
-        // A terminal with a coding agent in it is that agent's, not a plain terminal.
-        SessionKind::Terminal => match crate::sessions::agent_app(info) {
-            Some(app) => harness_icon(app),
-            None => Icon::SessionTerminal,
+        // A terminal with a coding agent in it is that agent's, not a plain terminal; so is one
+        // that started as the agent's program, and one that has ended.
+        SessionKind::Terminal => {
+            match crate::sessions::agent_app(info)
+                .or(remembered)
+                .or_else(|| started_as(info))
+            {
+                Some(app) => harness_icon(app),
+                None => Icon::SessionTerminal,
+            }
+        }
+        SessionKind::Harness => match info.chat.as_ref().map(|chat| chat.agent.as_str()) {
+            Some("direct") => Icon::SessionDirect,
+            Some(agent) if harness_icon(agent) != Icon::HarnessUnknown => harness_icon(agent),
+            _ => Icon::SessionHarness,
         },
-        SessionKind::Harness => Icon::SessionHarness,
         SessionKind::Direct => Icon::SessionDirect,
     }
+}
+
+/// The coding agent a terminal session was started as (`omp`, `claude`, `codex` as its program),
+/// whether or not it reports now.
+pub fn started_as(info: &SessionInfo) -> Option<&'static str> {
+    let program = info.command.first()?;
+    let name = std::path::Path::new(program).file_name()?.to_str()?;
+    ["omp", "claude", "codex"]
+        .into_iter()
+        .find(|app| name.eq_ignore_ascii_case(app))
 }
 
 /// Last path component of the session's working directory (`~` for the home directory).
