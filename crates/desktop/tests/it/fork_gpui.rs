@@ -472,10 +472,85 @@ fn a_codex_chat_forks_from_a_footer_here_into_a_worktree_and_with_its_files_rest
     // ---- the header chip names the parent and its turn, and opens it ------------------------
     show_chat(&view, cx, first.id);
     wait_region(&view, cx, Region::Chat("forked-from"));
+
+    // FX-UI-B: the header always shows the model, and nothing is clipped at its right. With
+    // the room there is, the chips say their words; short of room the lineage chip keeps its
+    // glyph and the model stays; short of that the chip leaves for the ⋯ menu as a row. The
+    // first frame draws everything and measures it, the next gives way: waits are on state.
+    use hutan_desktop::workbench::chat::HeaderFit;
+    let fits = |cx: &VisualTestContext| {
+        let Some(header) = bounds_of(&view, cx, Region::Chat("header")) else {
+            return false;
+        };
+        bounds_of(&view, cx, Region::Chat("model")).is_some()
+            && ["model", "mode", "forked-from", "context", "menu"]
+                .iter()
+                .filter_map(|part| bounds_of(&view, cx, Region::Chat(part)))
+                .all(|bounds| bounds.right() <= header.right() + px(1.0))
+    };
+    let fit_of = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_view_of(first.id).unwrap().read(cx).header_fit()
+        })
+    };
+    for width in [2400.0, 1280.0, 900.0, 700.0, 560.0, 440.0] {
+        cx.simulate_resize(gpui::size(px(width), px(800.0)));
+        settle(cx);
+        wait_until(&mut *cx, "the header to fit its pane", |cx| fits(cx));
+        let model = bounds_of(&view, cx, Region::Chat("model")).unwrap();
+        assert!(
+            model.size.width > px(60.0),
+            "the model keeps its words at {width}: {model:?}"
+        );
+        if width == 2400.0 {
+            wait_until(&mut *cx, "the header to say everything", |cx| {
+                fit_of(cx) == HeaderFit::Full
+            });
+        }
+    }
+    wait_until(&mut *cx, "the narrowest header to fold", |cx| {
+        fit_of(cx) == HeaderFit::Folded && fits(cx)
+    });
+    // The narrowest size folds the chip into the ⋯ menu, where it is a row that opens the parent.
+    assert!(bounds_of(&view, cx, Region::Chat("forked-from")).is_none());
+    view.update_in(cx, |_, window, cx| {
+        window.dispatch_action(
+            Box::new(actions::ShowSessionMenu(actions::SessionMenuAt {
+                session: first.id.to_string(),
+                position: point(px(300.0), px(200.0)),
+            })),
+            cx,
+        );
+    });
+    draw(cx);
+    let labels: Vec<String> = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect();
+    assert!(
+        labels.iter().any(|l| l.starts_with("Forked from")),
+        "{labels:?}"
+    );
+    cx.simulate_keystrokes("escape");
+    // Wide again, the chip is back with its words (the glyph alone is `header_fit_tests`'s).
+    cx.simulate_resize(gpui::size(px(2400.0), px(800.0)));
+    wait_until(&mut *cx, "the header to say everything again", |cx| {
+        fit_of(cx) == HeaderFit::Full && fits(cx)
+    });
+    settle(cx);
+    let chip = bounds_of(&view, cx, Region::Chat("forked-from")).unwrap();
+    assert!(
+        chip.size.width > px(150.0),
+        "the chip has its words: {chip:?}"
+    );
     click(&view, cx, Region::Chat("forked-from"));
     wait_until(&mut *cx, "the parent is shown", |cx| {
         shown(&view, cx) == Some(parent)
     });
+    cx.simulate_resize(gpui::size(px(1280.0), px(800.0)));
+    settle(cx);
 
     // ---- lineage: the fork's row hangs under its parent -------------------------------------
     let listed = rows(&view, cx);
@@ -979,13 +1054,33 @@ fn a_terminal_agent_forks_through_its_own_cli_in_a_new_tab_once_its_session_id_i
                 .map(|(label, _)| label.to_string())
                 .collect()
         };
-    // No session id yet: greyed, with the reason. A plain shell has no such entry.
+    // No session id yet: the entry says what supplies it (the hooks) and is the link to
+    // Agent integrations; the long words are its tooltip. A plain shell has no such entry.
     let labels = menu(&view, cx, unknown.id);
+    let name = "Claude Code";
+    let label = format!("Fork Session · install {name} hooks…");
+    let at = labels
+        .iter()
+        .position(|l| *l == label)
+        .unwrap_or_else(|| panic!("no {label:?} in {labels:?}"));
+    let tip = view
+        .read_with(cx, |wb, _| wb.context_menu_tips())
+        .into_iter()
+        .nth(at)
+        .flatten()
+        .expect("a tooltip on the entry");
     assert!(
-        labels
-            .iter()
-            .any(|l| l == "Fork Session (claude has not reported its session id)"),
-        "{labels:?}"
+        tip.contains(&format!("Install {name} hooks in Agent integrations…")),
+        "{tip}"
+    );
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(at, window, cx));
+    draw(cx);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb
+            .settings_sheet()
+            .map(|s| s.namespace().to_owned())),
+        Some("integrations".to_owned()),
+        "the entry opens Agent integrations"
     );
     cx.simulate_keystrokes("escape");
     assert!(

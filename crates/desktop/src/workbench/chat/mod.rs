@@ -40,7 +40,7 @@ pub use rewind::changed_text;
 pub use rich::{LONG_PASTE_CHARS, LONG_PASTE_LINES, format_size, is_long_paste};
 pub(crate) use view::model_label;
 pub use view::{
-    ChatView, KEY_CONTEXT, ModeChip, NARROW_HEADER, containment_chip, safety_chip, who_runs,
+    ChatView, FoldedChip, HeaderFit, KEY_CONTEXT, ModeChip, containment_chip, safety_chip, who_runs,
 };
 pub use vim::Vim;
 pub use widgets::ButtonKind;

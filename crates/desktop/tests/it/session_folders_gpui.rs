@@ -570,6 +570,15 @@ fn a_plain_shell_has_no_chip_or_menu_entry_until_the_plus_menu_gives_it_a_folder
         menu_labels(view, cx)
     };
     assert!(bounds_of(&view, cx, Region::Folders("terminal-chip")).is_none());
+    assert!(bounds_of(&view, cx, Region::Terminal("strip")).is_none());
+    let grid_before = bounds_of(&view, cx, Region::Terminal("grid")).expect("the grid is drawn");
+    let rows_before = view
+        .read_with(cx, |wb, cx| {
+            wb.terminal_view_of(shell.id)
+                .and_then(|t| t.read(cx).grid_size())
+        })
+        .expect("the view laid out its grid")
+        .1;
     assert!(
         !session_menu(&view, cx)
             .iter()
@@ -589,6 +598,23 @@ fn a_plain_shell_has_no_chip_or_menu_entry_until_the_plus_menu_gives_it_a_folder
         e == [(docs.clone(), ChatDirApplied::Now)]
     });
     wait_region(&view, cx, Region::Folders("terminal-chip"));
+    // FX-UI-B: the chip sits in a strip under the cell grid, never over a cell, and the grid
+    // gave up that height (the view reports the smaller grid to the PTY).
+    let chip = bounds_of(&view, cx, Region::Folders("terminal-chip")).unwrap();
+    let strip = bounds_of(&view, cx, Region::Terminal("strip")).expect("the strip");
+    let grid = bounds_of(&view, cx, Region::Terminal("grid")).unwrap();
+    assert!(
+        chip.top() >= grid.bottom() && strip.top() >= grid.bottom(),
+        "chip {chip:?} strip {strip:?} over grid {grid:?}"
+    );
+    assert!(grid.size.height < grid_before.size.height, "{grid:?}");
+    wait_until(cx, "the grid to follow the smaller box", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.terminal_view_of(shell.id)
+                .and_then(|t| t.read(cx).grid_size())
+                .is_some_and(|(_, rows)| rows < rows_before)
+        })
+    });
     assert!(
         session_menu(&view, cx).contains(&"Folders… (+1)".to_owned()),
         "the menu has it now"

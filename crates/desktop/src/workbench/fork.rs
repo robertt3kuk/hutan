@@ -24,7 +24,7 @@ use hutan_core::{CheckpointAvailability, ForkMode, SessionId, TurnId};
 use hutan_protocol::chat::{ChatFork, ChatForked, ForkWhere};
 use hutan_protocol::messages::TerminalSpec;
 
-use super::actions::palette;
+use super::actions::{self, palette};
 use super::chat::ended_turns;
 use super::render::probe;
 use super::rewind::turn_prompt;
@@ -34,6 +34,7 @@ use super::ui::{self, Button, ButtonKind, StyledExt as _};
 use super::view::{MenuEntry, Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::icons::Icon;
+use crate::integrations::IntegrationStatus;
 use crate::sessions::fork::{
     self, ForkFailure, Offer, Refused, TerminalFork, cut_words, exact_line,
 };
@@ -41,6 +42,16 @@ use crate::settings::{ChatSettings, ForkWhereSetting, TerminalSettings};
 use crate::theme::DensityExt as _;
 
 const WIDTH: f32 = 460.0;
+
+/// What supplies the session id *Fork Session* needs, said where the entry is greyed or the
+/// command refused: the agent's hooks (FX-UI-B; neither OMP's OSC 7501 report, which carries
+/// state, kind, app and message, nor its title has the id).
+fn no_session_id_words(name: &str) -> String {
+    format!(
+        "Install {name} hooks in Agent integrations…: they tell Hutan {name}'s session id, \
+         which Fork Session needs"
+    )
+}
 /// Most skipped paths the popover lists; the rest is counted.
 const SKIPPED_SHOWN: usize = 4;
 
@@ -900,10 +911,7 @@ impl Workbench {
             TerminalFork::Ready { app, argv } => (app, argv),
             TerminalFork::NoSessionId { app } => {
                 self.set_notice(
-                    format!(
-                        "{app} has not told Hutan its session id, so it cannot be forked from here: \
-                         install the integration (hutan integration install) or run its own fork command"
-                    ),
+                    no_session_id_words(&super::harnesses::harness_name(&app)),
                     cx,
                 );
                 return;
@@ -967,9 +975,34 @@ impl Workbench {
         }
         match fork::terminal_fork(info) {
             TerminalFork::Nothing => Vec::new(),
-            TerminalFork::NoSessionId { app } => vec![Self::disabled_entry(format!(
-                "Fork Session ({app} has not reported its session id)"
-            ))],
+            TerminalFork::NoSessionId { app } => {
+                let name = super::harnesses::harness_name(&app);
+                if self.integration_status(&app) == Some(IntegrationStatus::Installed) {
+                    // The hooks are in; the id comes with the agent's next event.
+                    return vec![MenuEntry {
+                        tip: Some(
+                            format!(
+                                "{name}'s hooks report its session id with its next event. \
+                                 Fork Session is available once it has."
+                            )
+                            .into(),
+                        ),
+                        ..Self::disabled_entry("Fork Session (no session id yet)")
+                    }];
+                }
+                vec![
+                    Self::entry(
+                        format!("Fork Session · install {name} hooks…"),
+                        move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(actions::OpenSettingsFor("integrations".to_owned())),
+                                cx,
+                            );
+                        },
+                    )
+                    .with_tip(no_session_id_words(&name)),
+                ]
+            }
             TerminalFork::Ready { .. } => {
                 vec![Self::entry("Fork Session", move |this, window, cx| {
                     this.fork_terminal_session(session, window, cx);

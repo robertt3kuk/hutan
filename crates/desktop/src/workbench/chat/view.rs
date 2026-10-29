@@ -54,6 +54,14 @@ pub struct ChatView {
     pub(super) sessions: Entity<SessionsStore>,
     pub(super) settings: SettingsStore,
     pub(super) regions: Regions,
+    /// What the header folded into its ⋯ menu as of the last frame (`session_menu`).
+    pub(super) folded: std::cell::RefCell<Vec<FoldedChip>>,
+    /// How much of the header the last frame drew.
+    fit: std::cell::Cell<HeaderFit>,
+    /// The header's width as last painted: a change renders the header again with it.
+    header_seen: Rc<std::cell::Cell<Option<f32>>>,
+    /// What the parts of the header take with all their words, as last drawn.
+    natural: std::cell::Cell<Option<HeaderWidths>>,
     /// The queue's chips as drawn last, and those that left (`queue_view.rs`).
     pub(super) queue_seen: std::cell::RefCell<super::queue_view::QueueSeen>,
     /// Approvals seen waiting, for the fold of the answered card (`cards.rs`).
@@ -109,8 +117,81 @@ impl Focusable for ChatView {
     }
 }
 
-/// A chat header narrower than this (pixels) keeps its model in the ⋯ menu.
-pub const NARROW_HEADER: f32 = 460.0;
+/// What the header of a chat keeps when the pane is short of room (FX-UI-B): the model is always
+/// there; the lineage and folders chips give way first (the glyph, the words in the tooltip),
+/// then the mode, the context and those two go to the ⋯ menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderFit {
+    Full,
+    Icons,
+    Folded,
+}
+
+/// The widths the parts of a header take when each has all its words, as the last frame in which
+/// it was drawn that way painted them (a part that is not there is 0). The header is laid out by
+/// flexbox and nothing measures it before it is drawn, so [`header_fit`] decides from these.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct HeaderWidths {
+    pub state: f32,
+    pub model: f32,
+    pub mode: f32,
+    pub lineage: f32,
+    pub folders: f32,
+    /// The `+N` counter of the folders chip, which stays in its icon-only form.
+    pub folders_count: bool,
+    pub context: f32,
+}
+
+/// The room a header's ⋯ button takes.
+const HEADER_MENU: f32 = 32.0;
+/// The room of a chip that is the glyph alone.
+const HEADER_ICON: f32 = 30.0;
+/// The `+N` counter that stays beside the folders glyph.
+const HEADER_COUNT: f32 = 26.0;
+
+/// How much of the header fits in `width` (the last frame's, with the gap between parts and the
+/// padding at its two edges). Nothing known yet draws everything.
+pub(crate) fn header_fit(
+    width: Option<f32>,
+    natural: Option<&HeaderWidths>,
+    gap: f32,
+    edge: f32,
+) -> HeaderFit {
+    let (Some(width), Some(w)) = (width, natural) else {
+        return HeaderFit::Full;
+    };
+    let icon = |full: f32, extra: f32| if full > 0.0 { HEADER_ICON + extra } else { 0.0 };
+    let total = |parts: [f32; 6]| {
+        let shown = parts.iter().filter(|p| **p > 0.0).count();
+        // The parts, the spacer and the ⋯ button, each a gap apart.
+        parts.iter().sum::<f32>() + HEADER_MENU + gap * (shown as f32 + 1.0) + 2.0 * edge
+    };
+    let extra = if w.folders_count { HEADER_COUNT } else { 0.0 };
+    let full = [w.state, w.model, w.mode, w.lineage, w.folders, w.context];
+    let icons = [
+        w.state,
+        w.model,
+        w.mode,
+        icon(w.lineage, 0.0),
+        icon(w.folders, extra),
+        w.context,
+    ];
+    if total(full) <= width {
+        HeaderFit::Full
+    } else if total(icons) <= width {
+        HeaderFit::Icons
+    } else {
+        HeaderFit::Folded
+    }
+}
+
+/// One chip the header folded into its ⋯ menu: its words, and the session a click opens (the
+/// parent of a fork).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldedChip {
+    pub text: String,
+    pub opens: Option<SessionId>,
+}
 
 /// A model as the chat header says it: the catalog's display name when there is one, else the
 /// last segment of its id (`gitlab-duo/duo-chat-opus-4-6` reads `duo-chat-opus-4-6`).
@@ -186,6 +267,10 @@ impl ChatView {
             sessions,
             settings,
             regions,
+            folded: std::cell::RefCell::default(),
+            fit: std::cell::Cell::new(HeaderFit::Full),
+            header_seen: Rc::default(),
+            natural: std::cell::Cell::new(None),
             queue_seen: std::cell::RefCell::default(),
             approvals_seen: std::cell::RefCell::default(),
             focus_handle: cx.focus_handle(),
@@ -476,6 +561,17 @@ impl ChatView {
         } else {
             "Interrupt & send"
         }
+    }
+
+    /// What the header folded into its ⋯ menu as of the last frame: empty while it has the room
+    /// for everything, or only for the glyphs of the lineage and folders chips.
+    pub fn folded_chips(&self) -> Vec<FoldedChip> {
+        self.folded.borrow().clone()
+    }
+
+    /// How much of the header the last frame drew.
+    pub fn header_fit(&self) -> HeaderFit {
+        self.fit.get()
     }
 
     /// The text of the header's context chip (`context 61 % · 122k / 200k`); `None` while the
@@ -861,6 +957,9 @@ impl ChatView {
             }
         };
         let (words, attention) = status_words(&presentation);
+        let folders =
+            crate::sessions::folders::folders_of(info).filter(|folders| folders.has_chip());
+        let lineage_text = self.forked_from_text(info, cx);
         let state = ui::state_label(
             presentation.icon(),
             words,
@@ -871,51 +970,118 @@ impl ChatView {
         );
         // Who runs it: `OMP · opus-4-6`, muted. Where the model can change it is a ghost menu
         // (it replaces the *Switch model…* button): ▾ and a click between turns, plain words
-        // while a turn runs.
-        // In a narrow pane it gives way first, but keeps the harness readable (`OMP · gitl…`).
+        // while a turn runs. The model is always in the header (FX-UI-B): the other chips give
+        // way first, and only when the pane is very narrow does the model's own text shorten.
         const WHO_MIN_WIDTH: f32 = 80.0;
-        // Narrower than this the model leaves the header for the ⋯ menu (*Switch Model…*), where
-        // it was clipped to nothing (FX-WORK-2, N-09). The width is last frame's.
-        let narrow = self
-            .regions
-            .get(Region::Chat("header"))
-            .is_some_and(|header| f32::from(header.size.width) < NARROW_HEADER);
-        let who = detail.filter(|_| !narrow).map(|text| {
+        // Where the pane is short of room the chips give way. What each takes when it has all
+        // its words is read from the last frame that drew it so (every part is `flex_none`
+        // while the header is not folded, so what the probes read is its own width).
+        let prev_fit = self.fit.get();
+        if prev_fit == HeaderFit::Full && self.regions.get(Region::Chat("state")).is_some() {
+            let width = |region: Region| {
+                self.regions
+                    .get(region)
+                    .map_or(0.0, |bounds| f32::from(bounds.size.width))
+            };
+            self.natural.set(Some(HeaderWidths {
+                state: width(Region::Chat("state")),
+                model: width(Region::Chat("model")),
+                mode: width(Region::Chat("mode")),
+                lineage: width(Region::Chat("forked-from")),
+                folders: width(Region::Folders("chip")),
+                folders_count: folders.as_ref().is_some_and(|f| f.chip_count().is_some()),
+                context: width(Region::Chat("context")),
+            }));
+        }
+        let fit = header_fit(
+            self.regions
+                .get(Region::Chat("header"))
+                .map(|header| f32::from(header.size.width)),
+            self.natural.get().as_ref(),
+            tokens.spacing * 3.0,
+            tokens.spacing * 3.0,
+        );
+        if fit != prev_fit {
+            cx.notify();
+        }
+        let lineage_chip = self.forked_from_chip(info, fit == HeaderFit::Icons, theme, tokens, cx);
+        self.fit.set(fit);
+        // What the header left out goes to the ⋯ menu (`session_menu`).
+        *self.folded.borrow_mut() = if fit == HeaderFit::Folded {
+            let mut folded = Vec::new();
+            if let Some(text) = &lineage_text {
+                folded.push(FoldedChip {
+                    text: text.clone(),
+                    opens: info
+                        .forked_from
+                        .as_ref()
+                        .map(|origin| origin.session_id)
+                        .filter(|parent| self.sessions.read(cx).session(*parent).is_some()),
+                });
+            }
+            if let Some(chip) = &mode {
+                folded.push(FoldedChip {
+                    text: chip.text.clone(),
+                    opens: None,
+                });
+            }
+            if let Some(context) = &context {
+                folded.push(FoldedChip {
+                    text: context_text(context),
+                    opens: None,
+                });
+            }
+            folded
+        } else {
+            Vec::new()
+        };
+        let who = detail.map(|text| {
             let detail_text = SharedString::from(text.clone());
             let words = div().min_w_0().truncate().child(SharedString::from(text));
             if !switchable {
                 return div()
                     .id("chat-model")
+                    .relative()
+                    .when(fit != HeaderFit::Folded, |s| s.flex_none())
                     .min_w(px(WHO_MIN_WIDTH))
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
                     .child(words)
                     .when_some(full_model.clone(), |s, id| s.tooltip(tooltip(id.into())))
+                    .child(probe(&self.regions, Region::Chat("model")))
                     .into_any_element();
             }
             if between_turns {
                 let text = detail_text.clone();
-                return ui::Button::new("chat-switch-model", text, theme, tokens)
-                    .compact()
-                    .ghost()
-                    .max_width(280.0)
-                    .tooltip(match &full_model {
-                        Some(id) => format!("Switch model… (now {id})"),
-                        None => "Switch model…".to_owned(),
-                    })
-                    .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            Box::new(actions::SwitchChatModelById(session.to_string())),
-                            cx,
-                        );
-                    })
-                    .child(probe(&self.regions, Region::Chat("switch-model")))
+                return div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .when(fit != HeaderFit::Folded, |s| s.flex_none())
+                    .child(
+                        ui::Button::new("chat-switch-model", text, theme, tokens)
+                            .compact()
+                            .ghost()
+                            .max_width(280.0)
+                            .tooltip(match &full_model {
+                                Some(id) => format!("Switch model… (now {id})"),
+                                None => "Switch model…".to_owned(),
+                            })
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(actions::SwitchChatModelById(session.to_string())),
+                                    cx,
+                                );
+                            })
+                            .child(probe(&self.regions, Region::Chat("switch-model")))
+                            .child(probe(&self.regions, Region::Chat("model"))),
+                    )
                     .into_any_element();
             }
             div()
                 .id("chat-switch-model")
                 .relative()
+                .when(fit != HeaderFit::Folded, |s| s.flex_none())
                 .flex()
                 .min_w(px(WHO_MIN_WIDTH))
                 .items_center()
@@ -931,6 +1097,7 @@ impl ChatView {
                     .into(),
                 ))
                 .child(probe(&self.regions, Region::Chat("switch-model")))
+                .child(probe(&self.regions, Region::Chat("model")))
                 .into_any_element()
         });
         // A status line, not a second title (CL-CHROME, D-C5): the tab and the window title name
@@ -945,11 +1112,19 @@ impl ChatView {
             .gap(px(tokens.spacing * 3.0))
             .h(px(tokens.pane_header))
             .px(px(tokens.spacing * 3.0))
+            .overflow_hidden()
             .border_b_1()
             .border_color(theme.border)
-            .child(state)
+            .child(
+                div()
+                    .relative()
+                    .min_w_0()
+                    .when(fit != HeaderFit::Folded, |s| s.flex_none())
+                    .child(state)
+                    .child(probe(&self.regions, Region::Chat("state"))),
+            )
             .children(who)
-            .children(mode.map(|chip| {
+            .children(mode.filter(|_| fit != HeaderFit::Folded).map(|chip| {
                 let tip = SharedString::from(chip.tooltip);
                 let text = SharedString::from(chip.text);
                 let label = if chip.warning {
@@ -982,24 +1157,20 @@ impl ChatView {
                     .tooltip(tooltip(tip))
                     .child(probe(&self.regions, Region::Chat("mode")))
             }))
-            .children(self.forked_from_chip(info, narrow, theme, tokens, cx))
-            .children(
-                crate::sessions::folders::folders_of(info)
-                    .filter(|folders| folders.has_chip())
-                    .map(|folders| {
-                        crate::workbench::folders::chip(
-                            "chat-folders",
-                            &folders,
-                            session,
-                            Region::Folders("chip"),
-                            &self.regions,
-                            narrow,
-                            theme,
-                            tokens,
-                        )
-                    }),
-            )
-            .children(context.map(|context| {
+            .children(lineage_chip.filter(|_| fit != HeaderFit::Folded))
+            .children(folders.filter(|_| fit != HeaderFit::Folded).map(|folders| {
+                crate::workbench::folders::chip(
+                    "chat-folders",
+                    &folders,
+                    session,
+                    Region::Folders("chip"),
+                    &self.regions,
+                    fit == HeaderFit::Icons,
+                    theme,
+                    tokens,
+                )
+            }))
+            .children(context.filter(|_| fit != HeaderFit::Folded).map(|context| {
                 let tip = SharedString::from(context_tooltip(&context));
                 div()
                     .id("chat-context")
@@ -1036,7 +1207,11 @@ impl ChatView {
                 })
                 .child(probe(&self.regions, Region::Chat("menu"))),
             )
-            .child(probe(&self.regions, Region::Chat("header")))
+            .child(crate::workbench::render::probe_width(
+                &self.regions,
+                Region::Chat("header"),
+                self.header_seen.clone(),
+            ))
             .into_any_element()
     }
 
@@ -2327,5 +2502,75 @@ mod model_label_tests {
         assert_eq!(model_label("sonnet", None), "sonnet");
         assert_eq!(model_label("sonnet", Some("  ")), "sonnet");
         assert_eq!(model_label("anthropic/", None), "anthropic/");
+    }
+}
+
+#[cfg(test)]
+mod header_fit_tests {
+    use super::{HeaderFit, HeaderWidths, header_fit};
+
+    fn widths() -> HeaderWidths {
+        HeaderWidths {
+            state: 90.0,
+            model: 150.0,
+            mode: 100.0,
+            lineage: 240.0,
+            folders: 120.0,
+            folders_count: true,
+            context: 160.0,
+        }
+    }
+
+    #[test]
+    fn the_chips_give_way_to_their_glyphs_first_and_leave_for_the_menu_last() {
+        let w = widths();
+        // Nothing drawn yet: everything, then the first frame measures it.
+        assert_eq!(header_fit(None, None, 12.0, 12.0), HeaderFit::Full);
+        assert_eq!(header_fit(Some(300.0), None, 12.0, 12.0), HeaderFit::Full);
+        assert_eq!(
+            header_fit(Some(1200.0), Some(&w), 12.0, 12.0),
+            HeaderFit::Full
+        );
+        // Parts 860 + menu 32 + 7 gaps of 12 + 2 edges of 12 = 1000.
+        assert_eq!(
+            header_fit(Some(1000.0), Some(&w), 12.0, 12.0),
+            HeaderFit::Full
+        );
+        assert_eq!(
+            header_fit(Some(999.0), Some(&w), 12.0, 12.0),
+            HeaderFit::Icons
+        );
+        // The lineage and folders chips as glyphs (30 and 30 + 26) save 274 px.
+        assert_eq!(
+            header_fit(Some(726.0), Some(&w), 12.0, 12.0),
+            HeaderFit::Icons
+        );
+        assert_eq!(
+            header_fit(Some(725.0), Some(&w), 12.0, 12.0),
+            HeaderFit::Folded
+        );
+        assert_eq!(
+            header_fit(Some(100.0), Some(&w), 12.0, 12.0),
+            HeaderFit::Folded
+        );
+    }
+
+    #[test]
+    fn a_header_without_chips_never_gives_up_the_mode_or_the_context_early() {
+        let w = HeaderWidths {
+            lineage: 0.0,
+            folders: 0.0,
+            folders_count: false,
+            ..widths()
+        };
+        // 500 parts + menu 32 + 5 gaps + 2 edges.
+        assert_eq!(
+            header_fit(Some(616.0), Some(&w), 12.0, 12.0),
+            HeaderFit::Full
+        );
+        assert_eq!(
+            header_fit(Some(615.0), Some(&w), 12.0, 12.0),
+            HeaderFit::Folded
+        );
     }
 }

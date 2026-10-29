@@ -268,6 +268,9 @@ pub enum Region {
     /// `problem`, `how`, and the chips that open it (`chip` in a chat header, `terminal-chip`
     /// on a terminal agent).
     Folders(&'static str),
+    /// A part of a terminal tab (`grid`: the box the cell grid fills, `strip`: the reserved
+    /// strip under it that holds the folders and Contain chips, never over the output).
+    Terminal(&'static str),
     /// Row `index` of the session folders popover (`row`: 0 is the working folder, the extra
     /// folders follow) or the remove button of extra folder `index` (`remove`).
     FolderRow(&'static str, usize),
@@ -693,6 +696,9 @@ pub(crate) struct MenuEntry {
     pub hint: Option<SharedString>,
     /// A line is drawn above the entry: it starts a group.
     pub separator: bool,
+    /// The longer words for the entry, in a tooltip: a disabled entry says why in a few words
+    /// and keeps the detail here (FX-UI-B).
+    pub tip: Option<SharedString>,
     pub run: MenuAction,
 }
 
@@ -708,6 +714,13 @@ impl MenuEntry {
     #[must_use]
     pub(crate) fn starting_group(mut self) -> Self {
         self.separator = true;
+        self
+    }
+
+    /// The entry with longer words in a tooltip (what the few words of a label leave out).
+    #[must_use]
+    pub(crate) fn with_tip(mut self, tip: impl Into<SharedString>) -> Self {
+        self.tip = Some(tip.into());
         self
     }
 }
@@ -2351,6 +2364,19 @@ impl Workbench {
         })
     }
 
+    /// The tooltip of each entry of the open context menu, in order (`None`: it has none).
+    pub fn context_menu_tips(&self) -> Vec<Option<String>> {
+        self.context_menu
+            .as_ref()
+            .map(|m| {
+                m.entries
+                    .iter()
+                    .map(|e| e.tip.as_ref().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Labels of the open context menu's entries that are greyed out.
     pub fn context_menu_disabled(&self) -> Vec<SharedString> {
         self.context_menu
@@ -2431,6 +2457,7 @@ impl Workbench {
             submenu: false,
             hint: None,
             separator: false,
+            tip: None,
             run: Rc::new(run),
         }
     }
@@ -2454,6 +2481,7 @@ impl Workbench {
             submenu: false,
             hint: None,
             separator: false,
+            tip: None,
             run: Rc::new(|_, _, _| {}),
         }
     }

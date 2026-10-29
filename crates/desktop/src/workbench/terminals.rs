@@ -1078,6 +1078,29 @@ impl Workbench {
         for (at, entry) in self.attention_entries(session, cx).into_iter().enumerate() {
             entries.insert(3 + at, entry);
         }
+        // What a narrow chat header left out (the lineage, the mode, the context), as rows.
+        let chats = self.chats.iter().find(|((_, s), _)| *s == session);
+        let folded = chats.map(|(_, chat)| chat.read(cx).folded_chips());
+        for (at, chip) in folded.unwrap_or_default().into_iter().enumerate() {
+            let entry = match chip.opens {
+                Some(parent) => Self::entry(chip.text, move |this, window, cx| {
+                    this.open_session(parent, window, cx);
+                }),
+                None => MenuEntry {
+                    disabled: true,
+                    ..Self::entry(chip.text, |_, _, _| {})
+                },
+            };
+            let at_end = entries.len() - 1;
+            entries.insert(
+                at_end,
+                if at == 0 {
+                    entry.starting_group()
+                } else {
+                    entry
+                },
+            );
+        }
         entries
     }
 
@@ -1242,9 +1265,11 @@ impl Workbench {
         let menu_view = view.clone();
         let drop_view = view.clone();
         let accent = theme.accent;
-        let mut root = div()
+        let root = div()
             .relative()
             .size_full()
+            .flex()
+            .flex_col()
             .group(ROWS_DROP_GROUP)
             // Rows of the Files tree dropped on the terminal type their paths relative to the
             // tree's root, quoted for the shell, as Finder's files are.
@@ -1270,8 +1295,20 @@ impl Workbench {
                     let entries = this.terminal_menu(&session_id);
                     this.open_menu(event.position, entries, window, cx);
                 }),
-            )
+            );
+        // The box the cell grid fills: everything drawn over the output hangs on it, and the
+        // strip of chips below it takes its height from the grid (the view reports the smaller
+        // grid to the PTY).
+        let mut body = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .child(super::render::cached_view(&self.regions, view))
+            .child(crate::workbench::render::probe(
+                &self.regions,
+                Region::Terminal("grid"),
+            ))
             .child(
                 div()
                     .absolute()
@@ -1320,7 +1357,7 @@ impl Workbench {
                     },
                 ));
             }
-            root = root.child(bar);
+            body = body.child(bar);
         }
         if let Some(item) = self.terminal_finds.get(&(pane, id)) {
             // Below the Close / Restart buttons of an ended session.
@@ -1329,7 +1366,7 @@ impl Workbench {
             } else {
                 tokens.spacing * 2.0
             };
-            root = root.child(
+            body = body.child(
                 div()
                     .absolute()
                     .top(px(top))
@@ -1340,110 +1377,98 @@ impl Workbench {
         if !self.daemon.stopped
             && let Some(bar) = self.render_terminal_recovery(id, ended, cx)
         {
-            root = root.child(bar);
+            body = body.child(bar);
         }
         if !self.daemon.stopped
             && let Some(strip) = self.render_terminal_untracked(id, cx)
         {
-            root = root.child(strip);
+            body = body.child(strip);
         }
-        if let Some(chip) = self.render_terminal_containment(id, cx) {
-            root = root.child(chip);
-        }
-        if let Some(chip) = self.render_terminal_folders(id, cx) {
-            root = root.child(chip);
-        }
-        root.into_any_element()
+        // The chips sit in a strip under the cell grid, never over what the program printed.
+        let strip = self.render_terminal_strip(id, cx);
+        root.child(body).children(strip).into_any_element()
     }
 
-    /// The folders chip of a terminal with a coding agent (or with folders), at the foot of the
-    /// pane on the left, above the Contain chip when there is one (the right-hand corner is the
-    /// *Track as* strip's): the working folder, `+N`, and the popover that adds one (the agent
-    /// is typed `/add-dir <path>` for the user to confirm).
-    fn render_terminal_folders(
+    /// The strip under the cell grid that holds the chips of a terminal (FX-UI-B): the folders
+    /// chip of a coding agent (or of a terminal with folders: the working folder, `+N`, and the
+    /// popover that adds one; the agent is typed `/add-dir <path>` for the user to confirm) and
+    /// the Contain chip, what the boundary around the terminal holds back and what it leaves
+    /// open (protocol 0.52, ADR 0021 decision 6: *writes limited to this worktree · can read
+    /// your files · network off*, a warning when it was asked for and is not there). The strip
+    /// is part of the layout, not an overlay: the grid above it is smaller by its height (the
+    /// view reports that to the PTY), so no chip covers a cell. Nothing is drawn, and nothing
+    /// reserved, when the terminal has neither chip.
+    fn render_terminal_strip(
         &mut self,
         id: SessionId,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        /// The height of the Contain chip and the gap above it.
-        const CONTAIN_CHIP: f32 = 34.0;
         let store = self.sessions.read(cx);
         let folders = store
             .session_folders(id)
-            .filter(|folders| folders.has_chip())?;
-        let lift = if store.session(id)?.containment.is_some() {
-            CONTAIN_CHIP
-        } else {
-            0.0
-        };
+            .filter(|folders| folders.has_chip());
+        let containment = store
+            .session(id)
+            .and_then(|info| info.containment.clone())
+            .map(|containment| super::chat::containment_chip(&containment));
+        if folders.is_none() && containment.is_none() {
+            return None;
+        }
         let theme = self.theme;
         let tokens = self.density.ui();
+        let mut strip = div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(px(tokens.spacing * 2.0))
+            .w_full()
+            .px(px(tokens.spacing * 3.0))
+            .py(px(tokens.spacing / 2.0))
+            .bg(theme.surface)
+            .border_t_1()
+            .border_color(theme.border);
+        if let Some(folders) = folders {
+            strip = strip.child(div().flex_shrink_0().child(super::folders::chip(
+                "terminal-folders",
+                &folders,
+                id,
+                Region::Folders("terminal-chip"),
+                &self.regions,
+                false,
+                &theme,
+                &tokens,
+            )));
+        }
+        if let Some(chip) = containment {
+            let tooltip = gpui::SharedString::from(chip.tooltip.clone());
+            strip = strip.child(
+                div()
+                    .id("terminal-containment")
+                    .min_w_0()
+                    .max_w(px(640.0))
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(if chip.warning {
+                        theme.warning
+                    } else {
+                        theme.muted
+                    })
+                    .truncate()
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| crate::workbench::style::TextTooltip::new(tooltip.clone()))
+                            .into()
+                    })
+                    .child(gpui::SharedString::from(chip.text))
+                    .child(crate::workbench::render::probe(
+                        &self.regions,
+                        Region::Contain("chip"),
+                    )),
+            );
+        }
         Some(
-            div()
-                .absolute()
-                .bottom(px(tokens.spacing * 2.0 + lift))
-                .left(px(tokens.spacing * 3.0))
-                .px(px(tokens.spacing))
-                .py(px(tokens.spacing / 2.0))
-                .rounded(px(tokens.radius))
-                .bg(theme.surface)
-                .border_1()
-                .border_color(theme.border)
-                .child(super::folders::chip(
-                    "terminal-folders",
-                    &folders,
-                    id,
-                    Region::Folders("terminal-chip"),
-                    &self.regions,
-                    false,
-                    &theme,
-                    &tokens,
-                ))
-                .into_any_element(),
-        )
-    }
-
-    /// What the boundary around this terminal holds back and what it leaves open, at the foot
-    /// of the pane (protocol 0.52, ADR 0021 decision 6): *writes limited to this worktree ·
-    /// can read your files · network off*. A warning when it was asked for and is not there.
-    fn render_terminal_containment(
-        &mut self,
-        id: SessionId,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let containment = self.sessions.read(cx).session(id)?.containment.clone()?;
-        let chip = super::chat::containment_chip(&containment);
-        let theme = self.theme;
-        let tokens = self.density.ui();
-        let tooltip = gpui::SharedString::from(chip.tooltip.clone());
-        Some(
-            div()
-                .id("terminal-containment")
-                .absolute()
-                .bottom(px(tokens.spacing * 2.0))
-                .left(px(tokens.spacing * 3.0))
-                .max_w(px(640.0))
-                .px(px(tokens.spacing * 2.0))
-                .py(px(tokens.spacing))
-                .rounded(px(tokens.radius))
-                .bg(theme.surface)
-                .border_1()
-                .border_color(theme.border)
-                .text_size(px(tokens.secondary_font_size))
-                .text_color(if chip.warning {
-                    theme.warning
-                } else {
-                    theme.muted
-                })
-                .truncate()
-                .tooltip(move |_, cx| {
-                    cx.new(|_| crate::workbench::style::TextTooltip::new(tooltip.clone()))
-                        .into()
-                })
-                .child(gpui::SharedString::from(chip.text))
+            strip
                 .child(crate::workbench::render::probe(
                     &self.regions,
-                    crate::workbench::Region::Contain("chip"),
+                    Region::Terminal("strip"),
                 ))
                 .into_any_element(),
         )

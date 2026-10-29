@@ -10,7 +10,7 @@
 
 use gpui::{
     AnyElement, App, ClipboardItem, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Styled, div, px,
+    Styled, Window, div, px,
 };
 use hutan_chat_view::{Body, Entry, Transcript};
 use hutan_core::{ForkSupport, TurnId};
@@ -282,12 +282,34 @@ impl ChatView {
             .or(newest)
     }
 
+    /// The words of the header's lineage chip, *Forked from “Parent” · turn 4*: the turn is what
+    /// the chip is for, a long title gives way, not the turn.
+    pub(super) fn forked_from_text(&self, info: &SessionInfo, cx: &App) -> Option<String> {
+        let origin = info.forked_from.as_ref()?;
+        let title = self
+            .sessions
+            .read(cx)
+            .session(origin.session_id)
+            .map(|p| p.title.clone());
+        let short = title.as_deref().map(|title| {
+            let mut chars = title.chars();
+            let head: String = chars.by_ref().take(24).collect();
+            if chars.next().is_some() {
+                format!("{}…", head.trim_end())
+            } else {
+                head
+            }
+        });
+        Some(chip_text(short.as_deref(), origin.ordinal))
+    }
+
     /// The header chip of a fork: *Forked from “Parent” · turn 4*, which opens the parent. A
-    /// parent that is closed or deleted leaves plain words.
+    /// parent that is closed or deleted leaves plain words. `icon_only` (a header short of room)
+    /// keeps the glyph; the words are the tooltip (FX-UI-B).
     pub(super) fn forked_from_chip(
         &self,
         info: &SessionInfo,
-        narrow: bool,
+        icon_only: bool,
         theme: &Theme,
         tokens: &Tokens,
         cx: &App,
@@ -295,47 +317,35 @@ impl ChatView {
         let origin = info.forked_from.as_ref()?;
         let parent = self.sessions.read(cx).session(origin.session_id);
         let title = parent.map(|p| p.title.clone());
-        let text = if narrow {
-            match origin.ordinal {
-                0 => "Forked".to_owned(),
-                n => format!("Forked · turn {n}"),
-            }
-        } else {
-            // The turn is what the chip is for: a long title gives way, not the turn.
-            let short = title.as_deref().map(|title| {
-                let mut chars = title.chars();
-                let head: String = chars.by_ref().take(24).collect();
-                if chars.next().is_some() {
-                    format!("{}…", head.trim_end())
-                } else {
-                    head
-                }
-            });
-            chip_text(short.as_deref(), origin.ordinal)
-        };
+        let text = self.forked_from_text(info, cx)?;
         let tip = match &title {
-            Some(title) => format!("Open the original, “{title}”"),
-            None => "The original is archived or deleted: Reopen it from History".to_owned(),
+            Some(title) => format!("{text}. Open the original, “{title}”"),
+            None => format!("{text}. The original is archived or deleted: Reopen it from History"),
         };
-        let button = Button::new("chat-forked-from", text, theme, tokens)
-            .ghost()
-            .compact()
-            .icon(Icon::ActionFork)
-            .max_width(320.0)
-            .tooltip(tip)
-            .disabled(title.is_none())
-            .child(probe(&self.regions, Region::Chat("forked-from")));
         let parent_id = origin.session_id;
-        Some(
-            div()
-                .flex_none()
-                .min_w_0()
-                .child(button.on_click(move |_, window, cx| {
-                    window
-                        .dispatch_action(Box::new(actions::OpenSession(parent_id.to_string())), cx);
-                }))
-                .into_any_element(),
-        )
+        let open = move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+            window.dispatch_action(Box::new(actions::OpenSession(parent_id.to_string())), cx);
+        };
+        let button = if icon_only {
+            IconButton::new("chat-forked-from", Icon::ActionFork, tip, theme, tokens)
+                .compact()
+                .disabled(title.is_none())
+                .on_click(open)
+                .child(probe(&self.regions, Region::Chat("forked-from")))
+                .into_any_element()
+        } else {
+            Button::new("chat-forked-from", text, theme, tokens)
+                .ghost()
+                .compact()
+                .icon(Icon::ActionFork)
+                .max_width(320.0)
+                .tooltip(tip)
+                .disabled(title.is_none())
+                .child(probe(&self.regions, Region::Chat("forked-from")))
+                .on_click(open)
+                .into_any_element()
+        };
+        Some(div().flex_none().min_w_0().child(button).into_any_element())
     }
 }
 

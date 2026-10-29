@@ -482,6 +482,7 @@ impl Workbench {
                             submenu: false,
                             hint: None,
                             separator: false,
+                            tip: None,
                             run: std::rc::Rc::new(move |this, _, cx| {
                                 this.provider_call(
                                     Request::ProviderAdd(request.clone()),

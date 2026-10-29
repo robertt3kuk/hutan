@@ -60,7 +60,8 @@ impl FoldersControl {
 
 /// The chip of a session's folders: a ghost button with the folder glyph, the working folder's
 /// name and, for the extra ones, a `+N` counter; a click opens the popover under it. `region`
-/// is where tests find it; `compact` (a narrow header) leaves the name to the tooltip.
+/// is where tests find it; `compact` (a header that is short of room) is the glyph and the
+/// counter alone, the name and the words in the tooltip (FX-UI-B).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn chip(
     id: &'static str,
@@ -72,33 +73,39 @@ pub(crate) fn chip(
     theme: &Theme,
     tokens: &Tokens,
 ) -> AnyElement {
-    let label = if compact {
-        folders.chip_count().unwrap_or_else(|| "Folders".to_owned())
-    } else {
-        folders.chip_name()
+    let open = move |event: &gpui::ClickEvent, window: &mut Window, cx: &mut gpui::App| {
+        window.dispatch_action(
+            Box::new(actions::ShowSessionFolders(actions::SessionMenuAt {
+                session: session.to_string(),
+                position: event.position(),
+            })),
+            cx,
+        );
     };
-    let button = Button::new(id, label, theme, tokens)
+    if compact {
+        let button = IconButton::new(id, Icon::ItemFolder, folders.chip_tooltip(), theme, tokens)
+            .compact()
+            .children(
+                folders
+                    .chip_count()
+                    .map(|count| ui::counter(count, theme, tokens).into_any_element()),
+            )
+            .on_click(open)
+            .child(probe(regions, region));
+        return div().flex_none().child(button).into_any_element();
+    }
+    let button = Button::new(id, folders.chip_name(), theme, tokens)
         .ghost()
         .compact()
         .icon(Icon::ItemFolder)
         .max_width(200.0)
         .tooltip(folders.chip_tooltip())
-        .when(!compact, |button| {
-            button.children(
-                folders
-                    .chip_count()
-                    .map(|count| ui::counter(count, theme, tokens).into_any_element()),
-            )
-        })
-        .on_click(move |event, window, cx| {
-            window.dispatch_action(
-                Box::new(actions::ShowSessionFolders(actions::SessionMenuAt {
-                    session: session.to_string(),
-                    position: event.position(),
-                })),
-                cx,
-            );
-        })
+        .children(
+            folders
+                .chip_count()
+                .map(|count| ui::counter(count, theme, tokens).into_any_element()),
+        )
+        .on_click(open)
         .child(probe(regions, region));
     // The chip keeps its width: in a header the model's name is what gives way.
     div().flex_none().child(button).into_any_element()

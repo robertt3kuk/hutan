@@ -114,6 +114,31 @@ pub(super) fn probe(regions: &Regions, region: Region) -> impl IntoElement {
     .size_full()
 }
 
+/// [`probe`] for a view that lays itself out by its parent's width (a header that gives way
+/// chip by chip): when the painted width is not the one `seen` holds, the view that painted it
+/// is rendered again, once, with the width it now has in the regions.
+pub(super) fn probe_width(
+    regions: &Regions,
+    region: Region,
+    seen: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+) -> impl IntoElement {
+    let regions = regions.clone();
+    canvas(
+        |bounds, _, _| bounds,
+        move |_, bounds, window, cx| {
+            regions.record(window.current_view(), region, bounds);
+            let width = f32::from(bounds.size.width);
+            if seen.replace(Some(width)) != Some(width) {
+                cx.notify(window.current_view());
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 /// `view` drawn through `AnyView::cached`: laid out, prepainted and painted again only when it
 /// notifies (or the window refreshes: focus, activation, theme, a click), otherwise its last
 /// frame is replayed. The view fills its parent. The regions its probes record are kept while
@@ -3282,9 +3307,16 @@ impl Workbench {
             .map(|(i, entry)| {
                 let disabled = entry.disabled;
                 let separator = entry.separator;
+                let tip = entry.tip.clone();
                 let row = div()
                     .id(id(format!("menu-row-{i}")))
                     .relative()
+                    .when_some(tip, |s, tip| {
+                        s.tooltip(move |_, cx| {
+                            cx.new(|_| crate::workbench::style::TextTooltip::new(tip.clone()))
+                                .into()
+                        })
+                    })
                     .flex()
                     .items_center()
                     .gap(px(tokens.spacing))
