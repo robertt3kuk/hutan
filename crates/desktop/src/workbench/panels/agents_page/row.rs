@@ -16,7 +16,9 @@ use crate::workbench::actions::{
     InterruptSessionById, SessionMenuAt, ShowAgentMenu, StopSessionById,
 };
 use crate::workbench::agents_page::primary_action;
-use crate::workbench::panels::common::{agent_lane, agent_state_word, agent_title_line, now_ms};
+use crate::workbench::panels::common::{
+    agent_lane, agent_state_word, agent_title_line_with, now_ms,
+};
 use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
 use crate::workbench::ui::{self, FocusRingExt as _};
@@ -106,7 +108,12 @@ impl AgentsPage {
 
         // ---- the identity: title and the one state word, then the reason or the status ----
         let reason_tip = agents_text::reason_tooltip(record, now).map(SharedString::from);
-        let title_line = agent_title_line(record, &theme, &tokens);
+        // The name the window gives the session: a fork wears its mark like in the sidebar.
+        let parts = {
+            let store = self.env.sessions.read(cx);
+            store.session(session).map(|info| store.title_parts(info))
+        };
+        let title_line = agent_title_line_with(record, parts, &theme, &tokens);
         let mut status_line = div()
             .flex()
             .items_center()

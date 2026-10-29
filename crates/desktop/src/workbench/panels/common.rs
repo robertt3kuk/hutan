@@ -48,24 +48,53 @@ pub fn state_word_color(theme: &Theme, tone: Tone, selected: bool) -> Hsla {
 }
 
 /// The title of an agent record, one component for the Agents page, the Agents panel and Today:
-/// medium weight, cut with "…", and `Assistant` beside it for Mawas.
+/// the sidebar's name weight, cut with "…", and `Assistant` beside it for Mawas.
 pub fn agent_title_line(record: &AgentRecord, theme: &Theme, tokens: &Tokens) -> gpui::Div {
+    agent_title_line_with(record, None, theme, tokens)
+}
+
+/// [`agent_title_line`] with the name the window gives the session (`SessionsStore::title_parts`):
+/// a fork's mark after it, which never gives way to the "…".
+pub fn agent_title_line_with(
+    record: &AgentRecord,
+    parts: Option<crate::sessions::fork::TitleParts>,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> gpui::Div {
     use crate::sessions::presentation::Role;
     // The name as the sidebar's card writes it: regular, semibold while something waits for a
     // look, faint once the session ended; an agent's own emoji prefix is not drawn.
     let needs = record.group.attention().is_some();
-    let mut line = div().flex().items_center().gap(px(8.0)).h(px(16.0)).child(
-        div()
-            .min_w_0()
-            .truncate()
-            .when(needs, |s| s.font_weight(gpui::FontWeight::SEMIBOLD))
-            .when(record.state.is_finished() && !needs, |s| {
-                s.text_color(theme.faint)
-            })
-            .child(SharedString::from(
-                crate::sessions::card::strip_pictographs(&record.title).to_owned(),
-            )),
-    );
+    let (head, tail) = match parts {
+        Some(parts) => (parts.head, parts.tail),
+        None => (
+            crate::sessions::card::strip_pictographs(&record.title).to_owned(),
+            None,
+        ),
+    };
+    let mut line = div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .h(px(16.0))
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .when(needs, |s| s.font_weight(gpui::FontWeight::SEMIBOLD))
+                .when(record.state.is_finished() && !needs, |s| {
+                    s.text_color(theme.faint)
+                })
+                .child(SharedString::from(head)),
+        )
+        .children(tail.map(|tail| {
+            title_mark(
+                SharedString::from(format!("agent-mark-{}", record.session)),
+                &tail,
+                theme.muted,
+                tokens.secondary_font_size,
+            )
+        }));
     if record.role == Role::Assistant {
         line = line.child(
             div()

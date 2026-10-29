@@ -794,4 +794,31 @@ mod tests {
             "Snoozed · Permission: run cargo test +1"
         );
     }
+
+    #[test]
+    fn the_lane_of_a_row_on_the_agents_page_says_what_the_sidebar_says() {
+        use crate::sessions::presentation::ReasonKind;
+        use crate::workbench::ui::BadgeState;
+        let mut r = record();
+        assert_eq!(lane_state(&r), BadgeState::Working);
+        r.state = State::Idle;
+        assert_eq!(lane_state(&r), BadgeState::Idle);
+        r.state = State::Completed;
+        assert_eq!(lane_state(&r), BadgeState::Ended);
+        for (kind, badge) in [
+            (ReasonKind::Approval, BadgeState::Request),
+            (ReasonKind::Question, BadgeState::Request),
+            (ReasonKind::Plan, BadgeState::Request),
+            (ReasonKind::Failed, BadgeState::Failed),
+            (ReasonKind::Review, BadgeState::DoneUnread),
+            (ReasonKind::CompletedUnread, BadgeState::DoneUnread),
+        ] {
+            r.reasons = vec![Reason {
+                kind,
+                text: "x".into(),
+                since_ms: None,
+            }];
+            assert_eq!(lane_state(&r), badge, "{kind:?}");
+        }
+    }
 }

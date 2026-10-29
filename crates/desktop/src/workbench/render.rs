@@ -2358,8 +2358,11 @@ impl Workbench {
         let cut: Vec<bool> = (0..pane.items.len())
             .map(|index| {
                 hidden.is_some()
+                    // The handle's item bounds are where the tab is laid out, before the scroll.
                     && tab_scroll.bounds_for_item(index).is_some_and(|tab| {
-                        tab.left() < view.left() - px(1.0) || tab.right() > view.right() + px(1.0)
+                        let (left, right) =
+                            (tab.left() + tab_scroll.offset().x, tab.right() + tab_scroll.offset().x);
+                        left < view.left() - px(1.0) || right > view.right() + px(1.0)
                     })
             })
             .collect();

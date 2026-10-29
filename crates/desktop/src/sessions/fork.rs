@@ -233,11 +233,11 @@ pub fn chip_text(parent: Option<&str>, ordinal: u32) -> String {
 const DEFAULT_SUFFIX: &str = " (fork)";
 
 /// The longest a worktree branch is written in a fork's mark.
-const BRANCH_MARK: usize = 16;
+const BRANCH_MARK: usize = 12;
 
 /// A session's name as the window draws it: the `head` is what gives way when there is no room
 /// (cut with "…"), the `tail` never does. Only a fork nobody renamed has a tail: its mark says
-/// where it parted from the parent (`⑂ 2`: after the parent's turn 2; `⑂ reply-wit…eady-t1`: in
+/// where it parted from the parent (`⑂ 2`: after the parent's turn 2; `⑂ reply-…dy-t1`: in
 /// the worktree of that branch), so the parent, a fork of it and a fork into a worktree never
 /// read the same in a row or a tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -596,7 +596,7 @@ mod tests {
         let find = |id: SessionId| all.iter().find(|s| s.id == id);
         let tail = title_parts(&wt, &find).tail.unwrap();
         assert!(
-            tail.starts_with("⑂ reply-wi") && tail.ends_with("eady-t1"),
+            tail.starts_with("⑂ reply-") && tail.ends_with("dy-t1"),
             "{tail}"
         );
         assert!(tail.chars().count() <= 2 + BRANCH_MARK);
