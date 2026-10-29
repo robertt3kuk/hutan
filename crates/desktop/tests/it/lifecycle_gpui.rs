@@ -28,9 +28,21 @@ fn settings_in(dir: &Path) -> SettingsStore {
 
 /// The app's own `hutand`: the one the launcher starts, of `version` (the real daemon reports
 /// this crate's version, so another `version` makes it "another build").
+///
+/// The identity carries no git commit (FX-FLAKY-7). The real `hutand` at `target/debug/hutand`
+/// is built by `cargo build --workspace --bins`, not by `cargo nextest run -p hutan-desktop`,
+/// so after a commit (or a rebase) the test binary can be one commit ahead of the `hutand` it
+/// starts. With the commit in the identity the window then sees "this daemon is another build
+/// of mine", restarts the idle daemon onto the app's `hutand` (the designed answer, once per
+/// window) and `process.starts()` reads 2 where the test means 1 (`starts() == 2` in
+/// `hutan_daemon_stop_is_kept…`, 5 vs 4 after *Retry* in `three_failing_starts…`). These tests
+/// are about what the window does with the daemon, not about which commit built it: the
+/// commit comparison is unit-tested in `hutan_client::identity`, and the tests that need
+/// another build say so with another version.
 fn own(process: &ProcessDaemon, version: &str) -> DaemonIdentity {
     DaemonIdentity {
         version: version.to_owned(),
+        git_sha: None,
         ..DaemonIdentity::own(Some(&process.hutand()))
     }
 }
@@ -134,6 +146,31 @@ fn an_idle_daemon_of_another_build_is_restarted_onto_the_apps_hutand(cx: &mut Te
     assert_eq!(process.starts(), 2);
     assert_eq!(mismatch(&view, cx), None);
     assert!(!drawn(&view, cx, Region::Offer("daemon-mismatch")));
+}
+
+/// The same version from another commit is another build too, and restarting is once: a window
+/// whose `hutand` is one commit ahead of the one it starts (a `hutand` that was not rebuilt, the
+/// cause of FX-FLAKY-7's `starts() == 2`) restarts the idle daemon and then keeps what answers.
+#[gpui::test]
+fn the_same_version_from_another_commit_is_restarted_once(cx: &mut TestAppContext) {
+    let process = ProcessDaemon::new();
+    let own = DaemonIdentity {
+        git_sha: Some("000000000000".to_owned()),
+        ..own(&process, OWN_VERSION)
+    };
+    let (view, cx) = open(
+        cx,
+        &process,
+        Connection::start(process.options()),
+        own.clone(),
+    );
+
+    wait_until(cx, "the restart onto the app's hutand", |cx| {
+        process.starts() == 2 && settled(&view, cx).is_some()
+    });
+    pump_for(cx, Duration::from_millis(500));
+    assert_eq!(process.starts(), 2, "once, not again and again");
+    assert_eq!(mismatch(&view, cx), None);
 }
 
 #[gpui::test]
