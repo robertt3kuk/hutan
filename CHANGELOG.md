@@ -4,6 +4,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+## 0.3.2 — 2026-10-29
+
 ### Added
 - Agents in terminals are recognised: when OMP, Claude Code, Codex (and others) run in a terminal, the tab and the sidebar row show the agent's own icon instead of `>_`, the **session takes the agent's name** (OMP's session title, without the `π` prefix; a name you set yourself stays, with the agent's title under it), and the state shows — a spinner while it works, a bell when it waits for you (the question appears under the row and in Requests), a cross on error, a check when done. A bell also marks a tab that rang or notified while out of sight. Read from OMP's status signal (OSC 7501), the window title and the running process — no hooks needed; `hutan ls` has an AGENT column.
 - **Fork a chat from any turn**: *Fork…* in each turn's footer, on a message's hover bar, in the session menu, ⌘K *Chat: Fork from Here* and ⑂ on a sidebar card. The popover says honestly where the agent can cut (exact turn, latest turn only, or a summary — you choose, never silently), *Where*: this folder or a **new worktree with that turn's files** (remembered), *Restore files to this turn*, *Archive the original*. A fork sits under its parent in the sidebar with a *Forked from … · turn N* chip. Terminal agents get *Fork Session* through their own CLI (`omp --fork`, `claude --fork-session`, `codex fork`). Also `hutan chat fork`, MCP `chat_fork`.
