@@ -2542,3 +2542,108 @@ async fn a_codex_chat_forks_after_a_turn_with_thread_fork_and_a_copy_of_its_jour
     );
     t.stop().await;
 }
+
+/// A turn whose user message is `/context` is a measurement (`hutan_core::insight::
+/// is_measure_message`, the rule INSIGHT-A counts it by): `chat.fork` without a `turn_id` forks
+/// at the newest real turn, the ordinal does not count it, and naming it is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fork_without_a_turn_skips_a_measurement_and_naming_one_is_refused() {
+    let work = tempfile::tempdir().unwrap();
+    // `two-turns` with the second turn's user message changed to the measurement command.
+    let scripted = work.path().join("script");
+    std::fs::create_dir_all(&scripted).unwrap();
+    let text = std::fs::read_to_string(fixtures().join("two-turns.jsonl")).unwrap();
+    let edited: Vec<String> = text
+        .lines()
+        .enumerate()
+        .map(|(n, line)| {
+            if n >= 24 {
+                line.replace(
+                    "Reply with the single word pong and nothing else.",
+                    "/context",
+                )
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    std::fs::write(
+        scripted.join("01-two-turns.jsonl"),
+        edited.join("\n") + "\n",
+    )
+    .unwrap();
+    std::fs::copy(
+        fixtures().join("fork-turn.jsonl"),
+        scripted.join("02-fork-turn.jsonl"),
+    )
+    .unwrap();
+    let config = replay(&scripted, &work.path().join("received.jsonl"));
+    let daemon = TestDaemon::start_with("", move |c| c.codex = Some(config)).await;
+    let (client, mut events) = daemon.connect_subscribed().await;
+    let t = Chat {
+        daemon,
+        work,
+        client,
+        events: events.resubscribe(),
+    };
+    let created = t.create().await;
+    for text in ["first", "second"] {
+        t.send(created.id, text).await;
+        next_chat_event(&mut events, "the turn to end", is_turn_end).await;
+        t.wait_state(created.id, SessionState::Idle).await;
+    }
+    let parent = t.history(created.id, None, 500).await;
+    let started: Vec<&AgentEvent> = parent
+        .events
+        .iter()
+        .filter(|e| matches!(e.kind, AgentEventKind::TurnStarted))
+        .collect();
+    assert_eq!(started.len(), 2);
+    let (first, second) = (started[0].turn_id.unwrap(), started[1].turn_id.unwrap());
+    assert!(
+        parent.events.iter().any(|e| matches!(
+            &e.kind,
+            AgentEventKind::MessageEnd { role: hutan_core::agent::MessageRole::User, text, .. }
+                if text == "/context"
+        )),
+        "the second turn is the measurement"
+    );
+    let fork = |turn_id| ChatFork {
+        session_id: created.id,
+        turn_id,
+        mode: hutan_core::ForkMode::Exact,
+        title: None,
+        where_: ForkWhere::ThisFolder,
+        branch: None,
+        restore_files: false,
+        archive_parent: false,
+    };
+
+    // Naming the measurement is refused: it is no turn of the conversation.
+    let refused = t
+        .client
+        .call::<ChatForked>(Request::ChatFork(fork(Some(second))))
+        .await;
+    assert_eq!(remote_code(refused), ErrorCode::InvalidState);
+    assert!(
+        t.received_of("thread/fork").is_empty(),
+        "nothing was asked of Codex"
+    );
+
+    // No turn named: the newest real turn, numbered 1 of 1.
+    let forked: ChatForked = t.client.call(Request::ChatFork(fork(None))).await.unwrap();
+    assert_eq!(forked.fork.ordinal, 1);
+    let origin = forked.session.forked_from.clone().unwrap();
+    assert_eq!((origin.session_id, origin.turn_id), (created.id, first));
+    let asked = &t.received_of("thread/fork")[0]["params"];
+    assert!(asked["lastTurnId"].is_string());
+    let copied = t.history(forked.session.id, None, 500).await;
+    assert!(
+        copied.events.iter().any(|e| matches!(
+            &e.kind,
+            AgentEventKind::Notice { message, .. } if message.contains("after turn 1 of 1")
+        )),
+        "the notice counts real turns only"
+    );
+    t.stop().await;
+}

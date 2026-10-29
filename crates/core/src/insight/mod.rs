@@ -45,6 +45,14 @@ pub const OTHER_TOOLS: &str = "other";
 /// and its answer is read as the breakdown ([`report::parse`]).
 pub const MEASURE_COMMAND: &str = "/context";
 
+/// Whether a message is the measurement command: a **user** message whose text is
+/// [`MEASURE_COMMAND`] (surrounding white space ignored). The one rule for "this turn is a
+/// measurement": the reducer does not count it, the chat view leaves it out, and a fork never
+/// picks it as the latest turn.
+pub fn is_measure_message(role: crate::agent::MessageRole, text: &str) -> bool {
+    role == crate::agent::MessageRole::User && text.trim() == MEASURE_COMMAND
+}
+
 /// Everything known about one session's agent. Whole snapshots only: a client replaces what it
 /// had when `seq` is larger.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -12,8 +12,8 @@ use super::{
     AgentInsight, BreakdownKind, BreakdownRow, CostKind, Exactness, InsightBlock, InsightContext,
     InsightFile, InsightFiles, InsightModel, InsightOutcome, InsightSource, InsightSourceKind,
     InsightTime, InsightTools, InsightTotals, InsightTurn, MAX_FILES, MAX_PATH_BYTES,
-    MAX_SNAPSHOT_BYTES, MAX_TOOL_NAMES, MAX_TURNS, MEASURE_COMMAND, OTHER_TOOLS, ToolCount,
-    TurnUsage, harness_insight,
+    MAX_SNAPSHOT_BYTES, MAX_TOOL_NAMES, MAX_TURNS, OTHER_TOOLS, ToolCount, TurnUsage,
+    harness_insight,
 };
 
 /// Tool calls whose end is still awaited; the oldest are forgotten past this many.
@@ -219,7 +219,7 @@ impl InsightReducer {
                     return false;
                 };
                 match role {
-                    MessageRole::User if text.trim() == MEASURE_COMMAND => running.measure = true,
+                    role if super::is_measure_message(*role, text) => running.measure = true,
                     MessageRole::Assistant if running.measure => {
                         if running.answer.len() < MAX_REPORT_BYTES {
                             running.answer.push_str(text);

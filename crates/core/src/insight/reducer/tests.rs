@@ -924,3 +924,16 @@ fn a_reducer_at_every_cap_holds_less_than_a_hundred_kib() {
     let held = r.approx_bytes();
     assert!(held < 100 * 1024, "{held} bytes");
 }
+
+#[test]
+fn only_a_user_message_that_is_the_command_is_a_measurement() {
+    use crate::agent::MessageRole::{Assistant, User};
+    assert!(super::super::is_measure_message(User, "/context"));
+    assert!(super::super::is_measure_message(User, "  /context\n"));
+    assert!(!super::super::is_measure_message(Assistant, "/context"));
+    assert!(!super::super::is_measure_message(
+        User,
+        "what does /context do?"
+    ));
+    assert!(!super::super::is_measure_message(User, "/context now"));
+}

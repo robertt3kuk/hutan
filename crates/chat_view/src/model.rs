@@ -733,8 +733,7 @@ impl Transcript {
                     message.done = true;
                     message.stream = Stream::default();
                 }
-                if matches!(role, hutan_core::agent::MessageRole::User)
-                    && text.trim() == hutan_core::insight::MEASURE_COMMAND
+                if hutan_core::insight::is_measure_message(*role, text)
                     && let Some(turn) = turn
                 {
                     self.measure_turns.insert(turn);

@@ -18,7 +18,7 @@
 //! [`ChatManager::plan_fork`] decides all of it before a session exists, so a refusal leaves
 //! nothing behind; the registry adds the session and the first start does the rest.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use hutan_agents::{ForkFrom, ForkMessage, ForkPoint};
 use hutan_core::agent::MessageRole;
@@ -41,6 +41,8 @@ const MESSAGE_LOOKBACK: u32 = 2000;
 /// Newest messages and tool calls a digest reads.
 const DIGEST_MESSAGES: u32 = 3000;
 const DIGEST_TOOLS: u32 = 1000;
+/// Messages of the journal read to find the measurement turns of a chat (newest first).
+const MEASURE_SCAN: u32 = 5000;
 
 /// Where a chat came from and what its first start still has to do (`ChatSpec.fork`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,7 +219,14 @@ impl ChatManager {
         }
         let id = parent.id;
         let turns = self.read_storage(move |s| s.chat().turns(id)).await?;
-        let Some(newest) = turns.len().checked_sub(1) else {
+        // A measurement (`/context`, the rule of `hutan_core::insight::is_measure_message`) is no
+        // turn of the conversation: never the latest turn to fork at, not counted in the
+        // ordinals, not a turn to name.
+        let measured = self.measurement_turns(id).await?;
+        let real: Vec<usize> = (0..turns.len())
+            .filter(|at| !measured.contains(&turns[*at].turn_id))
+            .collect();
+        let Some(&newest) = real.last() else {
             return Err(invalid_state(
                 "this chat has no turn to fork at yet: send a message first",
             ));
@@ -226,6 +235,11 @@ impl ChatManager {
             None => newest,
             Some(wanted) => {
                 let wanted = wanted.to_string();
+                if measured.contains(&wanted) {
+                    return Err(invalid_state(format!(
+                        "{wanted} is a measurement (`/context`), not a turn of the conversation"
+                    )));
+                }
                 turns
                     .iter()
                     .position(|turn| turn.turn_id == wanted)
@@ -233,6 +247,11 @@ impl ChatManager {
             }
         };
         let at_head = index == newest;
+        let ordinal_of = |at: usize| {
+            u32::try_from(real.iter().take_while(|r| **r <= at).count()).unwrap_or(u32::MAX)
+        };
+        let ordinal = ordinal_of(index);
+        let total = u32::try_from(real.len()).unwrap_or(u32::MAX);
         let turn = &turns[index];
         if turn.status == ChatTurnStatus::Running {
             return Err(invalid_state(format!(
@@ -295,12 +314,12 @@ impl ChatManager {
                 ForkSupport::Head => format!(
                     "{agent} forks only at the latest turn over ACP: fork at the latest turn \
                      (`head`) or start a new chat with a summary of turns 1–{} (`summary`)",
-                    index + 1
+                    ordinal
                 ),
                 ForkSupport::Summary => format!(
                     "{agent} cannot fork its conversation (it does not offer session/fork): only \
                      a summary of turns 1–{} can seed a new chat",
-                    index + 1
+                    ordinal
                 ),
                 _ => format!("a {agent} chat cannot be forked"),
             };
@@ -308,8 +327,6 @@ impl ChatManager {
         }
 
         let turn_id = turn.turn_id.clone();
-        let ordinal = u32::try_from(index + 1).unwrap_or(u32::MAX);
-        let total = u32::try_from(turns.len()).unwrap_or(u32::MAX);
         let through = {
             let turn_id = turn_id.clone();
             self.read_storage(move |s| s.chat().turn_last_seq(id, &turn_id))
@@ -349,7 +366,10 @@ impl ChatManager {
             })
         };
         let seed = if mode == ForkMode::Summary {
-            Some(self.digest_of(parent, &turns, index, through).await?)
+            Some(
+                self.digest_of(parent, &turns, &measured, index, through)
+                    .await?,
+            )
         } else {
             None
         };
@@ -498,11 +518,43 @@ impl ChatManager {
         })
     }
 
-    /// The digest a summary fork hands over: turns 1–`index + 1` of the parent.
+    /// The turns of `session` that are measurements: those whose user message is the
+    /// measurement command (`hutan_core::insight::is_measure_message`, the rule the insight
+    /// reducer and the chat view share). Read from the newest [`MEASURE_SCAN`] messages of the
+    /// journal; a measurement older than that counts as a turn.
+    pub(crate) async fn measurement_turns(
+        &self,
+        session: SessionId,
+    ) -> Result<HashSet<String>, ErrorBody> {
+        let rows = self
+            .read_storage(move |s| {
+                s.chat()
+                    .items_of_kind_through(session, "message_end", u64::MAX, MEASURE_SCAN)
+            })
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let event = serde_json::from_str::<AgentEvent>(&row.event_json).ok()?;
+                match event.kind {
+                    AgentEventKind::MessageEnd { role, text, .. }
+                        if hutan_core::insight::is_measure_message(role, &text) =>
+                    {
+                        event.turn_id.map(|turn| turn.to_string())
+                    }
+                    _ => None,
+                }
+            })
+            .collect())
+    }
+
+    /// The digest a summary fork hands over: the turns of the parent up to `index`, without its
+    /// measurements.
     async fn digest_of(
         &self,
         parent: &ForkParent,
         turns: &[ChatTurnRow],
+        measured: &HashSet<String>,
         index: usize,
         through: u64,
     ) -> Result<String, ErrorBody> {
@@ -524,6 +576,7 @@ impl ChatManager {
         };
         let mut kept: Vec<DigestTurn> = turns[..=index]
             .iter()
+            .filter(|turn| !measured.contains(&turn.turn_id))
             .enumerate()
             .map(|(n, turn)| DigestTurn {
                 ordinal: u32::try_from(n + 1).unwrap_or(u32::MAX),
