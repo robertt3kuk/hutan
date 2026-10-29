@@ -161,7 +161,7 @@ impl Relauncher for Recorder {
     }
 }
 
-pub(crate) fn open<'a>(
+fn open<'a>(
     cx: &'a mut TestAppContext,
     daemon: &TestDaemon,
     recorder: Arc<Recorder>,

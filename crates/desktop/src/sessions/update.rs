@@ -242,21 +242,34 @@ fn subtitle(status: &UpdateStatus, release: &UpdateRelease) -> String {
     parts.join(" · ")
 }
 
+/// `text` with its first letter in capitals and a full stop at its end: the daemon's messages
+/// are clauses (`the download's SHA-256 … is not the one GitHub lists`), the sheet's are
+/// sentences.
+fn sentence(text: &str) -> String {
+    let mut chars = text.trim().chars();
+    let mut sentence: String = chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default();
+    if !sentence.ends_with(['.', '!', '?', ':']) {
+        sentence.push('.');
+    }
+    sentence
+}
+
 fn outcome(install: &UpdateInstall) -> Option<String> {
     if install.method == InstallMethod::Bundle {
         return match install.state {
             InstallState::Running => None,
-            InstallState::Succeeded => Some(
-                install
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| format!("Hutan {} is installed.", install.version)),
-            ),
+            InstallState::Succeeded => Some(install.message.as_deref().map_or_else(
+                || format!("Hutan {} is installed.", install.version),
+                sentence,
+            )),
             InstallState::Failed => Some(
                 install
                     .message
-                    .clone()
-                    .unwrap_or_else(|| "The update did not finish.".to_owned()),
+                    .as_deref()
+                    .map_or_else(|| "The update did not finish.".to_owned(), sentence),
             ),
         };
     }
@@ -758,7 +771,7 @@ mod tests {
         assert_eq!(view.primary, Primary::TryAgain);
         assert_eq!(
             view.outcome.as_deref(),
-            Some("the download's SHA-256 is not the one GitHub lists")
+            Some("The download's SHA-256 is not the one GitHub lists.")
         );
         assert_eq!(view.progress, None);
         assert_eq!(item(&s).unwrap().tone, ItemTone::Failed);
