@@ -51,12 +51,20 @@ pub fn state_word_color(theme: &Theme, tone: Tone, selected: bool) -> Hsla {
 /// medium weight, cut with "…", and `Assistant` beside it for Mawas.
 pub fn agent_title_line(record: &AgentRecord, theme: &Theme, tokens: &Tokens) -> gpui::Div {
     use crate::sessions::presentation::Role;
+    // The name as the sidebar's card writes it: regular, semibold while something waits for a
+    // look, faint once the session ended; an agent's own emoji prefix is not drawn.
+    let needs = record.group.attention().is_some();
     let mut line = div().flex().items_center().gap(px(8.0)).h(px(16.0)).child(
         div()
             .min_w_0()
             .truncate()
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .child(SharedString::from(record.title.clone())),
+            .when(needs, |s| s.font_weight(gpui::FontWeight::SEMIBOLD))
+            .when(record.state.is_finished() && !needs, |s| {
+                s.text_color(theme.faint)
+            })
+            .child(SharedString::from(
+                crate::sessions::card::strip_pictographs(&record.title).to_owned(),
+            )),
     );
     if record.role == Role::Assistant {
         line = line.child(

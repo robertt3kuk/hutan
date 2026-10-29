@@ -119,6 +119,12 @@ impl TextTooltip {
     }
 }
 
+/// How far right and below the pointer a tooltip's card starts: GPUI puts the tooltip's box 1 px
+/// from the pointer, so the card is moved inside that box by these margins (transparent; the box
+/// still holds the pointer, so the tooltip stays while the pointer rests). Native tooltips sit
+/// the same way: under the pointer, past the control it points at.
+pub const TOOLTIP_OFFSET: (f32, f32) = (10.0, 22.0);
+
 impl gpui::Render for TextTooltip {
     fn render(
         &mut self,
@@ -131,15 +137,33 @@ impl gpui::Render for TextTooltip {
         }
         let style = UiStyle::get(cx);
         div()
-            .max_w(px(360.0))
-            .px(px(8.0))
-            .py(px(4.0))
-            .rounded(px(style.density.ui().radius - 2.0))
-            .bg(style.theme.surface)
-            .border_1()
-            .border_color(style.theme.border)
-            .text_color(style.theme.fg)
-            .text_size(px(style.density.ui().font_size - 1.0))
-            .child(self.text.clone())
+            .pl(px(TOOLTIP_OFFSET.0))
+            .pt(px(TOOLTIP_OFFSET.1))
+            .child(
+                div()
+                    .max_w(px(360.0))
+                    .px(px(8.0))
+                    .py(px(4.0))
+                    .rounded(px(style.density.ui().radius - 2.0))
+                    .bg(style.theme.surface)
+                    .border_1()
+                    .border_color(style.theme.border)
+                    .text_color(style.theme.fg)
+                    .text_size(px(style.density.ui().font_size - 1.0))
+                    .child(self.text.clone()),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TOOLTIP_OFFSET;
+
+    #[test]
+    fn a_tooltip_card_starts_past_the_control_it_points_at() {
+        // Below-right of the pointer: lower than the half of a 28 pt row or a 22 pt icon button
+        // under it, so the card never covers the hovered control (FX-UI-A 7).
+        assert!(TOOLTIP_OFFSET.0 >= 8.0);
+        assert!(TOOLTIP_OFFSET.1 >= 20.0);
     }
 }

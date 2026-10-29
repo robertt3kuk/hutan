@@ -104,6 +104,77 @@ fn the_active_tab_scrolls_into_view_when_the_strip_overflows_and_long_titles_are
     });
 }
 
+/// FX-UI-A 7: a strip with tabs out of sight fades into the chrome at the edge where they are
+/// (no hard-cut sliver of a tab), and a chevron lists every tab: choosing one activates it.
+#[gpui::test]
+fn a_strip_with_tabs_out_of_sight_fades_at_the_cut_and_lists_every_tab_behind_a_chevron(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx) = open_offline(cx);
+    draw(cx);
+    let pane = view.read_with(cx, |wb, _| wb.state().first_pane_id());
+    // A strip that fits has neither.
+    assert!(bounds(&view, cx, Region::TabOverflow(pane)).is_none());
+    assert!(bounds(&view, cx, Region::TabFade(pane, false)).is_none());
+    assert!(bounds(&view, cx, Region::TabFade(pane, true)).is_none());
+
+    let count = 14;
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            let pane = s.active_pane_id();
+            for n in 0..count {
+                s.add_item(pane, ItemRef::placeholder(format!("Tab number {n}")))
+                    .unwrap();
+            }
+        });
+    });
+    let items = view.read_with(cx, |wb, _| wb.state().pane(pane).unwrap().items.len());
+    // The newest tab is active and at the end: what is cut is at the left.
+    wait_until(cx, "the chevron, the left fade and no right fade", |cx| {
+        draw(cx);
+        tab_visible(&view, cx, pane, items - 1)
+            && bounds(&view, cx, Region::TabOverflow(pane)).is_some()
+            && bounds(&view, cx, Region::TabFade(pane, false)).is_some()
+            && bounds(&view, cx, Region::TabFade(pane, true)).is_none()
+    });
+
+    // The first tab: what is cut is at the right.
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            let pane = s.active_pane_id();
+            s.set_active_item(pane, 0).unwrap();
+        });
+    });
+    wait_until(cx, "the right fade", |cx| {
+        draw(cx);
+        bounds(&view, cx, Region::TabFade(pane, true)).is_some()
+            && bounds(&view, cx, Region::TabFade(pane, false)).is_none()
+    });
+
+    // The chevron lists every tab; choosing one activates it.
+    let chevron = bounds(&view, cx, Region::TabOverflow(pane)).unwrap();
+    common::click_at(cx, chevron.center());
+    draw(cx);
+    let labels: Vec<String> = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect();
+    assert_eq!(labels.len(), items, "{labels:?}");
+    assert!(labels.iter().any(|l| l == "Tab number 9"), "{labels:?}");
+    let at = labels.iter().position(|l| l == "Tab number 9").unwrap();
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(at, window, cx));
+    draw(cx);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.state().pane(pane).unwrap().active),
+        at
+    );
+    wait_until(cx, "the chosen tab in view", |cx| {
+        tab_visible(&view, cx, pane, at)
+    });
+}
+
 // Files panel git status -------------------------------------------------------------------------
 
 fn git(dir: &Path, args: &[&str]) {

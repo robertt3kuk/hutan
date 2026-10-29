@@ -38,7 +38,7 @@ use super::common::{
 };
 use crate::icons::{Icon, icon};
 use crate::sessions::PlacementBadge;
-use crate::sessions::card::{self, News, NewsKind};
+use crate::sessions::card::{self, News};
 use crate::sessions::tree::{
     self, Node, ProjectNode, Subtitle, SubtitleInputs, folder_label, session_folder,
 };
@@ -1677,8 +1677,10 @@ impl SessionsPanel {
                     .flex_col()
                     .justify_center()
                     .h(px(tokens.sidebar_row))
-                    .mx(px(tokens.sidebar_inset))
-                    .px(px(tokens.spacing * 1.5))
+                    // Flush with the panel header's own label ("PROJECTS" is drawn at
+                    // `spacing × 3` from the dock's edge): REQUESTS and FAILED start at the
+                    // same x, not a row's inset further right.
+                    .px(px(tokens.spacing * 3.0))
                     .mt(px(tokens.spacing))
                     .child(ui::group_header(
                         label,
@@ -2512,7 +2514,10 @@ impl SessionsPanel {
                             let title = div()
                                 .id(SharedString::from(format!("session-title-{id}")))
                                 .flex_1()
-                                .min_w(px(72.0))
+                                // The name gives way first (with "…"); nothing is cut off past the
+                                // row's end or under the hover icons, which the age's box holds
+                                // room for.
+                                .min_w_0()
                                 .flex()
                                 .items_center()
                                 .gap(px(tokens.spacing))
@@ -2681,11 +2686,13 @@ impl SessionsPanel {
             .child(
                 div()
                     .id(SharedString::from(format!("session-note-text-{}", info.id)))
+                    .relative()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
-                    .child(text),
+                    .child(text)
+                    .child(probe(&self.env.regions, Region::SessionNoteText(info.id))),
             )
             .children(
                 news.model

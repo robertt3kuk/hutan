@@ -577,11 +577,18 @@ pub enum Region {
     /// which never does.
     TabName(PaneId, usize),
     TabMark(PaneId, usize),
+    /// The chevron of a pane's tab strip that lists every tab (shown while some are out of sight).
+    TabOverflow(PaneId),
+    /// The fade at the left (`false`) or right (`true`) edge of a pane's tab strip, drawn while
+    /// tabs are out of sight on that side.
+    TabFade(PaneId, bool),
     /// The state of the work of the tab at `index` of a pane: working (a spinner), done, failed.
     TabState(PaneId, usize),
     /// The line under a session's row in the sessions panel: the question a blocked agent asks, the
     /// message of its error, or the agent's own title under a name the user chose.
     SessionNote(hutan_core::SessionId),
+    /// The text of that line, which starts where the row's name does.
+    SessionNoteText(hutan_core::SessionId),
     /// A control of a file tab's language-server bar (`trust`, `not-now`, `copy`, `dismiss`).
     FileLsp(&'static str),
     /// Diagnostic row `index` of the Problems panel (the listed diagnostics, top to bottom,
@@ -914,9 +921,9 @@ pub struct Workbench {
     pub(crate) sheet: Option<SettingsSheet>,
     pub(crate) resizing: Option<Resizing>,
     /// The scroll of each pane's tab strip, and which tab the strip was last scrolled to show
-    /// (`(active index, tabs)`): a changed active tab or tab count scrolls it into view once.
+    /// (`(active index, tabs, the strip's width)`): a change scrolls it into view once.
     pub(crate) tab_scrolls: std::collections::HashMap<PaneId, gpui::ScrollHandle>,
-    pub(crate) tab_revealed: std::collections::HashMap<PaneId, (usize, usize)>,
+    pub(crate) tab_revealed: std::collections::HashMap<PaneId, (usize, usize, i32)>,
     /// The tabs of each pane that wore an attention mark (a call dot, a warning) in the last
     /// frame: a tab that gets one is scrolled into view, so the mark is never cut off.
     pub(crate) tab_marked: std::collections::HashMap<PaneId, Vec<usize>>,

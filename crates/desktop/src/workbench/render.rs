@@ -48,6 +48,8 @@ const LEFT_HANDLE_OUTSET: f32 = 4.0;
 const TAB_TOP_INSET: f32 = 6.0;
 /// A tab's title is cut with an ellipsis beyond this width (the tooltip has it in full).
 const TAB_TITLE_MAX: f32 = 180.0;
+/// The width of the fade at the edge of a tab strip that has tabs out of sight.
+const TAB_FADE: f32 = 28.0;
 /// How far down the palette's panel starts, and the margin it keeps at the window's bottom.
 const PALETTE_TOP: f32 = 80.0;
 const PALETTE_BOTTOM_MARGIN: f32 = 24.0;
@@ -2315,9 +2317,12 @@ impl Workbench {
         let dragging = cx.has_active_drag();
 
         // Every activation (and every new tab) brings the active tab into view; a strip the
-        // user scrolled by hand stays where it is until then.
+        // user scrolled by hand stays where it is until then. The chevron that appears with the
+        // first tab out of sight (and a window resized) changes the strip's width: that is an
+        // activation too, so the active tab is never left half behind the chevron.
         let tab_scroll = self.tab_scrolls.entry(pane_id).or_default().clone();
-        let reveal = (pane.active, pane.items.len());
+        let strip_width = f32::from(tab_scroll.bounds().size.width).round() as i32;
+        let reveal = (pane.active, pane.items.len(), strip_width);
         if self.tab_revealed.get(&pane_id) != Some(&reveal) {
             self.tab_revealed.insert(pane_id, reveal);
             tab_scroll.scroll_to_item(pane.active);
@@ -2339,12 +2344,39 @@ impl Workbench {
         {
             tab_scroll.scroll_to_item(*newest);
         }
+        // Tabs out of sight, as of the last frame: whether the strip is cut at the left and at
+        // the right (a fade says so), and which tabs the edges cut (they hide their ✕).
+        let view = tab_scroll.bounds();
+        let hidden = (tab_scroll.max_offset().x > px(1.0)).then(|| {
+            let scrolled = -tab_scroll.offset().x;
+            (
+                scrolled > px(1.0),
+                // The 2 px gap after the last tab is not a tab out of sight.
+                tab_scroll.max_offset().x - scrolled > px(4.0),
+            )
+        });
+        let cut: Vec<bool> = (0..pane.items.len())
+            .map(|index| {
+                hidden.is_some()
+                    && tab_scroll.bounds_for_item(index).is_some_and(|tab| {
+                        tab.left() < view.left() - px(1.0) || tab.right() > view.right() + px(1.0)
+                    })
+            })
+            .collect();
         let mut tabs: Vec<AnyElement> = pane
             .items
             .iter()
             .enumerate()
             .map(|(index, item)| {
-                self.render_tab(pane_id, index, item, index == pane.active, focused, cx)
+                self.render_tab(
+                    pane_id,
+                    index,
+                    item,
+                    index == pane.active,
+                    focused,
+                    cut[index],
+                    cx,
+                )
             })
             .collect();
         if let Some((index, ghost)) = self.closing_tab_ghost(pane_id, cx) {
@@ -2358,6 +2390,35 @@ impl Workbench {
             .and_then(|item| item.as_panel().cloned())
             .map(|panel| self.panel_menu_button(panel, "center", cx));
 
+        // Where tabs are out of sight the strip fades into the chrome's tone, so a tab at the
+        // edge is never a hard-cut sliver.
+        let fade = |right: bool| {
+            let (solid, clear) = (theme.sidebar, theme.sidebar.opacity(0.0));
+            let (from, to) = if right {
+                (clear, solid)
+            } else {
+                (solid, clear)
+            };
+            div()
+                .id(id(format!(
+                    "pane-strip-fade-{pane_id}-{}",
+                    if right { "right" } else { "left" }
+                )))
+                .absolute()
+                .top_0()
+                .bottom(px(1.0))
+                .when(right, |s| s.right_0())
+                .when(!right, |s| s.left_0())
+                .w(px(TAB_FADE))
+                .bg(gpui::linear_gradient(
+                    90.0,
+                    gpui::linear_color_stop(from, 0.0),
+                    gpui::linear_color_stop(to, 1.0),
+                ))
+                .child(probe(&self.regions, Region::TabFade(pane_id, right)))
+        };
+        let left_fade = hidden.is_some_and(|(left, _)| left).then(|| fade(false));
+        let right_fade = hidden.is_some_and(|(_, right)| right).then(|| fade(true));
         // The strip is chrome (the `sidebar` tone, like the title bar above it); its hairline is
         // drawn first and the active tab, a `bg` fill reaching the strip's bottom, covers it: the
         // tab is connected to its pane (CL-CHROME).
@@ -2383,62 +2444,117 @@ impl Workbench {
             )
             .child(
                 div()
-                    .id(id(format!("pane-strip-scroll-{pane_id}")))
-                    .flex()
+                    .relative()
                     .flex_1()
                     .min_w_0()
-                    .items_end()
                     .h_full()
-                    .gap(px(2.0))
-                    .overflow_x_scroll()
-                    .track_scroll(&tab_scroll)
-                    .children(tabs)
                     .child(
                         div()
-                            .id(id(format!("pane-strip-filler-{pane_id}")))
-                            .flex_1()
-                            .h_full()
-                            .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
-                            .on_drop({
-                                let append = pane.items.len();
-                                cx.listener(move |this, d: &DraggedItem, window, cx| {
-                                    this.drop_item(
-                                        d,
-                                        DropTarget::Pane {
-                                            pane: pane_id,
-                                            index: append,
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                })
-                            })
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                    let entries = vec![
-                                        Workbench::entry("Split Right", move |this, window, cx| {
-                                            this.split_pane_with_terminal(
-                                                pane_id,
-                                                Edge::Right,
+                            .id(id(format!("pane-strip-scroll-{pane_id}")))
+                            .flex()
+                            .size_full()
+                            .items_end()
+                            .gap(px(2.0))
+                            .overflow_x_scroll()
+                            .track_scroll(&tab_scroll)
+                            .children(tabs)
+                            .child(
+                                div()
+                                    .id(id(format!("pane-strip-filler-{pane_id}")))
+                                    .flex_1()
+                                    .h_full()
+                                    .drag_over::<DraggedItem>(move |s, _, _, _| {
+                                        s.bg(accent.opacity(0.18))
+                                    })
+                                    .on_drop({
+                                        let append = pane.items.len();
+                                        cx.listener(move |this, d: &DraggedItem, window, cx| {
+                                            this.drop_item(
+                                                d,
+                                                DropTarget::Pane {
+                                                    pane: pane_id,
+                                                    index: append,
+                                                },
                                                 window,
                                                 cx,
                                             );
-                                        }),
-                                        Workbench::entry("Split Down", move |this, window, cx| {
-                                            this.split_pane_with_terminal(
-                                                pane_id,
-                                                Edge::Bottom,
-                                                window,
-                                                cx,
-                                            );
-                                        }),
-                                    ];
-                                    this.open_menu(event.position, entries, window, cx);
-                                }),
+                                        })
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Right,
+                                        cx.listener(
+                                            move |this, event: &MouseDownEvent, window, cx| {
+                                                let entries = vec![
+                                                    Workbench::entry(
+                                                        "Split Right",
+                                                        move |this, window, cx| {
+                                                            this.split_pane_with_terminal(
+                                                                pane_id,
+                                                                Edge::Right,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    ),
+                                                    Workbench::entry(
+                                                        "Split Down",
+                                                        move |this, window, cx| {
+                                                            this.split_pane_with_terminal(
+                                                                pane_id,
+                                                                Edge::Bottom,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    ),
+                                                ];
+                                                this.open_menu(event.position, entries, window, cx);
+                                            },
+                                        ),
+                                    ),
                             ),
-                    ),
+                    )
+                    .children(left_fade)
+                    .children(right_fade),
             )
+            // Tabs out of sight: one chevron lists them all (the strip scrolls to the one chosen).
+            .children(hidden.map(|_| {
+                div().flex_none().h_full().flex().items_center().child(
+                    ui::IconButton::new(
+                        id(format!("tab-overflow-{pane_id}")),
+                        crate::icons::Icon::ActionExpand,
+                        "All tabs",
+                        &theme,
+                        &tokens,
+                    )
+                    .compact()
+                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                        let items: Vec<ItemRef> = this
+                            .state
+                            .pane(pane_id)
+                            .map(|p| p.items.clone())
+                            .unwrap_or_default();
+                        let entries = items
+                            .iter()
+                            .enumerate()
+                            .map(|(index, item)| {
+                                Workbench::entry(
+                                    this.item_title(item, cx).to_string(),
+                                    move |this, window, cx| {
+                                        this.try_mutate(cx, |s| {
+                                            s.set_active_item(pane_id, index)?;
+                                            s.focus_pane(pane_id)
+                                        });
+                                        this.focus_root(window, cx);
+                                    },
+                                )
+                            })
+                            .collect();
+                        this.open_menu(event.position(), entries, window, cx);
+                    }))
+                    .child(probe(&self.regions, Region::TabOverflow(pane_id))),
+                )
+            }))
             .children(
                 center_menu
                     .map(|menu| div().flex_none().h_full().flex().items_center().child(menu)),
@@ -2587,6 +2703,7 @@ impl Workbench {
         item: &ItemRef,
         active: bool,
         pane_focused: bool,
+        cut: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.theme;
@@ -2887,6 +3004,8 @@ impl Workbench {
                     .justify_center()
                     .size(px(tokens.font_size + 4.0))
                     .rounded(px(tokens.radius))
+                    // A tab cut by the strip's edge keeps no ✕ of its own: a lone ✕ is no tab.
+                    .when(cut, |s| s.opacity(0.0))
                     .text_color(theme.muted)
                     .hover(move |s| s.bg(hover).text_color(theme.fg))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

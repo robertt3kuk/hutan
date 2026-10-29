@@ -239,6 +239,20 @@ fn a_shell_stays_one_line_and_an_agent_card_grows_a_line_only_with_news(cx: &mut
     });
     assert!(drawn(&view, cx, Region::SessionNote(agent.id)));
     assert_eq!(height(&view, cx, agent.id), one_line + card_extra);
+    // The question starts where the name does, not at the lane's edge (FX-UI-A 7).
+    let (name, text) = view.read_with(cx, |wb, _| {
+        (
+            wb.region_bounds(Region::SessionName(agent.id)),
+            wb.region_bounds(Region::SessionNoteText(agent.id)),
+        )
+    });
+    let (name, text) = (name.expect("the name"), text.expect("the question"));
+    assert!(
+        f32::from(name.left() - text.left()).abs() < 0.5,
+        "name at {:?}, question at {:?}",
+        name.left(),
+        text.left()
+    );
 
     // It fails: the failure badge and the message.
     osc(
