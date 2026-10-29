@@ -655,6 +655,12 @@ const FIELDS: &[FieldText] = &[
         "Show added and removed line counts",
         "Off by default. On adds +N −M (lines added and removed since the last commit) to the project and worktree rows that have changes.",
     ),
+    field(
+        "panels.sessions",
+        "hooks_hint",
+        "Point at agent hooks on the first agent row",
+        "Shows a small ⓘ once, on the first coding agent in a terminal that no hook speaks for: it says what installing the agent's hooks adds (its model and the tool it runs on its card) and opens Agent integrations. Off after you used it.",
+    ),
     choice(
         "sidebar",
         "organize",

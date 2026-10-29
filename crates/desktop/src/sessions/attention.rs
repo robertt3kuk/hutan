@@ -818,6 +818,7 @@ pub fn agent_subtitle(info: &SessionInfo) -> Option<String> {
         .as_ref()
         .and_then(|agent| agent.title.clone())
         .filter(|title| *title != info.title)
+        .map(|title| super::card::strip_pictographs(&title).to_owned())
 }
 
 /// What a tab says about its session besides the title: how the work went and whether the
@@ -1113,15 +1114,22 @@ mod tests {
         assert_eq!(tracker.unread(a), Some(Unread::Done));
         tracker.observe(epoch, &[info(a, SessionState::Running)]);
         assert_eq!(tracker.unread(a), Some(Unread::Done), "still unread");
-        let live = present(
-            &info(a, SessionState::Running),
-            tracker.unread(a),
-            &ModelNames::default(),
+        // A coding agent's notification is finished work; a plain shell's is only a bell.
+        let agent = with_agent(
+            info(a, SessionState::Running),
+            TerminalAgentState::Idle,
+            None,
         );
+        let live = present(&agent, tracker.unread(a), &ModelNames::default());
         assert_eq!(
             (live.label.as_str(), live.attention),
             ("review", Some(Attention::Review))
         );
+        let shell = info(a, SessionState::Running);
+        let rang = present(&shell, tracker.unread(a), &ModelNames::default());
+        assert_eq!((rang.label.as_str(), rang.attention), ("idle", None));
+        assert!(bell_only(&shell, tracker.unread(a)));
+        assert!(!bell_only(&agent, tracker.unread(a)));
     }
 
     #[test]

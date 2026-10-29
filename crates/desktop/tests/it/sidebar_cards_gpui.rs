@@ -160,62 +160,58 @@ fn a_shell_stays_one_line_and_an_agent_card_grows_a_line_only_with_news(cx: &mut
     }
     let one_line = height(&view, cx, shell.id);
 
-    // Both start OMP and say they are idle: idle agents are one line too — except the first one
-    // no hook speaks for, which says what hooks add and links to the integrations.
+    // Both start OMP and say they are idle: idle agents are one line — the first one no hook
+    // speaks for wears a small ⓘ about hooks on that line, not a second line of its own.
     for session in [&agent, &other] {
         osc(&daemon, session, "7501;state=idle:app=omp");
         wait_state(&view, cx, session.id, TerminalAgentState::Idle);
     }
-    wait_until(cx, "the hint on the first agent", |cx| {
-        row(&sidebar, cx, "agent")
-            .news
-            .is_some_and(|n| n.kind == NewsKind::HooksHint)
-    });
-    assert!(
-        row(&sidebar, cx, "other agent").news.is_none(),
-        "the hint is said once, on the first card"
-    );
-    assert!(row(&sidebar, cx, "shell").news.is_none());
-    assert!(drawn(&view, cx, Region::HooksHint(agent.id)));
-    assert!(!drawn(&view, cx, Region::HooksHint(other.id)));
-    assert!(!drawn(&view, cx, Region::HooksHint(shell.id)));
-    assert!(!drawn(&view, cx, Region::SessionNote(agent.id)));
-    assert_eq!(
-        height(&view, cx, other.id),
-        one_line,
-        "an idle agent: one line"
-    );
-    assert_eq!(
-        height(&view, cx, agent.id),
-        one_line + card_extra,
-        "the card with the hint grew by the news line"
-    );
-    assert_eq!(height(&view, cx, shell.id), one_line);
-
-    // The link opens Settings → Agent Integrations.
-    wait_until(cx, "the hint to be on screen", |cx| {
+    wait_until(cx, "the ⓘ on the first agent", |cx| {
         drawn(&view, cx, Region::HooksHint(agent.id))
     });
+    for title in ["shell", "agent", "other agent"] {
+        assert!(row(&sidebar, cx, title).news.is_none(), "{title}");
+    }
+    assert!(
+        !drawn(&view, cx, Region::HooksHint(other.id)),
+        "the hint is said once, on the first card"
+    );
+    assert!(!drawn(&view, cx, Region::HooksHint(shell.id)));
+    assert!(!drawn(&view, cx, Region::SessionNote(agent.id)));
+    for session in [&agent, &other, &shell] {
+        assert_eq!(
+            height(&view, cx, session.id),
+            one_line,
+            "an idle agent, hint or not: one line"
+        );
+    }
+
+    // The ⓘ opens Settings → Agent Integrations and is gone for good once it was used.
     let hint = view
         .read_with(cx, |wb, _| wb.region_bounds(Region::HooksHint(agent.id)))
         .expect("the hint is drawn");
-    common::click_at(
-        cx,
-        gpui::point(
-            hint.origin.x + hint.size.width - gpui::px(20.0),
-            hint.origin.y + hint.size.height / 2.0,
-        ),
-    );
+    common::click_at(cx, hint.center());
     draw(cx);
     assert_eq!(
         view.read_with(cx, |wb, _| wb
             .settings_sheet()
             .map(|s| s.namespace().to_owned())),
         Some("integrations".to_owned()),
-        "the link goes to Agent integrations"
+        "the ⓘ goes to Agent integrations"
     );
     view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
-    draw(cx);
+    wait_until(cx, "the hint to end", |cx| {
+        !view.read_with(cx, |wb, _| {
+            wb.settings_store()
+                .get::<hutan_desktop::settings::SessionsPanelSettings>()
+                .hooks_hint
+        })
+    });
+    assert!(!drawn(&view, cx, Region::HooksHint(agent.id)));
+    assert!(
+        !drawn(&view, cx, Region::HooksHint(other.id)),
+        "it does not move to the next card"
+    );
 
     // A turn: the lane's arc; nothing to say about it yet, so the hint stays where it was.
     osc(&daemon, &other, "7501;state=working:app=omp");
@@ -242,10 +238,6 @@ fn a_shell_stays_one_line_and_an_agent_card_grows_a_line_only_with_news(cx: &mut
                 .is_some_and(|n| n.kind == NewsKind::Request && n.text == question)
     });
     assert!(drawn(&view, cx, Region::SessionNote(agent.id)));
-    assert!(
-        !drawn(&view, cx, Region::HooksHint(agent.id)),
-        "news replaces the hint"
-    );
     assert_eq!(height(&view, cx, agent.id), one_line + card_extra);
 
     // It fails: the failure badge and the message.
@@ -264,15 +256,14 @@ fn a_shell_stays_one_line_and_an_agent_card_grows_a_line_only_with_news(cx: &mut
     });
 
     // The next turn ends well: finished and unread (the ✓ badge) — and nothing more to say, so
-    // the card is back to the hint.
+    // the card is one line again.
     osc(&daemon, &agent, "7501;state=working:app=omp");
     wait_state(&view, cx, agent.id, TerminalAgentState::Working);
     osc(&daemon, &agent, "7501;state=done:app=omp");
     wait_state(&view, cx, agent.id, TerminalAgentState::Done);
     wait_until(cx, "the done badge", |cx| {
         let card = row(&sidebar, cx, "agent");
-        card.lane == BadgeState::DoneUnread
-            && card.news.is_some_and(|n| n.kind == NewsKind::HooksHint)
+        card.lane == BadgeState::DoneUnread && card.news.is_none()
     });
 
     // A shell that rings its bell while out of sight wears a bell (FX-UI-A 4: no ✓, no bold

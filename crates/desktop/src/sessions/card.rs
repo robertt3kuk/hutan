@@ -12,8 +12,8 @@
 //! 5. the agent's own name for a session the user renamed — muted.
 //!
 //! Plain shells never have one: a shell is one line whatever happens in it. A row with nothing
-//! to say stays one line, and the first agent that no hook speaks for (and has no news of its
-//! own) says once what installing the hooks would add.
+//! to say stays one line; the first agent that no hook speaks for wears a small ⓘ about hooks
+//! on its title line instead (once, `panels.sessions.hooks_hint`).
 
 use hutan_protocol::messages::SessionInfo;
 
@@ -34,8 +34,6 @@ pub enum NewsKind {
     Reply,
     /// The agent's own title under the name the user gave the session.
     AgentTitle,
-    /// What installing the agent's hooks adds (`Agent integrations…` is its link).
-    HooksHint,
 }
 
 impl NewsKind {
@@ -44,7 +42,7 @@ impl NewsKind {
         match self {
             Self::Request => Tone::Warning,
             Self::Failure => Tone::Error,
-            Self::Tool | Self::Reply | Self::AgentTitle | Self::HooksHint => Tone::Muted,
+            Self::Tool | Self::Reply | Self::AgentTitle => Tone::Muted,
         }
     }
 }
@@ -59,13 +57,33 @@ pub struct News {
     pub model: Option<String>,
 }
 
-/// What the line without hooks says; its link, *Agent integrations…*, opens where they are
-/// installed. Short on purpose: the link shares the line.
-pub const HOOKS_HINT: &str = "Hooks add model and tool";
+/// What the ⓘ on the first agent no hook speaks for says (it opens *Agent integrations…*): the
+/// whole sentence, a tooltip.
+pub const HOOKS_HINT_TIP: &str = "Install the agent's hooks to see its model and the tool it runs on its card. Click to open Agent integrations; this hint then goes away.";
 
-/// The hint's tooltip: the whole sentence.
-pub const HOOKS_HINT_TIP: &str =
-    "Install the agent's hooks to see its model and the tool it runs on this card.";
+/// Whether `c` is part of an emoji or a pictograph: what a terminal title of an agent may begin
+/// with (`➖ SUB: …`, `👷 WORKER: …`) and the interface font draws as a flat grey shape.
+fn is_pictograph(c: char) -> bool {
+    matches!(c,
+        '\u{200d}' | '\u{20e3}' | '\u{fe0e}' | '\u{fe0f}'
+        | '\u{2190}'..='\u{21ff}'
+        | '\u{2300}'..='\u{23ff}'
+        | '\u{25a0}'..='\u{27bf}'
+        | '\u{2900}'..='\u{297f}'
+        | '\u{2b00}'..='\u{2bff}'
+        | '\u{3030}' | '\u{303d}' | '\u{3297}' | '\u{3299}'
+        | '\u{1f000}'..='\u{1faff}'
+        | '\u{e0020}'..='\u{e007f}')
+}
+
+/// `title` without the emoji and pictographs it begins with (and the spaces after them): `➖ SUB:
+/// Add sub` is `SUB: Add sub`. A title that is nothing else keeps them.
+pub fn strip_pictographs(title: &str) -> &str {
+    let rest = title
+        .trim_start_matches(|c: char| is_pictograph(c) || c.is_whitespace())
+        .trim_start();
+    if rest.is_empty() { title } else { rest }
+}
 
 /// The most characters of a reply the line keeps (the row cuts the rest with “…”).
 const REPLY_CHARS: usize = 160;

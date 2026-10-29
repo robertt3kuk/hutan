@@ -598,6 +598,9 @@ pub struct SessionsPanelSettings {
     /// Show `+N −M` (lines added and removed) on the project and worktree rows. Off by
     /// default: the count of changed files says how much changed without the noise.
     pub show_diffstat: bool,
+    /// Wear a small ⓘ on the first agent row that no hook speaks for: it says what installing
+    /// the agent's hooks adds and opens *Agent integrations*. Off after it was used.
+    pub hooks_hint: bool,
 }
 
 impl Default for SessionsPanelSettings {
@@ -609,6 +612,7 @@ impl Default for SessionsPanelSettings {
                 .map(str::to_owned)
                 .to_vec(),
             show_diffstat: false,
+            hooks_hint: true,
         }
     }
 }

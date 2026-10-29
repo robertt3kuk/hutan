@@ -277,13 +277,26 @@ pub fn title_parts<'a>(
     parts_at(info, find, 0)
 }
 
+/// Whether the session's name is the one its coding agent gave it (OMP names its sessions from
+/// the task, often behind an emoji): the user's own name is theirs, whatever it begins with.
+fn named_by_agent(info: &SessionInfo) -> bool {
+    info.terminal_agent
+        .as_ref()
+        .and_then(|agent| agent.title.as_deref())
+        .is_some_and(|title| title == info.title)
+}
+
 fn parts_at<'a>(
     info: &'a SessionInfo,
     find: &dyn Fn(SessionId) -> Option<&'a SessionInfo>,
     depth: usize,
 ) -> TitleParts {
     let plain = || TitleParts {
-        head: info.title.clone(),
+        head: if named_by_agent(info) {
+            super::card::strip_pictographs(&info.title).to_owned()
+        } else {
+            info.title.clone()
+        },
         tail: None,
     };
     let Some(origin) = info.forked_from.as_ref() else {
@@ -611,5 +624,43 @@ mod tests {
     fn the_middle_of_a_long_branch_goes() {
         assert_eq!(middle("short", 16), "short");
         assert_eq!(middle("abcdefghijklmnopqrstuvwxyz", 9), "abcd…wxyz");
+    }
+
+    fn agent_titled(own: &str, agent: Option<&str>) -> SessionInfo {
+        let mut info = session(own, None);
+        info.forked_from = None;
+        info.terminal_agent = agent.map(|title| hutan_protocol::messages::TerminalAgent {
+            app: "omp".into(),
+            state: hutan_protocol::messages::TerminalAgentState::Idle,
+            kind: None,
+            message: None,
+            since_ms: 1,
+            title: Some(title.to_owned()),
+            source: hutan_protocol::messages::TerminalAgentSource::Osc,
+        });
+        info
+    }
+
+    #[test]
+    fn an_agents_emoji_prefix_goes_from_its_title_and_the_users_own_name_is_theirs() {
+        use super::super::card::strip_pictographs;
+        assert_eq!(
+            strip_pictographs("➖ SUB: Add sub function"),
+            "SUB: Add sub function"
+        );
+        assert_eq!(strip_pictographs("👷 WORKER: worker"), "WORKER: worker");
+        assert_eq!(strip_pictographs("⚡️ 🚀 Ship it"), "Ship it");
+        assert_eq!(strip_pictographs("Fix the build"), "Fix the build");
+        assert_eq!(strip_pictographs("1️⃣ first"), "1️⃣ first");
+        // Nothing but a pictograph: it stays rather than leaving an empty name.
+        assert_eq!(strip_pictographs("🚀"), "🚀");
+
+        // The agent's own name loses its prefix; a name the user gave keeps theirs.
+        let agents = agent_titled("➖ SUB: Add sub", Some("➖ SUB: Add sub"));
+        assert_eq!(title_parts(&agents, &|_| None).text(), "SUB: Add sub");
+        let users = agent_titled("🚀 My launch", Some("➖ SUB: Add sub"));
+        assert_eq!(title_parts(&users, &|_| None).text(), "🚀 My launch");
+        let shell = agent_titled("🚀 My launch", None);
+        assert_eq!(title_parts(&shell, &|_| None).text(), "🚀 My launch");
     }
 }

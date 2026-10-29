@@ -226,6 +226,8 @@ struct SessionRow {
     subtitle: Option<Subtitle>,
     /// The card's second line, `None` for the one-line row.
     news: Option<News>,
+    /// The first agent no hook speaks for: its row wears the ⓘ about hooks.
+    hooks_hint: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -965,6 +967,7 @@ impl SessionsPanel {
                     info: info.clone(),
                     depth: 0,
                     news: None,
+                    hooks_hint: false,
                 }))
             }));
         }
@@ -981,6 +984,7 @@ impl SessionsPanel {
                             info: info.clone(),
                             depth: 0,
                             news: None,
+                            hooks_hint: false,
                         }))
                     }));
                 }
@@ -1008,6 +1012,7 @@ impl SessionsPanel {
                             info: (*info).clone(),
                             depth: 0,
                             news: None,
+                            hooks_hint: false,
                         }))
                     }));
                 }
@@ -1031,9 +1036,10 @@ impl SessionsPanel {
         }
         // The cards' second lines are decided here, with the entries, so that a row whose line
         // changes is a different entry and the list measures it again. The first agent no hook
-        // speaks for says what installing the hooks adds, when it has no news of its own.
+        // speaks for wears the ⓘ that says what installing the hooks adds (once: it goes when it
+        // was used, `panels.sessions.hooks_hint`); it is no line of its own.
         let agents = store.agent_presentation();
-        let mut hinted = false;
+        let mut hinted = !settings.hooks_hint;
         for entry in &mut entries {
             let Entry::Session(row) = entry else {
                 continue;
@@ -1045,13 +1051,9 @@ impl SessionsPanel {
                 store.unread(row.info.id),
                 store.reply_line(row.info.id),
             );
-            if !hinted && row.news.is_none() && card::without_hooks(&row.info) {
+            if !hinted && card::without_hooks(&row.info) {
                 hinted = true;
-                row.news.get_or_insert_with(|| News {
-                    kind: NewsKind::HooksHint,
-                    text: card::HOOKS_HINT.to_owned(),
-                    model: None,
-                });
+                row.hooks_hint = true;
             }
         }
         let only_home = store.sessions().is_empty()
@@ -1155,6 +1157,7 @@ impl SessionsPanel {
                             info: info.clone(),
                             depth: depth + below,
                             news: None,
+                            hooks_hint: false,
                         }))
                     },
                 ));
@@ -2241,6 +2244,30 @@ impl SessionsPanel {
                 cx,
             )
         });
+        // The first agent no hook speaks for: a small ⓘ says what hooks add and takes you to
+        // *Agent integrations…*; using it ends the hint for good (`panels.sessions.hooks_hint`).
+        let mut hint = row.hooks_hint.then(|| {
+            ui::IconButton::new(
+                SharedString::from(format!("hooks-hint-{id}")),
+                Icon::StateInfo,
+                card::HOOKS_HINT_TIP,
+                &theme,
+                &tokens,
+            )
+            .compact()
+            .on_click(cx.listener(|this, _, window, cx| {
+                if let Err(error) = this
+                    .env
+                    .settings
+                    .write_user("panels.sessions.hooks_hint", toml::Value::Boolean(false))
+                {
+                    tracing::warn!("cannot save panels.sessions.hooks_hint: {error}");
+                }
+                window.dispatch_action(Box::new(OpenSettingsFor("integrations".to_owned())), cx);
+                cx.stop_propagation();
+            }))
+            .child(probe(&self.env.regions, Region::HooksHint(info.id)))
+        });
         // A plain shell that rang or notified while out of sight: only a bell (no bold name, no
         // ✓, no group): the tab rings too.
         let mut bell = belled.then(|| {
@@ -2510,6 +2537,7 @@ impl SessionsPanel {
                                 .into_any_element()
                         }
                     })
+                    .children(hint.take())
                     .children(std::mem::take(&mut whose))
                     .children(badge.take())
                     .children(recovery.take())
@@ -2597,8 +2625,7 @@ impl SessionsPanel {
     /// The second line of an agent card, under its name: what is going on, one line, and the
     /// model as a mono chip at its end. A request is `warning` and a failure `danger` (the
     /// selected row keeps both in its ink: state colours are not AA on that fill); the tool it
-    /// runs, the unread reply and the agent's own title are muted. The first card no hook speaks
-    /// for has what hooks add and the link to *Agent integrations…* here instead.
+    /// runs, the unread reply and the agent's own title are muted.
     fn news_line(
         &self,
         info: &SessionInfo,
@@ -2610,18 +2637,8 @@ impl SessionsPanel {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let color = super::common::state_word_color(&theme, news.kind.tone(), selected);
-        let hint = news.kind == NewsKind::HooksHint;
-        let region = if hint {
-            Region::HooksHint(info.id)
-        } else {
-            Region::SessionNote(info.id)
-        };
         let text = SharedString::from(news.text.clone());
-        let tip = if hint {
-            SharedString::from(card::HOOKS_HINT_TIP)
-        } else {
-            text.clone()
-        };
+        let tip = text.clone();
         div()
             .id(SharedString::from(format!("session-note-{}", info.id)))
             .relative()
@@ -2642,31 +2659,12 @@ impl SessionsPanel {
                     .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
                     .child(text),
             )
-            .when(hint, |s| {
-                s.child(
-                    div()
-                        .id(SharedString::from(format!("hooks-hint-link-{}", info.id)))
-                        .flex_none()
-                        .cursor_pointer()
-                        .text_color(theme.link)
-                        .hover(move |s| s.text_color(theme.fg))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenSettingsFor("integrations".to_owned())),
-                                cx,
-                            );
-                            cx.stop_propagation();
-                        })
-                        .child("Agent integrations…"),
-                )
-            })
             .children(
                 news.model
                     .as_ref()
                     .map(|model| ui::chip_mono(SharedString::from(model.clone()), &theme, &tokens)),
             )
-            .child(probe(&self.env.regions, region))
+            .child(probe(&self.env.regions, Region::SessionNote(info.id)))
             .into_any_element()
     }
 }

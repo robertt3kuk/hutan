@@ -146,7 +146,9 @@ fn an_agent_terminal_wears_the_harness_its_title_its_state_and_its_question(
     });
     let (glyph, title) = view.read_with(cx, |wb, cx| wb.item_icon_and_title(&item, cx));
     assert_eq!(glyph, Icon::HarnessOmp);
-    assert_eq!(title.as_ref(), "👷 WORKER: worker");
+    // The emoji the agent put before its title is not drawn (FX-UI-A 5); the daemon keeps it.
+    assert_eq!(title.as_ref(), "WORKER: worker");
+    assert_eq!(info(&view, cx, agent.id).title, "👷 WORKER: worker");
     // The sidebar row's kind glyph is the same one (`session_icon` draws both).
     let listed = info(&view, cx, agent.id);
     assert_eq!(

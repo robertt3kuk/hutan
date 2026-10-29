@@ -1834,7 +1834,8 @@ fn a_chat_tab_follows_the_tab_rules_and_its_model_goes_with_the_last_tab(cx: &mu
     );
     // The tab is named after the session; the session's pane header icon is the agent's.
     let title = view.read_with(cx, |wb, cx| wb.item_icon_and_title(&item, cx));
-    assert_eq!(title.0, hutan_desktop::icons::Icon::SessionHarness);
+    // A Codex chat wears Codex's monogram, not the generic robot (FX-UI-A 3).
+    assert_eq!(title.0, hutan_desktop::icons::Icon::HarnessCodex);
     // A split shows the same conversation in a second view over one model.
     view.update_in(cx, |wb, window, cx| {
         wb.open_session_in_split(
