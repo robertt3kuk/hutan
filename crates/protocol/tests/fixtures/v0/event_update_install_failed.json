@@ -1,0 +1,1 @@
+{"data":{"install":{"command":"brew update && brew upgrade --cask robertt3kuk/hutan/hutan","exit_code":1,"method":"cask","session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM","state":"failed","version":"0.3.2"}},"epoch":"01K7F3B5N2Q9W8E4R6T1Y0V3PQ","event":"update.install","seq":1110}

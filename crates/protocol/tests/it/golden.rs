@@ -44,6 +44,7 @@ use hutan_protocol::hooks::{
     HooksTest, HooksTested,
 };
 use hutan_protocol::insight::*;
+use hutan_protocol::update::*;
 use hutan_protocol::lsp::*;
 use hutan_protocol::memory::*;
 use hutan_protocol::messages::*;
@@ -3935,6 +3936,20 @@ fn requests() -> Vec<(&'static str, Request)> {
                 path: "/work/api".into(),
             }),
         ),
+        ("update_status", Request::UpdateStatus(Empty {})),
+        ("update_check", Request::UpdateCheck(Empty {})),
+        (
+            "update_install_cask",
+            Request::UpdateInstall(UpdateInstallRequest {
+                method: InstallMethod::Cask,
+            }),
+        ),
+        (
+            "update_install_formula",
+            Request::UpdateInstall(UpdateInstallRequest {
+                method: InstallMethod::Formula,
+            }),
+        ),
     ]
 }
 
@@ -5320,7 +5335,87 @@ fn events() -> Vec<(&'static str, Event)> {
                 },
             },
         ),
+        (
+            "update_available",
+            Event::UpdateAvailable {
+                release: Box::new(update_release_fixture()),
+            },
+        ),
+        (
+            "update_install_running",
+            Event::UpdateInstallChanged {
+                install: Box::new(update_install_fixture(InstallState::Running, None)),
+            },
+        ),
+        (
+            "update_install_succeeded",
+            Event::UpdateInstallChanged {
+                install: Box::new(update_install_fixture(InstallState::Succeeded, Some(0))),
+            },
+        ),
+        (
+            "update_install_failed",
+            Event::UpdateInstallChanged {
+                install: Box::new(update_install_fixture(InstallState::Failed, Some(1))),
+            },
+        ),
     ]
+}
+
+fn update_release_fixture() -> UpdateRelease {
+    UpdateRelease {
+        version: "0.3.2".into(),
+        tag: "v0.3.2".into(),
+        prerelease: true,
+        published: Some("2026-10-29T10:15:00Z".into()),
+        notes_url: "https://github.com/robertt3kuk/hutan/releases/tag/v0.3.2".into(),
+        notes: "## Hutan 0.3.2\n\n- Update check and brew update.\n".into(),
+        notes_truncated: false,
+        assets: vec![
+            UpdateAsset {
+                name: "Hutan-0.3.2-arm64.zip".into(),
+                size: 48_113_664,
+                sha256: Some(
+                    "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".into(),
+                ),
+            },
+            UpdateAsset {
+                name: "Hutan-0.3.2-source.tar.gz".into(),
+                size: 2_411_724,
+                sha256: None,
+            },
+        ],
+    }
+}
+
+fn update_install_fixture(state: InstallState, exit_code: Option<i32>) -> UpdateInstall {
+    UpdateInstall {
+        method: InstallMethod::Cask,
+        session_id: sid(),
+        version: "0.3.2".into(),
+        command: CASK_COMMAND.into(),
+        state,
+        exit_code,
+    }
+}
+
+fn update_status_fixture() -> UpdateStatus {
+    UpdateStatus {
+        version: "0.3.1".into(),
+        check: UpdateCheck::Auto,
+        channel: UpdateChannel::Prerelease,
+        method: InstallMethod::Cask,
+        install_path: Some("/Applications/Hutan.app".into()),
+        command: Some(CASK_COMMAND.into()),
+        available: Some(update_release_fixture()),
+        skipped: None,
+        last_check: Some(UpdateCheckInfo {
+            at_ms: 1_791_894_000_000,
+            outcome: CheckOutcome::Checked,
+            message: None,
+        }),
+        install: None,
+    }
 }
 
 /// An OMP chat after two turns and a `/context`: every block of the record.
@@ -8849,6 +8944,54 @@ fn responses_match_fixtures() {
                     content: "pub fn hi() {}".into(),
                     binary: false,
                     too_large: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "update_status",
+            ControlMessage::ok(101, &update_status_fixture()).unwrap(),
+        ),
+        (
+            "update_status_current",
+            ControlMessage::ok(
+                102,
+                &UpdateStatus {
+                    check: UpdateCheck::Off,
+                    channel: UpdateChannel::Stable,
+                    method: InstallMethod::Unknown,
+                    install_path: None,
+                    command: None,
+                    available: None,
+                    last_check: Some(UpdateCheckInfo {
+                        at_ms: 1_791_894_000_000,
+                        outcome: CheckOutcome::RateLimited,
+                        message: Some("GitHub's rate limit is reached".into()),
+                    }),
+                    ..update_status_fixture()
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "update_status_installing",
+            ControlMessage::ok(
+                103,
+                &UpdateStatus {
+                    skipped: Some("0.3.1".into()),
+                    install: Some(update_install_fixture(InstallState::Running, None)),
+                    ..update_status_fixture()
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "update_installing",
+            ControlMessage::ok(
+                104,
+                &UpdateInstalling {
+                    session: session_info(),
+                    install: update_install_fixture(InstallState::Running, None),
                 },
             )
             .unwrap(),

@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`update`]: `update.status`, `update.check`, `update.install` and the events
+//!   `update.available` and `update.install` — the daemon's check for a newer release and the
+//!   Homebrew update it runs for the user (protocol 0.60, capability `update`, ADR 0024).
 //! - [`insight`]: `agent.insight`, `agent.measure_context` and the `agent.insight_updated` event —
 //!   what a chat's context holds, what each turn used, tools, files and time, with the source of
 //!   every block (protocol 0.59, capability `agent.insight`); `TokenCounts` gains
@@ -133,6 +136,7 @@ pub mod task;
 pub mod terminal_search;
 pub mod tree;
 pub mod ui;
+pub mod update;
 pub mod usage;
 pub mod worktree;
 
@@ -146,7 +150,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 59,
+    minor: 60,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

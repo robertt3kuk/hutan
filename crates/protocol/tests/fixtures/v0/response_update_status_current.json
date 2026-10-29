@@ -1,0 +1,1 @@
+{"id":102,"result":{"channel":"stable","check":"off","last_check":{"at_ms":1791894000000,"message":"GitHub's rate limit is reached","outcome":"rate_limited"},"method":"unknown","version":"0.3.1"}}

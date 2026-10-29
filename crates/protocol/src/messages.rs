@@ -64,6 +64,7 @@ use crate::task::{TaskCreate, TaskDelete, TaskListRequest, TaskRef, TaskReview, 
 use crate::terminal_search::TerminalSearch;
 use crate::tree::{AgentTreeRequest, NodeReport};
 use crate::ui::{SessionSendText, UiCommandResult, UiPublish, UiRun, UiSetSetting, UiTarget};
+use crate::update::{UpdateInstall, UpdateInstallRequest, UpdateRelease};
 use crate::usage::{UsageSummary, UsageSummaryRequest};
 use crate::worktree::{
     Placement, WorktreeCleanupRequest, WorktreeCommit, WorktreeCreate, WorktreeDiffRequest,
@@ -741,6 +742,20 @@ pub enum Request {
     /// with `HooksTested`. User-only: it runs the user's command.
     #[serde(rename = "hooks.test")]
     HooksTest(HooksTest),
+    /// Capability `update` (protocol 0.60, ADR 0024): the running version, the channel, how
+    /// Hutan was installed and the newest release above it that the daemon knows of; answered
+    /// with `UpdateStatus`. Read-only; contacts nothing.
+    #[serde(rename = "update.status")]
+    UpdateStatus(Empty),
+    /// Capability `update`: asks GitHub's releases now (whatever `updates.check` says) and
+    /// answers with `UpdateStatus`; a failed check is in `last_check`, not an error.
+    #[serde(rename = "update.check")]
+    UpdateCheck(Empty),
+    /// Capability `update`: updates Hutan the way its install method says — a visible terminal
+    /// session runs Homebrew; answered with `UpdateInstalling`. User-only: an agent can never
+    /// update or downgrade Hutan.
+    #[serde(rename = "update.install")]
+    UpdateInstall(UpdateInstallRequest),
 }
 
 impl Request {
@@ -1683,6 +1698,14 @@ pub enum Event {
     /// numbers moved; the whole summary, not a diff (bursts are coalesced).
     #[serde(rename = "usage.changed")]
     UsageChanged { summary: Box<UsageSummary> },
+    /// Capability `update` (protocol 0.60): a check found a release newer than the running one
+    /// that the daemon had not announced yet.
+    #[serde(rename = "update.available")]
+    UpdateAvailable { release: Box<UpdateRelease> },
+    /// Capability `update`: the install `update.install` started changed state (it ended, with
+    /// its exit code).
+    #[serde(rename = "update.install")]
+    UpdateInstallChanged { install: Box<UpdateInstall> },
     /// Capability `agent.insight` (protocol 0.59): the insight of a chat session changed; the
     /// whole snapshot, newer when its `seq` is larger. Sent **only** to connections whose
     /// `client.focus` is that session, outside the replay ring (see
@@ -1762,6 +1785,8 @@ impl Event {
         "daemon.stopping",
         "usage.changed",
         "agent.insight_updated",
+        "update.available",
+        "update.install",
     ];
 }
 
