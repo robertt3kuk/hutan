@@ -515,9 +515,24 @@ impl Workbench {
             let models = self.launcher_models(cx);
             let chosen = self.launcher_chosen_model(cx);
             let body: Option<AnyElement> = match &models {
-                Models::Loading => {
-                    Some(note("Loading the models…".into(), theme.muted).into_any_element())
-                }
+                // The same box the model control is, so the sheet does not move by the 6 px
+                // a line of small text is shorter than a control when the list arrives.
+                Models::Loading => Some(
+                    div()
+                        .id("launch-model-loading")
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .min_h(px(tokens.sidebar_row))
+                        .px(px(tokens.spacing * 2.0))
+                        .rounded(px(tokens.radius))
+                        .border_1()
+                        .border_color(theme.border)
+                        .text_color(theme.muted)
+                        .child("Loading the models…")
+                        .child(probe(&self.regions, Region::Launcher("model")))
+                        .into_any_element(),
+                ),
                 Models::Failed(error) => Some(self.render_models_failure(error, cx)),
                 Models::Ready(list) if list.is_empty() => Some(
                     note(

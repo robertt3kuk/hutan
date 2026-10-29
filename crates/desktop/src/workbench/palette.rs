@@ -92,6 +92,30 @@ fn rank_bonus(query: &str, candidate: &Candidate<'_>) -> i32 {
     bonus
 }
 
+/// How the query sits in a command's title: 2 the name starts with it or a word of the title
+/// does, 1 it is inside a word, 0 only its letters are found one after another.
+fn match_tier(query: &str, title: &str) -> u8 {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return 2;
+    }
+    let title = title.to_lowercase();
+    if label_of(&title).starts_with(&query)
+        || title.match_indices(&query).any(|(at, _)| {
+            title[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_alphanumeric())
+        })
+    {
+        2
+    } else if title.contains(&query) {
+        1
+    } else {
+        0
+    }
+}
+
 /// Indices into `candidates` that match `query`, best first; ties keep the original order. The
 /// subsequence score of [`fuzzy_score`] is lifted by [`rank_bonus`]: names that start with
 /// the query and commands with a key come first.
@@ -99,7 +123,7 @@ pub fn rank_commands<'a>(
     query: &str,
     candidates: impl IntoIterator<Item = Candidate<'a>>,
 ) -> Vec<usize> {
-    let mut scored: Vec<(i32, usize)> = candidates
+    let mut scored: Vec<(u8, i32, usize)> = candidates
         .into_iter()
         .enumerate()
         .filter_map(|(i, c)| {
@@ -107,11 +131,15 @@ pub fn rank_commands<'a>(
             // (`Session: New Terminal` for `new` matches the `n` of Session first).
             let title = fuzzy_score(query, c.title);
             let label = fuzzy_score(query, label_of(c.title));
-            title.max(label).map(|s| (s + rank_bonus(query, &c), i))
+            title
+                .max(label)
+                .map(|s| (match_tier(query, c.title), s + rank_bonus(query, &c), i))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    scored.into_iter().map(|(_, i)| i).collect()
+    // The kind of match first, the score within it: letters picked out of several words
+    // (`fork` in `Add Folder to Active Workspace…`) never stand above a name that has the word.
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+    scored.into_iter().map(|(_, _, i)| i).collect()
 }
 
 /// An open palette: the query, the filtered entries (indices into the command list) and the
@@ -169,6 +197,34 @@ mod tests {
                 has_key: false,
             })
             .collect()
+    }
+
+    #[test]
+    fn letters_found_in_several_words_never_outrank_a_name_with_the_word() {
+        // FX-UI-B: `fork` is a subsequence of `Folder … Workspace`, and that command has a key.
+        let candidates = [
+            Candidate {
+                title: "Workspace: Add Folder to Active Workspace…",
+                has_key: true,
+            },
+            Candidate {
+                title: "Chat: Fork from Here",
+                has_key: false,
+            },
+            Candidate {
+                title: "Session: Fork Session",
+                has_key: false,
+            },
+        ];
+        let order = rank_commands("fork", candidates);
+        assert_eq!(order.len(), 3, "it still matches, further down");
+        assert_eq!(order[2], 0, "{order:?}");
+        // A name starting with the word is still first among the real matches.
+        assert_eq!(
+            rank_commands("fork s", candidates)[0],
+            2,
+            "the longer query narrows to the one that has it"
+        );
     }
 
     #[test]

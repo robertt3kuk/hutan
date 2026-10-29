@@ -625,6 +625,13 @@ impl Filters {
     pub fn any(self) -> bool {
         self.modified || self.restart
     }
+
+    /// Whether a row passes: with both filters on it is either (FX-UI-B; they used to be
+    /// ANDed, which left almost nothing), with one it is that one, with none it is any.
+    /// `modified`: a settings file sets it; `restart`: it applies after the daemon restarts.
+    pub fn passes(self, modified: bool, restart: bool) -> bool {
+        (!self.any()) || (self.modified && modified) || (self.restart && restart)
+    }
 }
 
 /// The words and filters of a search box: `@modified` and `@restart` (any case, anywhere in

@@ -42,6 +42,14 @@ use crate::settings::{ChatSettings, ForkWhereSetting, TerminalSettings};
 use crate::theme::DensityExt as _;
 
 const WIDTH: f32 = 460.0;
+/// A line of text is this many times the font size tall (the text style's line height).
+const TEXT_LINE: f32 = 1.618;
+
+/// The colour of what the popover says about a harness's limit (it cannot cut there; only its
+/// newest turn): information, not a warning, so the muted tone and not the amber (FX-UI-B).
+fn limit_tone(theme: &crate::theme::Theme) -> gpui::Hsla {
+    theme.muted
+}
 
 /// What supplies the session id *Fork Session* needs, said where the entry is greyed or the
 /// command refused: the agent's hooks (FX-UI-B; neither OMP's OSC 7501 report, which carries
@@ -1053,9 +1061,16 @@ impl Workbench {
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .child(text)
         };
+        // The glyph sits in a box as tall as one line of the text beside it, centred in it, so
+        // it is level with that line's middle and not with the row's top (FX-UI-B).
+        let line = tokens.font_size * TEXT_LINE;
         let check = |checked: bool, enabled: bool| {
             div()
+                .relative()
+                .flex()
                 .flex_none()
+                .items_center()
+                .h(px(line))
                 .when(!enabled, |s| s.opacity(0.4))
                 .child(crate::icons::glyph(if checked {
                     Icon::StateCompleted
@@ -1225,7 +1240,7 @@ impl Workbench {
                 .child(
                     div()
                         .text_size(px(tokens.secondary_font_size))
-                        .text_color(theme.warning)
+                        .text_color(limit_tone(&theme))
                         .child(SharedString::from(note.clone())),
                 )
                 .children(options.iter().enumerate().map(
@@ -1248,7 +1263,9 @@ impl Workbench {
                                         this.choose_fork_cut(mode, cx);
                                     }))
                             })
-                            .child(check(*selected, true))
+                            .child(check(*selected, true).when(index == 0, |s| {
+                                s.child(probe(&regions, Region::Fork("radio")))
+                            }))
                             .child(
                                 div()
                                     .flex_1()
@@ -1257,8 +1274,15 @@ impl Workbench {
                                     .flex_col()
                                     .child(
                                         div()
+                                            .relative()
                                             .text_color(theme.fg)
-                                            .child(SharedString::from(title.clone())),
+                                            .child(SharedString::from(title.clone()))
+                                            .when(index == 0, |s| {
+                                                s.child(probe(
+                                                    &regions,
+                                                    Region::Fork("radio-title"),
+                                                ))
+                                            }),
                                     )
                                     .child(muted(SharedString::from(detail.clone()))),
                             )
@@ -1271,7 +1295,7 @@ impl Workbench {
                 .id("fork-cut")
                 .relative()
                 .text_size(px(tokens.secondary_font_size))
-                .text_color(theme.warning)
+                .text_color(limit_tone(&theme))
                 .child(SharedString::from(note.clone()))
                 .child(probe(&regions, Region::Fork("cut")))
                 .into_any_element(),
@@ -1355,13 +1379,15 @@ impl Workbench {
                                         .child(SharedString::from(quote))
                                 })),
                         )
+                        // The cut first: what the new chat will know is the question, where it
+                        // goes and what happens to this one are the options (FX-UI-B).
+                        .child(cut)
                         .children(where_row)
                         .children(branch_row)
                         .children(worktree_note)
                         .children(skipped)
                         .children(restore_row)
                         .children(archive_row)
-                        .child(cut)
                         .children(problem)
                         .child(
                             div()
@@ -1381,5 +1407,16 @@ impl Workbench {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tone_tests {
+    #[test]
+    fn a_limit_is_said_in_the_muted_tone_not_the_warning_amber() {
+        for theme in [crate::theme::Theme::dark(), crate::theme::Theme::light()] {
+            assert_eq!(super::limit_tone(&theme), theme.muted);
+            assert_ne!(super::limit_tone(&theme), theme.warning);
+        }
     }
 }

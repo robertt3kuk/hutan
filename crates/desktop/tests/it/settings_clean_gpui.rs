@@ -511,6 +511,27 @@ fn every_page_has_an_icon_of_its_own_in_the_list(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_description_that_does_not_fit_beside_the_scope_switch_wraps_instead_of_being_cut(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    open_page(&view, cx, "appearance");
+    cx.simulate_resize(gpui::size(gpui::px(1600.0), gpui::px(900.0)));
+    settle(cx);
+    let wide = bounds(&view, cx, Region::Settings("page-description")).unwrap();
+    cx.simulate_resize(gpui::size(gpui::px(640.0), gpui::px(900.0)));
+    settle(cx);
+    let narrow = bounds(&view, cx, Region::Settings("page-description")).unwrap();
+    let body = bounds(&view, cx, Region::Settings("sheet-body")).unwrap();
+    assert!(
+        narrow.size.height > wide.size.height,
+        "narrow {narrow:?} is taller than wide {wide:?}: it wraps, it is not cut"
+    );
+    assert!(narrow.right() <= body.right(), "{narrow:?} in {body:?}");
+}
+
+#[gpui::test]
 fn a_page_has_a_20_pt_title_a_description_line_and_cards_inset_by_the_page_padding(
     cx: &mut TestAppContext,
 ) {

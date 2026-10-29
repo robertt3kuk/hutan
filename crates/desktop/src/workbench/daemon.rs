@@ -879,9 +879,10 @@ impl Workbench {
         };
         let modal = Modal {
             title: "Quit Hutan?".into(),
+            // What each button does, in the words of its label: nothing about a setting.
             message: SharedString::from(format!(
-                "{} {is} running. Keep {them} running in the background, or stop {them}. \
-                 Keep running turns on \"Keep daemon running after Hutan quits\".",
+                "{} {is} running. Keep running leaves {them} going in the background; \
+                 Stop sessions and quit ends {them}.",
                 rows.len()
             )),
             rows,

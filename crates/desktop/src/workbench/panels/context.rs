@@ -603,7 +603,12 @@ impl ContextPanel {
                     if insight.tools.as_ref().is_some_and(|tools| tools.calls > 0) {
                         items.push(Item::Tools);
                     }
-                    if insight.files.as_ref().is_some_and(|files| files.count > 0) {
+                    // The block is there when the turns say files changed, whether or not the
+                    // agent named them (OMP's edit events carry no path): a count with a line
+                    // that says so, not nothing (FX-UI-B).
+                    if insight.files.as_ref().is_some_and(|files| files.count > 0)
+                        || model::files_changed_in_turns(insight) > 0
+                    {
                         items.push(Item::Files);
                     }
                     if !model::totals_pairs(insight).is_empty()
@@ -1536,15 +1541,31 @@ impl ContextPanel {
             }))
         });
         let truncated = insight.files.as_ref().is_some_and(|files| files.truncated);
+        let unnamed = total == 0;
+        let changed = model::files_changed_in_turns(insight);
         block(
-            "Files",
-            model::files_summary(insight),
+            "Files touched",
+            model::files_summary(insight)
+                .or_else(|| (unnamed && changed > 0).then(|| format!("{changed} changed"))),
             div()
                 .flex()
                 .flex_col()
                 .gap(px(tokens.spacing * 0.5))
                 .children(rows)
                 .children(more)
+                .when(unnamed, |s| {
+                    s.child(muted_line(
+                        format!(
+                            "{} did not say which files. The turns above count them.",
+                            insight
+                                .harness
+                                .as_deref()
+                                .map_or_else(|| "The agent".to_owned(), model::harness_label)
+                        ),
+                        &theme,
+                        &tokens,
+                    ))
+                })
                 .when(truncated, |s| {
                     s.child(muted_line(
                         "More files were touched than are listed.",

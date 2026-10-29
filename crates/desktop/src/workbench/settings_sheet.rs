@@ -1699,6 +1699,7 @@ impl Workbench {
                                                         .flex()
                                                         .flex_col()
                                                         .gap(px(space::XS))
+                                                        .flex_1()
                                                         .min_w_0()
                                                         .child(
                                                             div()
@@ -1721,10 +1722,11 @@ impl Workbench {
                                                         )
                                                         .when(!description.is_empty(), |s| {
                                                             s.child(
+                                                                // Whole: the scope switch beside it
+                                                                // takes its own room, this wraps.
                                                                 div()
                                                                     .relative()
                                                                     .min_w_0()
-                                                                    .truncate()
                                                                     .text_color(theme.muted)
                                                                     .child(SharedString::from(
                                                                         description,

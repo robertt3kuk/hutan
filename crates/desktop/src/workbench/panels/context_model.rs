@@ -571,6 +571,11 @@ pub fn file_lines(insight: &AgentInsight) -> Vec<FileLine> {
 }
 
 /// `8 touched`, `8 touched · +120 −34`.
+/// Files the turns counted as changed, whether or not the agent named them.
+pub fn files_changed_in_turns(insight: &AgentInsight) -> u64 {
+    insight.turns.iter().map(|turn| u64::from(turn.files)).sum()
+}
+
 pub fn files_summary(insight: &AgentInsight) -> Option<String> {
     let files = insight.files.as_ref()?;
     let mut text = format!("{} touched", files.count);

@@ -250,6 +250,13 @@ fn with_live_sessions_quitting_asks_to_stop_them(cx: &mut TestAppContext) {
     assert!(!destructive, "Return keeps the sessions running");
     assert_eq!(choice.as_deref(), Some("Stop sessions and quit"));
     assert_eq!(rows, 1, "the live session is listed");
+    // FX-UI-B: the sentence says what each button does and names no setting.
+    let message = view.read_with(cx, |wb, _| wb.modal().unwrap().message.to_string());
+    assert_eq!(
+        message,
+        "1 session is running. Keep running leaves it going in the background; \
+         Stop sessions and quit ends it."
+    );
     assert!(
         !checkbox,
         "there is nothing to remember: the toggle is the setting"

@@ -332,3 +332,24 @@ fn exact_figures_are_grouped() {
     assert_eq!(thousands(11_200), "11 200");
     assert_eq!(thousands(1_234_567), "1 234 567");
 }
+
+#[test]
+fn files_the_turns_counted_are_there_though_the_agent_named_none() {
+    // FX-UI-B: the footer says "1 file changed", the panel used to say nothing.
+    let mut insight = insight();
+    insight.files = None;
+    insight.turns = vec![
+        InsightTurn {
+            files: 1,
+            ..turn(1, None)
+        },
+        InsightTurn {
+            files: 2,
+            ..turn(2, None)
+        },
+    ];
+    assert_eq!(files_changed_in_turns(&insight), 3);
+    assert_eq!(files_summary(&insight), None, "no list, no list summary");
+    insight.turns.clear();
+    assert_eq!(files_changed_in_turns(&insight), 0);
+}

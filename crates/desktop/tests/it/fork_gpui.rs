@@ -822,6 +822,21 @@ fn an_omp_chat_asks_for_the_cut_it_cannot_make_and_never_forks_without_the_answe
         line(&said, "choice: Fork at the latest turn"),
         "choice: Fork at the latest turn"
     );
+    // FX-UI-B: the cut comes first, before what is only an option, and each radio is level
+    // with the first line of its text.
+    let cut = bounds_of(&view, cx, Region::Fork("cut")).expect("the cut");
+    for part in ["where-folder", "branch", "restore", "archive", "fork"] {
+        if let Some(below) = bounds_of(&view, cx, Region::Fork(part)) {
+            assert!(
+                cut.bottom() <= below.top() + px(1.0),
+                "{part} {below:?} is above the cut {cut:?}"
+            );
+        }
+    }
+    let radio = bounds_of(&view, cx, Region::Fork("radio")).expect("the first radio");
+    let title = bounds_of(&view, cx, Region::Fork("radio-title")).expect("its title");
+    let off = f32::from((radio.center().y - title.center().y).abs());
+    assert!(off <= 1.0, "radio {radio:?} against title {title:?}: {off}");
     assert!(
         has(&said, "choice: Fork with a summary of turn 1"),
         "{said:#?}"

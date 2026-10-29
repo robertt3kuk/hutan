@@ -251,9 +251,9 @@ impl Workbench {
 
     /// Whether `field` passes the filters of the search box: `@modified` wants a key some
     /// settings file sets (what a ↺ takes back), `@restart` a setting that waits for the
-    /// daemon to start, and the app's own settings never do.
+    /// daemon to start (the app's own settings never do); both on, either one.
     pub(super) fn field_passes(&self, f: &Field, filters: Filters) -> bool {
-        (!filters.modified || self.settings.source_of(&f.key_path()).is_some()) && !filters.restart
+        filters.passes(self.settings.source_of(&f.key_path()).is_some(), false)
     }
 
     /// Whether `section` has rows to show under `filters`: always without a filter, else a

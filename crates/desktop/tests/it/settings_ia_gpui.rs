@@ -397,8 +397,10 @@ fn restart_leaves_the_daemon_settings_that_apply_after_a_restart(cx: &mut TestAp
             );
         }
     }
-    // Both at once: only a setting that waits for the restart and is set in the file.
+    // Both at once: a setting that waits for the restart or is set in the file (FX-UI-B: they
+    // were ANDed, and the answer was "No settings match").
     view.update(cx, |wb, cx| wb.set_settings_query("@modified @restart", cx));
+    let mut rows = 0;
     for page in pages(&view, cx) {
         view.update(cx, |wb, cx| wb.select_settings_namespace(page, cx));
         for row in view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx)) {
@@ -406,9 +408,18 @@ fn restart_leaves_the_daemon_settings_that_apply_after_a_restart(cx: &mut TestAp
                 .strip_prefix("d:")
                 .unwrap_or_else(|| panic!("{page}: {row}"));
             let entry = view.read_with(cx, |wb, _| wb.daemon_settings().entry(key).cloned());
-            assert!(entry.is_some_and(|e| e.set_in_file), "{page}: {key}");
+            assert!(
+                entry.is_some_and(|e| e.set_in_file
+                    || e.applies == hutan_protocol::daemon_settings::Applies::Restart),
+                "{page}: {key}"
+            );
+            rows += 1;
         }
     }
+    assert!(
+        rows > 0,
+        "a union is not empty when `@restart` alone is not"
+    );
 }
 
 #[gpui::test]
@@ -445,4 +456,17 @@ fn the_chips_under_the_search_box_write_the_filters_into_it(cx: &mut TestAppCont
     assert_eq!(query(&view, cx), "font @modified");
     view.update(cx, |wb, cx| wb.set_settings_query("font", cx));
     assert!(!view.read_with(cx, |wb, _| wb.settings_sheet().unwrap().filters().any()));
+    // Both on, then one off: the other stays (each chip toggles by itself, FX-UI-B).
+    view.update(cx, |wb, cx| wb.set_settings_query("", cx));
+    for name in ["filter-modified", "filter-restart"] {
+        let at = chip(&view, cx, name).center();
+        click_at(cx, at);
+    }
+    assert_eq!(query(&view, cx), "@modified @restart");
+    let at = chip(&view, cx, "filter-modified").center();
+    click_at(cx, at);
+    assert_eq!(query(&view, cx), "@restart");
+    let at = chip(&view, cx, "filter-restart").center();
+    click_at(cx, at);
+    assert_eq!(query(&view, cx), "");
 }

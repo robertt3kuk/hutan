@@ -280,9 +280,9 @@ fn number_hint(e: &DaemonSetting) -> Option<String> {
 }
 
 /// Whether the row of `e` passes the sheet's filters: `@modified` wants a key `daemon.toml`
-/// sets, `@restart` one that only counts when the daemon starts.
+/// sets, `@restart` one that only counts when the daemon starts; both on, either one.
 pub(super) fn daemon_entry_passes(e: &DaemonSetting, filters: Filters) -> bool {
-    (!filters.modified || e.set_in_file) && (!filters.restart || e.applies == Applies::Restart)
+    filters.passes(e.set_in_file, e.applies == Applies::Restart)
 }
 
 /// Whether the page shows daemon settings.
