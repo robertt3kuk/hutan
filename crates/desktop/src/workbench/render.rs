@@ -16,10 +16,10 @@ use super::vim_ui::OverlayField;
 use super::workspaces::PickerKind;
 use crate::theme::{Density, DensityExt as _};
 use gpui::{
-    Action, AnyElement, AnyView, Bounds, ClickEvent, Context, ElementId, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, anchored, canvas,
-    deferred, div, point, prelude::*, px, relative, uniform_list,
+    Action, AnyElement, AnyView, Bounds, ClickEvent, Context, Div, ElementId, Hsla,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement,
+    Pixels, Render, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window,
+    anchored, canvas, deferred, div, point, prelude::*, px, relative, uniform_list,
 };
 use std::cell::Cell;
 use std::ops::Range;
@@ -35,7 +35,10 @@ use super::regions::Regions;
 pub const TITLEBAR_HEIGHT: f32 = 36.0;
 /// Space reserved for the traffic lights when the left dock does not cover them.
 const TRAFFIC_LIGHT_INSET: f32 = 80.0;
-const HANDLE_THICKNESS: f32 = 6.0;
+pub(super) const HANDLE_THICKNESS: f32 = 6.0;
+/// The accent line a hovered divider draws in the middle of its hit area (FX-UI-B: a hairline
+/// of 1–2 px beside the 1 px border it sits on, where a 6 px tinted bar was heavy).
+pub(super) const HANDLE_LINE: f32 = 2.0;
 /// How much wider than [`HANDLE_THICKNESS`] the left dock's handle is, on the center's side of its
 /// edge: the right one has the dock's whole edge, the left one lay inside it and a drag at the
 /// very edge (a pixel outside the dock) hit the center instead (N-04).
@@ -97,6 +100,19 @@ fn palette_key(window: &Window) -> SharedString {
 /// The line under the empty centre's sentence: the two ways to put something in it.
 fn empty_centre_hint(quick_open: &str, new_terminal: &str) -> String {
     format!("{quick_open} opens a file or a session · {new_terminal} a new terminal")
+}
+
+/// The line a divider's hit area draws while the pointer is over it: `horizontal` is a vertical
+/// bar (the divider between side-by-side panes). The hit area carries `.group(group)`.
+pub(super) fn divider_line(group: &SharedString, horizontal: bool, accent: Hsla) -> Div {
+    let inset = (HANDLE_THICKNESS - HANDLE_LINE) / 2.0;
+    let line = div().absolute();
+    let line = if horizontal {
+        line.top_0().bottom_0().left(px(inset)).w(px(HANDLE_LINE))
+    } else {
+        line.left_0().right_0().top(px(inset)).h(px(HANDLE_LINE))
+    };
+    line.group_hover(group.clone(), move |s| s.bg(accent))
 }
 
 /// An invisible child that records its parent's painted bounds under `region`.
@@ -2031,11 +2047,17 @@ impl Workbench {
         let size = self.state.docks.get(pos).size;
         let accent = self.theme.accent;
         let status_h = self.density.ui().status_bar;
+        let group = SharedString::from(format!("dock-resize-{pos:?}"));
         let base = div()
             .id(id(format!("dock-resize-{pos:?}")))
             .absolute()
             .occlude()
-            .hover(move |s| s.bg(accent.opacity(0.35)))
+            .group(group.clone())
+            .child(divider_line(
+                &group,
+                !matches!(pos, DockPosition::Bottom),
+                accent,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
@@ -2233,10 +2255,12 @@ impl Workbench {
                     cumulative += *ratio;
                     let cell = Rc::clone(&bounds_cell);
                     let path = path.clone();
+                    let group = SharedString::from(format!("splitter-{path:?}-{divider}"));
                     let handle = div()
                         .id(id(format!("splitter-{path:?}-{divider}")))
                         .absolute()
-                        .hover(move |s| s.bg(accent.opacity(0.35)))
+                        .group(group.clone())
+                        .child(divider_line(&group, horizontal, accent))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
@@ -3416,6 +3440,21 @@ mod empty_centre_tests {
         assert_eq!(
             super::empty_centre_hint("⌘P", "⌘T"),
             "⌘P opens a file or a session · ⌘T a new terminal"
+        );
+    }
+}
+
+#[cfg(test)]
+mod divider_tests {
+    use super::{HANDLE_LINE, HANDLE_THICKNESS};
+
+    #[test]
+    fn a_hovered_divider_draws_a_hairline_inside_its_wider_hit_area() {
+        // FX-UI-B: 1–2 px, not the 6 px tinted bar of the hit area.
+        assert!((1.0..=2.0).contains(&HANDLE_LINE), "{HANDLE_LINE}");
+        assert!(
+            HANDLE_THICKNESS >= 4.0 * HANDLE_LINE,
+            "the hit area stays easy to catch"
         );
     }
 }

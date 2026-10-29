@@ -360,6 +360,108 @@ async fn history_pages_merge_into_the_scrollback_cache() {
     stop(running).await;
 }
 
+/// FX-UI-B (P3-13, stale rows in the scrollback of a program that keeps drawing): history pages
+/// asked for while the output goes on, and applied when they arrive between frames, must land on
+/// the lines they hold. `terminal.history` counts from the viewport as the daemon has it when it
+/// answers; the client numbers a page by what it has applied. A line that a page put under the
+/// wrong number is a stale or foreign row at the wrong place in the scrollback.
+#[tokio::test(flavor = "multi_thread")]
+async fn history_pages_that_arrive_while_the_output_goes_on_land_on_their_own_lines() {
+    use tokio::sync::mpsc;
+    let (_dir, running, paths) = daemon().await;
+    let total = 900u32;
+    let script = format!(
+        "i=1; while [ $i -le {total} ]; do echo $i; i=$((i+1)); \
+         if [ $((i % 7)) -eq 0 ]; then sleep 0.003; fi; done; sleep 30"
+    );
+    let mut t = Attached::start(&paths, &script).await;
+    let (answers_tx, mut answers) = mpsc::channel::<(Option<u64>, TerminalHistoryRows)>(64);
+    let mut asked = 0usize;
+    let mut applied = 0usize;
+    let finished = timeout(WAIT, async {
+        loop {
+            tokio::select! {
+                render = t.renders.recv() => {
+                    let render = render.expect("connection stays open");
+                    let frame = match &render {
+                        TerminalRender::Snapshot(s) => s.frame,
+                        TerminalRender::Frame(f) => f.frame,
+                    };
+                    t.model.apply(render);
+                    let _: Value = t
+                        .client
+                        .call(Request::TerminalAck(TerminalAck {
+                            terminal_id: t.terminal,
+                            frame,
+                        }))
+                        .await
+                        .unwrap();
+                    // Ask for the page just above the viewport, as the view does when it is
+                    // scrolled there, and go on without waiting for the answer.
+                    if t.model.history_len() >= 30 && asked < applied + 6 {
+                        asked += 1;
+                        let (client, terminal, tx) =
+                            (t.client.clone(), t.terminal, answers_tx.clone());
+                        tokio::spawn(async move {
+                            // As the desktop asks: counted from the viewport the daemon had.
+                            let page = client
+                                .terminal_history_anchored(terminal, 0, 30)
+                                .await;
+                            if let Ok(page) = page {
+                                tx.send(page).await.ok();
+                            }
+                        });
+                    }
+                    if has_line(&t.model, &total.to_string()) {
+                        break;
+                    }
+                }
+                page = answers.recv() => {
+                    let (top, page) = page.expect("the sender lives");
+                    t.model.apply_history_at(top, page.from_line, page.rows);
+                    applied += 1;
+                }
+            }
+        }
+    })
+    .await;
+    assert!(
+        finished.is_ok(),
+        "output did not finish:\n{}",
+        screen(&t.model)
+    );
+    // Let the answers in flight land too, then every cached line must be the number it is.
+    while applied < asked {
+        let Ok(Some((top, page))) = timeout(WAIT, answers.recv()).await else {
+            break;
+        };
+        t.model.apply_history_at(top, page.from_line, page.rows);
+        applied += 1;
+    }
+    let known = t.model.history_total();
+    let mut checked = 0;
+    let mut wrong = Vec::new();
+    for line in 0..known {
+        let Some(row) = t.model.row_at(i64::try_from(line).unwrap()) else {
+            continue;
+        };
+        checked += 1;
+        let want = (line + 1).to_string();
+        let got = TerminalModel::row_text(row);
+        if got != want {
+            wrong.push((line, got));
+        }
+    }
+    assert!(checked > 0, "no page was applied");
+    assert!(
+        wrong.is_empty(),
+        "{} of {checked} cached lines are not the line they are numbered as, e.g. {:?}",
+        wrong.len(),
+        &wrong[..wrong.len().min(8)]
+    );
+    stop(running).await;
+}
+
 /// What the view's reading-place anchor (`TerminalView::after_apply`) relies on: a width change
 /// reflows rows that wrap and renumbers nothing else, so a line that does not wrap keeps its
 /// absolute number and the lines above the viewport keep theirs.

@@ -16,9 +16,7 @@ use hutan_client::{
 };
 use hutan_core::{Epoch, SessionId, TerminalId};
 use hutan_protocol::blocks::{Block, BlockPart};
-use hutan_protocol::messages::{
-    Request, SessionInfo, TerminalColors, TerminalHistory, TerminalHistoryRows, TerminalSize,
-};
+use hutan_protocol::messages::{Request, SessionInfo, TerminalColors, TerminalSize};
 use hutan_protocol::render::TerminalRender;
 use hutan_terminal_view::{
     DefaultColors, ImagePasteTarget, PasteAgent, SharedTerminal, TerminalBackend, ViewStatus,
@@ -100,16 +98,16 @@ impl TerminalBackend for SessionBackend {
         let shared = self.shared.clone();
         self.cx
             .spawn(async move |cx| {
-                let request = Request::TerminalHistory(TerminalHistory {
-                    terminal_id: terminal,
-                    from_line,
-                    count,
-                });
-                match connection.call::<TerminalHistoryRows>(request).await {
-                    Ok(page) => {
+                // Counted from the viewport the daemon had when it answered, which a program
+                // that keeps drawing has moved since the last frame the model applied.
+                match connection
+                    .terminal_history_anchored(terminal, from_line, count)
+                    .await
+                {
+                    Ok((top, page)) => {
                         shared
                             .update(cx, |shared, cx| {
-                                shared.apply_history(page.from_line, page.rows, cx);
+                                shared.apply_history_at(top, page.from_line, page.rows, cx);
                             })
                             .ok();
                     }

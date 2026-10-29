@@ -28,7 +28,8 @@ use hutan_protocol::chat::{
 use hutan_protocol::daemon_settings::DaemonSettings;
 use hutan_protocol::history::{HistoryHits, HistorySearch, HistorySetEnabled, HistoryStatusInfo};
 use hutan_protocol::messages::{
-    AgentReleaseRequest, AgentReportRequest, Empty, Request, SessionInfo, TerminalSize,
+    AgentReleaseRequest, AgentReportRequest, Empty, Request, SessionInfo, TerminalHistoryRows,
+    TerminalSize,
 };
 use hutan_protocol::resources::{DEFAULT_INTERVAL_MS, ResourcesSubscribed};
 use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchResult};
@@ -311,6 +312,20 @@ impl Connection {
     pub async fn fetch_blocks(&self, terminal: TerminalId) -> Result<BlockList, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
         BlockList::fetch(&client, terminal).await
+    }
+
+    /// One page of `terminal.history` with the viewport top it was counted from (see
+    /// [`Client::terminal_history_anchored`]).
+    pub async fn terminal_history_anchored(
+        &self,
+        terminal: TerminalId,
+        from_line: u32,
+        count: u32,
+    ) -> Result<(Option<u64>, TerminalHistoryRows), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client
+            .terminal_history_anchored(terminal, from_line, count)
+            .await
     }
 
     /// One page of `terminal`'s blocks, newest first (see [`Client::terminal_blocks`]).

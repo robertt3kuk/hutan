@@ -48,8 +48,8 @@ use hutan_protocol::memory::{
 };
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, ClientInfo, Empty, Event, Hello,
-    Request, ResumePoint, SessionInfo, SessionRef, SessionResult, Welcome, WorkspaceCreate,
-    WorkspaceInfo, decode_result,
+    Request, ResumePoint, SessionInfo, SessionRef, SessionResult, TerminalHistory,
+    TerminalHistoryRows, Welcome, WorkspaceCreate, WorkspaceInfo, decode_result,
 };
 use hutan_protocol::notify::{
     ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyActed, NotifyList, NotifyMute,
@@ -2159,6 +2159,50 @@ impl Client {
             limit,
         }))
         .await
+    }
+
+    /// One page of `terminal.history` with the absolute line number of the viewport's first row
+    /// it was counted from (FX-UI-B). `from_line` counts from the viewport as the daemon has it
+    /// *when it answers*, and a program that keeps drawing (a coding agent's TUI) moves it while
+    /// the request is on its way: a client that numbers the rows by the viewport it has itself
+    /// applied puts them on the wrong lines. The page is bracketed by two `terminal.blocks`
+    /// probes (`limit` 0, which answer `viewport_top` and nothing else); the page counts from
+    /// that top only when both probes agree, so the viewport did not move while it was read, and
+    /// is asked for again otherwise (a few times). `None` for the top: the daemon does not
+    /// advertise `terminal.blocks`, or the viewport kept moving; the page is then what plain
+    /// `terminal.history` gives and the caller numbers it by its own view of the viewport.
+    pub async fn terminal_history_anchored(
+        &self,
+        terminal_id: TerminalId,
+        from_line: u32,
+        count: u32,
+    ) -> Result<(Option<u64>, TerminalHistoryRows), ClientError> {
+        const ATTEMPTS: usize = 4;
+        let history = || {
+            self.call::<TerminalHistoryRows>(Request::TerminalHistory(TerminalHistory {
+                terminal_id,
+                from_line,
+                count,
+            }))
+        };
+        if !self.supports_blocks() {
+            return Ok((None, history().await?));
+        }
+        for _ in 0..ATTEMPTS {
+            let before = self
+                .terminal_blocks(terminal_id, None, 0)
+                .await?
+                .viewport_top;
+            let page = history().await?;
+            let after = self
+                .terminal_blocks(terminal_id, None, 0)
+                .await?
+                .viewport_top;
+            if before == after {
+                return Ok((Some(before), page));
+            }
+        }
+        Ok((None, history().await?))
     }
 
     /// Plain text of a block's command or output, at most `max_bytes` (the daemon caps it).

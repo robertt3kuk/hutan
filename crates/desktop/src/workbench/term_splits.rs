@@ -482,12 +482,14 @@ impl Workbench {
             *dividers += 1;
             let cell = Rc::clone(&bounds_cell);
             let (down_path, click_path) = (path.clone(), path.clone());
+            let group = gpui::SharedString::from(format!("term-divider-{pane}-{path:?}-{divider}"));
             let handle = div()
                 .id(element_id(format!(
                     "term-divider-{pane}-{path:?}-{divider}"
                 )))
                 .absolute()
-                .hover(move |s| s.bg(accent.opacity(0.35)))
+                .group(group.clone())
+                .child(super::render::divider_line(&group, horizontal, accent))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {

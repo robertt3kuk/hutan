@@ -428,16 +428,34 @@ impl TerminalModel {
     }
 
     /// Stores a `terminal.history` answer: `from_line` 0 is the line directly above the viewport
-    /// as of now, `rows` are newest first. Lines beyond the retained history are ignored.
+    /// as of now, `rows` are newest first. Lines beyond the retained history are ignored. Only
+    /// right while the viewport did not move between the daemon reading the rows and this call;
+    /// a client that can know where the daemon counted from uses [`Self::apply_history_at`].
     pub fn apply_history(&mut self, from_line: u32, rows: Vec<Row>) {
+        self.apply_history_at(None, from_line, rows);
+    }
+
+    /// [`Self::apply_history`] for an answer counted from the viewport whose first row was the
+    /// absolute line `top` (`Client::terminal_history_anchored`), which is not necessarily the
+    /// viewport this model holds: a program that keeps drawing moves it between the daemon's
+    /// answer and the frames that tell the client. The rows go to the lines they are; those the
+    /// model has not reached yet (newer than its viewport) or no longer retains are dropped.
+    pub fn apply_history_at(&mut self, top: Option<u64>, from_line: u32, rows: Vec<Row>) {
+        let top = top.unwrap_or(self.history_total);
         for (offset, row) in rows.into_iter().enumerate() {
-            let Some(line) = u64::from(from_line).checked_add(offset as u64) else {
+            let Some(depth) = u64::from(from_line).checked_add(offset as u64) else {
                 break;
             };
-            if line >= self.history_total || line >= u64::from(self.history_len) {
+            let Some(line) = top.checked_sub(depth.saturating_add(1)) else {
+                break;
+            };
+            if line >= self.history_total {
+                continue;
+            }
+            if self.history_total - line > u64::from(self.history_len) {
                 break;
             }
-            self.history.insert(self.history_total - 1 - line, row);
+            self.history.insert(line, row);
         }
     }
 
@@ -797,6 +815,42 @@ mod tests {
         m.apply_snapshot(snapshot(1, 10, &["a"], 0));
         let applied = m.apply_frame(frame(2, &[(5, "x")], 0)).unwrap();
         assert!(applied.dirty.is_empty());
+    }
+
+    #[test]
+    fn a_page_counted_from_another_viewport_lands_on_its_own_lines() {
+        let mut m = TerminalModel::new();
+        // The model has applied a viewport whose first row is line 6 (six lines above it).
+        m.apply_snapshot(snapshot(1, 10, &["v0", "v1"], 6));
+        // The daemon answered when its viewport had moved on to line 8: from_line 0 was line 7.
+        // Lines 6 and 7 are not in the model's history yet and are left for the frame that
+        // brings them; line 5 and below are numbered by the daemon's viewport.
+        m.apply_history_at(Some(8), 0, vec![row("h7"), row("h6"), row("h5"), row("h4")]);
+        assert_eq!(
+            m.row_at(5).map(TerminalModel::row_text).as_deref(),
+            Some("h5")
+        );
+        assert_eq!(
+            m.row_at(4).map(TerminalModel::row_text).as_deref(),
+            Some("h4")
+        );
+        assert!(
+            !m.has_history(2),
+            "line 3 is still missing: {:?}",
+            m.row_at(3)
+        );
+        // Without an anchor the page counts from the model's own viewport, as before.
+        m.apply_history_at(None, 2, vec![row("g3"), row("g2")]);
+        assert_eq!(
+            m.row_at(3).map(TerminalModel::row_text).as_deref(),
+            Some("g3")
+        );
+        // A page older than what the daemon retains is dropped at the first such line.
+        m.apply_history_at(Some(6), 4, vec![row("x1"), row("x0"), row("old")]);
+        assert_eq!(
+            m.row_at(1).map(TerminalModel::row_text).as_deref(),
+            Some("x1")
+        );
     }
 
     #[test]

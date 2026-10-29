@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, AnyView, AppContext as _, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, AnyView, AppContext as _, Hsla, InteractiveElement, IntoElement, ParentElement,
     SharedString, StatefulInteractiveElement, Styled, div, px,
 };
 use hutan_client::ConnectionState;
@@ -594,18 +594,29 @@ pub fn builtin_status_items() -> StatusItemRegistry {
     registry
 }
 
-/// One ring of `usage.meters`: the harness's glyph inside an arc of the share used (calm: the
-/// bar's `muted`; amber and red from 80 % and 95 %, and then the number beside it, so a colour is
-/// never all there is), and the harness's card as its hover.
-fn usage_meter(index: usize, meter: &MeterView, ctx: &StatusContext<'_>) -> AnyElement {
-    const SIZE: f32 = 18.0;
-    const STROKE: f32 = 2.0;
-    let theme = ctx.theme;
-    let color = match meter.severity {
-        Severity::Calm => theme.muted,
+/// The size of a usage ring's box and the line it is drawn with: the circle inside the line is
+/// 16 px (FX-UI-B; it was 14, thin and grey).
+const RING_SIZE: f32 = 20.0;
+const RING_STROKE: f32 = 2.0;
+
+/// The colours of a usage ring: its track (the whole circle) and its arc (the share used).
+/// Calm is `fg`, not `muted`, so the arc reads against the bar (a graphical object wants 3:1);
+/// amber and red from 80 % and 95 %, and then the number beside it, so a colour is never all
+/// there is.
+pub(crate) fn ring_colors(theme: &crate::theme::Theme, severity: Severity) -> (Hsla, Hsla) {
+    let arc = match severity {
+        Severity::Calm => theme.fg.opacity(0.9),
         Severity::Warning => theme.warning,
         Severity::Critical => theme.danger,
     };
+    (theme.muted.opacity(0.4), arc)
+}
+
+/// One ring of `usage.meters`: the harness's glyph inside an arc of the share used, and the
+/// harness's card as its hover.
+fn usage_meter(index: usize, meter: &MeterView, ctx: &StatusContext<'_>) -> AnyElement {
+    let theme = ctx.theme;
+    let (track, color) = ring_colors(theme, meter.severity);
     let card = meter.card.clone();
     div()
         .id(("status-usage-meter", index))
@@ -618,8 +629,8 @@ fn usage_meter(index: usize, meter: &MeterView, ctx: &StatusContext<'_>) -> AnyE
             div()
                 .relative()
                 .flex_none()
-                .size(px(SIZE))
-                .child(ring(SIZE, STROKE, meter.fraction, theme.border, color))
+                .size(px(RING_SIZE))
+                .child(ring(RING_SIZE, RING_STROKE, meter.fraction, track, color))
                 .child(
                     div()
                         .absolute()
@@ -810,6 +821,33 @@ fn render_diagnostics_item(item: DiagnosticsItem, ctx: &StatusContext<'_>) -> An
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_calm_usage_ring_reads_against_the_bar_in_both_built_in_themes() {
+        use crate::theme::Theme;
+        use crate::workbench::ui::lane::contrast;
+        use gpui::Rgba;
+        // The colour as it lands on the bar: alpha composited over it.
+        let flat = |color: Hsla, bar: Hsla| -> Hsla {
+            let (c, b) = (Rgba::from(color), Rgba::from(bar));
+            let mix = |top: f32, below: f32| below + (top - below) * c.a;
+            Rgba {
+                r: mix(c.r, b.r),
+                g: mix(c.g, b.g),
+                b: mix(c.b, b.b),
+                a: 1.0,
+            }
+            .into()
+        };
+        assert!((RING_SIZE - 2.0 * RING_STROKE - 16.0).abs() < f32::EPSILON);
+        for theme in [Theme::dark(), Theme::light()] {
+            let (track, arc) = ring_colors(&theme, Severity::Calm);
+            for bar in [theme.bg, theme.sidebar] {
+                assert!(contrast(flat(arc, bar), bar) >= 3.0, "the arc");
+                assert!(contrast(flat(track, bar), bar) >= 1.3, "the track");
+            }
+        }
+    }
 
     #[test]
     fn an_untrusted_servers_item_brings_the_trust_choice_back() {

@@ -114,9 +114,23 @@ impl SharedTerminal {
     /// Delivers a `terminal.history` answer: `from_line` 0 is the line directly above the
     /// viewport, `rows` are newest first.
     pub fn apply_history(&mut self, from_line: u32, rows: Vec<Row>, cx: &mut Context<Self>) {
+        self.apply_history_at(None, from_line, rows, cx);
+    }
+
+    /// [`Self::apply_history`] for a page counted from the viewport whose first row is the
+    /// absolute line `top` (see `TerminalModel::apply_history_at`).
+    pub fn apply_history_at(
+        &mut self,
+        top: Option<u64>,
+        from_line: u32,
+        rows: Vec<Row>,
+        cx: &mut Context<Self>,
+    ) {
         let empty = rows.is_empty();
         if !empty {
-            self.model.borrow_mut().apply_history(from_line, rows);
+            self.model
+                .borrow_mut()
+                .apply_history_at(top, from_line, rows);
         }
         cx.emit(SharedEvent::History { from_line, empty });
         cx.notify();
