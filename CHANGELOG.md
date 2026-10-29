@@ -4,6 +4,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+### Added
+- **Updates**: Hutan looks for a newer release on GitHub once a day (and on *Check for Updates…* in the Hutan menu, ⌘K, `hutan update check`) — one request, nothing else is sent; switch it off or pick the channel in Settings → General → Updates. A newer version shows as *Update to x.y.z* in the status bar with its release notes; *Update now* runs `brew upgrade` for a Homebrew install in a terminal you can watch, then *Relaunch*; *Skip this version* or *Later*. It never updates on its own, and agents can't update it.
+
 ## 0.3.2 — 2026-10-29
 
 ### Added
