@@ -130,7 +130,7 @@ impl Workbench {
         }
     }
 
-    /// `daemon::CopyUpdateCommand`: `brew upgrade --cask hutan`, on the clipboard.
+    /// `daemon::CopyUpdateCommand`: `brew update && brew upgrade --cask robertt3kuk/hutan/hutan`, on the clipboard.
     pub fn copy_update_command(&mut self, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(
             hutan_client::start_failure::UPDATE_COMMAND.to_owned(),

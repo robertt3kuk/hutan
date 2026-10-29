@@ -105,7 +105,7 @@ fn newer_data_shows_the_reason_and_start_with_empty_data_moves_it_and_connects(
         sentence,
         format!(
             "Your Hutan data was written by a newer Hutan (database version 999; this build \
-             reads up to {supported}). Update Hutan: `brew upgrade --cask hutan`."
+             reads up to {supported}). Update Hutan: `brew update && brew upgrade --cask robertt3kuk/hutan/hutan`."
         )
     );
     // The line under the title bar, with the update command and the way out.

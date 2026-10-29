@@ -55,6 +55,7 @@ mod tasks;
 mod terminal;
 mod theme;
 mod ui;
+mod update;
 mod usage;
 mod workspaces;
 mod worktrees;
@@ -127,6 +128,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Checkpoint(command) => ctx?.checkpoint(command).await,
         Command::Account(command) => ctx?.account(command).await,
         Command::Usage(args) => ctx?.usage(args).await,
+        Command::Update(command) => ctx?.update(command).await,
         Command::Provider(command) => ctx?.provider(command).await,
         Command::Config(command) => ctx?.config(command).await,
         Command::Ask(args) => ctx?.ask(args).await,

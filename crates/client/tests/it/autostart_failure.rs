@@ -105,7 +105,7 @@ async fn a_newer_database_fails_the_autostart_with_the_record_until_the_data_is_
         failure.sentence(),
         format!(
             "Your Hutan data was written by a newer Hutan (database version 999; this build \
-             reads up to {supported}). Update Hutan: `brew upgrade --cask hutan`."
+             reads up to {supported}). Update Hutan: `brew update && brew upgrade --cask robertt3kuk/hutan/hutan`."
         )
     );
     // What the daemon printed was kept, in the home's log directory.

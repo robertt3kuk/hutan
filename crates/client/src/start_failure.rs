@@ -36,7 +36,7 @@ const TAIL_BYTES: u64 = 64 * 1024;
 /// Lines of a log's end shown with a failure.
 pub const TAIL_LINES: usize = 20;
 /// The command that updates a Homebrew install.
-pub const UPDATE_COMMAND: &str = "brew upgrade --cask hutan";
+pub const UPDATE_COMMAND: &str = hutan_protocol::update::CASK_COMMAND;
 
 /// `hutand-start-error.json`: what the last failed start of the daemon recorded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(
             newer.sentence(),
             "Your Hutan data was written by a newer Hutan (database version 13; this build \
-             reads up to 12). Update Hutan: `brew upgrade --cask hutan`."
+             reads up to 12). Update Hutan: `brew update && brew upgrade --cask robertt3kuk/hutan/hutan`."
         );
         let held = failure(
             Some(record(StartErrorKind::AlreadyRunning {

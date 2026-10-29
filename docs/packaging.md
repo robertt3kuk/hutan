@@ -276,8 +276,8 @@ prints the record and the ends of both logs.
 
 - **Data from a newer Hutan (downgrades).** Migrations only go forward: a database written by
   a newer Hutan is refused, never rewritten ("Your Hutan data was written by a newer Hutan
-  (database version 13; this build reads up to 12). Update Hutan: `brew upgrade --cask
-  hutan`."). Updating is the fix. If the newer version is gone for good, *Start with Empty
+  (database version 13; this build reads up to 12). Update Hutan: `brew update && brew
+  upgrade --cask robertt3kuk/hutan/hutan`."). Updating is the fix. If the newer version is gone for good, *Start with Empty
   Data…* (app) or `hutan daemon reset-data --yes` (CLI) moves `hutan.db` and its `-wal`/`-shm`
   into `backups/hutan-<ms>-v<found>-newer.db` next to it and starts with empty data: no
   workspaces, sessions or chats. Nothing is deleted, pruning of the migration backups never

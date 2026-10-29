@@ -109,6 +109,10 @@ pub enum Command {
     /// How much each harness reports used and left of its limits (5-hour, weekly), and the
     /// tokens and cost of the turns Hutan ran today and this week
     Usage(UsageArgs),
+    /// Updates: whether a newer Hutan exists and update it the way it was installed
+    /// (`hutan update status|check|install`)
+    #[command(subcommand)]
+    Update(UpdateCommand),
     /// Model providers for direct chat: OpenAI, Anthropic, Ollama, OpenAI-compatible servers
     #[command(subcommand)]
     Provider(ProviderCommand),
@@ -890,6 +894,27 @@ pub struct ChatModelsArgs {
     /// Whose models: codex (default), omp or claude
     #[arg(long, default_value = "codex", value_parser = ["codex", "omp", "claude"])]
     pub agent: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum UpdateCommand {
+    /// The running version, how Hutan was installed, and the newer release the daemon knows of
+    /// (contacts nothing)
+    Status,
+    /// Ask GitHub's releases now, whatever `updates.check` says, and print the status; the one
+    /// request carries only a `User-Agent: Hutan/<version>` header
+    Check,
+    /// Update Hutan the way it was installed: the daemon runs Homebrew in a visible terminal
+    /// session (`hutan attach` it to watch). Running sessions are not touched; after the update
+    /// the app relaunches, and an idle daemon moves onto the new build by itself
+    Install(UpdateInstallArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct UpdateInstallArgs {
+    /// Wait for Homebrew to finish and exit with its status (0 only when it succeeded)
+    #[arg(long)]
+    pub wait: bool,
 }
 
 #[derive(Debug, Args)]

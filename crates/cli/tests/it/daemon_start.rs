@@ -33,7 +33,7 @@ async fn a_newer_database_is_explained_and_reset_data_recovers() {
     };
     let sentence = format!(
         "Your Hutan data was written by a newer Hutan (database version 999; this build reads \
-         up to {supported}). Update Hutan: `brew upgrade --cask hutan`."
+         up to {supported}). Update Hutan: `brew update && brew upgrade --cask robertt3kuk/hutan/hutan`."
     );
 
     let start = run(&["daemon", "start"]).await;

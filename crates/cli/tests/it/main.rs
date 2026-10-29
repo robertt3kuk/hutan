@@ -35,6 +35,7 @@ mod staging;
 mod tasks;
 mod terminal_search;
 mod theme;
+mod update;
 mod workspaces;
 mod worktree_review;
 mod worktrees;
