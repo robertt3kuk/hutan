@@ -365,17 +365,17 @@ fn measure_context_sends_slash_context_and_draws_the_breakdown(cx: &mut TestAppC
     assert!(bounds(&view, cx, Region::ChatFork(measured_footer)).is_none());
     assert!(bounds(&view, cx, Region::ChatRewind(measured_footer)).is_none());
     assert!(bounds(&view, cx, Region::ChatCheckpoint(measured_footer)).is_none());
-    // "The latest turn" of the window skips the measurement: the sidebar's ⑂ forks at turn 2 and
-    // names it so, not at the hidden `/context` turn 3.
-    cx.dispatch_action(actions::ForkSessionLatest(actions::SessionMenuAt {
-        session: chat.id.to_string(),
-        position: gpui::point(gpui::px(300.0), gpui::px(200.0)),
-    }));
-    wait_until(cx, "the fork popover", |cx| {
-        view.read_with(cx, |wb, _| wb.fork_popover_session()) == Some(chat.id)
+    // "The latest turn" of the window — what the sidebar's ⑂, the popover's default and ⌘K read
+    // — skips the measurement: turn 2 of 2, not the hidden `/context` turn.
+    let ended = view.read_with(cx, |wb, cx| {
+        let model = wb.chat_model_of(chat.id).unwrap();
+        let model = model.read(cx);
+        hutan_desktop::workbench::chat::ended_turns(model.transcript(), !model.has_earlier())
     });
-    let said = view.read_with(cx, |wb, cx| wb.fork_popover_lines(cx));
-    assert_eq!(said[0], "title: Fork from turn 2", "{said:#?}");
+    assert_eq!(ended.len(), 2, "{ended:?}");
+    assert_eq!(ended.last().map(|e| e.ordinal), Some(Some(2)));
+    assert_eq!(ended.last().map(|e| e.newest), Some(true));
+    assert!(ended.iter().all(|e| e.footer < measured_footer));
 }
 
 // ---- Claude Code ------------------------------------------------------------------------------
