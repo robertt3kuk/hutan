@@ -449,38 +449,51 @@ async fn last_user_message(connection: &Connection, session: SessionId) -> Resul
     Err("There is no message of yours in this chat to send again".to_owned())
 }
 
-/// The first line of the newest assistant reply in the chat's journal (what a card says about a
-/// turn nobody has read yet); `None` while the journal has none.
-async fn last_reply_line(connection: &Connection, session: SessionId) -> Option<String> {
+/// What the journal says about the turn of a chat that ended unread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EndedTurn {
+    /// The first line of its reply.
+    Reply(String),
+    /// A measurement (`/context`, `hutan_core::insight::is_measure_message`): no turn of the
+    /// conversation, so nothing to read.
+    Measurement,
+}
+
+/// The newest turn of the chat's journal as a card tells it: the first line of the newest
+/// assistant reply (what a card says about a turn nobody has read yet), or that the turn was a
+/// measurement; `None` while the journal has neither.
+async fn last_ended_turn(connection: &Connection, session: SessionId) -> Option<EndedTurn> {
     use hutan_core::AgentEventKind;
     use hutan_core::agent::MessageRole;
     let mut before = None;
+    let mut reply = None;
     for _ in 0..3 {
         let page = connection
             .chat_history(session, before, hutan_protocol::chat::HISTORY_DEFAULT_LIMIT)
             .await
             .ok()?;
-        let found = page
-            .events
-            .iter()
-            .rev()
-            .find_map(|event| match &event.kind {
-                AgentEventKind::MessageEnd {
-                    role: MessageRole::Assistant,
-                    text,
-                    ..
-                } => super::card::first_line(text),
-                _ => None,
-            });
-        if found.is_some() {
-            return found;
+        for event in page.events.iter().rev() {
+            let AgentEventKind::MessageEnd { role, text, .. } = &event.kind else {
+                continue;
+            };
+            match role {
+                MessageRole::Assistant if reply.is_none() => {
+                    reply = super::card::first_line(text);
+                }
+                // The turn that ended began with this message.
+                MessageRole::User if hutan_core::insight::is_measure_message(*role, text) => {
+                    return Some(EndedTurn::Measurement);
+                }
+                MessageRole::User if reply.is_some() => return reply.map(EndedTurn::Reply),
+                _ => {}
+            }
         }
         match page.events.first() {
             Some(first) if page.has_more => before = Some(first.seq),
-            _ => return None,
+            _ => break,
         }
     }
-    None
+    reply.map(EndedTurn::Reply)
 }
 
 fn unix_ms() -> u64 {
@@ -974,7 +987,9 @@ impl SessionsStore {
     }
 
     /// Reads the first line of the reply of every chat with a turn nobody has read yet, once,
-    /// for its card's news line; forgets the lines of the turns that were read.
+    /// for its card's news line; forgets the lines of the turns that were read. A turn that was
+    /// a measurement (*Measure context*, `hutan agent measure-context`) is not a turn anywhere:
+    /// its mark goes and it has no line.
     fn observe_replies(&mut self, cx: &mut Context<Self>) {
         let unread = self.attention.unread_map();
         self.replies
@@ -991,14 +1006,23 @@ impl SessionsStore {
         for id in wanted {
             self.replies.insert(id, None);
             let connection = self.connection.clone();
-            let read = cx.background_spawn(async move { last_reply_line(&connection, id).await });
+            let read = cx.background_spawn(async move { last_ended_turn(&connection, id).await });
             cx.spawn(async move |this, cx| {
-                let line = read.await;
-                this.update(cx, |store, cx| {
-                    if let (Some(slot), Some(line)) = (store.replies.get_mut(&id), line) {
-                        *slot = Some(line);
-                        store.changed(StoreChanged::ATTENTION, cx);
+                let turn = read.await;
+                this.update(cx, |store, cx| match turn {
+                    Some(EndedTurn::Reply(line)) => {
+                        if let Some(slot) = store.replies.get_mut(&id) {
+                            *slot = Some(line);
+                            store.changed(StoreChanged::ATTENTION, cx);
+                        }
                     }
+                    Some(EndedTurn::Measurement) => {
+                        store.replies.remove(&id);
+                        if store.attention.dismiss_turn(id) {
+                            store.changed(StoreChanged::ATTENTION, cx);
+                        }
+                    }
+                    None => {}
                 })
                 .ok();
             })

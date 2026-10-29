@@ -548,6 +548,16 @@ impl AttentionTracker {
         }
     }
 
+    /// The turn that ended was no turn (a measurement): the unseen mark it left goes, and only
+    /// that mark. Whether anything changed.
+    pub fn dismiss_turn(&mut self, session: SessionId) -> bool {
+        if self.unread.get(&session) == Some(&Unread::Turn) {
+            self.unread.remove(&session);
+            return true;
+        }
+        false
+    }
+
     /// *Mark as read*: whatever is flagged about `session`, a failure too, is dismissed.
     pub fn mark_read(&mut self, session: SessionId) -> bool {
         self.unread.remove(&session).is_some()

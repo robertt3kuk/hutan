@@ -350,6 +350,104 @@ fn an_unread_reply_is_the_first_line_of_the_card_until_the_chat_is_looked_at(
     assert_eq!(height(&view, cx, chat.id), one_line);
 }
 
+/// FX-UI-A 1: `/context` is a turn for the harness and none for the user (`hutan_core::insight::
+/// is_measure_message`): when it ends nobody has to look at it — no unseen mark, no tab check, no
+/// news line — and the next real turn is news as before.
+#[gpui::test]
+fn a_measurement_never_leaves_a_chat_unread_but_the_next_turn_does(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let gates = [env.work.path().join("go1"), env.work.path().join("go2")];
+    let transcript = held_turns(env.work.path(), &gates);
+    // The fake agent echoes the message it was recorded with: the first turn is the measurement.
+    let first_turn_ends = std::fs::read_to_string(&transcript)
+        .unwrap()
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains("\"dir\":\"hold\""))
+        .nth(1)
+        .map(|(n, _)| n)
+        .unwrap();
+    let edited: Vec<String> = std::fs::read_to_string(&transcript)
+        .unwrap()
+        .lines()
+        .enumerate()
+        .map(|(n, line)| {
+            if n < first_turn_ends {
+                line.replace(
+                    "Reply with the single word pong and nothing else.",
+                    hutan_core::insight::MEASURE_COMMAND,
+                )
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    std::fs::write(&transcript, edited.join("\n") + "\n").unwrap();
+    let daemon = TestDaemon::start_with_codex(env.replay(&transcript));
+    let chat = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    let sidebar = panel(&view, cx);
+    wait_until(cx, "the chat's row", |cx| {
+        rows(&sidebar, cx)
+            .iter()
+            .any(|r| r.kind == RowKind::Session)
+    });
+    let title = rows(&sidebar, cx)
+        .into_iter()
+        .find(|r| r.kind == RowKind::Session)
+        .unwrap()
+        .title;
+    let send = |text: &str| {
+        let _: hutan_protocol::chat::ChatSent =
+            daemon.call(Request::ChatSend(hutan_protocol::chat::ChatSend {
+                session_id: chat.id,
+                text: text.to_owned(),
+                attachments: Vec::new(),
+            }));
+    };
+    let turn_active = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .session(chat.id)
+                .and_then(|s| s.chat.as_ref())
+                .is_some_and(|c| c.turn_active)
+        })
+    };
+
+    send(hutan_core::insight::MEASURE_COMMAND);
+    wait_until(cx, "the measurement to run", |cx| turn_active(cx));
+    std::fs::write(&gates[0], "").unwrap();
+    wait_until(cx, "the measurement to end", |cx| !turn_active(cx));
+    wait_until(cx, "no mark for the measurement", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).unread(chat.id))
+            .is_none()
+    });
+    settle(cx);
+    let card = row(&sidebar, cx, &title);
+    assert_eq!(card.lane, BadgeState::Idle, "no done badge");
+    assert!(card.news.is_none(), "no news line");
+    assert!(
+        view.read_with(cx, |wb, cx| wb
+            .sessions()
+            .read(cx)
+            .reply_line(chat.id)
+            .is_none()),
+        "no reply line kept"
+    );
+
+    send("Reply with the single word pong and nothing else.");
+    wait_until(cx, "the turn to run", |cx| turn_active(cx));
+    std::fs::write(&gates[1], "").unwrap();
+    wait_until(cx, "the reply on the card", |cx| {
+        let card = row(&sidebar, cx, &title);
+        card.lane == BadgeState::DoneUnread
+            && card
+                .news
+                .is_some_and(|n| n.kind == NewsKind::Reply && n.text == "pong")
+    });
+}
+
 // ---- diffstat -------------------------------------------------------------------------------
 
 fn git(dir: &Path, args: &[&str]) {
