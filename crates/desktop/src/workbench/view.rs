@@ -452,6 +452,8 @@ pub enum Region {
     /// The changed-files badge of a project row of the sidebar (a project the window is not
     /// working in).
     ProjectChanged(hutan_core::WorkspaceId),
+    /// The session count of a collapsed project row (`5/7`: five of seven sessions run).
+    ProjectCount(hutan_core::WorkspaceId),
     /// The fold chevron of group `index` of the Changes tab.
     ChangesFold(usize),
     /// The *Finish…* button of group `index` of the Changes tab.

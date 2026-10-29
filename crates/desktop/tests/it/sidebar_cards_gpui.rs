@@ -663,6 +663,64 @@ fn a_shell_that_rings_gets_only_a_bell(cx: &mut TestAppContext) {
     });
 }
 
+/// FX-UI-A 6: the project row is calm — the uncommitted files are one counter with the Changes
+/// glyph (explained by its tooltip), and the session count (`5/7`, explained too) appears only
+/// while the project is collapsed: open, its rows are the sessions.
+#[gpui::test]
+fn a_project_row_counts_what_is_uncommitted_and_its_sessions_only_while_collapsed(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let keep = tempfile::tempdir().unwrap();
+    let root = TestDaemon::dirty_repo(keep.path());
+    let worker = session_in(&daemon, "worker", &root);
+    let (view, cx) = open(cx, &daemon);
+    let sidebar = panel(&view, cx);
+    let project = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .workspaces()
+                .iter()
+                .find(|w| w.roots.contains(&root))
+                .map(|w| w.id)
+        })
+    };
+    wait_until(cx, "the project", |cx| project(cx).is_some());
+    let id = project(cx).unwrap();
+    wait_until(cx, "the uncommitted counter", |cx| {
+        drawn(&view, cx, Region::ProjectChanged(id))
+    });
+    let collapsed = |cx: &mut VisualTestContext| {
+        rows(&sidebar, cx)
+            .into_iter()
+            .find(|r| r.kind == RowKind::Project && r.title == "repo")
+            .map(|r| r.collapsed)
+    };
+    wait_until(cx, "the project row", |cx| collapsed(cx).is_some());
+
+    // Collapsed: the counter says how many sessions it holds.
+    if collapsed(cx) == Some(false) {
+        sidebar.update(cx, |p, cx| p.toggle_container(id, cx));
+    }
+    wait_until(cx, "the row to fold", |cx| collapsed(cx) == Some(true));
+    wait_until(cx, "the session count", |cx| {
+        drawn(&view, cx, Region::ProjectCount(id))
+    });
+    assert!(drawn(&view, cx, Region::ProjectChanged(id)));
+
+    // Open: the sessions are its rows; the count goes, the uncommitted files stay.
+    sidebar.update(cx, |p, cx| p.toggle_container(id, cx));
+    wait_until(cx, "the row to open", |cx| collapsed(cx) == Some(false));
+    wait_until(cx, "the session's row", |cx| {
+        rows(&sidebar, cx)
+            .iter()
+            .any(|r| r.kind == RowKind::Session && r.title == worker.title)
+    });
+    assert!(!drawn(&view, cx, Region::ProjectCount(id)));
+    assert!(drawn(&view, cx, Region::ProjectChanged(id)));
+}
+
 // ---- diffstat -------------------------------------------------------------------------------
 
 fn git(dir: &Path, args: &[&str]) {

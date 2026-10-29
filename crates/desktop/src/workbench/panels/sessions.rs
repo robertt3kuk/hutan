@@ -1461,6 +1461,21 @@ fn count_text(info: &WorkspaceInfo) -> Option<String> {
     }
 }
 
+/// What a row's session count says in words (its tooltip): `7 sessions`, `5 of 7 sessions
+/// running`.
+fn count_tooltip(info: &WorkspaceInfo) -> String {
+    count_words(info.live_sessions, info.total_sessions)
+}
+
+fn count_words(live: u32, total: u32) -> String {
+    let noun = if total == 1 { "session" } else { "sessions" };
+    if live == total {
+        format!("{total} {noun}")
+    } else {
+        format!("{live} of {total} {noun} running")
+    }
+}
+
 impl Focusable for SessionsPanel {
     fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
         self.search_focus.clone()
@@ -2033,9 +2048,11 @@ impl SessionsPanel {
                         .child(row.working.to_string()),
                 )
             })
+            // The uncommitted files: the Changes glyph (git's diff), never the ring that says an
+            // agent works, and the number says what it counts when the pointer rests on it.
             .when(row.changed > 0, |s| {
                 let tip = SharedString::from(format!(
-                    "{} changed file{} in this project",
+                    "{} uncommitted file{} in this project",
                     row.changed,
                     if row.changed == 1 { "" } else { "s" }
                 ));
@@ -2043,12 +2060,12 @@ impl SessionsPanel {
                     div()
                         .id(SharedString::from(format!("workspace-changed-{id_text}")))
                         .flex_none()
-                        .text_color(theme.accent)
+                        .text_color(theme.muted)
                         .flex()
                         .items_center()
                         .gap(px(2.0))
                         .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
-                        .child(crate::icons::glyph(Icon::VcsDirty))
+                        .child(crate::icons::glyph(Icon::PanelChanges))
                         .child(row.changed.to_string())
                         .child(probe(&self.env.regions, Region::ProjectChanged(id))),
                 )
@@ -2060,7 +2077,18 @@ impl SessionsPanel {
             .children(row.shared.as_ref().map(|chip| {
                 shared_checkout_chip(&theme, &chip.badge, &chip.root, &self.env.regions)
             }))
-            .children(count_text(info).map(|count| ui::counter(count, &theme, &tokens)))
+            // How many sessions the project holds says something only while its rows are hidden;
+            // open, they are the rows. `5/7` is "5 of its 7 sessions run" (the tooltip says so).
+            .children(collapsed.then(|| count_text(info)).flatten().map(|count| {
+                let tip = SharedString::from(count_tooltip(info));
+                div()
+                    .id(SharedString::from(format!("workspace-count-{id_text}")))
+                    .relative()
+                    .flex_none()
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
+                    .child(ui::counter(count, &theme, &tokens))
+                    .child(probe(&self.env.regions, Region::ProjectCount(id)))
+            }))
             .when(
                 matches!(kind, WorkspaceKind::Project | WorkspaceKind::Home),
                 |s| {
@@ -2666,5 +2694,17 @@ impl SessionsPanel {
             )
             .child(probe(&self.env.regions, Region::SessionNote(info.id)))
             .into_any_element()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::count_words;
+
+    #[test]
+    fn the_count_of_a_project_row_is_explained_in_words() {
+        assert_eq!(count_words(1, 1), "1 session");
+        assert_eq!(count_words(7, 7), "7 sessions");
+        assert_eq!(count_words(5, 7), "5 of 7 sessions running");
+        assert_eq!(count_words(0, 2), "0 of 2 sessions running");
     }
 }
