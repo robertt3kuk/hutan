@@ -413,6 +413,32 @@ fn check_for_updates_says_when_there_is_nothing_newer(cx: &mut TestAppContext) {
     assert_eq!(item_text(&view, cx), None);
 }
 
+#[gpui::test]
+fn check_for_updates_says_a_release_was_just_published_while_its_archive_is_not_there_yet(
+    cx: &mut TestAppContext,
+) {
+    let releases = Releases::serving(&["v0.3.2"]);
+    // Listed by the API, `Not Found` at the download URL: what GitHub does for a while.
+    releases.server.set_route(
+        "HEAD",
+        "/robertt3kuk/hutan/releases/download/v0.3.2/Hutan-0.3.2-arm64.zip",
+        Reply::fixed(404, "text/plain", "Not Found"),
+    );
+    let cask = Cask::new(0);
+    let daemon = daemon(&releases, &cask, "[updates]\ncheck = \"off\"\n");
+    let (view, cx) = open(cx, &daemon, Arc::default());
+    cx.dispatch_action(actions::CheckForUpdates);
+    wait_until(cx, "the answer", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.notice().is_some_and(|n| {
+                n.as_ref() == "Hutan 0.3.2 was just published; it can be installed in a minute"
+            })
+        })
+    });
+    assert!(!sheet_open(&view, cx), "nothing to install yet");
+    assert_eq!(item_text(&view, cx), None, "and no status item");
+}
+
 // ---- the settings -----------------------------------------------------------------------------
 
 #[gpui::test]

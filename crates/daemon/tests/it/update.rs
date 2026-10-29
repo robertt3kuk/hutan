@@ -393,11 +393,20 @@ async fn a_release_is_not_offered_until_its_archive_answers_a_head_with_2xx() {
         CheckOutcome::Checked,
         "quiet: no failure to show"
     );
-    assert_eq!(last.message, None);
+    assert_eq!(
+        last.message.as_deref(),
+        Some("Hutan 0.3.2 was just published; it can be installed in a minute"),
+        "what a manual check says instead of \"up to date\""
+    );
     assert_eq!(count(&server, "HEAD"), 1);
     assert!(events.try_recv().is_err(), "nothing was announced");
 
     let later = client.update_check().await.unwrap();
+    assert_eq!(
+        later.last_check.unwrap().message,
+        None,
+        "the words go with the wait"
+    );
     assert_eq!(later.available.unwrap().version, "0.3.2");
     assert_eq!(count(&server, "HEAD"), 2);
     let announced = wait_event(&mut events, "update.available", |event| match event {

@@ -163,6 +163,22 @@ async fn check_finds_the_newer_release_and_says_how_to_get_it() {
     serve(&server, &["v0.3.1"]);
     let text = t.hutan(&["update", "check"]).await.ok().stdout;
     assert!(text.contains("up to date"), "{text}");
+    // Listed, but its archive is not served yet: not "up to date" (and exit 0).
+    serve(&server, &["v0.3.3"]);
+    server.set_route(
+        "HEAD",
+        "/robertt3kuk/hutan/releases/download/v0.3.3/Hutan-0.3.3-arm64.zip",
+        Reply::fixed(404, "text/plain", "Not Found"),
+    );
+    let text = t.hutan(&["update", "check"]).await.ok().stdout;
+    assert!(
+        text.contains("Hutan 0.3.3 was just published; it can be installed in a minute"),
+        "{text}"
+    );
+    assert!(!text.contains("up to date"), "{text}");
+    assert!(!text.contains("update available"), "{text}");
+    let text = t.hutan(&["update", "status"]).await.ok().stdout;
+    assert!(text.contains("was just published"), "{text}");
     server.set_route("GET", RELEASES, Reply::json(500, "{}"));
     let text = t.hutan(&["update", "check"]).await.ok().stdout;
     assert!(

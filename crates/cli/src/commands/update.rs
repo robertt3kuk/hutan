@@ -303,7 +303,16 @@ fn status_text(status: &UpdateStatus, now_ms: u64) -> String {
         None if status.last_check.is_none() => {
             lines.push("no check yet (`hutan update check` asks now)".to_owned());
         }
-        None => lines.push("up to date as far as the last check knows".to_owned()),
+        // A newer release that is listed but not downloadable yet: not "up to date".
+        None => match status
+            .last_check
+            .as_ref()
+            .filter(|check| check.outcome == CheckOutcome::Checked)
+            .and_then(|check| check.message.as_deref())
+        {
+            Some(message) => lines.push(message.to_owned()),
+            None => lines.push("up to date as far as the last check knows".to_owned()),
+        },
     }
     if let Some(install) = &status.install {
         lines.push(format!("install: {}", install_text(install)));

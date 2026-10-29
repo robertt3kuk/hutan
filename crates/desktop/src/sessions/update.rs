@@ -496,6 +496,8 @@ pub fn check_note(status: &UpdateStatus) -> Option<String> {
             "Could not check for updates: {}",
             check.message.as_deref().unwrap_or("no answer")
         )),
+        // Published, not downloadable yet: said instead of "up to date" (the daemon's words).
+        Some(check) if check.message.is_some() => check.message.clone(),
         _ => Some(format!("Hutan {} is up to date", status.version)),
     }
 }
@@ -819,6 +821,16 @@ mod tests {
         assert_eq!(
             check_note(&s).unwrap(),
             "Could not check for updates: GitHub could not be reached"
+        );
+        // A newer release that is not downloadable yet is neither "up to date" nor a failure.
+        s.last_check = Some(UpdateCheckInfo {
+            at_ms: 1,
+            outcome: CheckOutcome::Checked,
+            message: Some("Hutan 0.3.2 was just published; it can be installed in a minute".into()),
+        });
+        assert_eq!(
+            check_note(&s).unwrap(),
+            "Hutan 0.3.2 was just published; it can be installed in a minute"
         );
         assert!(checks_automatically(&s));
         s.check = UpdateCheck::Off;

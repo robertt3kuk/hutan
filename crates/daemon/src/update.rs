@@ -462,7 +462,9 @@ impl UpdateService {
                     state.last_check = Some(UpdateCheckInfo {
                         at_ms,
                         outcome: CheckOutcome::Checked,
-                        message: None,
+                        // Not a failure: what a check the user asked for says instead of "up
+                        // to date" while a newer release is not downloadable yet.
+                        message: waiting.as_ref().map(|version| just_published(version)),
                     });
                     state.last_ok_ms = Some(at_ms);
                     state.last_failed_ms = None;
@@ -708,6 +710,11 @@ impl UpdateService {
             _ => None,
         })
     }
+}
+
+/// What a check says about a release that is listed but whose archive is not served yet.
+fn just_published(version: &str) -> String {
+    format!("Hutan {version} was just published; it can be installed in a minute")
 }
 
 /// How long until the next automatic check: `None` when none will run, `Some(ZERO)` when one is
