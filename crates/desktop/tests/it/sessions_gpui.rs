@@ -217,7 +217,7 @@ fn the_sessions_panel_lists_groups_and_filters(cx: &mut TestAppContext) {
             "Open in Split Right",
             "Open in Split Down",
             "Mark as unread",
-            "Snooze until it changes (nothing waits for you here)",
+            "Snooze until it changes",
             "Mute notifications",
             "Rename…",
             "Restart",
@@ -227,6 +227,22 @@ fn the_sessions_panel_lists_groups_and_filters(cx: &mut TestAppContext) {
             "Open File…",
             "Copy Session ID"
         ]
+    );
+    // FX-UI-B: the groups of the menu are under a line, and a greyed entry says why in its
+    // tooltip, not in a sentence of its own.
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.context_menu_groups()),
+        ["Mark as unread", "Rename…", "Restart", "Show in Resources"]
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.context_menu_disabled()),
+        ["Snooze until it changes"]
+    );
+    let tips = view.read_with(cx, |wb, _| wb.context_menu_tips());
+    assert_eq!(
+        tips[4].as_deref(),
+        Some("Nothing waits for you here."),
+        "{tips:?}"
     );
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(1, window, cx));
     assert_eq!(state_of(&view, cx).panes().len(), 2, "open in split right");

@@ -825,7 +825,7 @@ mod tests {
     #[test]
     fn a_calm_usage_ring_reads_against_the_bar_in_both_built_in_themes() {
         use crate::theme::Theme;
-        use crate::workbench::ui::lane::contrast;
+        use crate::workbench::ui::contrast;
         use gpui::Rgba;
         // The colour as it lands on the bar: alpha composited over it.
         let flat = |color: Hsla, bar: Hsla| -> Hsla {

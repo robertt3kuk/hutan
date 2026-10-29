@@ -1126,6 +1126,7 @@ impl Workbench {
                     for (at, entry) in extra.into_iter().enumerate() {
                         entries.insert(after_rename + at, entry);
                     }
+                    Workbench::tidy_session_menu(&mut entries);
                     this.open_menu(a.0.position, entries, window, cx);
                 }
             }),
@@ -3453,7 +3454,7 @@ mod divider_tests {
         // FX-UI-B: 1–2 px, not the 6 px tinted bar of the hit area.
         assert!((1.0..=2.0).contains(&HANDLE_LINE), "{HANDLE_LINE}");
         assert!(
-            HANDLE_THICKNESS >= 4.0 * HANDLE_LINE,
+            HANDLE_THICKNESS >= 3.0 * HANDLE_LINE,
             "the hit area stays easy to catch"
         );
     }

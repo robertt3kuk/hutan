@@ -1032,6 +1032,46 @@ impl Workbench {
         ))
     }
 
+    /// The session menu as it is shown (FX-UI-B): groups under a line (open · the queue ·
+    /// this session's own things · stop or restart · the rest), and a greyed entry says why in
+    /// a few words, the rest of the reason in its tooltip. The entries are the menu's own
+    /// (`session_menu` and the folders and fork entries put into it); only their grouping and
+    /// the length of their labels are decided here.
+    pub(crate) fn tidy_session_menu(entries: &mut [MenuEntry]) {
+        /// A reason longer than this leaves the label for the tooltip.
+        const SHORT_REASON: usize = 14;
+        const GROUP_STARTS: [&str; 4] = ["Mark as", "Rename", "Restart", "Show in Resources"];
+        let mut grouped = 0;
+        for entry in entries.iter_mut() {
+            if grouped > 0
+                && GROUP_STARTS
+                    .iter()
+                    .any(|start| entry.label.starts_with(start))
+            {
+                entry.separator = true;
+            }
+            grouped += 1;
+            if !entry.disabled || entry.tip.is_some() {
+                continue;
+            }
+            let label = entry.label.to_string();
+            // `Snooze until it changes (nothing waits for you here)`, `Checkpoints: not
+            // available here`: the head stays, the reason is read on hover.
+            let split = label
+                .strip_suffix(')')
+                .and_then(|rest| rest.rsplit_once(" ("))
+                .or_else(|| label.split_once(": "));
+            if let Some((head, reason)) = split.filter(|(_, reason)| reason.len() > SHORT_REASON) {
+                let mut sentence = reason.to_owned();
+                if let Some(first) = sentence.get_mut(..1) {
+                    first.make_ascii_uppercase();
+                }
+                entry.tip = Some(format!("{sentence}.").into());
+                entry.label = head.to_owned().into();
+            }
+        }
+    }
+
     pub(crate) fn session_menu(&self, session: SessionId, cx: &gpui::App) -> Vec<MenuEntry> {
         let mut entries = vec![
             Self::entry("Open", move |this, window, cx| {
@@ -1951,6 +1991,7 @@ impl Workbench {
                 let close = entries.pop();
                 entries.append(&mut extra);
                 entries.extend(close);
+                Self::tidy_session_menu(&mut entries);
                 entries
             }
             None => self.tab_menu(pane, index),

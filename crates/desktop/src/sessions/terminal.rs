@@ -16,7 +16,7 @@ use hutan_client::{
 };
 use hutan_core::{Epoch, SessionId, TerminalId};
 use hutan_protocol::blocks::{Block, BlockPart};
-use hutan_protocol::messages::{Request, SessionInfo, TerminalColors, TerminalSize};
+use hutan_protocol::messages::{SessionInfo, TerminalColors, TerminalSize};
 use hutan_protocol::render::TerminalRender;
 use hutan_terminal_view::{
     DefaultColors, ImagePasteTarget, PasteAgent, SharedTerminal, TerminalBackend, ViewStatus,

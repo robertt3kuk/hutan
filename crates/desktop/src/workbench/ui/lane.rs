@@ -75,6 +75,7 @@ fn luminance(color: Hsla) -> f32 {
     0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn contrast(a: Hsla, b: Hsla) -> f32 {
     let (a, b) = (luminance(a), luminance(b));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)

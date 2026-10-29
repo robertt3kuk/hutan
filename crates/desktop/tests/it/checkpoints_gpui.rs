@@ -424,7 +424,16 @@ fn a_chat_outside_git_says_why_once_in_its_menu_and_nothing_per_turn(cx: &mut Te
         .filter(|label| label.starts_with("Checkpoints"))
         .collect();
     assert_eq!(said.len(), 1, "{entries:?}");
-    assert!(said[0].starts_with("Checkpoints: "), "{said:?}");
+    // The reason is in the label when it is short, else (FX-UI-B) in the tooltip.
+    let tips = view.read_with(cx, |wb, _| wb.context_menu_tips());
+    let at = entries
+        .iter()
+        .position(|(label, _)| label.as_ref() == said[0])
+        .unwrap();
+    assert!(
+        said[0].starts_with("Checkpoints: ") || (said[0] == "Checkpoints" && tips[at].is_some()),
+        "{said:?} {tips:?}"
+    );
     assert!(
         view.read_with(cx, |wb, _| wb.context_menu_disabled())
             .iter()

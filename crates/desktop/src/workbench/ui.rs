@@ -33,6 +33,8 @@ mod splitter;
 pub use button::{
     Button, ButtonKind, ButtonSize, IconButton, approval_button_kind, spinner, spinner_at,
 };
+#[cfg(test)]
+pub(crate) use lane::contrast;
 pub use lane::{BadgeState, row_lane, state_badge};
 pub use ring::ring;
 pub use splitter::{HANDLE as SPLITTER_HANDLE, SplitAxis, Splitter};
