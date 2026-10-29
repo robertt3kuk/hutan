@@ -6,6 +6,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ### Added
 - **Updates**: Hutan looks for a newer release on GitHub once a day (and on *Check for Updates…* in the Hutan menu, ⌘K, `hutan update check`) — one request, nothing else is sent; switch it off or pick the channel in Settings → General → Updates. A newer version shows as *Update to x.y.z* in the status bar with its release notes; *Update now* runs `brew upgrade` for a Homebrew install in a terminal you can watch, then *Relaunch*; *Skip this version* or *Later*. It never updates on its own, and agents can't update it.
+- Updating an app you copied into Applications yourself (not through Homebrew): *Update now* downloads the release, checks its SHA-256 against both GitHub and the Homebrew tap, its signature, bundle id and version, shows the progress, then *Quit and Install* puts the old app in the Trash, the new one in its place and opens it. Anything that doesn't match stops the update and leaves your app as it was; a folder Hutan can't write to gets the command to run instead.
 
 ## 0.3.2 — 2026-10-29
 
