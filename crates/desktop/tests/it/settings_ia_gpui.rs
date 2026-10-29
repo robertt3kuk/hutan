@@ -165,7 +165,7 @@ fn every_old_page_id_opens_its_page_scrolled_to_its_section(cx: &mut TestAppCont
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
     assert_eq!(
-        OLD_PAGES.iter().map(|(old, _, _)| *old).count(),
+        OLD_PAGES.len(),
         34,
         "the 34 pages of the sheet before the regrouping"
     );
