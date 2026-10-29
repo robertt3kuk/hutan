@@ -525,7 +525,7 @@ impl Workbench {
                         ),
                 )
                 .child(notes)
-                .child(notes_link)
+                .child(div().flex().child(notes_link))
                 .children(paragraphs)
                 .children(outcome)
                 .children(manual)
