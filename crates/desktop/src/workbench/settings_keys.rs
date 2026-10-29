@@ -13,9 +13,9 @@ use gpui::{
 };
 use hutan_protocol::daemon_settings::DaemonSettingKind;
 
-use super::settings_daemon::{MCP_KEYS, choice_text, choices_of, sections};
+use super::settings_daemon::{MCP_KEYS, choice_text, choices_of, daemon_entry_passes, sections};
 use super::settings_labels::{value_label, words};
-use super::settings_schema::FieldKind;
+use super::settings_schema::{FieldKind, PAGES};
 use super::ui::Button;
 use super::ui::FocusRingExt as _;
 use super::view::Workbench;
@@ -71,7 +71,8 @@ impl Workbench {
         })
     }
 
-    /// The rows of the page the keyboard can be on, in the order they are drawn.
+    /// The rows of the page the keyboard can be on, in the order they are drawn: those of each
+    /// of its sections in turn.
     pub fn sheet_focus_rows(&self, cx: &gpui::App) -> Vec<String> {
         let Some(sheet) = &self.sheet else {
             return Vec::new();
@@ -80,50 +81,91 @@ impl Workbench {
         if !sheet.query.trim().is_empty() && self.sheet_pages().is_empty() {
             return Vec::new();
         }
-        let page = sheet.namespace;
-        let fields: Vec<String> = sheet
-            .fields()
-            .iter()
-            .filter(|f| !matches!(self.sheet_kind_of(f), FieldKind::Unsupported(_)))
-            .map(|f| format!("{ROW_FIELD}{}", f.dotted()))
-            .collect();
-        let mut daemon: Vec<String> = Vec::new();
+        // The sections the sheet draws: those of the page, or the one of a panel's popover.
+        let drawn: Vec<&'static str> = if sheet.popover.is_some() {
+            vec![sheet.namespace]
+        } else {
+            PAGES
+                .iter()
+                .find(|p| p.id == sheet.page)
+                .map_or_else(Vec::new, |p| p.sections.to_vec())
+        };
+        drawn
+            .into_iter()
+            .flat_map(|section| self.section_focus_rows(section, cx))
+            .collect()
+    }
+
+    /// The first row the keyboard gets on entering the controls: the first of the section the
+    /// sheet is at (a deep link's section is where the page is scrolled to), else of the page.
+    fn first_focus_row(&self, rows: &[String], cx: &gpui::App) -> Option<String> {
+        let sheet = self.sheet.as_ref()?;
+        self.section_focus_rows(sheet.namespace, cx)
+            .into_iter()
+            .find(|row| rows.contains(row))
+            .or_else(|| rows.first().cloned())
+    }
+
+    /// The rows of one section the keyboard can be on, in the order they are drawn.
+    fn section_focus_rows(&self, section: &str, cx: &gpui::App) -> Vec<String> {
+        let Some(sheet) = &self.sheet else {
+            return Vec::new();
+        };
+        let filters = sheet.filters();
+        if !self.section_has_rows(section, filters) {
+            return Vec::new();
+        }
         let ready = self.daemon_connected(cx)
             && !self.daemon_settings.unsupported()
             && self.daemon_settings.settings().is_some();
+        let fields: Vec<String> = sheet
+            .sections
+            .get(section)
+            .into_iter()
+            .flatten()
+            .filter(|f| !matches!(self.sheet_kind_of(f), FieldKind::Unsupported(_)))
+            .filter(|f| self.field_passes(f, filters))
+            .map(|f| format!("{ROW_FIELD}{}", f.dotted()))
+            .collect();
+        let mut daemon: Vec<String> = Vec::new();
         if ready {
-            for section in sections(page) {
-                for key in section.keys {
+            for part in sections(section) {
+                for key in part.keys {
                     if *key == MCP_KEYS {
                         daemon.extend(
                             self.daemon_settings
                                 .settings()
                                 .into_iter()
                                 .flat_map(|s| s.entries.iter())
-                                .filter(|e| e.key.starts_with("mcp."))
+                                .filter(|e| {
+                                    e.key.starts_with("mcp.") && daemon_entry_passes(e, filters)
+                                })
                                 .map(|e| format!("{ROW_DAEMON}{}", e.key)),
                         );
-                        daemon.push(format!("{ROW_DAEMON}{MCP_KEYS}"));
-                    } else if self.daemon_settings.entry(key).is_some() {
+                        if !filters.any() {
+                            daemon.push(format!("{ROW_DAEMON}{MCP_KEYS}"));
+                        }
+                    } else if self
+                        .daemon_settings
+                        .entry(key)
+                        .is_some_and(|e| daemon_entry_passes(e, filters))
+                    {
                         daemon.push(format!("{ROW_DAEMON}{key}"));
                     }
                 }
             }
         }
-        if page == "history" {
+        if section == "history" {
             daemon.into_iter().chain(fields).collect()
         } else {
             fields.into_iter().chain(daemon).collect()
         }
     }
 
-    /// Scrolls the page so that the row the keyboard is on shows. Pages whose app-drawn rows
-    /// come before the fields (General, History, Mawas) keep their scroll.
+    /// Scrolls the page so that the row the keyboard is on shows (a row of the daemon's
+    /// settings has no place to aim at: it stays where it is).
     fn scroll_focus_row_into_view(&self) {
         let Some(sheet) = &self.sheet else { return };
-        if matches!(sheet.namespace, "app" | "history" | "assistant") {
-            return;
-        }
         let Some(field) = sheet
             .focus_row
             .as_deref()
@@ -131,8 +173,8 @@ impl Workbench {
         else {
             return;
         };
-        if let Some(at) = sheet.fields().iter().position(|f| f.dotted() == field) {
-            sheet.scroll.scroll_to_item(at);
+        if let Some(at) = sheet.page_fields().iter().position(|f| f.dotted() == field) {
+            self.scroll_row_into_view(at);
         }
     }
 
@@ -176,6 +218,7 @@ impl Workbench {
         };
         let zone = places[next];
         let rows = self.sheet_focus_rows(cx);
+        let first = self.first_focus_row(&rows, cx);
         if let Some(sheet) = &mut self.sheet {
             sheet.zone = zone;
             sheet.edit = None;
@@ -187,7 +230,7 @@ impl Workbench {
                     .as_ref()
                     .is_some_and(|row| rows.contains(row))
             {
-                sheet.focus_row = rows.first().cloned();
+                sheet.focus_row = first;
             }
         }
         cx.notify();
@@ -200,10 +243,7 @@ impl Workbench {
             SheetFocus::Search => {}
             SheetFocus::Categories => {
                 let pages = self.sheet_pages();
-                let at = pages
-                    .iter()
-                    .position(|p| *p == sheet.namespace)
-                    .unwrap_or(0);
+                let at = pages.iter().position(|p| *p == sheet.page).unwrap_or(0);
                 if let Some(next) = at
                     .checked_add_signed(delta)
                     .and_then(|next| pages.get(next).copied())

@@ -66,7 +66,7 @@ impl Workbench {
             return Vec::new();
         };
         let overridable = sheet
-            .fields()
+            .page_fields()
             .iter()
             .filter_map(|f| sheet.entry_of(f.namespace))
             .any(|e| e.workspace_overridable);
@@ -171,7 +171,7 @@ impl Workbench {
             return Vec::new();
         };
         sheet
-            .fields()
+            .page_fields()
             .iter()
             .filter(|f| !matches!(f.kind, FieldKind::Unsupported(_)) && !mirrors_system(f))
             .filter(|f| self.field_has_key(f))

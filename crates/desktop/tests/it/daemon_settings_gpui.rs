@@ -152,11 +152,19 @@ fn the_notifications_page_lists_the_daemons_values_and_a_live_change_needs_no_re
         assert_eq!(state.value("notify.min_turn_secs"), Some(&json!(20)));
         assert!(!state.restart_pending());
     });
-    // Every field of the page is a row of the keyboard's list.
+    // Every field of the page, in the order its sections are drawn, is a row of the keyboard's
+    // list: General's own, the Notifications section's, then Sessions & restore's.
     let rows = view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx));
     assert_eq!(
         rows,
         [
+            "f:keep_running",
+            "f:start_at_login",
+            "f:setup_done",
+            "f:ask_notifications",
+            "f:ask_hooks",
+            "f:on_last_window_close",
+            "f:menu_bar",
             "f:dock_badge",
             "f:usage_warnings",
             "d:notify.enabled",
@@ -165,7 +173,14 @@ fn the_notifications_page_lists_the_daemons_values_and_a_live_change_needs_no_re
             "d:notify.finished",
             "d:notify.kinds",
             "d:notify.min_turn_secs",
-            "d:notify.expire_secs"
+            "d:notify.expire_secs",
+            "d:daemon.restore_sessions",
+            "d:workspaces.home_folder",
+            "d:terminal.env_inherit",
+            "d:projects.auto",
+            "d:worktrees.cleanup",
+            "d:worktrees.cleanup_idle_days",
+            "d:worktrees.wait_for_setup"
         ]
     );
 
@@ -254,9 +269,9 @@ fn the_daemon_pages_are_searchable_and_every_key_has_wording(cx: &mut TestAppCon
 
     // The search finds a page by what its daemon settings are called.
     for (query, page) in [
-        ("notification centre", "notifications"),
-        ("restore", "sessions_restore"),
-        ("approval", "control"),
+        ("notification centre", "app"),
+        ("restore", "app"),
+        ("approval", "agents_tools"),
         ("claude-agent-acp", "agents_tools"),
         ("how far back", "history"),
         ("terminal output", "assistant"),
@@ -624,7 +639,17 @@ fn an_older_daemon_gets_the_update_note_and_the_file_path(cx: &mut TestAppContex
     // No daemon rows to change (the Dock badge is the desktop's own); the way to the file instead.
     assert_eq!(
         view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx)),
-        ["f:dock_badge", "f:usage_warnings"]
+        [
+            "f:keep_running",
+            "f:start_at_login",
+            "f:setup_done",
+            "f:ask_notifications",
+            "f:ask_hooks",
+            "f:on_last_window_close",
+            "f:menu_bar",
+            "f:dock_badge",
+            "f:usage_warnings"
+        ]
     );
     assert!(drawn(&view, cx, Region::Settings("open-daemon-toml")));
     assert_eq!(

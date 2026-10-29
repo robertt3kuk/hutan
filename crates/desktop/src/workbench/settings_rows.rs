@@ -365,7 +365,7 @@ impl Workbench {
     pub(super) fn field_index(&self, field: &Field) -> usize {
         self.sheet
             .as_ref()
-            .and_then(|s| s.fields().iter().position(|f| f == field))
+            .and_then(|s| s.page_fields().iter().position(|f| f == field))
             .unwrap_or(0)
     }
 
@@ -931,7 +931,10 @@ impl Workbench {
         let tokens = self.density.ui();
         let choices = self.sheet_layer_choices(cx);
         let chosen = self.sheet.as_ref().and_then(|s| s.layer);
-        let resettable = self.sheet.as_ref().is_some_and(|s| !s.fields().is_empty());
+        let resettable = self
+            .sheet
+            .as_ref()
+            .is_some_and(|s| !s.page_fields().is_empty());
         div()
             .flex()
             .items_center()

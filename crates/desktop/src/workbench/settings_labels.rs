@@ -86,7 +86,84 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("experimental", "Experimental features"),
 ];
 
-/// What each page is for, one line under its title (13 pt muted; 80 characters at most so it
+/// The pages of the sheet's list ([`super::settings_schema::PAGES`]): the title in the list
+/// and the header, and what the page is for, one line under the title (13 pt muted; 80
+/// characters at most so it stays one line in the 592 pt column). A page's sections keep the
+/// title and the line of the page they used to be (`NAMESPACES`, `NAMESPACE_DESCRIPTIONS`).
+const PAGE_TEXTS: &[(&str, &str, &str)] = &[
+    (
+        "appearance",
+        "Appearance",
+        "Themes and icons, density, docks and panels, and the status bar.",
+    ),
+    (
+        "app",
+        "General",
+        "Starting and quitting, notifications and what comes back after a restart.",
+    ),
+    (
+        "terminal",
+        "Terminal",
+        "Shell, fonts, scrollback and how terminals behave.",
+    ),
+    (
+        "editor",
+        "Editing & keys",
+        "The code editor, keyboard shortcuts and Vim keys.",
+    ),
+    (
+        "assistant",
+        "Mawas",
+        "Mawas, the assistant: models, memory and what it may do.",
+    ),
+    (
+        "agents",
+        "Agents & chat",
+        "Agent chats and the Agents page, the Start sheet and requests that wait.",
+    ),
+    (
+        "accounts",
+        "Accounts & models",
+        "Sign in to agents and set up the model providers Hutan can talk to.",
+    ),
+    (
+        "integrations",
+        "Integrations & hooks",
+        "Hooks that connect agents to Hutan, and commands that run on events.",
+    ),
+    (
+        "panels.sessions",
+        "Projects & sessions",
+        "How projects, workspaces, sessions and tasks are listed.",
+    ),
+    (
+        "panels.files",
+        "Files & changes",
+        "Files, changes, search, problems and instructions.",
+    ),
+    (
+        "history",
+        "History",
+        "Searchable history of your agent sessions.",
+    ),
+    (
+        "data",
+        "Data & logs",
+        "Where Hutan keeps its files and logs, and how to open them.",
+    ),
+    (
+        "agents_tools",
+        "Tools & security",
+        "Agent programs and MCP servers, what agents may do, and the process monitor.",
+    ),
+    (
+        "experimental",
+        "Experimental",
+        "Features that ship switched off, at your own risk.",
+    ),
+];
+
+/// What each section is for, one line under its title (13 pt muted; 80 characters at most so it
 /// stays one line in the 592 pt column).
 const NAMESPACE_DESCRIPTIONS: &[(&str, &str)] = &[
     (
@@ -902,7 +979,7 @@ const FIELDS: &[FieldText] = &[
         "editor",
         "vim_mappings.insert",
         "Vim mappings in Insert mode",
-        "Your own keys for Insert mode, as Vim's inoremap, such as jk for <Esc>. Edit them in settings.toml; the Keyboard page lists them.",
+        "Your own keys for Insert mode, as Vim's inoremap, such as jk for <Esc>. Edit them in settings.toml; the Keyboard section of Editing & keys lists them.",
     ),
     field(
         "editor",
@@ -1599,7 +1676,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "harness.omp.account",
         "OMP default account",
-        "The account new OMP chats run as when you have not set a default on the Accounts page: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
+        "The account new OMP chats run as when you have not set a default in Accounts: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
     ),
     field(
         "daemon",
@@ -1629,7 +1706,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "harness.claude.account",
         "Claude Code default account",
-        "The account new Claude Code chats run as when you have not set a default on the Accounts page: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
+        "The account new Claude Code chats run as when you have not set a default in Accounts: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
     ),
     field(
         "daemon",
@@ -1647,7 +1724,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "codex.account",
         "Codex default account",
-        "The account new Codex chats run as when you have not set a default on the Accounts page: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
+        "The account new Codex chats run as when you have not set a default in Accounts: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
     ),
     field(
         "daemon",
@@ -1773,7 +1850,7 @@ fn humanize(key: &str) -> String {
         .join(" ")
 }
 
-/// The title of `namespace` in the sheet.
+/// The title of the section `namespace` in the sheet (its old page's title).
 pub fn namespace_title(namespace: &str) -> String {
     NAMESPACES
         .iter()
@@ -1781,7 +1858,23 @@ pub fn namespace_title(namespace: &str) -> String {
         .map_or_else(|| humanize(namespace), |(_, title)| (*title).to_owned())
 }
 
+/// The title of the page `page` ([`super::settings_schema::PAGES`]) in the list and the header.
+pub fn page_title(page: &str) -> String {
+    PAGE_TEXTS
+        .iter()
+        .find(|(id, _, _)| *id == page)
+        .map_or_else(|| humanize(page), |(_, title, _)| (*title).to_owned())
+}
+
 /// The line under a page's title in the sheet: what the page is for.
+pub fn page_description(page: &str) -> String {
+    PAGE_TEXTS
+        .iter()
+        .find(|(id, _, _)| *id == page)
+        .map_or_else(String::new, |(_, _, text)| (*text).to_owned())
+}
+
+/// The line under a section's title: what the section is for.
 pub fn namespace_description(namespace: &str) -> String {
     NAMESPACE_DESCRIPTIONS
         .iter()
@@ -2082,12 +2175,14 @@ pub mod words {
         MODEL_TITLE = "Model";
         MODEL_LOADING = "Loading the models…";
         MODEL_NONE = "No models were listed.";
-        PROVIDERS_NONE = "No model provider is set up: add one on the Models page.";
+        PROVIDERS_NONE = "No model provider is set up: add one in Models.";
         NOT_OPENED = "Not opened yet: Mawas starts on its backend the first time you use it.";
         NO_PROJECT_NOTE = "Open a project to set its own backend and permissions here.";
         NO_MATCH_HINT = "Clear the search to see every page, or try another word.";
         NO_MATCH_FOOTER = "No matches";
         CLEAR_SEARCH = "Clear search";
+        FILTER_MODIFIED_TIP = "Only the settings you changed: a settings file sets them (the ↺ takes one back)";
+        FILTER_RESTART_TIP = "Only the settings that apply after the daemon restarts";
         MCP_HELP = "Tool servers Hutan hands to the agents it starts: a program to run, or an address to reach. They are written in daemon.toml and reach agent sessions once the daemon has restarted.";
         MCP_ADD = "Add server…";
         MCP_ADD_TITLE = "Add an MCP server";
@@ -2457,7 +2552,9 @@ pub mod words {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workbench::settings_schema::{FieldKind, catalog, fields_of, namespace_schema};
+    use crate::workbench::settings_schema::{
+        FieldKind, PAGES, catalog, fields_of, namespace_schema,
+    };
     use hutan_settings::{SettingsPaths, SettingsStore};
 
     /// A word with an underscore between lowercase parts (`on_last_window_close`).
@@ -2490,6 +2587,20 @@ mod tests {
         crate::settings::register_all(&store);
         let schema = store.schema();
         let mut fields = 0;
+        for page in PAGES {
+            let id = page.id;
+            assert!(
+                PAGE_TEXTS.iter().any(|(p, _, _)| *p == id),
+                "page {id} has no title and description"
+            );
+            assert_user_facing(&format!("page {id}"), &page_title(id));
+            let description = page_description(id);
+            assert_user_facing(&format!("page {id} description"), &description);
+            assert!(
+                description.chars().count() <= 80,
+                "page {id}: the description is one line under the title: `{description}`"
+            );
+        }
         for entry in catalog() {
             let ns = entry.namespace;
             assert!(

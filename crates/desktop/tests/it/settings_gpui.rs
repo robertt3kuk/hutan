@@ -920,6 +920,9 @@ fn the_keyboard_page_lists_keymap_bindings_and_search_filters_them(cx: &mut Test
     assert!(drawn(&view, cx, Region::Settings("open-keymap")));
     click(&view, cx, Region::Settings("open-keymap"));
     assert_eq!(*opened.borrow(), [daemon.home().join("keymap.toml")]);
+    // The search found the page; rewriting the file below drops the binding it matched (the
+    // file watcher may reload it before Reload is clicked), so the page must not depend on it.
+    view.update(cx, |wb, cx| wb.set_settings_query("", cx));
     write(
         daemon.home(),
         "keymap.toml",
@@ -937,25 +940,26 @@ fn settings_search_finds_the_models_and_accounts_pages_by_their_controls(cx: &mu
     let (view, cx) = open(cx, &daemon);
     view.update_in(cx, |wb, window, cx| wb.open_settings(None, window, cx));
     for (query, page) in [
-        ("api key", "models"),
-        ("base url", "models"),
-        ("endpoint", "models"),
-        ("provider", "models"),
-        ("model", "models"),
+        ("api key", "accounts"),
+        ("base url", "accounts"),
+        ("endpoint", "accounts"),
+        ("provider", "accounts"),
+        ("model", "accounts"),
         ("login", "accounts"),
         ("logout", "accounts"),
         ("account", "accounts"),
         ("restart daemon", "data"),
-        ("revoke", "launcher"),
+        ("revoke", "agents"),
         ("reveal in finder", "data"),
     ] {
         view.update(cx, |wb, cx| wb.set_settings_query(query, cx));
         let hits = view.read_with(cx, |wb, _| wb.sheet_pages());
         assert!(hits.contains(&page), "{query}: {hits:?}");
     }
-    // "api key" is the Models page and nothing else; the sheet goes there.
+    // "api key" is the Models section of the Accounts & models page and nothing else; the sheet
+    // goes there, to the section.
     view.update(cx, |wb, cx| wb.set_settings_query("api key", cx));
-    assert_eq!(view.read_with(cx, |wb, _| wb.sheet_pages()), ["models"]);
+    assert_eq!(view.read_with(cx, |wb, _| wb.sheet_pages()), ["accounts"]);
     assert_eq!(
         view.read_with(cx, |wb, _| wb
             .settings_sheet()

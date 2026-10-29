@@ -30,6 +30,7 @@ use super::panels::ScopeKey;
 use super::settings_daemon::sections;
 use super::settings_labels::{daemon_field_help, daemon_field_title, words};
 use super::settings_rows::{menu_option, menu_panel, note, sheet_row};
+use super::settings_schema::Filters;
 use super::ui::Button;
 use super::view::Workbench;
 use crate::theme::DensityExt as _;
@@ -682,14 +683,14 @@ impl Workbench {
         }
         let all = sections("assistant");
         // What Mawas may do, and what it may do without asking.
-        out.extend(self.render_daemon_section(&all[0], cx));
+        out.extend(self.render_daemon_section(&all[0], Filters::default(), cx));
         out.extend(self.render_mawas_grants(cx));
         // What Mawas remembers: on or off, and how much.
-        out.extend(self.render_daemon_section(&all[5], cx));
+        out.extend(self.render_daemon_section(&all[5], Filters::default(), cx));
         // When nothing is chosen: the file's own backend, provider and model.
-        out.extend(self.render_daemon_section(&all[1], cx));
-        out.extend(self.render_daemon_section(&all[2], cx));
-        out.extend(self.render_daemon_section(&all[3], cx));
+        out.extend(self.render_daemon_section(&all[1], Filters::default(), cx));
+        out.extend(self.render_daemon_section(&all[2], Filters::default(), cx));
+        out.extend(self.render_daemon_section(&all[3], Filters::default(), cx));
         if let Some(workspace) = self.assistant_workspace(cx) {
             out.push(
                 self.section_heading(words::SEC_ASSISTANT_THIS, words::SEC_ASSISTANT_THIS_HELP),
@@ -698,7 +699,7 @@ impl Workbench {
                 out.push(self.render_workspace_permission(&workspace, permission, cx));
             }
         }
-        out.extend(self.render_daemon_section(&all[4], cx));
+        out.extend(self.render_daemon_section(&all[4], Filters::default(), cx));
         out
     }
 

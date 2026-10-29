@@ -312,8 +312,8 @@ impl<T: ParentElement + Styled + Sized> FocusRingExt for T {}
 
 pub use rhythm::{
     CONTROL_WIDTH, ROW_HEIGHT, SHEET_MARGIN, SHEET_WIDTH, card_section, dialog_footer,
-    dialog_footer_stacked, group_sections, row_fixed, section_head, sheet, sheet_stacks,
-    sheet_width, space,
+    dialog_footer_stacked, group_sections, page_section_head, row_fixed, section_head, sheet,
+    sheet_stacks, sheet_width, space,
 };
 
 /// The widest a [`pill`] gets before its text is cut with "…".

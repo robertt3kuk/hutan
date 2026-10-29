@@ -87,6 +87,7 @@ mod session_folders_gpui;
 mod sessions_gpui;
 mod settings_clean_gpui;
 mod settings_gpui;
+mod settings_ia_gpui;
 mod settings_r4_gpui;
 mod setup_gpui;
 mod sidebar_cards_gpui;

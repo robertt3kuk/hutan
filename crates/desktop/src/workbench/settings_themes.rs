@@ -329,11 +329,11 @@ impl Workbench {
     fn scroll_to_pack_row(&self, field: PackField) {
         if let Some(sheet) = &self.sheet
             && let Some(at) = sheet
-                .fields()
+                .page_fields()
                 .iter()
                 .position(|f| PackField::of(f.namespace, &f.dotted()) == Some(field))
         {
-            sheet.scroll.scroll_to_item(at);
+            self.scroll_row_into_view(at);
         }
     }
 

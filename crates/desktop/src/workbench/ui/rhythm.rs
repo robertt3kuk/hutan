@@ -155,6 +155,43 @@ pub fn section_head(
         .into_any_element()
 }
 
+/// The head of a section of a page that has several (a page that used to be a page of its own):
+/// `title` (15 semibold, in the text color) over a line of `help` (12, muted), [`space::XL`]
+/// above and [`space::SM`] below, a hairline under it. It is a bigger label than
+/// [`section_head`]: the cards below it keep their own.
+pub fn page_section_head(
+    title: impl Into<SharedString>,
+    help: impl Into<SharedString>,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> Stateful<Div> {
+    let help = help.into();
+    div()
+        .id("page-section-head")
+        .flex()
+        .flex_col()
+        .gap(px(space::XS))
+        .pt(px(space::XL))
+        .pb(px(space::SM))
+        .border_b_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_size(px(tokens.font_size + 2.0))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme.fg)
+                .child(title.into()),
+        )
+        .when(!help.is_empty(), |s| {
+            s.child(
+                div()
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .child(help),
+            )
+        })
+}
+
 /// Whether `element` was made by [`section_head`].
 fn is_section_head(element: &mut AnyElement) -> bool {
     element

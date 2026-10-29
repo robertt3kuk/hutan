@@ -1,13 +1,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)] // test helpers
 //! The Experimental page of Settings (R-2): "Remote hosts over SSH (experimental)" is off by
-//! default, sits in its own group of the page list, toggles in the user's `settings.toml` (the
+//! default, is a page of the Advanced group of the page list, toggles in the user's `settings.toml` (the
 //! file the CLI reads), and carries the disclaimer and the link to the docs.
 
 use crate::common;
 
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use hutan_desktop::workbench::settings_labels::{field_title, namespace_title};
+use hutan_desktop::workbench::settings_labels::{field_title, namespace_title, page_title};
 use hutan_desktop::workbench::settings_schema::NavGroup;
 use hutan_desktop::workbench::{Region, Workbench, actions};
 use hutan_settings::experimental::REMOTE_HOSTS_DISCLAIMER;
@@ -42,17 +42,18 @@ fn remote_hosts_are_an_experimental_toggle_with_a_disclaimer(cx: &mut TestAppCon
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
 
-    // Its own group of the page list, shown (not folded like Advanced).
+    // A page of the Advanced group, which is folded until it holds the selected page.
     cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
     draw(cx);
     let nav = view.read_with(cx, |wb, _| wb.sheet_nav());
     let group = nav
         .iter()
-        .find(|(g, _, _)| *g == NavGroup::Experimental)
-        .expect("an Experimental group");
-    assert!(group.1, "the group is open");
-    assert_eq!(group.2, ["experimental"]);
+        .find(|(g, _, _)| *g == NavGroup::Advanced)
+        .expect("an Advanced group");
+    assert!(!group.1, "the group is folded");
+    assert!(group.2.contains(&"experimental"));
     assert_eq!(namespace_title("experimental"), "Experimental features");
+    assert_eq!(page_title("experimental"), "Experimental");
 
     // Search finds it by what a user would type.
     view.update(cx, |wb, cx| wb.set_settings_query("--host", cx));

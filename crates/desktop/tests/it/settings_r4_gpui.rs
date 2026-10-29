@@ -159,6 +159,14 @@ fn after_a_hooks_confirmation_the_search_has_the_keyboard(cx: &mut TestAppContex
 
     // Install, confirmed.
     open_page(&view, cx, "integrations");
+    // The sheet slides in; the click lands where it settles. The page is three sections long:
+    // the last agent's row is below the fold, so the page is scrolled to it.
+    common::settle(cx);
+    view.update(cx, |wb, _| {
+        let scroll = wb.settings_sheet().unwrap().scroll().clone();
+        scroll.set_offset(gpui::point(gpui::px(0.0), gpui::px(-200.0)));
+    });
+    draw(cx);
     click(&view, cx, Region::SettingsItem("hooks-install", 2));
     view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
     wait_until(cx, "the install", |cx| {

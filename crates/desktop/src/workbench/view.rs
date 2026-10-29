@@ -328,6 +328,8 @@ pub enum Region {
     /// `restart-daemon`, `stop-daemon`, `revoke-all`, `open-keymap`, `reload-keymap`,
     /// `env-add`, `preset-save`).
     Settings(&'static str),
+    /// The head of a section of a settings page (the id of the section: an old page id).
+    SettingsSection(&'static str),
     /// A part of the open dialog (`modal.rs`): `card`, `rows` (the list of what it is about),
     /// `footer`, and its buttons `cancel`, `choice`, `ok`.
     Modal(&'static str),

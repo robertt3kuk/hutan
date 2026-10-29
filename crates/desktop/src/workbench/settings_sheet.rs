@@ -25,16 +25,16 @@ use super::actions::sheet as sheet_actions;
 use super::modal::PromptSpec;
 use super::render::probe;
 use super::settings_keys::SheetFocus;
-use super::settings_labels::{namespace_description, namespace_title, words};
+use super::settings_labels::{page_description, page_title, words};
 use super::settings_pages::{preset_name, valid_env_name};
 use super::settings_schema::{
-    CatalogEntry, Field, FieldKind, NavGroup, catalog, number_range, page_fields, refine_kind,
-    search, value_at,
+    CatalogEntry, Field, FieldKind, Filters, NavGroup, PAGES, catalog, number_range, page_fields,
+    parse_query, refine_kind, search, section_fields, toggle_filter, value_at,
 };
 use super::style::TextTooltip;
 use super::ui::motion::{self, PresentExt as _};
 use super::ui::scroll::ScrollExt as _;
-use super::ui::{FocusRingExt as _, StyledExt as _, space};
+use super::ui::{Button, FocusRingExt as _, StyledExt as _, space};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::settings::LayoutSettings;
@@ -53,6 +53,9 @@ const PAGE_TITLE_LINE: f32 = 28.0;
 /// The Problems line at the foot: 36 pt.
 const SHEET_FOOTER: f32 = 36.0;
 
+/// The frames a deep link keeps scrolling a page to its section while the page is filling.
+const ANCHOR_FRAMES: u8 = 40;
+
 /// A text box being edited.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edit {
@@ -69,14 +72,29 @@ pub struct Edit {
 
 #[derive(Debug)]
 pub struct SettingsSheet {
-    /// The selected page: the namespace of its first entry.
+    /// The selected page ([`PAGES`]): the list highlights it, the header names it, its sections
+    /// are drawn.
+    pub(super) page: &'static str,
+    /// The section the sheet was sent to: the section an old page id, a deep link, a panel's
+    /// gear or a search names (the first of the page when the page was picked from the list).
+    /// The page is scrolled to it while `anchor_pending`.
     pub(super) namespace: &'static str,
+    /// How many more frames the page is scrolled to `namespace` (0: not at all). It is one
+    /// frame once the page is whole, and a few more while what sits above the section is still
+    /// arriving (the daemon's settings), so a section never ends up below where it was sent.
+    pub(super) anchor: u8,
+    /// How many paints in a row found the section's head where `anchor` wants it (the page
+    /// paints it, `settings_pages::anchor_probe`).
+    pub(super) anchor_settled: std::rc::Rc<std::cell::Cell<u8>>,
     pub(super) query: String,
     pub(super) edit: Option<Edit>,
     pub(super) dropdown: Option<String>,
     pub(super) message: Option<String>,
     pub(super) entries: Vec<CatalogEntry>,
+    /// The fields of every page, in the order its sections are drawn.
     pub(super) pages: BTreeMap<&'static str, Vec<Field>>,
+    /// The fields of every section: what a panel's popover shows.
+    pub(super) sections: BTreeMap<&'static str, Vec<Field>>,
     /// The layer the user chose to edit; `None`: each field edits the layer it comes from.
     pub(super) layer: Option<SettingsLayer>,
     /// Where the keyboard is: the search box, the list of pages or the controls of the page.
@@ -110,9 +128,20 @@ pub struct SettingsSheet {
 }
 
 impl SettingsSheet {
-    /// The selected page (`terminal`, `panels.sessions`, `models`, `data`, …).
+    /// The section the sheet is at: an old page id (`terminal`, `panels.sessions`, `models`,
+    /// `data`, …), the one a deep link asked for, else the first section of the page.
     pub fn namespace(&self) -> &str {
         self.namespace
+    }
+
+    /// The selected page ([`PAGES`]).
+    pub fn page(&self) -> &str {
+        self.page
+    }
+
+    /// The filters the search box holds (`@modified`, `@restart`).
+    pub fn filters(&self) -> Filters {
+        parse_query(&self.query).1
     }
 
     pub fn query(&self) -> &str {
@@ -158,14 +187,36 @@ impl SettingsSheet {
         self.layer
     }
 
-    /// The fields of the selected page.
+    /// The fields of the section the sheet is at (the one a panel's popover shows).
     pub fn fields(&self) -> &[Field] {
-        self.pages.get(self.namespace).map_or(&[], Vec::as_slice)
+        self.sections.get(self.namespace).map_or(&[], Vec::as_slice)
+    }
+
+    /// The fields of every section of the selected page, in the order they are drawn.
+    pub(super) fn page_fields(&self) -> &[Field] {
+        self.pages.get(self.page).map_or(&[], Vec::as_slice)
     }
 
     /// The field of the selected page whose key inside its namespace is `dotted`.
     pub(super) fn field(&self, dotted: &str) -> Option<&Field> {
-        self.fields().iter().find(|f| f.dotted() == dotted)
+        self.page_fields().iter().find(|f| f.dotted() == dotted)
+    }
+
+    /// Shows `page` at `section`, with nothing of the previous page left open.
+    pub(super) fn move_to(&mut self, page: &'static str, section: &'static str) {
+        self.page = page;
+        self.namespace = section;
+        self.anchor = ANCHOR_FRAMES;
+        self.anchor_settled.set(0);
+        self.edit = None;
+        self.dropdown = None;
+        self.message = None;
+        self.layer = None;
+        self.problems_open = false;
+        self.focus_row = None;
+        self.cursor = None;
+        self.pack_filter.clear();
+        self.pack_preview = None;
     }
 
     /// The catalog entry of the settings namespace `namespace`.
@@ -204,17 +255,17 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let entries = catalog();
-        let pages = page_fields(&entries, &self.settings.schema());
-        let selected = entries
-            .iter()
-            .find(|e| Some(e.namespace) == namespace)
-            .or_else(|| {
-                self.sheet
-                    .as_ref()
-                    .and_then(|s| entries.iter().find(|e| e.namespace == s.namespace))
-            })
-            .or_else(|| entries.first())
-            .map_or("appearance", |e| e.page);
+        let sections = section_fields(&entries, &self.settings.schema());
+        let pages = page_fields(&sections);
+        // An old page id, a page id or the namespace of a section: the page it is on, scrolled
+        // to its section. Else the page the sheet was at, else the first page.
+        let find = |ns: &str| entries.iter().find(|e| e.namespace == ns);
+        let (section, page) = namespace
+            .and_then(find)
+            .or_else(|| self.sheet.as_ref().and_then(|s| find(s.namespace)))
+            .or_else(|| find(PAGES[0].id))
+            .map_or((PAGES[0].id, PAGES[0].id), |e| (e.section, e.page));
+        let selected = page;
         self.palette = None;
         self.context_menu = None;
         // Opening another page keeps what the sheet gives the keyboard back to.
@@ -226,13 +277,17 @@ impl Workbench {
                 .map(|f| f.downgrade()),
         };
         self.sheet = Some(SettingsSheet {
-            namespace: selected,
+            page,
+            namespace: section,
+            anchor: ANCHOR_FRAMES,
+            anchor_settled: Default::default(),
             query: String::new(),
             edit: None,
             dropdown: None,
             message: None,
             entries,
             pages,
+            sections,
             layer: None,
             zone: super::settings_keys::SheetFocus::Search,
             focus_row: None,
@@ -251,7 +306,7 @@ impl Workbench {
         self.edits.sheet_query.reset();
         self.edits.sheet_value.reset();
         self.settings_page_opened(selected, cx);
-        if !super::settings_daemon::is_daemon_page(selected) {
+        if !super::settings_pages::page_has_daemon_settings(selected) {
             // The banner of a pending restart is on every page.
             self.refresh_daemon_settings(cx);
         }
@@ -280,7 +335,7 @@ impl Workbench {
             return Vec::new();
         };
         let mut lines: Vec<String> = self.settings_problems().iter().map(problem_text).collect();
-        lines.extend(self.daemon_page_problems(sheet.namespace));
+        lines.extend(self.sheet_page_problems(sheet.page));
         lines
     }
 
@@ -372,61 +427,49 @@ impl Workbench {
         used
     }
 
+    /// Selects the page `namespace` names (a page, or a section of one: the page opens scrolled
+    /// to it).
     pub fn select_settings_namespace(&mut self, namespace: &str, cx: &mut Context<Self>) {
-        let Some(page) = self
+        let Some((page, section)) = self
             .sheet
             .as_ref()
             .and_then(|s| s.entry_of(namespace))
-            .map(|e| e.page)
+            .map(|e| (e.page, e.section))
         else {
             return;
         };
         if let Some(sheet) = &mut self.sheet {
-            sheet.namespace = page;
-            sheet.edit = None;
-            sheet.dropdown = None;
-            sheet.message = None;
-            sheet.layer = None;
-            sheet.problems_open = false;
+            sheet.move_to(page, section);
             sheet.zone = super::settings_keys::SheetFocus::Categories;
-            sheet.focus_row = None;
-            sheet.cursor = None;
-            sheet.pack_filter.clear();
-            sheet.pack_preview = None;
-            // A page starts at its top, whatever the previous one was scrolled to.
-            sheet.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
         }
         self.settings_page_opened(page, cx);
         cx.notify();
     }
 
     /// Types `query` into the search box: the pages that match stay in the list, and the
-    /// selected page moves to the first of them when it is not one.
+    /// selected page moves to the first of them when it is not one (opened at the section that
+    /// matched). `@modified` and `@restart` in it are filters of the rows.
     pub fn set_settings_query(&mut self, query: &str, cx: &mut Context<Self>) {
-        let Some(sheet) = &self.sheet else { return };
-        let hits: Vec<&'static str> = search(&sheet.entries, &sheet.pages, query, &|page| {
-            self.page_search_text(page)
-        })
-        .into_iter()
-        .map(|e| e.namespace)
-        .collect();
-        let mut moved = None;
+        if self.sheet.is_none() {
+            return;
+        }
         if let Some(sheet) = &mut self.sheet {
             sheet.query = query.to_owned();
-            if let Some(first) = hits.first()
-                && !hits.contains(&sheet.namespace)
-            {
-                sheet.namespace = first;
-                sheet.edit = None;
-                sheet.dropdown = None;
-                sheet.layer = None;
-                sheet.problems_open = false;
-                sheet.focus_row = None;
-                sheet.cursor = None;
-                sheet.pack_filter.clear();
-                sheet.pack_preview = None;
-                sheet.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
-                moved = Some(*first);
+        }
+        let hits = self.sheet_hits();
+        let mut moved = None;
+        if let Some(sheet) = &mut self.sheet {
+            let text = parse_query(&sheet.query).0;
+            if let Some((_, section)) = hits.iter().find(|(page, _)| *page == sheet.page) {
+                // The page stays; it scrolls to what the words matched.
+                if !text.is_empty() && sheet.namespace != *section {
+                    sheet.namespace = section;
+                    sheet.anchor = ANCHOR_FRAMES;
+                    sheet.anchor_settled.set(0);
+                }
+            } else if let Some((first, section)) = hits.first().copied() {
+                sheet.move_to(first, section);
+                moved = Some(first);
             }
         }
         if let Some(page) = moved {
@@ -435,18 +478,42 @@ impl Workbench {
         cx.notify();
     }
 
+    /// Switches the filter `token` (`@modified`, `@restart`) of the search box on or off, the
+    /// words typed beside it kept: what the chips under the box do.
+    pub fn toggle_settings_filter(&mut self, token: &str, cx: &mut Context<Self>) {
+        let Some(sheet) = &self.sheet else { return };
+        let query = toggle_filter(&sheet.query, token);
+        self.set_settings_query(&query, cx);
+        // The caret follows the text the chip rewrote.
+        self.edits.sheet_query.reset();
+    }
+
     // ---- reading ----------------------------------------------------------------------------
 
     /// The pages of the list: all of them, or the ones the search leaves, in order.
     pub fn sheet_pages(&self) -> Vec<&'static str> {
+        self.sheet_hits()
+            .into_iter()
+            .map(|(page, _)| page)
+            .collect()
+    }
+
+    /// The pages the search leaves, each with the section that matched first (what it opens
+    /// at).
+    pub(super) fn sheet_hits(&self) -> Vec<(&'static str, &'static str)> {
         let Some(sheet) = &self.sheet else {
             return Vec::new();
         };
-        search(&sheet.entries, &sheet.pages, &sheet.query, &|page| {
-            self.page_search_text(page)
-        })
+        let (text, filters) = parse_query(&sheet.query);
+        search(
+            &sheet.entries,
+            &sheet.sections,
+            &text,
+            &|section| self.page_search_text(section),
+            &|section| self.section_has_rows(section, filters),
+        )
         .into_iter()
-        .map(|e| e.namespace)
+        .map(|(page, section)| (page.id, section))
         .collect()
     }
 
@@ -1007,6 +1074,79 @@ impl Workbench {
 
     // ---- the page list and the footer ---------------------------------------------------------
 
+    /// Scrolls the page by the least that shows the row of the `index`th field of the page, as
+    /// the last frame drew it.
+    pub(super) fn scroll_row_into_view(&self, index: usize) {
+        let Some(sheet) = &self.sheet else { return };
+        let Some(row) = self.regions.get(Region::SettingsItem("row", index)) else {
+            return;
+        };
+        let view = sheet.scroll.bounds();
+        let mut offset = sheet.scroll.offset();
+        if row.top() < view.top() {
+            offset.y += view.top() - row.top();
+        } else if row.bottom() > view.bottom() {
+            offset.y -= row.bottom() - view.bottom();
+        } else {
+            return;
+        }
+        let most = sheet.scroll.max_offset().y;
+        offset.y = offset.y.clamp(-most, px(0.0));
+        sheet.scroll.set_offset(offset);
+    }
+
+    /// Counts the frames a page is scrolled to the section the sheet was sent to. The scroll
+    /// itself is done where the head of the section is painted (`anchor_probe`): the distance
+    /// is measured between two things of the same frame, so a sheet that is still sliding in
+    /// does not skew it. It goes on while the page is still being filled (the daemon's answer
+    /// is on its way) and until the head has stayed in place for two paints, for at most
+    /// [`ANCHOR_FRAMES`] frames, so it never holds a page the user scrolls. The first section is the top of the page, and so
+    /// is one the filters left out (`drawn` says whether the head was drawn).
+    fn scroll_to_anchor(&mut self, drawn: bool, cx: &gpui::App) {
+        let Some(sheet) = &self.sheet else { return };
+        if sheet.anchor == 0 || sheet.popover.is_some() {
+            return;
+        }
+        let first = PAGES
+            .iter()
+            .find(|p| p.id == sheet.page)
+            .and_then(|p| p.sections.first());
+        if first == Some(&sheet.namespace) || !drawn {
+            sheet.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+        }
+        let waiting = self.sheet_page_waits(cx);
+        if let Some(sheet) = &mut self.sheet {
+            // Done once the head has stayed in place for two paints, the page is whole and (for
+            // the top of a page) there is no head to wait for.
+            let placed =
+                first == Some(&sheet.namespace) || !drawn || sheet.anchor_settled.get() >= 2;
+            sheet.anchor = if placed && !waiting {
+                0
+            } else {
+                sheet.anchor - 1
+            };
+        }
+    }
+
+    /// Whether what the selected page shows is still on its way: the daemon's settings, the
+    /// providers or the accounts, which change how tall the sections above a deep link are.
+    fn sheet_page_waits(&self, cx: &gpui::App) -> bool {
+        let Some(sheet) = &self.sheet else {
+            return false;
+        };
+        let daemon = super::settings_pages::page_has_daemon_settings(sheet.page)
+            && self.daemon_connected(cx)
+            && self.daemon_settings.settings().is_none()
+            && !self.daemon_settings.unsupported();
+        let accounts = sheet.page == "accounts"
+            && (self.providers.loading
+                || matches!(
+                    self.env.harnesses.read(cx).listing(),
+                    super::harnesses::Listing::Loading
+                ));
+        daemon || accounts
+    }
+
     /// The page list as drawn: each group with the pages the search leaves, and whether its pages
     /// show. Advanced is closed until it was opened, holds the selected page or a search is on.
     pub fn sheet_nav(&self) -> Vec<(NavGroup, bool, Vec<&'static str>)> {
@@ -1028,7 +1168,7 @@ impl Workbench {
                 let open = group != NavGroup::Advanced
                     || sheet.advanced_open
                     || !sheet.query.trim().is_empty()
-                    || NavGroup::of(sheet.namespace) == group;
+                    || NavGroup::of(sheet.page) == group;
                 Some((group, open, own))
             })
             .collect()
@@ -1149,19 +1289,15 @@ impl Workbench {
                 )
             })
             .collect();
-        lines.extend(
-            self.daemon_page_problems(sheet.namespace)
-                .iter()
-                .map(|message| {
-                    line(
-                        &Severity::Error.to_string(),
-                        theme.danger,
-                        None,
-                        "",
-                        message,
-                    )
-                }),
-        );
+        lines.extend(self.sheet_page_problems(sheet.page).iter().map(|message| {
+            line(
+                &Severity::Error.to_string(),
+                theme.danger,
+                None,
+                "",
+                message,
+            )
+        }));
         lines
     }
 
@@ -1198,7 +1334,7 @@ impl Workbench {
         let scroll = sheet.scroll.clone();
         let theme = self.theme;
         let tokens = self.density.ui();
-        let selected = sheet.namespace;
+        let selected = sheet.page;
         let editing = sheet.edit.clone();
         let message = sheet.message.clone();
         let query = sheet.query.clone();
@@ -1206,7 +1342,7 @@ impl Workbench {
         let problems_open = sheet.problems_open;
         let pages = self.sheet_pages();
         let errors = self.settings_problems();
-        let daemon_problems = self.daemon_page_problems(selected);
+        let daemon_problems = self.sheet_page_problems(selected);
         let problem_count = errors.len() + daemon_problems.len();
         let has_errors =
             !daemon_problems.is_empty() || errors.iter().any(|e| e.severity == Severity::Error);
@@ -1218,7 +1354,7 @@ impl Workbench {
         let description = if no_match {
             String::new()
         } else {
-            namespace_description(selected)
+            page_description(selected)
         };
         for (index, (group, open, own)) in self.sheet_nav().into_iter().enumerate() {
             let forced = group == NavGroup::Advanced
@@ -1302,7 +1438,7 @@ impl Workbench {
                             div()
                                 .min_w_0()
                                 .truncate()
-                                .child(SharedString::from(namespace_title(ns))),
+                                .child(SharedString::from(page_title(ns))),
                         )
                         .into_any_element()
                 })
@@ -1330,18 +1466,9 @@ impl Workbench {
         let rows = if no_match {
             vec![self.render_no_match(cx)]
         } else {
-            match selected {
-                "models" => vec![self.render_providers(cx)],
-                "accounts" => vec![self.render_accounts(cx)],
-                "data" => {
-                    let page = self.render_data_page(cx);
-                    vec![super::ui::card_section(vec![page], &theme, &tokens)]
-                }
-                page => {
-                    let rows = self.render_page_rows(page, cx);
-                    super::ui::group_sections(rows, &theme, &tokens)
-                }
-            }
+            let (rows, drawn) = self.render_page_sections(selected, cx);
+            self.scroll_to_anchor(drawn, cx);
+            rows
         };
         let banner = self.render_restart_banner(cx);
         let actions = if no_match {
@@ -1395,6 +1522,50 @@ impl Workbench {
                     .child(SharedString::from(query.clone()))
                     .into_any_element()
             });
+
+        // The two filters of the rows under the box: they are words of the search (`@modified`,
+        // `@restart`), so typing them does the same.
+        let filters = parse_query(&query).1;
+        let chips = div()
+            .id("sheet-filters")
+            .flex()
+            .items_center()
+            .gap(px(space::SM))
+            .mx(px(tokens.spacing * 2.0))
+            .mb(px(space::SM))
+            .children(
+                [
+                    (
+                        Filters::MODIFIED,
+                        filters.modified,
+                        words::FILTER_MODIFIED_TIP,
+                    ),
+                    (Filters::RESTART, filters.restart, words::FILTER_RESTART_TIP),
+                ]
+                .map(|(token, on, tip)| {
+                    Button::new(
+                        SharedString::from(format!("filter-{}", &token[1..])),
+                        token,
+                        &theme,
+                        &tokens,
+                    )
+                    .ghost()
+                    .compact()
+                    .selected(on)
+                    .tooltip(tip)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_settings_filter(token, cx);
+                    }))
+                    .child(probe(
+                        &self.regions,
+                        Region::Settings(if token == Filters::MODIFIED {
+                            "filter-modified"
+                        } else {
+                            "filter-restart"
+                        }),
+                    ))
+                }),
+            );
 
         // One muted line, 32 px whatever it says: the list of problems opens over the page. It is
         // there only when there is something to say: problems, or no match for the search.
@@ -1497,6 +1668,7 @@ impl Workbench {
                                         .border_r_1()
                                         .border_color(theme.border)
                                         .child(search_box)
+                                        .child(chips)
                                         .child(hutan_ui::scroll_y(
                                             "sheet-nav-scroll",
                                             div()
@@ -1540,7 +1712,7 @@ impl Workbench {
                                                                     if no_match {
                                                                         "Search".to_owned()
                                                                     } else {
-                                                                        namespace_title(selected)
+                                                                        page_title(selected)
                                                                     },
                                                                 ))
                                                                 .child(probe(

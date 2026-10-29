@@ -31,9 +31,10 @@ use super::modal::{Modal, ModalChoice};
 use super::model::PanelId;
 use super::panels::{HistoryPanel, format_bytes};
 use super::render::probe;
-use super::settings_labels::words;
+use super::settings_labels::{namespace_description, namespace_title, page_title, words};
 use super::settings_rows::{SheetRow, note, sheet_row};
-use super::settings_schema::Field;
+use super::settings_schema::{Field, Filters, PAGES};
+use super::settings_sheet::SettingsSheet;
 use super::ui::{self, Button, FocusRingExt as _, IconButton};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
@@ -41,6 +42,51 @@ use crate::integrations::IntegrationStatus;
 use crate::settings::{EditorSettings, LayoutSettings};
 use crate::theme::DensityExt as _;
 use crate::workbench::model::LayoutPreset;
+
+/// Whether a section of `page` shows daemon settings (the sheet then asks the daemon for them
+/// when it opens the page).
+pub(super) fn page_has_daemon_settings(page: &str) -> bool {
+    PAGES.iter().find(|p| p.id == page).is_some_and(|p| {
+        p.sections
+            .iter()
+            .any(|section| super::settings_daemon::is_daemon_page(section))
+    })
+}
+
+/// An invisible child of a section's head that, when painted, scrolls the page so that the head
+/// is at the top of it: the page's offset plus the distance between the top of the page and
+/// of the head (both as this frame paints them), kept within the page.
+fn anchor_probe(
+    scroll: gpui::ScrollHandle,
+    settled: std::rc::Rc<std::cell::Cell<u8>>,
+) -> impl IntoElement {
+    gpui::canvas(
+        |bounds, _, _| bounds,
+        move |_, head, window, _| {
+            let view = scroll.bounds();
+            let mut offset = scroll.offset();
+            let most = scroll.max_offset().y;
+            let y = (offset.y + view.top() - head.top()).clamp(-most, px(0.0));
+            if (y - offset.y).abs() > px(0.5) {
+                offset.y = y;
+                scroll.set_offset(offset);
+                settled.set(0);
+                window.refresh();
+            } else {
+                let held = settled.get().saturating_add(1);
+                settled.set(held);
+                if held < 2 {
+                    // One more frame to see it hold; the sheet then stops asking.
+                    window.refresh();
+                }
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
 
 /// What the sheet knows about the history index (`history.status`).
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -127,42 +173,73 @@ pub(super) fn valid_env_name(name: &str) -> bool {
 impl Workbench {
     // ---- opening a page ------------------------------------------------------------------------
 
-    /// A page was selected: asks for what it shows that is not in the settings files.
+    /// A page was selected: asks for what its sections show that is not in the settings files.
     pub(super) fn settings_page_opened(&mut self, page: &str, cx: &mut Context<Self>) {
         // A form that was not finished (an MCP server) does not outlive the page.
         self.daemon_settings.mcp_form = None;
         self.daemon_settings.account_form = None;
-        match page {
-            "models" => self.refresh_providers(cx),
-            "accounts" => self.refresh_accounts(cx),
-            "history" => {
-                self.refresh_history_index(cx);
-                self.refresh_daemon_settings(cx);
+        let Some(page) = PAGES.iter().find(|p| p.id == page) else {
+            return;
+        };
+        // The daemon's settings are asked once, whatever number of sections show them.
+        let mut daemon = false;
+        for section in page.sections {
+            match *section {
+                "models" => self.refresh_providers(cx),
+                "accounts" => self.refresh_accounts(cx),
+                "history" => {
+                    self.refresh_history_index(cx);
+                    daemon = true;
+                }
+                "data" => {
+                    self.refresh_history_index(cx);
+                    self.refresh_daemon_status(cx);
+                }
+                "integrations" => self.refresh_all_integration_statuses(cx),
+                "automation" => self.refresh_hooks(cx),
+                "assistant" => {
+                    daemon = true;
+                    self.refresh_assistant_defaults(cx);
+                    self.refresh_mawas_grants(cx);
+                    self.refresh_providers(cx);
+                }
+                "notifications" | "sessions_restore" | "control" | "agents_tools" => {
+                    daemon = true;
+                }
+                _ => {}
             }
-            "data" => {
-                self.refresh_history_index(cx);
-                self.refresh_daemon_status(cx);
-            }
-            "integrations" => self.refresh_all_integration_statuses(cx),
-            "automation" => self.refresh_hooks(cx),
-            "assistant" => {
-                self.refresh_daemon_settings(cx);
-                self.refresh_assistant_defaults(cx);
-                self.refresh_mawas_grants(cx);
-                self.refresh_providers(cx);
-            }
-            "notifications" | "sessions_restore" | "control" | "agents_tools" => {
-                self.refresh_daemon_settings(cx);
-            }
-            _ => {}
+        }
+        if daemon {
+            self.refresh_daemon_settings(cx);
         }
     }
 
-    /// What a search of the sheet matches on `page` besides its title, fields and keywords: the
-    /// bindings of the Keyboard page, the wording of the daemon settings of a daemon page.
-    pub(super) fn page_search_text(&self, page: &str) -> String {
-        if page != "keymap" {
-            return super::settings_daemon::search_text(page);
+    /// What the problems footer of `page` lists besides the settings files' own: what the
+    /// daemon's settings and the providers say is wrong in any of its sections.
+    pub(super) fn sheet_page_problems(&self, page: &str) -> Vec<String> {
+        let mut problems: Vec<String> = Vec::new();
+        for section in PAGES
+            .iter()
+            .find(|p| p.id == page)
+            .into_iter()
+            .flat_map(|p| p.sections.iter())
+        {
+            for problem in self.daemon_page_problems(section) {
+                // A file that cannot be read is a problem of every section that shows it.
+                if !problems.contains(&problem) {
+                    problems.push(problem);
+                }
+            }
+        }
+        problems
+    }
+
+    /// What a search of the sheet matches on `section` besides its title, fields and keywords:
+    /// the bindings of the Keyboard section, the wording of the daemon settings of a daemon
+    /// section.
+    pub(super) fn page_search_text(&self, section: &str) -> String {
+        if section != "keymap" {
+            return super::settings_daemon::search_text(section);
         }
         self.custom_bindings()
             .iter()
@@ -172,41 +249,168 @@ impl Workbench {
             .join(" ")
     }
 
-    /// The rows of a page that is generated from the schema, with what the app adds.
-    pub(super) fn render_page_rows(
+    /// Whether `field` passes the filters of the search box: `@modified` wants a key some
+    /// settings file sets (what a ↺ takes back), `@restart` a setting that waits for the
+    /// daemon to start, and the app's own settings never do.
+    pub(super) fn field_passes(&self, f: &Field, filters: Filters) -> bool {
+        (!filters.modified || self.settings.source_of(&f.key_path()).is_some()) && !filters.restart
+    }
+
+    /// Whether `section` has rows to show under `filters`: always without a filter, else a
+    /// setting of the app or the daemon that passes it (what the sheet draws itself, a
+    /// provider or a hook, is not a setting a filter picks).
+    pub(super) fn section_has_rows(&self, section: &str, filters: Filters) -> bool {
+        if !filters.any() {
+            return true;
+        }
+        self.sheet
+            .as_ref()
+            .and_then(|sheet| sheet.sections.get(section))
+            .is_some_and(|fields| fields.iter().any(|f| self.field_passes(f, filters)))
+            || self.daemon_section_passes(section, filters)
+    }
+
+    /// The sections of `page` as the sheet draws them: each under its own head (a page of one
+    /// section, or a section called like its page, has none), what used to be the page below
+    /// it. The head of each is probed (`Region::SettingsSection`), which is where a deep link
+    /// scrolls to.
+    pub(super) fn render_page_sections(
         &mut self,
         page: &str,
+        cx: &mut Context<Self>,
+    ) -> (Vec<AnyElement>, bool) {
+        let Some(nav) = PAGES.iter().find(|p| p.id == page) else {
+            return (Vec::new(), false);
+        };
+        // The head the page is scrolled to while it is being filled: it moves the page where
+        // it is painted (`anchor_probe`).
+        let anchor = self
+            .sheet
+            .as_ref()
+            .filter(|s| s.anchor > 0 && s.popover.is_none())
+            .map(|s| (s.namespace, s.scroll.clone(), s.anchor_settled.clone()));
+        let mut anchor_drawn = false;
+        let (theme, tokens) = (self.theme, self.density.ui());
+        let filters = self
+            .sheet
+            .as_ref()
+            .map(SettingsSheet::filters)
+            .unwrap_or_default();
+        let headed = nav.sections.len() > 1;
+        let mut out: Vec<AnyElement> = Vec::new();
+        // What is wrong with the daemon's settings is said once per page, over the section the
+        // sheet is at when it has daemon settings (else the first that has some); the others
+        // are left out while that stands in for them.
+        let daemon_sections = || {
+            nav.sections
+                .iter()
+                .copied()
+                .filter(|s| super::settings_daemon::is_daemon_page(s))
+        };
+        let at = self.sheet.as_ref().map_or("", |s| s.namespace);
+        let owner = daemon_sections()
+            .find(|s| *s == at)
+            .or_else(|| daemon_sections().next());
+        for section in nav.sections {
+            if !self.section_has_rows(section, filters) {
+                continue;
+            }
+            let daemon_section = super::settings_daemon::is_daemon_page(section);
+            if daemon_section && owner != Some(*section) && self.daemon_gate(cx).is_err() {
+                continue;
+            }
+            if headed && namespace_title(section) != page_title(page) {
+                out.push(
+                    super::ui::page_section_head(
+                        namespace_title(section),
+                        namespace_description(section),
+                        &theme,
+                        &tokens,
+                    )
+                    .relative()
+                    .child(probe(&self.regions, Region::SettingsSection(section)))
+                    .children(
+                        anchor
+                            .as_ref()
+                            .filter(|(target, _, _)| target == section)
+                            .map(|(_, scroll, settled)| {
+                                anchor_probe(scroll.clone(), settled.clone())
+                            }),
+                    )
+                    .into_any_element(),
+                );
+                anchor_drawn |= anchor
+                    .as_ref()
+                    .is_some_and(|(target, _, _)| target == section);
+            }
+            match *section {
+                "models" => out.push(self.render_providers(cx)),
+                "accounts" => out.push(self.render_accounts(cx)),
+                "data" => {
+                    let page = self.render_data_page(cx);
+                    out.push(super::ui::card_section(vec![page], &theme, &tokens));
+                }
+                section => {
+                    let rows =
+                        self.render_section_rows(section, filters, owner == Some(section), cx);
+                    out.extend(super::ui::group_sections(rows, &theme, &tokens));
+                }
+            }
+        }
+        (out, anchor_drawn)
+    }
+
+    /// The rows of a section that is generated from the schema, with what the app adds.
+    pub(super) fn render_section_rows(
+        &mut self,
+        section: &str,
+        filters: Filters,
+        banner: bool,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let fields: Vec<Field> = self
             .sheet
             .as_ref()
-            .map(|s| s.fields().to_vec())
+            .and_then(|s| s.sections.get(section))
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter(|f| self.field_passes(f, filters))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         let mut rows = Vec::new();
-        match page {
-            "app" => rows.push(self.render_run_setup_row(cx)),
+        // What the app draws itself comes with no filter only: a filter lists settings.
+        let own = !filters.any();
+        match section {
+            "app" if own => rows.push(self.render_run_setup_row(cx)),
             "history" => {
-                rows.push(self.render_history_indexing(cx));
-                rows.extend(self.render_daemon_page("history", cx));
-                rows.push(self.section_heading(words::SEC_HISTORY_PANEL, ""));
+                if own {
+                    rows.push(self.render_history_indexing(cx));
+                }
+                rows.extend(self.render_daemon_page("history", filters, banner, cx));
+                if !fields.is_empty() {
+                    rows.push(self.section_heading(words::SEC_HISTORY_PANEL, ""));
+                }
             }
-            "assistant" => rows.push(self.section_heading(words::SEC_ASSISTANT_PANEL, "")),
+            "assistant" if own => rows.push(self.section_heading(words::SEC_ASSISTANT_PANEL, "")),
             _ => {}
         }
         rows.extend(fields.iter().map(|f| self.render_field_row(f, cx)));
-        match page {
-            "integrations" => rows.push(self.render_integrations(cx)),
-            "automation" => rows.extend(self.render_hooks(cx)),
-            "launcher" => rows.push(self.render_exemptions(cx)),
-            "keymap" => {
+        match section {
+            "integrations" if own => rows.push(self.render_integrations(cx)),
+            "automation" if own => rows.extend(self.render_hooks(cx)),
+            "launcher" if own => rows.push(self.render_exemptions(cx)),
+            "keymap" if own => {
                 rows.push(self.render_keybindings(cx));
                 rows.push(self.render_vim_keys());
             }
-            "assistant" => rows.extend(self.render_assistant_daemon(cx)),
-            "experimental" => rows.push(self.render_experimental_disclaimer(cx)),
-            page if super::settings_daemon::is_daemon_page(page) => {
-                rows.extend(self.render_daemon_page(page, cx));
+            "assistant" if own => rows.extend(self.render_assistant_daemon(cx)),
+            "assistant" => rows.extend(self.render_daemon_page("assistant", filters, banner, cx)),
+            "experimental" if own => rows.push(self.render_experimental_disclaimer(cx)),
+            section if super::settings_daemon::is_daemon_page(section) && section != "history" => {
+                rows.extend(self.render_daemon_page(section, filters, banner, cx));
             }
             _ => {}
         }

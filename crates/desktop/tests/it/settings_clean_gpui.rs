@@ -157,11 +157,21 @@ fn every_row_is_52_pt_with_one_line_of_help_and_the_controls_share_a_column(
     // The probes are inside the row's 1 px hairline: a 52 pt row measures 51.
     let heights = row_heights(&view, cx);
     assert!(heights.len() >= 3, "{heights:?}");
-    assert!(heights.iter().all(|h| *h == 51.0), "{heights:?}");
+    // Every row of the page's sections, except the saved layouts' list of the Layout section
+    // (it is a list, not one row).
+    assert!(
+        heights.iter().filter(|h| **h != 51.0).count() <= 1 && heights.iter().all(|h| *h >= 51.0),
+        "{heights:?}"
+    );
 
     // The dropdowns (and boxes) of the page are as wide as each other and start at one x.
+    // Of the rows in view: the page goes on below (Layout, the status bar), in cards of their
+    // own.
+    let body = bounds(&view, cx, Region::Settings("sheet-body")).unwrap();
     let controls: Vec<Bounds<Pixels>> = (0..heights.len())
+        .filter(|n| heights[*n] == 51.0)
         .filter_map(|n| bounds(&view, cx, Region::SettingsItem("control", n)))
+        .filter(|b| b.bottom() <= body.bottom())
         // Dropdowns and boxes: a switch is narrower, a line of text (a field with no control
         // of its own) is not a box.
         .filter(|b| f32::from(b.size.width) >= 100.0 && f32::from(b.size.height) >= 22.0)
@@ -294,7 +304,9 @@ fn a_choice_is_a_popover_that_moves_no_row_and_escape_gives_the_keyboard_back_to
     hutan_desktop::workbench::ui::set_keyboard_focus(false);
     cx.update(|window, _| window.refresh());
     draw(cx);
-    let head = bounds(&view, cx, Region::Settings("dropdown")).unwrap();
+    // The first row's control (the page has several dropdowns; the region of "dropdown" is
+    // whichever was drawn last, far down a page of three sections).
+    let head = bounds(&view, cx, Region::SettingsItem("control", 0)).unwrap();
     cx.simulate_click(head.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     assert!(view.read_with(cx, |wb, _| {
@@ -421,50 +433,35 @@ fn the_page_list_is_in_groups_and_advanced_opens_on_demand_by_search_or_by_its_p
         .iter()
         .find(|(g, _, _)| *g == NavGroup::Advanced)
         .unwrap();
-    assert!(advanced.1 && advanced.2.contains(&"control"), "{found:?}");
+    assert!(
+        advanced.1 && advanced.2.contains(&"agents_tools"),
+        "{found:?}"
+    );
 }
 
 // ---- UI-RHYTHM: page list icons, page header, cards ------------------------------------------------------
 
-/// The ids of the pages of the sheet: pages move into other groups later (SETTINGS-IA), but
-/// no id, deep link, ⌘K entry or `hutan ui set` path is renamed or removed.
-const PAGE_IDS: [&str; 32] = [
+/// The 14 pages of the list (SETTINGS-IA), by id: the id of a page is the id of its first
+/// section (the old page it grew from). `settings_ia_gpui` freezes where every old page went.
+const PAGE_IDS: [&str; 14] = [
     "accounts",
     "agents",
     "agents_tools",
     "app",
     "appearance",
     "assistant",
-    "automation",
-    "changes",
-    "chat",
-    "control",
     "data",
     "editor",
     "experimental",
     "history",
     "integrations",
-    "keymap",
-    "launcher",
-    "layout",
-    "models",
-    "notifications",
     "panels.files",
-    "panels.inspector",
-    "panels.instructions",
-    "panels.problems",
-    "panels.search",
     "panels.sessions",
-    "resources",
-    "sessions_restore",
-    "status",
-    "tasks",
     "terminal",
-    "workspaces",
 ];
 
 #[gpui::test]
-fn every_page_keeps_its_id_and_has_an_icon_of_its_own_in_the_list(cx: &mut TestAppContext) {
+fn every_page_has_an_icon_of_its_own_in_the_list(cx: &mut TestAppContext) {
     use hutan_settings::themes::icons::IconId;
 
     let daemon = TestDaemon::start();
@@ -472,7 +469,7 @@ fn every_page_keeps_its_id_and_has_an_icon_of_its_own_in_the_list(cx: &mut TestA
     open_page(&view, cx, "appearance");
     let mut pages = view.read_with(cx, |wb, _| wb.sheet_pages());
     pages.sort_unstable();
-    assert_eq!(pages, PAGE_IDS, "no page id was added, renamed or removed");
+    assert_eq!(pages, PAGE_IDS, "no page was added, renamed or removed");
 
     // One catalog icon per page, none shared, none the fallback gear but General's own.
     let ids: std::collections::BTreeSet<_> = PAGE_IDS
@@ -501,7 +498,7 @@ fn every_page_keeps_its_id_and_has_an_icon_of_its_own_in_the_list(cx: &mut TestA
             .map(|(_, _, pages)| pages.len())
             .sum()
     });
-    assert!(shown >= 20, "{shown}");
+    assert!(shown >= 10, "{shown}");
     for index in 0..shown {
         let icon = bounds(&view, cx, Region::SettingsItem("nav-icon", index))
             .unwrap_or_else(|| panic!("page {index} of the list has no icon"));

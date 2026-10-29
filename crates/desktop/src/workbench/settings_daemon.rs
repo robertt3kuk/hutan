@@ -35,6 +35,7 @@ use super::settings_labels::{
 use super::settings_mcp::McpForm;
 use super::settings_pages::{DataTarget, valid_env_name};
 use super::settings_rows::{SheetRow, menu_option, menu_panel, note, reset_button, source_chip};
+use super::settings_schema::Filters;
 use super::settings_sheet::{Edit, display_value};
 use super::style::TextTooltip;
 use super::ui::FocusRingExt as _;
@@ -276,6 +277,12 @@ fn number_hint(e: &DaemonSetting) -> Option<String> {
         (None, Some(low), None) => Some(words::at_least(*low)),
         _ => None,
     }
+}
+
+/// Whether the row of `e` passes the sheet's filters: `@modified` wants a key `daemon.toml`
+/// sets, `@restart` one that only counts when the daemon starts.
+pub(super) fn daemon_entry_passes(e: &DaemonSetting, filters: Filters) -> bool {
+    (!filters.modified || e.set_in_file) && (!filters.restart || e.applies == Applies::Restart)
 }
 
 /// Whether the page shows daemon settings.
@@ -1079,46 +1086,90 @@ impl Workbench {
         Ok(Vec::new())
     }
 
-    /// The daemon settings of `page`: what stands in for them while they cannot be shown, else
-    /// the sections.
+    /// The daemon settings of the section `page`: what stands in for them while they cannot be
+    /// shown, else the sections. `banner`: this is the first section of its page with daemon
+    /// settings, so it says what is wrong with the file.
     pub(super) fn render_daemon_page(
         &mut self,
         page: &str,
+        filters: Filters,
+        banner: bool,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         match self.daemon_gate(cx) {
+            // A filter shows settings, never what stands in for them.
+            Err(_) if filters.any() => Vec::new(),
             Err(instead) => instead,
             Ok(mut rows) => {
+                // One banner per page, over the first of its sections that has daemon settings.
+                if !banner {
+                    rows.clear();
+                }
                 for section in sections(page) {
-                    rows.extend(self.render_daemon_section(section, cx));
+                    rows.extend(self.render_daemon_section(section, filters, cx));
                 }
                 rows
             }
         }
     }
 
-    /// One section: its heading and a row per setting the daemon lists.
+    /// One section: its heading and a row per setting the daemon lists. Under a filter only
+    /// the rows it lets through, and no heading over none.
     pub(super) fn render_daemon_section(
         &self,
         section: &Section,
+        filters: Filters,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let theme = self.theme;
         let tokens = self.density.ui();
         let mut rows = Vec::new();
-        if !section.title.is_empty() {
-            rows.push(heading(section.title, section.help, &theme, &tokens));
-        }
         for key in section.keys {
             if *key == MCP_KEYS {
-                rows.extend(self.render_mcp_rows(cx));
+                if !filters.any() || self.mcp_passes(filters) {
+                    rows.extend(self.render_mcp_rows(cx));
+                }
             } else if *key == CHECKPOINT_PROJECT_KEYS {
-                rows.extend(self.render_checkpoint_projects(cx));
-            } else if let Some(entry) = self.daemon_settings.entry(key).cloned() {
+                if !filters.any() {
+                    rows.extend(self.render_checkpoint_projects(cx));
+                }
+            } else if let Some(entry) = self.daemon_settings.entry(key).cloned()
+                && daemon_entry_passes(&entry, filters)
+            {
                 rows.push(self.render_daemon_row(&entry, cx));
             }
         }
+        if !section.title.is_empty() && (!filters.any() || !rows.is_empty()) {
+            rows.insert(0, heading(section.title, section.help, &theme, &tokens));
+        }
         rows
+    }
+
+    /// Whether some MCP server the file defines passes `filters` (each is set in the file and
+    /// read when the daemon starts).
+    fn mcp_passes(&self, filters: Filters) -> bool {
+        self.daemon_settings.settings().is_some_and(|s| {
+            s.entries
+                .iter()
+                .any(|e| e.key.starts_with("mcp.") && daemon_entry_passes(e, filters))
+        })
+    }
+
+    /// Whether `section` of the sheet has a daemon setting that passes `filters`.
+    pub(super) fn daemon_section_passes(&self, section: &str, filters: Filters) -> bool {
+        sections(section).iter().any(|part| {
+            part.keys.iter().any(|key| {
+                if *key == MCP_KEYS {
+                    self.mcp_passes(filters)
+                } else if *key == CHECKPOINT_PROJECT_KEYS {
+                    false
+                } else {
+                    self.daemon_settings
+                        .entry(key)
+                        .is_some_and(|e| daemon_entry_passes(e, filters))
+                }
+            })
+        })
     }
 
     /// Under *Checkpoints*: where a project's own mode lives, and the chats whose checkpoints
