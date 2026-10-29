@@ -2542,14 +2542,11 @@ impl SessionsStore {
         }
     }
 
-    /// Whether the daemon's `client.focus` is as it will be for `session`: acknowledged on this
-    /// connection, or not going to be reported at all (the session is not looked at, or the
-    /// daemon cannot be told). What `agent.insight` is read after, so no change falls between
-    /// the snapshot and the first `agent.insight_updated`.
+    /// Whether the daemon has been told, and has acknowledged on this connection, that this
+    /// window looks at `session` (or cannot be told at all). What `agent.insight` is read after,
+    /// so no change falls between the snapshot and the first `agent.insight_updated`.
     pub fn focus_settled_for(&self, session: SessionId) -> bool {
-        self.looked_at() != Some(session)
-            || !self.connection.supports_notify()
-            || self.focus_reported() == Some(Some(session))
+        !self.connection.supports_notify() || self.focus_reported() == Some(Some(session))
     }
 
     /// The Assistant panel has (or no longer has) the focus with `session` shown. Only the

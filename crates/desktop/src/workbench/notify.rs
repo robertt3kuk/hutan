@@ -87,10 +87,12 @@ impl Workbench {
                 .update(cx, |store, cx| store.set_context_followed(None, cx));
             return;
         };
-        let (shown, session, missing, from) = {
+        let active = window.is_window_active();
+        let (shown, was_active, session, missing, from) = {
             let panel = panel.read(cx);
             (
                 panel.is_visible(),
+                panel.is_active(),
                 panel.session(),
                 visible
                     .then(|| panel.turns_without_prompt())
@@ -98,9 +100,7 @@ impl Workbench {
                 panel.prompts_from(),
             )
         };
-        let followed = (window.is_window_active() && visible)
-            .then_some(session)
-            .flatten();
+        let followed = (active && visible).then_some(session).flatten();
         self.sessions
             .update(cx, |store, cx| store.set_context_followed(followed, cx));
         let prompts = session
@@ -111,12 +111,12 @@ impl Workbench {
                 (session, model, entries)
             })
             .filter(|(session, _, entries)| from != Some((*session, *entries)));
-        if shown == visible && prompts.is_none() {
+        if shown == visible && was_active == active && prompts.is_none() {
             return;
         }
         cx.defer_in(window, move |_, _, cx| {
             panel.update(cx, |panel, cx| {
-                panel.set_visible(visible, cx);
+                panel.set_visible(visible, active, cx);
                 if let Some((session, model, entries)) = prompts {
                     let found = missing
                         .iter()

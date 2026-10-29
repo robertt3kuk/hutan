@@ -122,6 +122,9 @@ pub struct ContextPanel {
     focus: FocusHandle,
     /// On screen: the panel does nothing otherwise.
     visible: bool,
+    /// The window is active: the daemon is told this window looks at the session, and the panel
+    /// reads the insight once it knows.
+    active: bool,
     /// The session followed.
     session: Option<SessionId>,
     insight: Option<AgentInsight>,
@@ -187,6 +190,7 @@ impl ContextPanel {
             env,
             focus: cx.focus_handle(),
             visible: false,
+            active: false,
             session: None,
             insight: None,
             load: Load::Idle,
@@ -249,6 +253,10 @@ impl ContextPanel {
         self.visible
     }
 
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
     /// Turns of the followed session whose prompt the panel does not have.
     pub fn turns_without_prompt(&self) -> Vec<TurnId> {
         self.insight
@@ -280,12 +288,18 @@ impl ContextPanel {
         self.rebuild(cx);
     }
 
-    /// The workbench says whether the panel is on screen.
-    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
-        if self.visible == visible {
+    /// The workbench says whether the panel is on screen and the window active.
+    pub fn set_visible(&mut self, visible: bool, active: bool, cx: &mut Context<Self>) {
+        if self.visible == visible && self.active == active {
             return;
         }
+        let looked = |visible: bool, active: bool| visible && active;
+        // Looking at the session again: what happened meanwhile is read once the daemon knows.
+        if looked(visible, active) && !looked(self.visible, self.active) {
+            self.asked = None;
+        }
         self.visible = visible;
+        self.active = active;
         if visible {
             self.follow(cx);
         }
@@ -344,7 +358,8 @@ impl ContextPanel {
             return;
         }
         let generation = store.connection().generation();
-        if self.asked == Some((session, generation)) || !store.focus_settled_for(session) {
+        let waiting = self.visible && self.active && !store.focus_settled_for(session);
+        if self.asked == Some((session, generation)) || waiting {
             return;
         }
         self.asked = Some((session, generation));
@@ -1780,17 +1795,85 @@ impl ContextPanel {
             .into_any_element()
     }
 
+    /// Whether the rows offer *Fork…*, and whether it works now: the same gate as the chat's turn
+    /// footers (nothing without `chat.fork`, for an assistant, or for a chat that cannot be
+    /// forked; greyed while a turn runs, which the daemon refuses a fork during).
+    pub fn fork_gate(&self, cx: &gpui::App) -> ForkGate {
+        let store = self.env.sessions.read(cx);
+        if !store.supports_chat_fork() {
+            return ForkGate::Hidden;
+        }
+        let Some(chat) = self
+            .session
+            .and_then(|id| store.session(id))
+            .and_then(|info| info.chat.as_ref())
+        else {
+            return ForkGate::Hidden;
+        };
+        if chat.is_assistant()
+            || chat
+                .fork
+                .as_ref()
+                .is_some_and(|fork| fork.support == hutan_core::ForkSupport::None)
+        {
+            return ForkGate::Hidden;
+        }
+        if chat.turn_active {
+            ForkGate::Waiting
+        } else {
+            ForkGate::Ready
+        }
+    }
+
     /// *Fork…* and *Rewind…* (or *Undo*) of one turn row.
     fn turn_buttons(
         &self,
         index: usize,
-        _line: &TurnLine,
+        line: &TurnLine,
         rewind: RewindOffer,
         theme: &Theme,
         tokens: &Tokens,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let mut buttons: Vec<AnyElement> = Vec::new();
+        let gate = self.fork_gate(cx);
+        if let (Some(session), Some(turn), true) = (
+            self.session,
+            line.turn_id,
+            gate != ForkGate::Hidden && line.state != TurnState::Running,
+        ) {
+            buttons.push(
+                ui::Button::new(
+                    SharedString::from(format!("context-turn-fork-{index}")),
+                    "Fork…",
+                    theme,
+                    tokens,
+                )
+                .ghost()
+                .compact()
+                .tooltip(if gate == ForkGate::Waiting {
+                    "A turn is running: fork when it ends"
+                } else {
+                    "Fork: a new chat with the conversation up to this turn"
+                })
+                .disabled(gate == ForkGate::Waiting)
+                .on_click(move |event, window, cx| {
+                    window.dispatch_action(
+                        Box::new(actions::ForkChat(actions::ForkAt {
+                            session,
+                            turn: Some(turn),
+                            position: event.position(),
+                        })),
+                        cx,
+                    );
+                })
+                .child(probe(
+                    &self.env.regions,
+                    Region::ContextTurnAction(index, "fork"),
+                ))
+                .into_any_element(),
+            );
+        }
         match rewind {
             RewindOffer::Nothing => {}
             RewindOffer::Rewind(at) => buttons.push(
@@ -1867,4 +1950,14 @@ impl Render for ContextPanel {
             )
             .child(probe(&self.env.regions, Region::Context("panel")))
     }
+}
+
+/// What the *Fork…* buttons of the turn rows do now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForkGate {
+    /// Not offered: an older daemon, an assistant, a chat that cannot be forked.
+    Hidden,
+    /// A turn runs: forking waits for it.
+    Waiting,
+    Ready,
 }
