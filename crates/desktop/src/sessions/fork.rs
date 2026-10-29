@@ -227,6 +227,115 @@ pub fn chip_text(parent: Option<&str>, ordinal: u32) -> String {
     }
 }
 
+// ---- names ------------------------------------------------------------------------------------
+
+/// What the daemon appends to the parent's title for a fork nobody named.
+const DEFAULT_SUFFIX: &str = " (fork)";
+
+/// The longest a worktree branch is written in a fork's mark.
+const BRANCH_MARK: usize = 16;
+
+/// A session's name as the window draws it: the `head` is what gives way when there is no room
+/// (cut with "…"), the `tail` never does. Only a fork nobody renamed has a tail: its mark says
+/// where it parted from the parent (`⑂ 2`: after the parent's turn 2; `⑂ reply-wit…eady-t1`: in
+/// the worktree of that branch), so the parent, a fork of it and a fork into a worktree never
+/// read the same in a row or a tab.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitleParts {
+    pub head: String,
+    pub tail: Option<String>,
+}
+
+impl TitleParts {
+    /// The name on one line, as a screen reader or a tooltip says it.
+    pub fn text(&self) -> String {
+        match &self.tail {
+            Some(tail) => format!("{} {tail}", self.head),
+            None => self.head.clone(),
+        }
+    }
+}
+
+/// `text` cut to `max` characters by dropping its middle (`…`).
+fn middle(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    if count <= max || max < 3 {
+        return text.to_owned();
+    }
+    let keep = max - 1;
+    let (front, back) = (keep.div_ceil(2), keep / 2);
+    let start: String = text.chars().take(front).collect();
+    let end: String = text.chars().skip(count - back).collect();
+    format!("{start}…{end}")
+}
+
+/// The name of `info`; `find` looks up a session by id (the parent of a fork).
+pub fn title_parts<'a>(
+    info: &'a SessionInfo,
+    find: &dyn Fn(SessionId) -> Option<&'a SessionInfo>,
+) -> TitleParts {
+    parts_at(info, find, 0)
+}
+
+fn parts_at<'a>(
+    info: &'a SessionInfo,
+    find: &dyn Fn(SessionId) -> Option<&'a SessionInfo>,
+    depth: usize,
+) -> TitleParts {
+    let plain = || TitleParts {
+        head: info.title.clone(),
+        tail: None,
+    };
+    let Some(origin) = info.forked_from.as_ref() else {
+        return plain();
+    };
+    // A name the user gave is theirs.
+    let Some(mut stem) = info.title.strip_suffix(DEFAULT_SUFFIX) else {
+        return plain();
+    };
+    let parent = find(origin.session_id).filter(|parent| parent.id != info.id);
+    let own_worktree = info
+        .placement
+        .as_ref()
+        .filter(|placement| placement.kind == hutan_protocol::worktree::PlacementKind::Worktree)
+        .filter(|placement| {
+            parent
+                .and_then(|parent| parent.placement.as_ref())
+                .is_none_or(|theirs| theirs.root != placement.root)
+        })
+        .and_then(|placement| placement.branch.as_deref());
+    let mark = match (own_worktree, origin.ordinal) {
+        (Some(branch), _) => format!(
+            "⑂ {}",
+            middle(branch.strip_prefix("fork/").unwrap_or(branch), BRANCH_MARK)
+        ),
+        (None, 0) => "⑂".to_owned(),
+        (None, turn) => format!("⑂ {turn}"),
+    };
+    // A fork of a fork carries its parent's mark in front of its own.
+    if let Some(parent) = parent
+        && depth < 8
+        && parent.forked_from.is_some()
+        && parent.title.ends_with(DEFAULT_SUFFIX)
+    {
+        let above = parts_at(parent, find, depth + 1);
+        return TitleParts {
+            tail: Some(match above.tail {
+                Some(above) => format!("{above} {mark}"),
+                None => mark,
+            }),
+            head: above.head,
+        };
+    }
+    while let Some(rest) = stem.strip_suffix(DEFAULT_SUFFIX) {
+        stem = rest;
+    }
+    TitleParts {
+        head: stem.to_owned(),
+        tail: Some(mark),
+    }
+}
+
 // ---- terminal agents ---------------------------------------------------------------------------
 
 /// What *Fork session* does for a terminal session.
@@ -433,5 +542,74 @@ mod tests {
             terminal_fork(&session("shell", None)),
             TerminalFork::Nothing
         );
+    }
+
+    fn worktree(info: &mut SessionInfo, root: &str, branch: &str) {
+        info.placement = Some(hutan_protocol::worktree::Placement {
+            kind: hutan_protocol::worktree::PlacementKind::Worktree,
+            root: root.into(),
+            branch: Some(branch.to_owned()),
+            shared_with: Vec::new(),
+        });
+    }
+
+    #[test]
+    fn a_default_named_fork_keeps_its_parents_name_and_wears_the_turn_it_parted_at() {
+        let parent = session("Reply with the single word ready", None);
+        let fork = session("Reply with the single word ready (fork)", Some(parent.id));
+        let all = [parent.clone(), fork.clone()];
+        let find = |id: SessionId| all.iter().find(|s| s.id == id);
+        let parts = title_parts(&fork, &find);
+        assert_eq!(parts.head, "Reply with the single word ready");
+        assert_eq!(parts.tail.as_deref(), Some("⑂ 2"));
+        assert_eq!(parts.text(), "Reply with the single word ready ⑂ 2");
+        // The parent has no mark: they never read the same.
+        assert_eq!(title_parts(&parent, &find).tail, None);
+    }
+
+    #[test]
+    fn a_fork_into_a_worktree_wears_the_branch_and_a_fork_of_a_fork_both_marks() {
+        let parent = session("Plan", None);
+        let mut wt = session("Plan (fork)", Some(parent.id));
+        worktree(
+            &mut wt,
+            "/repo-wt/fork",
+            "fork/reply-with-the-single-word-ready-t1",
+        );
+        let mut deep = session("Plan (fork) (fork)", Some(wt.id));
+        deep.forked_from.as_mut().unwrap().ordinal = 3;
+        worktree(&mut deep, "/repo-wt/fork", "fork/other");
+        let all = [parent.clone(), wt.clone(), deep.clone()];
+        let find = |id: SessionId| all.iter().find(|s| s.id == id);
+        let tail = title_parts(&wt, &find).tail.unwrap();
+        assert!(
+            tail.starts_with("⑂ reply-wi") && tail.ends_with("eady-t1"),
+            "{tail}"
+        );
+        assert!(tail.chars().count() <= 2 + BRANCH_MARK);
+        // The fork of the fork stays in the worktree of its parent: a turn, after the parent's mark.
+        let nested = title_parts(&deep, &find);
+        assert_eq!(nested.head, "Plan");
+        assert_eq!(nested.tail, Some(format!("{tail} ⑂ 3")));
+    }
+
+    #[test]
+    fn a_name_the_user_gave_and_a_session_that_is_no_fork_are_left_alone() {
+        let parent = session("Plan", None);
+        let renamed = session("Plan B", Some(parent.id));
+        let all = [parent.clone(), renamed.clone()];
+        let find = |id: SessionId| all.iter().find(|s| s.id == id);
+        assert_eq!(title_parts(&renamed, &find).text(), "Plan B");
+        let lookalike = session("Notes (fork)", None);
+        assert_eq!(title_parts(&lookalike, &find).text(), "Notes (fork)");
+        // A parent that is gone: the name without the marker of the daemon, still marked.
+        let orphan = session("Gone (fork)", Some(SessionId::new()));
+        assert_eq!(title_parts(&orphan, &|_| None).text(), "Gone ⑂ 2");
+    }
+
+    #[test]
+    fn the_middle_of_a_long_branch_goes() {
+        assert_eq!(middle("short", 16), "short");
+        assert_eq!(middle("abcdefghijklmnopqrstuvwxyz", 9), "abcd…wxyz");
     }
 }

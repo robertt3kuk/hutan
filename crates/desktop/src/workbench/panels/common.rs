@@ -293,6 +293,35 @@ pub fn recovery_chip(
         .into_any_element()
 }
 
+/// A fork's mark after its name (`⑂ 2`, `⑂ branch`, [`crate::sessions::fork::TitleParts`]): the
+/// pack's fork glyph stands for each `⑂` (no text font is promised to have the character), the
+/// rest is `size` px text; it never shrinks, the name before it does.
+pub fn title_mark(
+    id: impl Into<gpui::ElementId>,
+    tail: &str,
+    color: Hsla,
+    size: f32,
+) -> gpui::Stateful<gpui::Div> {
+    let mut mark = div()
+        .id(id)
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(2.0))
+        .text_size(px(size))
+        .text_color(color);
+    for (n, piece) in tail.split('⑂').enumerate() {
+        if n > 0 {
+            mark = mark.child(icon(Icon::ActionFork, size, color));
+        }
+        let piece = piece.trim();
+        if !piece.is_empty() {
+            mark = mark.child(SharedString::from(piece.to_owned()));
+        }
+    }
+    mark
+}
+
 /// The glyph of a coding agent by its program (`omp`, `claude`, `codex`); another harness wears
 /// the generic one.
 pub fn harness_icon(app: &str) -> Icon {

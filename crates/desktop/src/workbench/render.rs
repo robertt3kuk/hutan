@@ -2699,6 +2699,20 @@ impl Workbench {
                 )),
             }
         });
+        // A fork nobody renamed: its name and the mark that sets it apart from its parent.
+        let (name, mark) = match session_of_item(item) {
+            Some(session) => {
+                let store = self.sessions.read(cx);
+                match store.session(session) {
+                    Some(info) => {
+                        let parts = store.title_parts(info);
+                        (SharedString::from(parts.head), parts.tail)
+                    }
+                    None => (title.clone(), None),
+                }
+            }
+            None => (title.clone(), None),
+        };
         let split_badge = self.split_count_badge(pane_id, index, item);
         let preview = item.as_file().is_some_and(|path| self.is_preview(path));
         let dragged = DraggedItem {
@@ -2785,9 +2799,30 @@ impl Workbench {
             .child(
                 div()
                     .max_w(px(TAB_TITLE_MAX))
-                    .truncate()
+                    .flex()
+                    .items_center()
+                    .gap(px(tokens.spacing / 2.0))
                     .when(preview, |s| s.italic())
-                    .child(title),
+                    // The name gives way with "…"; a fork's mark (`⑂ 2`) never does.
+                    .child(
+                        div()
+                            .id(id(format!("tab-name-{pane_id}-{index}")))
+                            .relative()
+                            .min_w_0()
+                            .truncate()
+                            .child(name)
+                            .child(probe(&self.regions, Region::TabName(pane_id, index))),
+                    )
+                    .children(mark.map(|tail| {
+                        super::panels::common::title_mark(
+                            id(format!("tab-mark-{pane_id}-{index}")),
+                            &tail,
+                            theme.muted,
+                            tokens.secondary_font_size,
+                        )
+                        .relative()
+                        .child(probe(&self.regions, Region::TabMark(pane_id, index)))
+                    })),
             )
             .children(split_badge)
             .children(badge)

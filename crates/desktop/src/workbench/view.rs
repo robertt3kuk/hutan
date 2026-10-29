@@ -357,6 +357,9 @@ pub enum Region {
     SessionRow(hutan_core::SessionId),
     /// The muted marker of a session's row (its notifications are muted, `notify.mute`).
     SessionMuted(hutan_core::SessionId),
+    /// The name of a session's row (what gives way with "…") and its fork mark, which never does.
+    SessionName(hutan_core::SessionId),
+    SessionMark(hutan_core::SessionId),
     /// The unread dot of a session's row (6 px of amber inside its ring).
     SessionUnread(hutan_core::SessionId),
     /// The shared-checkout chip of a project or worktree row: another live agent works in the
@@ -566,6 +569,10 @@ pub enum Region {
     /// The bell of the tab at `index` of a pane: an agent waits for an answer, or the terminal
     /// rang or sent a notification while the tab was out of sight.
     TabBell(PaneId, usize),
+    /// The name of the tab at `index` of a pane (what gives way with "…") and its fork mark,
+    /// which never does.
+    TabName(PaneId, usize),
+    TabMark(PaneId, usize),
     /// The state of the work of the tab at `index` of a pane: working (a spinner), done, failed.
     TabState(PaneId, usize),
     /// The line under a session's row in the sessions panel: the question a blocked agent asks, the
@@ -1815,7 +1822,7 @@ impl Workbench {
                 match info {
                     Some(info) => (
                         crate::workbench::panels::session_icon(&info),
-                        info.title.into(),
+                        self.sessions.read(cx).title_parts(&info).text().into(),
                     ),
                     None => (crate::icons::Icon::SessionTerminal, "Terminal".into()),
                 }

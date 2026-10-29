@@ -558,7 +558,9 @@ fn a_codex_chat_forks_from_a_footer_here_into_a_worktree_and_with_its_files_rest
         .iter()
         .position(|r| r.kind == RowKind::Session && r.title == "Auth work")
         .unwrap_or_else(|| panic!("no parent row in {listed:?}"));
-    assert_eq!(listed[at + 1].title, first.title, "{listed:?}");
+    // The daemon names the fork "<parent> (fork)"; the row says where it parted (FX-UI-A 2).
+    assert_eq!(first.title, "Auth work (fork)");
+    assert_eq!(listed[at + 1].title, "Auth work ⑂ 1", "{listed:?}");
     assert_eq!(listed[at + 1].depth, listed[at].depth + 1, "{listed:?}");
 
     // ---- a new worktree: the remembered destination, the branch, what was left out ----------
@@ -743,6 +745,122 @@ fn the_message_bar_the_menu_k_and_the_sidebar_row_all_reach_the_same_fork(cx: &m
         shown(&view, cx) == Some(child.id)
     });
     assert!(view.read_with(cx, |wb, _| wb.fork_popover_session().is_none()));
+}
+
+/// FX-UI-A 2: a chat, its fork in the same folder and its fork into a new worktree are three
+/// names in the sidebar and in the tabs — the parent's, then the same name with the turn it parted
+/// at (`⑂ 2`) and with the worktree's branch — and the mark stays in view when the name is too
+/// long for the row or the tab.
+#[gpui::test]
+fn a_fork_and_a_worktree_fork_never_read_like_their_parent_in_rows_and_tabs(
+    cx: &mut TestAppContext,
+) {
+    let s = codex(2, 4, true);
+    let parent = s.session.id;
+    let (view, cx) = open(cx, &s.daemon);
+    show_chat(&view, cx, parent);
+    s.turn(&view, cx, 0, |_| {});
+    s.turn(&view, cx, 1, |_| {});
+    // A name no row or tab has room for.
+    let long = "Review the authentication middleware and the session store before the release";
+    let _: SessionResult = s.daemon.call(Request::SessionRename(
+        hutan_protocol::messages::SessionRename {
+            session_id: parent,
+            title: long.to_owned(),
+        },
+    ));
+    let fork = |where_| hutan_protocol::chat::ChatFork {
+        session_id: parent,
+        turn_id: None,
+        mode: ForkMode::Exact,
+        title: None,
+        where_,
+        branch: None,
+        restore_files: false,
+        archive_parent: false,
+    };
+    let same: hutan_protocol::chat::ChatForked = s.daemon.call(Request::ChatFork(fork(
+        hutan_protocol::chat::ForkWhere::ThisFolder,
+    )));
+    let worktree: hutan_protocol::chat::ChatForked = s.daemon.call(Request::ChatFork(fork(
+        hutan_protocol::chat::ForkWhere::NewWorktree,
+    )));
+    let (same, worktree) = (same.session.id, worktree.session.id);
+    for id in [same, worktree] {
+        view.update_in(cx, |wb, window, cx| wb.open_session(id, window, cx));
+    }
+
+    // The rows: three different names, each fork's mark in view inside its row.
+    wait_until(cx, "the three rows", |cx| {
+        let titles: Vec<String> = rows(&view, cx)
+            .into_iter()
+            .filter(|r| r.kind == RowKind::Session)
+            .map(|r| r.title)
+            .collect();
+        titles.len() == 3
+    });
+    let title_of = |cx: &mut VisualTestContext, id: SessionId| {
+        view.read_with(cx, |wb, cx| {
+            let store = wb.sessions().read(cx);
+            let info = store.session(id).unwrap();
+            store.title_parts(info)
+        })
+    };
+    let (a, b, c) = (
+        title_of(cx, parent),
+        title_of(cx, same),
+        title_of(cx, worktree),
+    );
+    assert_eq!(a.tail, None);
+    assert_eq!(b.head, long);
+    assert_eq!(b.tail.as_deref(), Some("⑂ 2"));
+    assert_eq!(c.head, long);
+    let wt_mark = c.tail.clone().unwrap();
+    assert!(wt_mark.starts_with("⑂ ") && wt_mark != "⑂ 2", "{wt_mark}");
+    let shown_titles: Vec<String> = rows(&view, cx)
+        .into_iter()
+        .filter(|r| r.kind == RowKind::Session)
+        .map(|r| r.title)
+        .collect();
+    for expected in [a.text(), b.text(), c.text()] {
+        assert!(
+            shown_titles.contains(&expected),
+            "{expected} in {shown_titles:?}"
+        );
+    }
+    for id in [same, worktree] {
+        wait_region(&view, cx, Region::SessionMark(id));
+        let (row, name, mark) = (
+            bounds_of(&view, cx, Region::SessionRow(id)).unwrap(),
+            bounds_of(&view, cx, Region::SessionName(id)).unwrap(),
+            bounds_of(&view, cx, Region::SessionMark(id)).unwrap(),
+        );
+        assert!(mark.right() <= row.right(), "the mark is inside its row");
+        assert!(
+            name.right() <= mark.left() + px(1.0),
+            "the name gives way, not the mark"
+        );
+        assert!(mark.size.width > px(8.0));
+    }
+
+    // The tabs: the same names, the same mark in view.
+    let pane = view.read_with(cx, |wb, _| wb.state().first_pane_id());
+    for (index, id) in [(1, same), (2, worktree)] {
+        let item = hutan_desktop::workbench::model::ItemRef::Chat {
+            session: id.to_string(),
+        };
+        let expected = title_of(cx, id).text();
+        view.read_with(cx, |wb, cx| {
+            assert_eq!(wb.item_title(&item, cx).as_ref(), expected);
+        });
+        wait_region(&view, cx, Region::TabMark(pane, index));
+        let (tab, name, mark) = (
+            bounds_of(&view, cx, Region::Tab(pane, index)).unwrap(),
+            bounds_of(&view, cx, Region::TabName(pane, index)).unwrap(),
+            bounds_of(&view, cx, Region::TabMark(pane, index)).unwrap(),
+        );
+        assert!(mark.right() <= tab.right() && name.right() <= mark.left() + px(1.0));
+    }
 }
 
 // ---- ACP harnesses (head, summary only, a refusal) ---------------------------------------------

@@ -1294,6 +1294,12 @@ impl SessionsStore {
             .or_else(|| self.recent.get(&id))
     }
 
+    /// The name of `info` as every surface draws it: a fork nobody renamed wears the turn or
+    /// the worktree it parted at ([`super::fork::title_parts`]).
+    pub fn title_parts<'a>(&'a self, info: &'a SessionInfo) -> super::fork::TitleParts {
+        super::fork::title_parts(info, &|id| self.session(id))
+    }
+
     pub fn workspace(&self, id: WorkspaceId) -> Option<&WorkspaceInfo> {
         self.state.workspaces.iter().find(|w| w.id == id)
     }

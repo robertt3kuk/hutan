@@ -582,7 +582,11 @@ impl SessionsPanel {
                             ),
                             news: row.news.clone(),
                             muted: row.info.muted,
-                            ..SidebarRow::blank(RowKind::Session, row.depth, row.info.title.clone())
+                            ..SidebarRow::blank(
+                                RowKind::Session,
+                                row.depth,
+                                store.title_parts(&row.info).text(),
+                            )
                         }
                     }
                 })
@@ -2423,83 +2427,109 @@ impl SessionsPanel {
                 .children(close)
         });
         for field in &settings.row {
-            line =
-                match field.as_str() {
-                    "state" | "kind" => line.children(lane.take()),
-                    "title" => line
-                        .child(match renaming.as_deref() {
-                            Some(text) => self.rename_editor(&id, text, cx),
-                            None => {
-                                let title = div()
-                                    .id(SharedString::from(format!("session-title-{id}")))
-                                    .flex_1()
-                                    .min_w(px(72.0))
-                                    .truncate()
-                                    .text_size(px(tokens.row_font_size))
-                                    .when(unread, |s| s.font_weight(gpui::FontWeight::SEMIBOLD))
-                                    .when(!live, |s| s.text_color(theme.faint))
-                                    .child(SharedString::from(info.title.clone()));
-                                // The name says what the session is; the prompt behind a short title
-                                // and where the session is, in full, are one hover away.
-                                let prompt = self
-                                    .env
-                                    .sessions
-                                    .read(cx)
-                                    .tasks()
-                                    .prompt_of(info.id, &info.title);
-                                let tip = match (prompt, session_folder(info)) {
-                                    (Some(prompt), Some(path)) => {
-                                        Some(format!("{prompt}\n{}", path.display()))
-                                    }
-                                    (Some(prompt), None) => Some(prompt),
-                                    (None, Some(path)) => Some(path.display().to_string()),
-                                    (None, None) => None,
-                                };
-                                match tip.map(SharedString::from) {
-                                    Some(tip) => title
-                                        .tooltip(move |_, cx| {
-                                            cx.new(|_| TextTooltip::new(tip.clone())).into()
-                                        })
-                                        .into_any_element(),
-                                    None => title.into_any_element(),
-                                }
-                            }
-                        })
-                        .children(std::mem::take(&mut whose))
-                        .children(badge.take())
-                        .children(recovery.take())
-                        .children(review.take())
-                        .children(muted.take()),
-                    "age" => {
-                        // Since something last happened in it, not since it was made.
-                        let active_ms = self.env.sessions.read(cx).last_activity_ms(info);
-                        let swaps = actions.is_some();
-                        let age = div()
-                            .id(SharedString::from(format!("row-age-{}", info.id)))
-                            .flex_none()
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.faint)
-                            .when(swaps, |s| {
-                                s.group_hover(row_group.clone(), |s| s.opacity(0.0))
-                            })
-                            .tooltip(time_tooltip(active_ms))
-                            .child(SharedString::from(age_label(active_ms)));
-                        line.child(
-                            div()
-                                .relative()
-                                .flex_none()
+            line = match field.as_str() {
+                "state" | "kind" => line.children(lane.take()),
+                "title" => line
+                    .child(match renaming.as_deref() {
+                        Some(text) => self.rename_editor(&id, text, cx),
+                        None => {
+                            let parts = self.env.sessions.read(cx).title_parts(info);
+                            let full = parts.text();
+                            // The name gives way with "…"; a fork's mark (`⑂ 2`) never does,
+                            // so a parent and its forks never read the same.
+                            let title = div()
+                                .id(SharedString::from(format!("session-title-{id}")))
+                                .flex_1()
+                                .min_w(px(72.0))
                                 .flex()
                                 .items_center()
-                                .justify_end()
-                                .when(swaps, |s| s.min_w(px(CARD_ACTIONS * action_count as f32)))
-                                .child(age)
-                                .children(actions.take().map(|actions| {
-                                    actions.absolute().top_0().bottom_0().right_0()
-                                })),
-                        )
-                    }
-                    _ => line,
-                };
+                                .gap(px(tokens.spacing))
+                                .text_size(px(tokens.row_font_size))
+                                .when(unread, |s| s.font_weight(gpui::FontWeight::SEMIBOLD))
+                                .when(!live, |s| s.text_color(theme.faint))
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("session-name-{id}")))
+                                        .relative()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(SharedString::from(parts.head))
+                                        .child(probe(
+                                            &self.env.regions,
+                                            Region::SessionName(info.id),
+                                        )),
+                                )
+                                .children(parts.tail.map(|tail| {
+                                    super::common::title_mark(
+                                        SharedString::from(format!("session-mark-{id}")),
+                                        &tail,
+                                        theme.muted,
+                                        tokens.secondary_font_size,
+                                    )
+                                    .relative()
+                                    .child(probe(&self.env.regions, Region::SessionMark(info.id)))
+                                }));
+                            // The name says what the session is; the prompt behind a short title
+                            // and where the session is, in full, are one hover away.
+                            let prompt = self
+                                .env
+                                .sessions
+                                .read(cx)
+                                .tasks()
+                                .prompt_of(info.id, &info.title);
+                            // The tooltip leads with the whole name: the row may have cut it.
+                            let mut tip = full;
+                            if let Some(prompt) = prompt {
+                                tip = format!("{tip}\n{prompt}");
+                            }
+                            if let Some(path) = session_folder(info) {
+                                tip = format!("{tip}\n{}", path.display());
+                            }
+                            let tip = SharedString::from(tip);
+                            title
+                                .tooltip(move |_, cx| {
+                                    cx.new(|_| TextTooltip::new(tip.clone())).into()
+                                })
+                                .into_any_element()
+                        }
+                    })
+                    .children(std::mem::take(&mut whose))
+                    .children(badge.take())
+                    .children(recovery.take())
+                    .children(review.take())
+                    .children(muted.take()),
+                "age" => {
+                    // Since something last happened in it, not since it was made.
+                    let active_ms = self.env.sessions.read(cx).last_activity_ms(info);
+                    let swaps = actions.is_some();
+                    let age = div()
+                        .id(SharedString::from(format!("row-age-{}", info.id)))
+                        .flex_none()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.faint)
+                        .when(swaps, |s| {
+                            s.group_hover(row_group.clone(), |s| s.opacity(0.0))
+                        })
+                        .tooltip(time_tooltip(active_ms))
+                        .child(SharedString::from(age_label(active_ms)));
+                    line.child(
+                        div()
+                            .relative()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .when(swaps, |s| s.min_w(px(CARD_ACTIONS * action_count as f32)))
+                            .child(age)
+                            .children(
+                                actions
+                                    .take()
+                                    .map(|actions| actions.absolute().top_0().bottom_0().right_0()),
+                            ),
+                    )
+                }
+                _ => line,
+            };
         }
         // A row without an age field still has its actions, at its end.
         if let Some(actions) = actions.take() {
