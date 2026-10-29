@@ -88,6 +88,9 @@ pub struct WorkbenchOptions {
     /// Opens the installed app again after *Relaunch* quits this one (`update.rs`); `None`
     /// opens nothing and the sheet says to quit and open Hutan again.
     pub relauncher: Option<Arc<dyn super::update::Relauncher>>,
+    /// `Some`: the process the daemon waits for before replacing a hand-copied bundle, instead
+    /// of this one (tests); `None`: this process.
+    pub update_wait_pid: Option<u32>,
 }
 
 impl WorkbenchOptions {
@@ -113,12 +116,20 @@ impl WorkbenchOptions {
             custom_home: std::env::var_os("HUTAN_HOME").is_some_and(|home| !home.is_empty()),
             own_daemon: None,
             relauncher: None,
+            update_wait_pid: None,
         }
     }
 
     /// The same options relaunching the app through `relauncher` after an update.
     pub fn with_relauncher(mut self, relauncher: Arc<dyn super::update::Relauncher>) -> Self {
         self.relauncher = Some(relauncher);
+        self
+    }
+
+    /// The same options asking the daemon to wait for `pid` instead of this process before it
+    /// replaces the bundle on *Quit and Install* (a test cannot make its own process exit).
+    pub fn with_update_wait_pid(mut self, pid: u32) -> Self {
+        self.update_wait_pid = Some(pid);
         self
     }
 
@@ -1033,6 +1044,9 @@ pub struct Workbench {
     pub(crate) update_open: bool,
     /// What *Relaunch* opens the installed app with.
     pub(crate) relauncher: Option<Arc<dyn super::update::Relauncher>>,
+    /// The process the daemon waits for before it replaces a hand-copied bundle (*Quit and
+    /// Install*): this one, unless a test says otherwise.
+    pub(crate) update_wait_pid: Option<u32>,
     /// The restart summary is on screen (`recovery_summary.rs`).
     pub(crate) recovery_open: bool,
     /// A large sidebar's one-row summary was opened into the full list ("Review").
@@ -1665,6 +1679,7 @@ impl Workbench {
             updates,
             update_open: false,
             relauncher: options.relauncher,
+            update_wait_pid: options.update_wait_pid,
             recovery_open: false,
             recovery_review: false,
             last_title: String::new(),

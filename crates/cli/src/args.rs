@@ -905,16 +905,29 @@ pub enum UpdateCommand {
     /// request carries only a `User-Agent: Hutan/<version>` header
     Check,
     /// Update Hutan the way it was installed: the daemon runs Homebrew in a visible terminal
-    /// session (`hutan attach` it to watch). Running sessions are not touched; after the update
-    /// the app relaunches, and an idle daemon moves onto the new build by itself
+    /// session (`hutan attach` it to watch), or, for a Hutan.app copied by hand, downloads,
+    /// verifies and unpacks the new app (`--apply` then installs it). Running sessions are not
+    /// touched; after the update the app relaunches, and an idle daemon moves onto the new build
+    /// by itself
     Install(UpdateInstallArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct UpdateInstallArgs {
-    /// Wait for Homebrew to finish and exit with its status (0 only when it succeeded)
+    /// Wait for the update to finish and exit with its status (0 only when it succeeded): for
+    /// Homebrew until it exits, for a copied app until the new app is downloaded and verified
+    /// (with `--apply`, until it is in place)
     #[arg(long)]
     pub wait: bool,
+    /// A Hutan.app copied by hand whose new app is downloaded and verified: have the daemon
+    /// move the old app to the Trash and put the new one in its place (and, with `--after-pid`,
+    /// open it)
+    #[arg(long)]
+    pub apply: bool,
+    /// With `--apply`: wait until this process has exited (the app that is quitting) before the
+    /// app is replaced, then open the new one
+    #[arg(long, value_name = "PID", requires = "apply")]
+    pub after_pid: Option<u32>,
 }
 
 #[derive(Debug, Args)]

@@ -16,9 +16,17 @@
 //! - **`update.install`** (user-only) starts a visible terminal session that runs Homebrew for a
 //!   cask or formula install and reports how it ended with `update.install`. Nothing ever
 //!   updates by itself, and nothing here runs `brew` except that session.
+//! - **A bundle copied by hand** ([`bundle`], UPDATES-2) is updated by the daemon itself:
+//!   `update.install` downloads `Hutan-<version>-arm64.zip`, checks its SHA-256 against GitHub's
+//!   digest *and* the tap's `Casks/hutan.rb`, unpacks it with `ditto` and verifies it with
+//!   `codesign`; once the user asks (`apply`) and the desktop has quit, the old bundle goes to
+//!   the Trash, the new one takes its place and is opened.
 
+mod bundle;
 mod install;
 pub mod releases;
+
+pub use self::bundle::Tools;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -45,6 +53,7 @@ use tracing::{debug, info, warn};
 pub use self::install::{Detected, Layout, default_prefixes, detect};
 use crate::bus::EventBus;
 use crate::config::UpdatesSettings;
+use crate::files::trash::{SystemTrash, Trash};
 use crate::registry::{RegistryHandle, now_ms};
 
 /// The file next to the database that remembers when the last check read an answer and what it
@@ -55,6 +64,11 @@ pub const GITHUB_API: &str = "https://api.github.com";
 /// The environment variable that points a `hutand` at another releases API (a mock server for
 /// screenshots and demos); it also lets a development build check by itself.
 pub const API_ENV: &str = "HUTAN_UPDATE_API";
+/// Like [`API_ENV`], where a release's archive is downloaded from (a mock of GitHub's release
+/// downloads).
+pub const DOWNLOADS_ENV: &str = "HUTAN_UPDATE_DOWNLOADS";
+/// Like [`API_ENV`], where the tap's `Casks/hutan.rb` is read from.
+pub const TAP_ENV: &str = "HUTAN_UPDATE_TAP";
 /// The most of the release list that is read.
 const BODY_MAX: usize = 2 * 1024 * 1024;
 /// How often a running install session is looked at to see whether it ended.
@@ -85,6 +99,24 @@ pub struct UpdateTuning {
     pub startup_delay: Duration,
     /// The whole request.
     pub request_timeout: Duration,
+    /// Where a release's files are downloaded from (`<base>/robertt3kuk/hutan/releases/download/
+    /// <tag>/<name>`): GitHub, or a mock server.
+    pub download_base: String,
+    /// Where the tap's files are read from (`<base>/robertt3kuk/homebrew-hutan/<ref>/Casks/
+    /// hutan.rb`): `raw.githubusercontent.com`, or a mock server.
+    pub tap_base: String,
+    /// The most an archive may be, in bytes; a bigger download is refused (512 MiB).
+    pub max_archive: u64,
+    /// The longest silence while an archive downloads (30 seconds).
+    pub download_idle: Duration,
+    /// The longest a whole archive may take to download (15 minutes).
+    pub download_timeout: Duration,
+    /// How long the swap waits for the desktop that asked for it to quit (60 seconds).
+    pub quit_timeout: Duration,
+    /// The programs a bundle update runs (`ditto`, `codesign`, `open`).
+    pub tools: Tools,
+    /// Where the old bundle goes: the user's Trash; a test's folder.
+    pub trash: Arc<dyn Trash>,
 }
 
 impl Default for UpdateTuning {
@@ -99,18 +131,31 @@ impl Default for UpdateTuning {
             retry: Duration::from_secs(3600),
             startup_delay: Duration::from_secs(30),
             request_timeout: Duration::from_secs(15),
+            download_base: bundle::DOWNLOAD_BASE.to_owned(),
+            tap_base: bundle::TAP_BASE.to_owned(),
+            max_archive: bundle::ARCHIVE_MAX_BYTES,
+            download_idle: Duration::from_secs(30),
+            download_timeout: Duration::from_secs(15 * 60),
+            quit_timeout: Duration::from_secs(60),
+            tools: Tools::default(),
+            trash: Arc::new(SystemTrash),
         }
     }
 }
 
 impl UpdateTuning {
-    /// What `hutand` runs with: GitHub, or the API `HUTAN_UPDATE_API` names.
+    /// What `hutand` runs with: GitHub, or the API `HUTAN_UPDATE_API` names (and, for what a
+    /// mock server of a release also serves, `HUTAN_UPDATE_DOWNLOADS` and `HUTAN_UPDATE_TAP`).
     pub fn github() -> Self {
-        let over = std::env::var(API_ENV).ok().filter(|v| !v.trim().is_empty());
+        let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+        let over = env(API_ENV);
+        let default = Self::default();
         Self {
             auto_anywhere: over.is_some(),
             api_base: Some(over.unwrap_or_else(|| GITHUB_API.to_owned())),
-            ..Self::default()
+            download_base: env(DOWNLOADS_ENV).unwrap_or(default.download_base.clone()),
+            tap_base: env(TAP_ENV).unwrap_or(default.tap_base.clone()),
+            ..default
         }
     }
 }
@@ -146,6 +191,8 @@ struct State {
     /// When a check last failed, while it is later than `last_ok_ms`.
     last_failed_ms: Option<u64>,
     install: Option<UpdateInstall>,
+    /// The verified new bundle a hand-copied install waits to put in place.
+    staged: Option<bundle::Staged>,
 }
 
 /// The update service of one daemon.
@@ -156,6 +203,8 @@ pub struct UpdateService {
     tuning: UpdateTuning,
     running: Version,
     http: Option<Http>,
+    /// The client that downloads archives (follows redirects, no whole-request limit).
+    downloader: Option<Http>,
     detected: Detected,
     state_file: PathBuf,
     settings: Mutex<UpdatesSettings>,
@@ -210,6 +259,17 @@ impl UpdateService {
                 .map_err(|error| warn!(%error, "the update check cannot set up its HTTP client"))
                 .ok()
         });
+        let downloader = tuning.api_base.as_ref().and_then(|_| {
+            let config = HttpConfig {
+                read_timeout: tuning.download_idle,
+                connect_retries: 0,
+                no_proxy: !tuning.download_base.starts_with("https://"),
+                ..HttpConfig::default()
+            };
+            Http::new(config)
+                .map_err(|error| warn!(%error, "the update download cannot set up its HTTP client"))
+                .ok()
+        });
         let persisted = load(&state_file);
         let available = persisted
             .available
@@ -226,6 +286,7 @@ impl UpdateService {
             tuning,
             running,
             http,
+            downloader,
             detected,
             state_file,
             settings: Mutex::new(settings),
@@ -463,27 +524,24 @@ impl UpdateService {
         self: &Arc<Self>,
         req: UpdateInstallRequest,
     ) -> Result<UpdateInstalling, ErrorBody> {
+        if req.method == InstallMethod::Bundle {
+            self.check_method(req.method)?;
+            return self.install_bundle(req).await;
+        }
+        if req.apply || req.after_pid.is_some() {
+            return Err(bad_request(
+                "`apply` is for a bundle that was copied by hand; a Homebrew install runs in its terminal",
+            ));
+        }
         let (command, prefix) = match req.method {
-            InstallMethod::Unknown => {
-                return Err(bad_request(
-                    "Hutan was not installed in a way it can update; update it the way you installed it",
-                ));
-            }
-            method if method != self.detected.method => {
-                return Err(invalid_state(format!(
-                    "this Hutan is installed as {:?}, not {method:?}; ask `update.status` first",
-                    self.detected.method
-                )));
-            }
-            InstallMethod::Bundle => {
-                return Err(ErrorBody::new(
-                    ErrorCode::Unsupported,
-                    "updating a Hutan.app that was copied by hand is not available yet; download the release, or install Hutan with Homebrew",
-                ));
-            }
             InstallMethod::Cask => (CASK_COMMAND, self.detected.prefix.clone()),
             InstallMethod::Formula => (FORMULA_COMMAND, self.detected.prefix.clone()),
+            method => {
+                self.check_method(method)?;
+                return Err(invalid_state("this Hutan cannot be updated that way"));
+            }
         };
+        self.check_method(req.method)?;
         let _one = self.installing.lock().await;
         let release = {
             let state = self.state.lock();
@@ -518,24 +576,47 @@ impl UpdateService {
             .await?;
         let install = UpdateInstall {
             method: req.method,
-            session_id: session.id,
+            session_id: Some(session.id),
             version: release.version,
             command: command.to_owned(),
             state: InstallState::Running,
             exit_code: None,
+            stage: None,
+            downloaded: None,
+            total: None,
+            message: None,
+            manual_command: None,
         };
         self.state.lock().install = Some(install.clone());
-        self.watch(install.clone());
-        Ok(UpdateInstalling { session, install })
+        self.watch(install.clone(), session.id);
+        Ok(UpdateInstalling {
+            session: Some(session),
+            install,
+        })
+    }
+
+    /// `bad_request` for a method that cannot be installed, `invalid_state` when it is not the
+    /// one this Hutan was installed with.
+    fn check_method(&self, method: InstallMethod) -> Result<(), ErrorBody> {
+        match method {
+            InstallMethod::Unknown => Err(bad_request(
+                "Hutan was not installed in a way it can update; update it the way you installed it",
+            )),
+            method if method != self.detected.method => Err(invalid_state(format!(
+                "this Hutan is installed as {:?}, not {method:?}; ask `update.status` first",
+                self.detected.method
+            ))),
+            _ => Ok(()),
+        }
     }
 
     /// Looks at the install's session until it ends, then records and announces how.
-    fn watch(self: &Arc<Self>, install: UpdateInstall) {
+    fn watch(self: &Arc<Self>, install: UpdateInstall, session_id: SessionId) {
         let service = self.clone();
         tokio::spawn(async move {
             let (state, exit_code) = loop {
                 tokio::time::sleep(WATCH_INTERVAL).await;
-                match service.session_end(install.session_id).await {
+                match service.session_end(session_id).await {
                     Ok(Some(end)) => break end,
                     Ok(None) => {}
                     // The registry is gone: the daemon is stopping.

@@ -35,6 +35,7 @@ ignore.workspace = true
 libc.workspace = true
 notify.workspace = true
 parking_lot.workspace = true
+plist.workspace = true
 regex.workspace = true
 rustix.workspace = true
 semver.workspace = true
@@ -42,7 +43,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "signal", "process"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "signal", "process", "fs"] }
 tokio-util.workspace = true
 toml.workspace = true
 toml_edit.workspace = true

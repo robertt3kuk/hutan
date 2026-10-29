@@ -129,7 +129,7 @@ fn cask_owns(prefix: &Path, bundle: &Path) -> bool {
         .any(|entry| std::fs::canonicalize(entry.path()).is_ok_and(|real| real == bundle))
 }
 
-fn writable(dir: &Path) -> bool {
+pub(super) fn writable(dir: &Path) -> bool {
     access(dir, Access::WRITE_OK).is_ok()
 }
 

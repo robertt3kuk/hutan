@@ -142,6 +142,77 @@ impl Http {
             body,
         })
     }
+
+    /// One `GET url` whose body is read by the caller, chunk by chunk: the daemon's download of
+    /// a release archive. Sends only the given `User-Agent` and `Accept`, never retries, has no
+    /// whole-request limit (the client's read timeout bounds the silence between two chunks)
+    /// and follows at most [`DOWNLOAD_REDIRECTS`] redirects, which GitHub's release assets
+    /// need; a redirect may not leave `https` for another scheme. Any status is an answer.
+    pub async fn get_stream(
+        &self,
+        url: &str,
+        user_agent: &str,
+        accept: &str,
+    ) -> Result<Download, GatewayError> {
+        let mut url = Url::parse(url).map_err(|e| GatewayError::InvalidUrl(e.to_string()))?;
+        for _ in 0..=DOWNLOAD_REDIRECTS {
+            debug!(host = url.host_str().unwrap_or(""), "streaming GET");
+            let response = self
+                .client
+                .get(url.clone())
+                .header(reqwest::header::USER_AGENT, user_agent)
+                .header(reqwest::header::ACCEPT, accept)
+                .send()
+                .await
+                .map_err(|error| fetch_error(&error))?;
+            if !response.status().is_redirection() {
+                return Ok(Download {
+                    status: response.status().as_u16(),
+                    content_length: response.content_length(),
+                    response,
+                });
+            }
+            let next = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|location| url.join(location).ok())
+                .ok_or_else(|| {
+                    GatewayError::Protocol("a redirect without a usable Location".to_owned())
+                })?;
+            if next.scheme() != url.scheme() {
+                return Err(GatewayError::Protocol(format!(
+                    "a redirect from {} to {}",
+                    url.scheme(),
+                    next.scheme()
+                )));
+            }
+            url = next;
+        }
+        Err(GatewayError::Protocol("too many redirects".to_owned()))
+    }
+}
+
+/// Most redirects [`Http::get_stream`] follows.
+pub const DOWNLOAD_REDIRECTS: usize = 5;
+
+/// The answer of [`Http::get_stream`], body not read yet.
+#[derive(Debug)]
+pub struct Download {
+    pub status: u16,
+    /// What the server says the body is (`content-length`).
+    pub content_length: Option<u64>,
+    response: Response,
+}
+
+impl Download {
+    /// The next piece of the body; `None` at its end.
+    pub async fn chunk(&mut self) -> Result<Option<bytes::Bytes>, GatewayError> {
+        self.response
+            .chunk()
+            .await
+            .map_err(|error| fetch_error(&error))
+    }
 }
 
 /// The answer of [`Http::get_bounded`].

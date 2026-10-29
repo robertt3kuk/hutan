@@ -8,8 +8,8 @@
 use hutan_protocol::messages::Request;
 use hutan_protocol::messages::{Empty, Event, Subscribed};
 use hutan_protocol::update::{
-    CheckOutcome, InstallMethod, InstallState, UpdateChannel, UpdateCheck, UpdateInstall,
-    UpdateStatus,
+    CheckOutcome, InstallMethod, InstallStage, InstallState, UpdateChannel, UpdateCheck,
+    UpdateInstall, UpdateStatus,
 };
 use tokio::sync::broadcast::error::RecvError;
 
@@ -47,6 +47,16 @@ impl Ctx {
         args: UpdateInstallArgs,
     ) -> Result<(), CliError> {
         let status = client.update_status().await.map_err(|e| self.fail(e))?;
+        if status.method == InstallMethod::Bundle {
+            return self.update_install_bundle(client, &args).await;
+        }
+        if args.apply {
+            return Err(CliError::Usage(
+                "--apply is for a Hutan.app copied by hand; a Homebrew install runs in its \
+                 terminal"
+                    .to_owned(),
+            ));
+        }
         // Subscribed before the install starts: its end cannot be missed.
         let mut events = args.wait.then(|| client.events());
         if events.is_some() {
@@ -59,7 +69,11 @@ impl Ctx {
             .await
             .map_err(|e| self.fail(e))?;
         let install = started.install.clone();
-        let session = started.session.id;
+        let Some(session) = install.session_id else {
+            return Err(CliError::Failed(
+                "the daemon started no terminal session for the update".to_owned(),
+            ));
+        };
         if !args.wait {
             return self.print(&started, || {
                 format!(
@@ -81,7 +95,8 @@ impl Ctx {
         let done = loop {
             match events.recv().await {
                 Ok((_, Event::UpdateInstallChanged { install }))
-                    if install.session_id == session && install.state != InstallState::Running =>
+                    if install.session_id == Some(session)
+                        && install.state != InstallState::Running =>
                 {
                     break *install;
                 }
@@ -99,9 +114,66 @@ impl Ctx {
             _ => Err(CliError::Reported),
         }
     }
+
+    /// A Hutan.app copied by hand: the daemon downloads and verifies the new app (`--wait`
+    /// follows it to `ready`), and `--apply` has it put in place.
+    async fn update_install_bundle(
+        &self,
+        client: &hutan_client::Client,
+        args: &UpdateInstallArgs,
+    ) -> Result<(), CliError> {
+        let mut events = args.wait.then(|| client.events());
+        if events.is_some() {
+            let _: Subscribed = self
+                .call(client, Request::EventsSubscribe(Empty {}))
+                .await?;
+        }
+        let started = if args.apply {
+            client.update_install_apply(args.after_pid).await
+        } else {
+            client.update_install(InstallMethod::Bundle).await
+        }
+        .map_err(|e| self.fail(e))?;
+        let begun = started.install.clone();
+        if !args.wait {
+            return self.print(&started, || bundle_text(&begun));
+        }
+        if !self.json {
+            super::print_line(&bundle_text(&begun))?;
+        }
+        let Some(events) = events.as_mut() else {
+            return Ok(());
+        };
+        // Preparing ends at `ready`; installing ends with the swap.
+        let done = loop {
+            match events.recv().await {
+                Ok((_, Event::UpdateInstallChanged { install }))
+                    if install.method == InstallMethod::Bundle
+                        && (install.state != InstallState::Running
+                            || (!args.apply && install.stage == Some(InstallStage::Ready))) =>
+                {
+                    break *install;
+                }
+                Ok(_) | Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => {
+                    return Err(CliError::Unreachable(
+                        "lost the connection to hutand".into(),
+                    ));
+                }
+            }
+        };
+        self.print(&done, || bundle_text(&done))?;
+        match done.state {
+            InstallState::Failed => Err(CliError::Reported),
+            _ => Ok(()),
+        }
+    }
 }
 
 fn install_text(install: &UpdateInstall) -> String {
+    if install.method == InstallMethod::Bundle {
+        return bundle_text(install);
+    }
     match install.state {
         InstallState::Succeeded => format!(
             "Hutan {} is installed; relaunch the app to use it (an idle daemon moves onto the \
@@ -119,6 +191,44 @@ fn install_text(install: &UpdateInstall) -> String {
             ),
         },
         InstallState::Running => format!("updating to Hutan {}…", install.version),
+    }
+}
+
+/// Where the update of a Hutan.app copied by hand stands.
+fn bundle_text(install: &UpdateInstall) -> String {
+    let version = &install.version;
+    match (install.state, install.stage) {
+        (InstallState::Succeeded, _) => format!(
+            "Hutan {version} is in place of the old Hutan.app (which is in the Trash); open the \
+             app to use it (an idle daemon moves onto the new build by itself)"
+        ),
+        (InstallState::Failed, _) => {
+            let mut text = format!(
+                "the update to Hutan {version} stopped: {}",
+                install.message.as_deref().unwrap_or("it did not finish")
+            );
+            if let Some(command) = &install.manual_command {
+                text.push_str(&format!("\nrun this to install it yourself:\n  {command}"));
+            }
+            text
+        }
+        (InstallState::Running, Some(InstallStage::Ready)) => format!(
+            "Hutan {version} is downloaded and verified; quit Hutan, then `hutan update install \
+             --apply` replaces the app (or choose Quit and Install in the app)"
+        ),
+        (InstallState::Running, Some(InstallStage::Installing)) => {
+            format!("installing Hutan {version}…")
+        }
+        (InstallState::Running, Some(InstallStage::Downloading)) => {
+            match (install.downloaded, install.total) {
+                (Some(done), Some(total)) if total > 0 => format!(
+                    "downloading Hutan {version}: {} of {total} bytes",
+                    done.min(total)
+                ),
+                _ => format!("downloading Hutan {version}…"),
+            }
+        }
+        (InstallState::Running, _) => format!("checking the download of Hutan {version}…"),
     }
 }
 
@@ -178,10 +288,11 @@ fn status_text(status: &UpdateStatus, now_ms: u64) -> String {
             lines.push(format!("  release notes: {}", release.notes_url));
             match (&status.command, status.method) {
                 (Some(_), _) => lines.push("  update with: hutan update install".to_owned()),
-                (None, InstallMethod::Bundle) => lines.push(format!(
-                    "  download Hutan-{}-arm64.zip from the release page, or install Hutan with Homebrew",
-                    release.version
-                )),
+                (None, InstallMethod::Bundle) => lines.push(
+                    "  update with: hutan update install (downloads and verifies the new app), \
+                     then hutan update install --apply"
+                        .to_owned(),
+                ),
                 (None, _) => lines.push(
                     "  update it the way you installed it, or download the release from the page above"
                         .to_owned(),

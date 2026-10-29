@@ -1199,6 +1199,15 @@ impl Connection {
         client.update_install(method).await
     }
 
+    /// `update.install` with `apply` ([`Client::update_install_apply`]).
+    pub async fn update_install_apply(
+        &self,
+        after_pid: Option<u32>,
+    ) -> Result<hutan_protocol::update::UpdateInstalling, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.update_install_apply(after_pid).await
+    }
+
     /// `hooks.list` ([`Client::hooks_list`]).
     pub async fn hooks_list(&self) -> Result<hutan_protocol::hooks::HooksList, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;

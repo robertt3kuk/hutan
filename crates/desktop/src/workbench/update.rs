@@ -1,15 +1,20 @@
-//! Updates in the window (UPDATES-1, protocol 0.60, ADR 0024; `docs/design.md` § Updates): the
-//! *Update to x.y.z* status item, the sheet with the release notes and the three answers, *Check
-//! for Updates…* (the Hutan menu and ⌘K), and what happens after a successful Homebrew run:
-//! *Relaunch*.
+//! Updates in the window (UPDATES-1, UPDATES-2, protocol 0.60, ADR 0024; `docs/design.md`
+//! § Updates): the *Update to x.y.z* status item, the sheet with the release notes and the
+//! three answers, *Check for Updates…* (the Hutan menu and ⌘K), and what happens after a
+//! successful Homebrew run: *Relaunch*, or for a hand-copied bundle *Quit and Install*.
 //!
-//! The daemon checks and installs (`update.status`, `update.check`, `update.install`); this keeps its last answer ([`UpdateDirectory`]), words it
-//! ([`crate::sessions::update`]) and asks the user. Nothing here ever updates by itself: the
-//! sheet opens when the user clicks the item or asks for a check, and every step is a button.
+//! The daemon checks and installs (`update.status`, `update.check`, `update.install`); this keeps
+//! its last answer ([`UpdateDirectory`]), words it ([`crate::sessions::update`]) and asks the
+//! user. Nothing here ever updates by itself: the sheet opens when the user clicks the item or
+//! asks for a check, and every step is a button.
 //!
 //! - **Update now** (a Homebrew install) has the daemon run Homebrew in a terminal session; the
 //!   window opens that session so the user sees Homebrew's output and prompts. When it ends the
 //!   daemon says how, the item turns into *Relaunch for x.y.z*, and the sheet offers *Relaunch*.
+//! - **Update now** (a bundle copied by hand) has the daemon download the release, check it
+//!   against two checksums and `codesign`, and unpack it; the sheet shows download, verify,
+//!   ready as the daemon's `update.install` events arrive, then *Quit and Install*: the daemon
+//!   is asked to replace the bundle once this process has exited, and the window quits.
 //! - **Later** closes the sheet; the item stays.
 //! - **Skip this version** writes `updates.skip_version` to `daemon.toml`; the item goes until a
 //!   higher version comes. *Check for Updates…* still shows a skipped release.
@@ -268,14 +273,21 @@ impl Workbench {
         .detach();
     }
 
-    /// *Update now*: the daemon runs Homebrew in a terminal session, which opens here.
+    /// *Update now*: the daemon runs Homebrew in a terminal session, which opens here; for a
+    /// bundle copied by hand it downloads, verifies and unpacks the new app (the sheet shows
+    /// how far it is) and then waits for *Quit and Install*.
     pub fn update_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(method) = self
             .updates
             .read(cx)
             .status()
             .map(|status| status.method)
-            .filter(|method| matches!(method, InstallMethod::Cask | InstallMethod::Formula))
+            .filter(|method| {
+                matches!(
+                    method,
+                    InstallMethod::Cask | InstallMethod::Formula | InstallMethod::Bundle
+                )
+            })
         else {
             return;
         };
@@ -288,13 +300,50 @@ impl Workbench {
                 Ok(started) => {
                     this.updates.update(cx, |updates, cx| {
                         if let Some(status) = &mut updates.status {
-                            status.install = Some(started.install.clone());
+                            // The daemon's events may have said more than its answer does.
+                            let newer = status.install.as_ref().is_some_and(|current| {
+                                current.method == InstallMethod::Bundle
+                                    && current.state == InstallState::Running
+                            });
+                            if !newer {
+                                status.install = Some(started.install.clone());
+                                cx.notify();
+                            }
+                        }
+                    });
+                    if let Some(session) = &started.session {
+                        this.open_session(session.id, window, cx);
+                    }
+                }
+                Err(error) => this.set_notice(format!("Cannot update: {error}"), cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// *Quit and Install* (a bundle copied by hand whose new app is verified): asks the daemon
+    /// to replace the bundle once this process has exited, then quits — never asking and never
+    /// stopping the daemon, so its sessions go on. The daemon moves the old app to the Trash,
+    /// puts the new one in place and opens it. A refusal (a folder that cannot be written, an
+    /// update that is no longer ready) is said and the window stays.
+    pub fn update_quit_and_install(&mut self, cx: &mut Context<Self>) {
+        let connection = self.connection(cx);
+        let pid = self.update_wait_pid.unwrap_or_else(std::process::id);
+        cx.spawn(async move |this, cx| {
+            let answer = connection.update_install_apply(Some(pid)).await;
+            this.update(cx, |this, cx| match answer {
+                Ok(applying) => {
+                    this.updates.update(cx, |updates, cx| {
+                        if let Some(status) = &mut updates.status {
+                            status.install = Some(applying.install);
                             cx.notify();
                         }
                     });
-                    this.open_session(started.session.id, window, cx);
+                    this.update_open = false;
+                    this.quit_leaving_daemon(cx);
                 }
-                Err(error) => this.set_notice(format!("Cannot update: {error}"), cx),
+                Err(error) => this.set_notice(format!("Cannot install the update: {error}"), cx),
             })
             .ok();
         })
@@ -375,7 +424,7 @@ impl Workbench {
             .sessions()
             .iter()
             .filter(|s| s.state.is_live())
-            .filter(|s| install.is_none_or(|install| install.session_id != s.id))
+            .filter(|s| install.is_none_or(|install| install.session_id != Some(s.id)))
             .count()
     }
 
@@ -455,6 +504,53 @@ impl Workbench {
                 .child(SharedString::from(text))
                 .child(probe(&regions, Region::Update("outcome")))
         });
+        let progress = view.progress.clone().map(|progress| {
+            let steps = progress.steps.iter().map(|(name, state)| {
+                let (mark, color) = match state {
+                    words::StepState::Done => ("✓", theme.success),
+                    words::StepState::Current => ("●", theme.fg),
+                    words::StepState::Waiting => ("○", theme.muted),
+                };
+                div()
+                    .text_color(color)
+                    .child(SharedString::from(format!("{mark} {name}")))
+            });
+            let bar = progress.fraction.map(|fraction| {
+                div()
+                    .id("update-progress-bar")
+                    .h(px(4.0))
+                    .w_full()
+                    .rounded(px(2.0))
+                    .bg(theme.border)
+                    .child(
+                        div()
+                            .h_full()
+                            .w(gpui::relative(fraction.clamp(0.0, 1.0)))
+                            .rounded(px(2.0))
+                            .bg(theme.accent),
+                    )
+            });
+            div()
+                .id("update-progress")
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing * 2.0))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(tokens.spacing * 4.0))
+                        .text_size(px(tokens.secondary_font_size))
+                        .children(steps),
+                )
+                .children(bar)
+                .child(
+                    div()
+                        .text_color(theme.muted)
+                        .text_size(px(tokens.secondary_font_size))
+                        .child(SharedString::from(progress.label)),
+                )
+                .child(probe(&regions, Region::Update("progress")))
+        });
         let manual = view.manual_command.clone().map(|command| {
             let copy = command.clone();
             div()
@@ -478,15 +574,18 @@ impl Workbench {
                         .child(probe(&regions, Region::Update("copy-command"))),
                 )
         });
-        let session = status.install.as_ref().map(|install| install.session_id);
-        let show_terminal = session.map(|session| {
-            Button::new("update-terminal", "Show terminal", &theme, &tokens)
-                .ghost()
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.open_session(session, window, cx);
-                }))
-                .child(probe(&regions, Region::Update("terminal")))
-        });
+        let show_terminal = status
+            .install
+            .as_ref()
+            .and_then(|install| install.session_id)
+            .map(|session| {
+                Button::new("update-terminal", "Show terminal", &theme, &tokens)
+                    .ghost()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_session(session, window, cx);
+                    }))
+                    .child(probe(&regions, Region::Update("terminal")))
+            });
         let primary = self.update_primary_button(&view, release, cx);
 
         Some(
@@ -527,6 +626,7 @@ impl Workbench {
                 .child(notes)
                 .child(div().flex().child(notes_link))
                 .children(paragraphs)
+                .children(progress)
                 .children(outcome)
                 .children(manual)
                 .child(
@@ -579,6 +679,13 @@ impl Workbench {
                     .primary()
                     .on_click(cx.listener(|this, _, window, cx| this.update_now(window, cx)))
                     .child(probe(&regions, Region::Update("now")))
+                    .into_any_element()
+            }
+            Primary::QuitAndInstall => {
+                Button::new("update-quit-install", "Quit and Install", &theme, &tokens)
+                    .primary()
+                    .on_click(cx.listener(|this, _, _, cx| this.update_quit_and_install(cx)))
+                    .child(probe(&regions, Region::Update("quit-install")))
                     .into_any_element()
             }
             Primary::Running => Button::new("update-running", "Updating…", &theme, &tokens)

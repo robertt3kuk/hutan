@@ -3401,8 +3401,9 @@ impl SessionsStore {
         })
     }
 
-    /// `update.install` (protocol 0.60): the daemon runs Homebrew in a terminal session. The
-    /// session is remembered until its events arrive, so the window can show it at once.
+    /// `update.install` (protocol 0.60): the daemon runs Homebrew in a terminal session, or
+    /// (a bundle copied by hand) starts downloading and has no session. The session is
+    /// remembered until its events arrive, so the window can show it at once.
     pub fn update_install(
         &mut self,
         method: hutan_protocol::update::InstallMethod,
@@ -3414,13 +3415,14 @@ impl SessionsStore {
                 .update_install(method)
                 .await
                 .map_err(|e| e.to_string())?;
-            let remembered = answer.session.clone();
-            this.update(cx, |this, _| {
-                if !this.state.sessions.iter().any(|s| s.id == remembered.id) {
-                    this.recent.insert(remembered.id, remembered);
-                }
-            })
-            .ok();
+            if let Some(remembered) = answer.session.clone() {
+                this.update(cx, |this, _| {
+                    if !this.state.sessions.iter().any(|s| s.id == remembered.id) {
+                        this.recent.insert(remembered.id, remembered);
+                    }
+                })
+                .ok();
+            }
             Ok(answer)
         })
     }

@@ -3942,12 +3942,32 @@ fn requests() -> Vec<(&'static str, Request)> {
             "update_install_cask",
             Request::UpdateInstall(UpdateInstallRequest {
                 method: InstallMethod::Cask,
+                apply: false,
+                after_pid: None,
             }),
         ),
         (
             "update_install_formula",
             Request::UpdateInstall(UpdateInstallRequest {
                 method: InstallMethod::Formula,
+                apply: false,
+                after_pid: None,
+            }),
+        ),
+        (
+            "update_install_bundle",
+            Request::UpdateInstall(UpdateInstallRequest {
+                method: InstallMethod::Bundle,
+                apply: false,
+                after_pid: None,
+            }),
+        ),
+        (
+            "update_install_bundle_apply",
+            Request::UpdateInstall(UpdateInstallRequest {
+                method: InstallMethod::Bundle,
+                apply: true,
+                after_pid: Some(48_213),
             }),
         ),
     ]
@@ -5359,6 +5379,36 @@ fn events() -> Vec<(&'static str, Event)> {
                 install: Box::new(update_install_fixture(InstallState::Failed, Some(1))),
             },
         ),
+        (
+            "update_install_bundle_downloading",
+            Event::UpdateInstallChanged {
+                install: Box::new(bundle_install_fixture(InstallStage::Downloading)),
+            },
+        ),
+        (
+            "update_install_bundle_ready",
+            Event::UpdateInstallChanged {
+                install: Box::new(bundle_install_fixture(InstallStage::Ready)),
+            },
+        ),
+        (
+            "update_install_bundle_failed",
+            Event::UpdateInstallChanged {
+                install: Box::new(UpdateInstall {
+                    state: InstallState::Failed,
+                    stage: Some(InstallStage::Verifying),
+                    message: Some(
+                        "the download's SHA-256 (5f2c9a41b7d0…) is not the one GitHub lists for Hutan-0.3.2-arm64.zip (9e1d33c6a8f4…); nothing was installed"
+                            .into(),
+                    ),
+                    manual_command: Some(
+                        "sudo mv '/Applications/Hutan.app' \"$HOME/.Trash/Hutan (old).app\" && sudo ditto '/staging/Hutan.app' '/Applications/Hutan.app' && open -n '/Applications/Hutan.app'"
+                            .into(),
+                    ),
+                    ..bundle_install_fixture(InstallStage::Verifying)
+                }),
+            },
+        ),
     ]
 }
 
@@ -5391,11 +5441,37 @@ fn update_release_fixture() -> UpdateRelease {
 fn update_install_fixture(state: InstallState, exit_code: Option<i32>) -> UpdateInstall {
     UpdateInstall {
         method: InstallMethod::Cask,
-        session_id: sid(),
+        session_id: Some(sid()),
         version: "0.3.2".into(),
         command: CASK_COMMAND.into(),
         state,
         exit_code,
+        stage: None,
+        downloaded: None,
+        total: None,
+        message: None,
+        manual_command: None,
+    }
+}
+
+/// A hand-copied bundle's update at `stage`: no session, no command.
+fn bundle_install_fixture(stage: InstallStage) -> UpdateInstall {
+    UpdateInstall {
+        method: InstallMethod::Bundle,
+        session_id: None,
+        version: "0.3.2".into(),
+        command: String::new(),
+        state: InstallState::Running,
+        exit_code: None,
+        stage: Some(stage),
+        downloaded: Some(if stage == InstallStage::Downloading {
+            18_350_080
+        } else {
+            36_700_160
+        }),
+        total: Some(36_700_160),
+        message: None,
+        manual_command: None,
     }
 }
 
@@ -8990,8 +9066,32 @@ fn responses_match_fixtures() {
             ControlMessage::ok(
                 104,
                 &UpdateInstalling {
-                    session: session_info(),
+                    session: Some(session_info()),
                     install: update_install_fixture(InstallState::Running, None),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "update_installing_bundle",
+            ControlMessage::ok(
+                105,
+                &UpdateInstalling {
+                    session: None,
+                    install: bundle_install_fixture(InstallStage::Downloading),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "update_status_bundle_ready",
+            ControlMessage::ok(
+                106,
+                &UpdateStatus {
+                    method: InstallMethod::Bundle,
+                    command: None,
+                    install: Some(bundle_install_fixture(InstallStage::Ready)),
+                    ..update_status_fixture()
                 },
             )
             .unwrap(),

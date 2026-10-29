@@ -51,6 +51,7 @@ mod term_agent;
 mod terminal_search;
 mod transport;
 mod update;
+mod update_bundle;
 mod usage;
 mod workspaces;
 mod worktree_review;

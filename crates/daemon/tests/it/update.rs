@@ -22,14 +22,14 @@ use hutan_protocol::messages::{
 };
 use hutan_protocol::update::{
     CASK_COMMAND, CheckOutcome, FORMULA_COMMAND, InstallMethod, InstallState, UpdateChannel,
-    UpdateCheck, UpdateInstall, UpdateStatus,
+    UpdateCheck, UpdateInstall, UpdateInstallRequest, UpdateStatus,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::time::{sleep, timeout};
 
-const RELEASES: &str = "/repos/robertt3kuk/hutan/releases";
-const RUNNING: &str = "0.3.1";
+pub(crate) const RELEASES: &str = "/repos/robertt3kuk/hutan/releases";
+pub(crate) const RUNNING: &str = "0.3.1";
 
 // ---- fixtures ---------------------------------------------------------------------------------
 
@@ -65,7 +65,7 @@ fn serve(server: &MockServer, releases: &[Value]) {
 
 /// A fake program at a stable path named by its content (macOS vets every new executable once,
 /// so scripts are written once, not once per test).
-fn executable(name: &str, body: &str) -> PathBuf {
+pub(crate) fn executable(name: &str, body: &str) -> PathBuf {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let text = format!("#!/bin/sh\n{body}\n");
     let mut hasher = DefaultHasher::new();
@@ -185,12 +185,12 @@ impl Layout {
     }
 }
 
-async fn status(client: &Client) -> UpdateStatus {
+pub(crate) async fn status(client: &Client) -> UpdateStatus {
     client.update_status().await.unwrap()
 }
 
 /// Polls `update.status` until `done` holds (the daemon's state, not the clock).
-async fn status_where(
+pub(crate) async fn status_where(
     client: &Client,
     what: &str,
     done: impl Fn(&UpdateStatus) -> bool,
@@ -213,7 +213,7 @@ async fn start(server: &MockServer, layout: &Layout, toml: &str) -> TestDaemon {
 }
 
 /// A daemon that never checks by itself: the check waits for the user.
-const MANUAL: &str = "[updates]\ncheck = \"off\"\n";
+pub(crate) const MANUAL: &str = "[updates]\ncheck = \"off\"\n";
 
 // ---- the check --------------------------------------------------------------------------------
 
@@ -544,22 +544,22 @@ async fn update_now_runs_brew_for_a_cask_in_a_visible_session_and_reports_succes
     assert_eq!(started.install.state, InstallState::Running);
     assert_eq!(started.install.version, "0.3.2");
     assert_eq!(started.install.command, CASK_COMMAND);
-    assert_eq!(started.session.title, "Update Hutan to 0.3.2");
+    let session = started.session.clone().expect("Homebrew runs in a session");
+    assert_eq!(session.title, "Update Hutan to 0.3.2");
     assert!(
-        started.session.terminal_id.is_some(),
+        session.terminal_id.is_some(),
         "a terminal the user can watch"
     );
-    assert_eq!(&started.session.command[..2], ["/bin/sh", "-c"]);
+    assert_eq!(&session.command[..2], ["/bin/sh", "-c"]);
     assert!(
-        started.session.command[2]
-            .contains("brew update && brew upgrade --cask robertt3kuk/hutan/hutan"),
+        session.command[2].contains("brew update && brew upgrade --cask robertt3kuk/hutan/hutan"),
         "{:?}",
-        started.session.command
+        session.command
     );
 
     let done = install_ended(&mut events, InstallState::Succeeded).await;
     assert_eq!(done.exit_code, Some(0));
-    assert_eq!(done.session_id, started.session.id);
+    assert_eq!(done.session_id, Some(session.id));
     // The fake brew saw both steps, with Homebrew's own words.
     assert_eq!(
         layout.brew_log().lines().collect::<Vec<_>>(),
@@ -608,15 +608,12 @@ async fn an_install_that_cannot_run_is_refused_with_its_reason() {
     let server = MockServer::start().await;
     serve(&server, &[release("v0.3.2", true, true)]);
 
-    // A hand-copied bundle waits for the in-place update; a development build has no method.
+    // A development build has no method; a method other than the detected one is not run
+    // (a hand-copied bundle is updated by the daemon itself: `update_bundle.rs`).
     let layout = Layout::bundle(&fake_brew(0, false));
     let t = start(&server, &layout, MANUAL).await;
     let client = t.connect().await;
     client.update_check().await.unwrap();
-    assert_eq!(
-        remote_code(client.update_install(InstallMethod::Bundle).await),
-        ErrorCode::Unsupported
-    );
     assert_eq!(
         remote_code(client.update_install(InstallMethod::Unknown).await),
         ErrorCode::BadRequest
@@ -635,6 +632,21 @@ async fn an_install_that_cannot_run_is_refused_with_its_reason() {
     assert_eq!(
         remote_code(client.update_install(InstallMethod::Cask).await),
         ErrorCode::InvalidState
+    );
+    // `apply` is for a bundle copied by hand; a Homebrew install runs in its terminal.
+    assert_eq!(
+        remote_code(
+            client
+                .call::<hutan_protocol::update::UpdateInstalling>(Request::UpdateInstall(
+                    UpdateInstallRequest {
+                        method: InstallMethod::Cask,
+                        apply: true,
+                        after_pid: None,
+                    }
+                ))
+                .await
+        ),
+        ErrorCode::BadRequest
     );
     assert_eq!(layout.brew_log(), "", "brew was not run");
     t.stop().await;

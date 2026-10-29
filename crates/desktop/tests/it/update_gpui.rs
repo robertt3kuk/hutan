@@ -336,7 +336,10 @@ fn update_now_runs_brew_in_a_terminal_then_offers_relaunch(cx: &mut TestAppConte
             .status()
             .and_then(|s| s.install.clone())
             .unwrap();
-        let id = install.session_id.to_string();
+        let id = install
+            .session_id
+            .expect("a Homebrew update has a session")
+            .to_string();
         assert!(
             wb.state().find_session_tab(&id).is_some(),
             "the window shows the terminal Homebrew runs in"

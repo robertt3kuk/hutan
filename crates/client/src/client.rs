@@ -975,14 +975,38 @@ impl Client {
         self.call(Request::UpdateCheck(Empty {})).await
     }
 
-    /// `update.install`: has the daemon run Homebrew for this install in a visible terminal
-    /// session. Refused with `forbidden` for a client that runs inside an agent's session.
+    /// `update.install`: has the daemon update Hutan the way it was installed. A Homebrew
+    /// install runs in a visible terminal session; a bundle copied by hand is downloaded,
+    /// verified and unpacked in the background (watch `update.install` events for its stage)
+    /// and waits for [`Client::update_install_apply`]. Refused with `forbidden` for a client
+    /// that runs inside an agent's session.
     pub async fn update_install(
         &self,
         method: hutan_protocol::update::InstallMethod,
     ) -> Result<hutan_protocol::update::UpdateInstalling, ClientError> {
         self.call(Request::UpdateInstall(
-            hutan_protocol::update::UpdateInstallRequest { method },
+            hutan_protocol::update::UpdateInstallRequest {
+                method,
+                apply: false,
+                after_pid: None,
+            },
+        ))
+        .await
+    }
+
+    /// `update.install` with `apply` for a bundle whose update is `ready`: the daemon waits
+    /// until the process `after_pid` (the app that is about to quit) has exited, moves the old
+    /// bundle to the Trash, puts the new one in place and opens it.
+    pub async fn update_install_apply(
+        &self,
+        after_pid: Option<u32>,
+    ) -> Result<hutan_protocol::update::UpdateInstalling, ClientError> {
+        self.call(Request::UpdateInstall(
+            hutan_protocol::update::UpdateInstallRequest {
+                method: hutan_protocol::update::InstallMethod::Bundle,
+                apply: true,
+                after_pid,
+            },
         ))
         .await
     }
