@@ -410,6 +410,9 @@ pub struct Transcript {
     question_entry: HashMap<QuestionId, usize>,
     turn_plan: HashMap<TurnId, usize>,
     turn_diff: HashMap<TurnId, usize>,
+    /// Turns whose user message is the measurement command (`/context`, sent by *Measure
+    /// context*): not part of the conversation the reader sees.
+    measure_turns: HashSet<TurnId>,
     seen: HashSet<u64>,
     max_seq: u64,
     rev: u64,
@@ -444,6 +447,16 @@ impl Transcript {
 
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// Whether `entry` belongs to a measurement (`/context` and the harness's answer to it): a
+    /// view leaves it out. A permission request or question stays visible whatever turn it is
+    /// in, so nothing that waits for the user is ever hidden.
+    pub fn is_measurement(&self, entry: &Entry) -> bool {
+        !matches!(entry.body, Body::Approval(_) | Body::Question(_))
+            && entry
+                .turn
+                .is_some_and(|turn| self.measure_turns.contains(&turn))
     }
 
     pub fn len(&self) -> usize {
@@ -719,6 +732,12 @@ impl Transcript {
                     message.phase = phase.clone();
                     message.done = true;
                     message.stream = Stream::default();
+                }
+                if matches!(role, hutan_core::agent::MessageRole::User)
+                    && text.trim() == hutan_core::insight::MEASURE_COMMAND
+                    && let Some(turn) = turn
+                {
+                    self.measure_turns.insert(turn);
                 }
                 self.touch(at);
             }
@@ -2503,5 +2522,61 @@ mod tests {
             [(None, Some(100)), (Some(250), Some(250))],
             "the older turn names the conversation total but no per-turn figure"
         );
+    }
+
+    #[test]
+    fn a_measurement_turn_is_marked_so_a_view_can_leave_it_out() {
+        let mut s = Script::new();
+        let mut t = Transcript::new();
+        let say = |s: &mut Script, t: &mut Transcript, role: MessageRole, text: &str| {
+            let item = Some(ItemId::new());
+            t.apply(&s.event(
+                item,
+                AgentEventKind::MessageEnd {
+                    role,
+                    phase: None,
+                    text: text.to_owned(),
+                },
+            ));
+        };
+        // An ordinary turn, then the measurement, then one more ordinary turn.
+        t.apply(&s.event(None, AgentEventKind::TurnStarted));
+        say(&mut s, &mut t, MessageRole::User, "hello");
+        say(&mut s, &mut t, MessageRole::Assistant, "hi");
+        t.apply(&s.event(None, AgentEventKind::TurnCompleted { duration_ms: None }));
+        s.turn = TurnId::new();
+        t.apply(&s.event(None, AgentEventKind::TurnStarted));
+        say(&mut s, &mut t, MessageRole::User, "/context");
+        say(
+            &mut s,
+            &mut t,
+            MessageRole::Assistant,
+            "Context window: 200000 tokens",
+        );
+        t.apply(&s.event(None, AgentEventKind::TurnCompleted { duration_ms: None }));
+        s.turn = TurnId::new();
+        t.apply(&s.event(None, AgentEventKind::TurnStarted));
+        say(&mut s, &mut t, MessageRole::User, "and now?");
+        t.apply(&s.event(None, AgentEventKind::TurnCompleted { duration_ms: None }));
+
+        let marks: Vec<bool> = t.entries().iter().map(|e| t.is_measurement(e)).collect();
+        // user, assistant, footer | /context, table, footer | user, footer
+        assert_eq!(marks, [false, false, false, true, true, true, false, false]);
+    }
+
+    #[test]
+    fn a_user_who_only_mentions_slash_context_is_not_measuring() {
+        let mut s = Script::new();
+        let mut t = Transcript::new();
+        t.apply(&s.event(None, AgentEventKind::TurnStarted));
+        t.apply(&s.event(
+            Some(ItemId::new()),
+            AgentEventKind::MessageEnd {
+                role: MessageRole::User,
+                phase: None,
+                text: "what does /context do?".to_owned(),
+            },
+        ));
+        assert!(t.entries().iter().all(|e| !t.is_measurement(e)));
     }
 }

@@ -138,6 +138,11 @@ impl ChatView {
         let Some(entry) = transcript.entries().get(index) else {
             return div().into_any_element();
         };
+        // A measurement (*Measure context*'s `/context` and the harness's table) is not part of
+        // the conversation: no row, no turn footer, nothing to fork or rewind.
+        if transcript.is_measurement(entry) {
+            return div().into_any_element();
+        }
         let mut ids = Ids::new(format!("e{}", entry.id)).probing(self.regions.clone(), index);
         let tokens = look.tokens;
         let card = match &entry.body {

@@ -312,16 +312,59 @@ fn measure_context_sends_slash_context_and_draws_the_breakdown(cx: &mut TestAppC
     wait_region(&view, cx, Region::Context("measure"));
     // `/context` is not a turn of the conversation.
     assert_eq!(turns_of(&panel, cx), 2);
-    // It is in the chat, as the exchange the user can see.
-    let said =
+    // The journal has it (the exchange is there for `hutan chat log`), the chat view does not
+    // show it: no `/context` bubble, no table, and no Fork… or Rewind… footer for it.
+    wait_until(cx, "the measurement's footer", |cx| {
         view.read_with(cx, |wb, cx| {
             wb.chat_model_of(chat.id).is_some_and(|m| {
-                m.read(cx).transcript().entries().iter().any(
+                let t = m.read(cx).transcript();
+                t.entries().iter().any(
                     |e| matches!(&e.body, hutan_chat_view::Body::User(m) if m.text == "/context"),
+                ) && matches!(
+                    t.entries().last().map(|e| &e.body),
+                    Some(hutan_chat_view::Body::Footer(_))
                 )
             })
-        });
-    assert!(said, "the measurement shows in the chat");
+        })
+    });
+    let (hidden, shown_footer, measured_footer) = view.read_with(cx, |wb, cx| {
+        let model = wb.chat_model_of(chat.id).unwrap();
+        let t = model.read(cx).transcript();
+        let entries = t.entries();
+        let start = entries
+            .iter()
+            .position(|e| matches!(&e.body, hutan_chat_view::Body::User(m) if m.text == "/context"))
+            .unwrap();
+        let footers: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e.body, hutan_chat_view::Body::Footer(_)))
+            .map(|(at, _)| at)
+            .collect();
+        (
+            entries[start..].iter().all(|e| t.is_measurement(e)),
+            footers[footers.len() - 2],
+            footers[footers.len() - 1],
+        )
+    });
+    assert!(
+        hidden,
+        "the command, the table and its footer are one measurement"
+    );
+    assert!(
+        view.read_with(cx, |wb, cx| {
+            let model = wb.chat_model_of(chat.id).unwrap();
+            let t = model.read(cx);
+            !t.transcript()
+                .is_measurement(&t.transcript().entries()[shown_footer])
+        }),
+        "the turn before it is an ordinary one"
+    );
+    // The footer of the last real turn offers Fork…; the measurement's has no footer at all.
+    wait_region(&view, cx, Region::ChatFork(shown_footer));
+    assert!(bounds(&view, cx, Region::ChatFork(measured_footer)).is_none());
+    assert!(bounds(&view, cx, Region::ChatRewind(measured_footer)).is_none());
+    assert!(bounds(&view, cx, Region::ChatCheckpoint(measured_footer)).is_none());
 }
 
 // ---- Claude Code ------------------------------------------------------------------------------
