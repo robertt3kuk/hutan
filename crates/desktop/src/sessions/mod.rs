@@ -20,6 +20,7 @@ pub mod tasks;
 mod terminal;
 pub mod tree;
 pub mod untracked;
+pub mod update;
 pub mod usage;
 pub mod workspaces;
 
@@ -37,7 +38,8 @@ pub use store::{
     AccountsChanged, ActivityCause, Checkout, CheckoutActivity, CloseFailure, FS_RECOUNT_AFTER,
     FS_RECOUNT_EVERY, FilesRootChoice, FilesRootChoices, MawasFocus, MawasFolder, MemoryChanged,
     REPLAY_WINDOW, RecoverySummaryDue, RequestCalled, ScopeKind, ScopeLabel, SessionClosed,
-    SessionsStore, StoreChanged, UI_OPEN_MAX_AGE_MS, UiOpenRequested, UsageSummaryChanged,
+    SessionsStore, StoreChanged, UI_OPEN_MAX_AGE_MS, UiOpenRequested, UpdateChanged,
+    UsageSummaryChanged,
 };
 pub use terminal::TerminalSession;
 pub use untracked::Untracked;

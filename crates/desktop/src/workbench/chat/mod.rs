@@ -35,6 +35,7 @@ pub use context::{
 pub use fork::{EndedTurn, ended_turns};
 pub use input::{TextInput, utf16_len, utf16_to_byte};
 pub use markdown_view::Look;
+pub(crate) use markdown_view::{Ids, blocks};
 pub use model::{ChatModel, LoadStatus};
 pub use rewind::changed_text;
 pub use rich::{LONG_PASTE_CHARS, LONG_PASTE_LINES, format_size, is_long_paste};

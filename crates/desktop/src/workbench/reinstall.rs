@@ -93,6 +93,11 @@ impl InstallControl {
         was
     }
 
+    /// The app bundle this window runs from; `None` for a development build.
+    pub(crate) fn bundle(&self) -> Option<std::path::PathBuf> {
+        self.install.as_ref().map(|install| install.bundle.clone())
+    }
+
     /// `path` is a file of the running app bundle: it is shown read-only and never offered to a
     /// language server (the changelog of *What's new*).
     pub(crate) fn holds(&self, path: &std::path::Path) -> bool {

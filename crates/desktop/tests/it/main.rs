@@ -103,6 +103,7 @@ mod term_splits_gpui;
 mod text_input_gpui;
 mod theme_gpui;
 mod theme_picker_gpui;
+mod update_gpui;
 mod usage_gpui;
 mod ux_chat_gpui;
 mod vim_file_gpui;

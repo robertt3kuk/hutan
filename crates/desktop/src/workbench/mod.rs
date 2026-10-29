@@ -99,6 +99,7 @@ mod terminals;
 pub mod text_field;
 mod track_changes;
 pub mod ui;
+pub mod update;
 pub mod usage;
 pub mod usage_card;
 mod view;

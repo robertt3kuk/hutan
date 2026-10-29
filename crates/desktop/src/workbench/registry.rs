@@ -204,6 +204,9 @@ pub struct StatusData {
     /// The `usage.meters` item: a ring per harness with a running limit window; empty until
     /// one reported.
     pub meters: Vec<crate::sessions::usage::MeterView>,
+    /// The `update` item: an update to offer, being installed, or to relaunch for; `None` while
+    /// there is nothing to say.
+    pub update: Option<crate::sessions::update::ItemView>,
 }
 
 /// What the editor items know of the focused file tab at the workbench's level. Its line and
@@ -344,6 +347,7 @@ impl Default for StatusBarLayout {
                 "editor.language",
                 "usage.meters",
                 "working",
+                "update",
             ]
             .map(str::to_owned)
             .to_vec(),

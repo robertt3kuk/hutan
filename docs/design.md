@@ -553,7 +553,7 @@ User 2026-10-28: "nicer settings". The 34 pages of the sheet (one per namespace)
 | Group | Page (id) | Sections: the old pages, each still a deep link |
 |---|---|---|
 | General | **Appearance** (`appearance`) | Appearance · Layout (`layout`) · Status bar (`status`) |
-| | **General** (`app`) | General (`app`) · Notifications (`notifications`) · Sessions & restore (`sessions_restore`) |
+| | **General** (`app`) | General (`app`) · Notifications (`notifications`) · Sessions & restore (`sessions_restore`) · Updates (`updates`) |
 | | **Terminal** (`terminal`) | Terminal |
 | | **Editing & keys** (`editor`) | Editing (`editor`) · Keyboard (`keymap`) |
 | Agents | **Mawas** (`assistant`) | Mawas |
@@ -963,6 +963,17 @@ A first run that ends at the first value, in two steps and without a modal: **se
 | Higher version | no setup offer; **Updated to 0.2.0 · What's new** in the status bar for the session; clicking opens the bundled `CHANGELOG.md` (`Contents/Resources/CHANGELOG.md`, copied by `xtask bundle`) in a file tab at that version's `## ` heading (else `## Unreleased`), and the notice goes away. A file inside the running bundle opens **read-only** (`FileBuffer::set_read_only`: no edits) and is never sent to a language server (no `doc.open`, no trust bar) |
 
 The first screen also has a ghost **Set up Hutan…** button that opens the same flow.
+
+## Updates (UPDATES-1)
+
+User 2026-10-29: "how can we update it and check for updates — through brew, asking to update?" ADR 0024; protocol 0.60 (`docs/protocol.md` § Updates); what is contacted and how to turn it off: `docs/packaging.md` § Updates. Code: `sessions/update.rs` (the words, pure), `workbench/update.rs` (the model, the sheet, Relaunch), `panels/status.rs` (the item). **Nothing ever updates by itself**: every step is a button.
+
+- **The status item** `update` (right side of the built-in bar, after *working*; it gives way below 700 px like the other right-hand items): **Update to 0.3.2** in the accent colour while a newer release waits, **Updating to 0.3.2…** (muted) while Homebrew runs, **Relaunch for 0.3.2** (success colour) once it succeeded, **Update failed** (danger) when it did not. Nothing to say, nothing drawn. A click opens the sheet. The bar's checklist (right click) lists it as *Update available*.
+- **Check for Updates…**: the Hutan menu (below *About Hutan*) and ⌘K *Hutan: Check for Updates…*. It asks the daemon now (`update.check`, whatever `updates.check` says): a release opens the sheet — also one the user skipped —, *Hutan 0.3.1 is up to date* or *Could not check for updates: …* is said in the status bar.
+- **The sheet** (a card above the status bar on the right, 540 pt, no focus trap; *Later* closes it): the title *Update to Hutan 0.3.2*; *You have 0.3.1 · pre-release · published 2026-10-29*; the **release notes** as rendered Markdown (the release body, bounded to 32 KiB by the daemon, scrolling after 240 pt) with *Read on GitHub*; **what will happen** in a few muted sentences — the command Homebrew runs, that macOS may ask to approve the new Hutan, that running sessions keep running while Homebrew works, that nothing changes until Relaunch, and what the build-mismatch flow then does (an idle service moves onto the new build by itself; with sessions running it asks first, *Restart now* or *Later*: terminals are restored, agent turns in progress are interrupted); then the buttons **Skip this version** (ghost, left), **Later**, and the primary one: **Update now** (a Homebrew install; the daemon opens a terminal session running Homebrew and the window shows it as a tab, *Show terminal* in the sheet), **Updating…** (disabled) while it runs, **Relaunch** after it succeeded (quits the app without asking and without stopping the daemon, then opens the installed bundle again), **Try again** after a failure (with *Homebrew exited with 3. Its terminal shows why.*). For an install Hutan cannot update itself (a hand-copied bundle until UPDATES-2, a development build) the primary button is **Open release page** and the sheet shows the Homebrew command with *Copy command*.
+- **Skip this version** writes `updates.skip_version` to `daemon.toml`: the item goes until a higher version comes; *Check for Updates…* still shows it.
+- **Settings → General → Updates** (section `updates`): *Check for updates* (Automatically · Only when I ask), *Releases that count* (All releases · Stable releases only), *Skipped version* (empty by default; clear it to be told again). The first-run setup's Background step has the first as a switch with what is contacted.
+- **Parity.** The old text *Update Hutan: `brew upgrade --cask hutan`* of the start-failure messages is now the full command `brew update && brew upgrade --cask robertt3kuk/hutan/hutan`; nothing else was removed.
 
 ## Run Setup Again… (D-2, the setup flow)
 

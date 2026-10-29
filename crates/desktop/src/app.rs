@@ -143,6 +143,7 @@ pub fn menus(presets: &[LayoutPreset], current: &str, daemon_menu: &DaemonMenu) 
     vec![
         Menu::new("Hutan").items([
             MenuItem::action("About Hutan", actions::About),
+            MenuItem::action("Check for Updates…", actions::CheckForUpdates),
             MenuItem::separator(),
             MenuItem::action("Settings…", actions::OpenSettings),
             MenuItem::action("Run Setup Again…", actions::RunSetup),
@@ -493,6 +494,7 @@ fn open_main(cx: &mut App) -> gpui::Result<WindowHandle<Workbench>> {
             .with_install(crate::install::Install::current())
             .with_installer(Arc::new(CliInstaller::new(hutan_path())))
             .with_package_runner(Arc::new(SystemRunner))
+            .with_relauncher(Arc::new(crate::workbench::update::OpenRelauncher))
             .with_own_daemon(own_daemon());
     open_workbench(cx, options)
 }
@@ -657,6 +659,25 @@ mod tests {
             )),
             "Hutan ▸ Run Setup Again…"
         );
+    }
+
+    #[test]
+    fn the_hutan_menu_offers_check_for_updates_below_about() {
+        let menus = menus(
+            &LayoutPreset::builtin(),
+            LayoutPreset::DEFAULT,
+            &DaemonMenu::default(),
+        );
+        let names: Vec<&str> = menus[0]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action { name, .. } => Some(name.as_ref()),
+                _ => None,
+            })
+            .collect();
+        let about = names.iter().position(|n| *n == "About Hutan").unwrap();
+        assert_eq!(names.get(about + 1), Some(&"Check for Updates…"));
     }
 
     #[test]

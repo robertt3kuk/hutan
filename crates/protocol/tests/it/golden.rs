@@ -44,7 +44,6 @@ use hutan_protocol::hooks::{
     HooksTest, HooksTested,
 };
 use hutan_protocol::insight::*;
-use hutan_protocol::update::*;
 use hutan_protocol::lsp::*;
 use hutan_protocol::memory::*;
 use hutan_protocol::messages::*;
@@ -60,6 +59,7 @@ use hutan_protocol::resources::*;
 use hutan_protocol::task::*;
 use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch, TerminalSearchResult};
 use hutan_protocol::tree::*;
+use hutan_protocol::update::*;
 use hutan_protocol::usage::*;
 use hutan_protocol::worktree::*;
 use hutan_protocol::{ErrorBody, ErrorCode, Frame, PROTOCOL_VERSION};

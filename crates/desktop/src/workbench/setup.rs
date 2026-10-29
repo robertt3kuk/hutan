@@ -161,6 +161,9 @@ pub struct SetupState {
     pub history_touched: bool,
     pub keep_running: bool,
     pub start_at_login: bool,
+    /// `updates.check = "auto"` (daemon.toml): the daemon asks GitHub's releases once a day.
+    /// Starts at what the daemon says; on until it has said (the default).
+    pub update_check: bool,
     pub global_shortcut: String,
     pub notifications: NotificationUi,
     pub cli_link: bool,
@@ -190,6 +193,7 @@ impl SetupState {
             history_touched: false,
             keep_running: app.keep_running,
             start_at_login: app.start_at_login,
+            update_check: true,
             global_shortcut: assistant.global_shortcut.clone(),
             notifications: NotificationUi::NotAsked,
             cli_link: false,
@@ -316,7 +320,9 @@ impl Workbench {
         match &mut self.setup.state {
             Some(state) => state.suspended = false,
             None => {
-                self.setup.state = Some(SetupState::from_settings(&self.settings));
+                let mut state = SetupState::from_settings(&self.settings);
+                state.update_check = self.updates_check_now(cx);
+                self.setup.state = Some(state);
                 // What the history index reads now: the daemon answers, the step shows it.
                 self.setup_adopt_history();
                 self.refresh_history_index(cx);
@@ -526,6 +532,9 @@ impl Workbench {
                 {
                     self.setup_write("assistant.global_shortcut", &state.global_shortcut, cx);
                 }
+                if state.update_check != self.updates_check_now(cx) {
+                    self.setup_write_update_check(state.update_check, cx);
+                }
             }
             SetupStep::CommandLine => {
                 if state.cli_link {
@@ -545,6 +554,7 @@ impl Workbench {
             return;
         }
         let today = SetupState::from_settings(&self.settings);
+        let update_check_today = self.updates_check_now(cx);
         if let Some(state) = &mut self.setup.state {
             match step {
                 SetupStep::Look => {
@@ -568,6 +578,7 @@ impl Workbench {
                 SetupStep::Background => {
                     state.keep_running = today.keep_running;
                     state.start_at_login = today.start_at_login;
+                    state.update_check = update_check_today;
                     state.global_shortcut = today.global_shortcut;
                 }
                 SetupStep::CommandLine => state.cli_link = false,
@@ -804,6 +815,42 @@ impl Workbench {
             state.keep_running = on;
             cx.notify();
         }
+    }
+
+    pub fn setup_set_update_check(&mut self, on: bool, cx: &mut Context<Self>) {
+        if let Some(state) = &mut self.setup.state {
+            state.update_check = on;
+            cx.notify();
+        }
+    }
+
+    /// Whether the daemon checks for updates by itself now; on until it has said.
+    fn updates_check_now(&self, cx: &gpui::App) -> bool {
+        self.updates
+            .read(cx)
+            .status()
+            .is_none_or(crate::sessions::update::checks_automatically)
+    }
+
+    /// The Background step's update row reaches `daemon.toml` (`updates.check`).
+    fn setup_write_update_check(&mut self, auto: bool, cx: &mut Context<Self>) {
+        let connection = self.connection(cx);
+        if !connection.supports_daemon_settings() {
+            return;
+        }
+        let value = if auto { "auto" } else { "off" };
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = connection
+                .daemon_setting_set("updates.check", Some(serde_json::json!(value)))
+                .await
+            {
+                this.update(cx, |this, cx| {
+                    this.set_notice(format!("Cannot save updates.check: {error}"), cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     pub fn setup_set_start_at_login(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -1817,6 +1864,13 @@ impl Workbench {
                 .child(probe(&self.regions, Region::Setup("notifications"))),
             )
             .into_any_element();
+        let update_check = ui::switch("update-check", state.update_check, true, &theme)
+            .relative()
+            .on_click(cx.listener(|this, _, _, cx| {
+                let on = this.setup.state.as_ref().is_some_and(|s| !s.update_check);
+                this.setup_set_update_check(on, cx);
+            }))
+            .child(probe(&self.regions, Region::Setup("update-check")));
         let shortcuts = div()
             .flex()
             .gap(px(tokens.spacing * 2.0))
@@ -1853,6 +1907,13 @@ impl Workbench {
                 "Notifications",
                 div().text_color(note_color).child(note_text),
                 notifications,
+            ))
+            .child(self.setup_row(
+                "Check for updates",
+                "Once a day at most, Hutan asks GitHub's release list (api.github.com) whether \
+                 a newer version exists. Only a User-Agent header with this version is sent. \
+                 Nothing updates unless you press Update now.",
+                update_check.into_any_element(),
             ))
             .child(self.setup_row(
                 "Global shortcut for Mawas",

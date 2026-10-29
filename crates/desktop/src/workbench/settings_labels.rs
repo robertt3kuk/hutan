@@ -82,6 +82,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("models", "Models"),
     ("notifications", "Notifications"),
     ("sessions_restore", "Sessions & restore"),
+    ("updates", "Updates"),
     ("control", "Agent control & security"),
     ("agents_tools", "Agents & tools"),
     ("experimental", "Experimental features"),
@@ -100,7 +101,7 @@ const PAGE_TEXTS: &[(&str, &str, &str)] = &[
     (
         "app",
         "General",
-        "Starting and quitting, notifications and what comes back after a restart.",
+        "Starting and quitting, notifications, what comes back, and updates.",
     ),
     (
         "terminal",
@@ -264,6 +265,10 @@ const NAMESPACE_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "sessions_restore",
         "What comes back when the daemon restarts.",
+    ),
+    (
+        "updates",
+        "Whether Hutan checks for a newer version, and which releases count.",
     ),
     (
         "control",
@@ -1265,6 +1270,30 @@ fn entry(namespace: &str, key: &str) -> Option<&'static FieldText> {
 /// Kept apart from [`FIELDS`] because these keys are the daemon's, not a namespace of the
 /// settings store; a test checks that each key of the daemon's table has an entry.
 const DAEMON_FIELDS: &[FieldText] = &[
+    // ---- updates ----
+    choice(
+        "daemon",
+        "updates.check",
+        "Check for updates",
+        "Once a day at most, Hutan asks GitHub's release list (api.github.com) whether a newer version exists. The request carries only a User-Agent header with this version; nothing about you or your work is sent. Only on request, it asks when you choose Check for Updates… Nothing ever updates by itself.",
+        &[("auto", "Automatically"), ("off", "Only when I ask")],
+    ),
+    choice(
+        "daemon",
+        "updates.channel",
+        "Releases that count",
+        "Which releases are offered as updates. Every Hutan release is a pre-release for now, so Stable offers nothing until one is not.",
+        &[
+            ("prerelease", "All releases, pre-releases too"),
+            ("stable", "Stable releases only"),
+        ],
+    ),
+    field(
+        "daemon",
+        "updates.skip_version",
+        "Skipped version",
+        "The version you chose to skip: Hutan does not announce it in the status bar. A newer version is announced again. Empty skips nothing.",
+    ),
     // ---- notifications ----
     field(
         "daemon",
@@ -1979,6 +2008,10 @@ pub fn page_keywords(page: &str) -> &'static str {
         }
         "sessions_restore" => {
             "Restore sessions restart respawn home folder environment login shell projects"
+        }
+        "updates" => {
+            "Updates check for updates new version release GitHub api.github.com Homebrew brew \
+             channel stable prerelease pre-release skip version update available"
         }
         "control" => {
             "Agents control approval security MCP tools read only allow ask permission finish \

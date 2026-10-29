@@ -35,6 +35,7 @@ pub fn status_item_title(id: &str) -> &str {
         "working" => "Agents at work",
         "usage.meters" => "Usage rings",
         "usage" => "Usage limit",
+        "update" => "Update available",
         "sessions" => "Session count",
         "attention" => "Requests waiting",
         "approvals" => "Approvals",

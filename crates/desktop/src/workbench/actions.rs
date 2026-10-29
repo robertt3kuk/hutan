@@ -73,6 +73,11 @@ actions!(
         UseNewDefaultLayout,
         OpenSettings,
         About,
+        /// *Check for Updates…* (the Hutan menu, ⌘K): asks the daemon to check now and opens the
+        /// update sheet when a release is newer.
+        CheckForUpdates,
+        /// Open the update sheet (the *Update to x.y.z* status item).
+        ShowUpdate,
         Quit,
         MinimizeWindow,
         ZoomWindow,
@@ -890,6 +895,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("App: Command Palette", TogglePalette),
         command("App: Settings…", OpenSettings),
         command("App: About Hutan", About),
+        command("Hutan: Check for Updates…", CheckForUpdates),
         command("Hutan: Run Setup Again…", RunSetup),
         command("Window: Minimize", MinimizeWindow),
         command("Window: Zoom", ZoomWindow),

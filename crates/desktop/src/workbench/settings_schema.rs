@@ -424,7 +424,7 @@ pub const PAGES: &[NavPage] = &[
     NavPage {
         id: "app",
         group: NavGroup::General,
-        sections: &["app", "notifications", "sessions_restore"],
+        sections: &["app", "notifications", "sessions_restore", "updates"],
     },
     NavPage {
         id: "terminal",
@@ -550,6 +550,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<HistorySettings>(),
         CatalogEntry::custom("data"),
         CatalogEntry::custom("sessions_restore"),
+        CatalogEntry::custom("updates"),
         CatalogEntry::of::<ExperimentalSettings>(),
         CatalogEntry::custom("agents_tools"),
         CatalogEntry::custom("control"),
@@ -934,6 +935,7 @@ mod tests {
         ("history", "history"),
         ("data", "data"),
         ("sessions_restore", "app"),
+        ("updates", "app"),
         ("agents_tools", "agents_tools"),
         ("control", "agents_tools"),
         ("resources", "agents_tools"),

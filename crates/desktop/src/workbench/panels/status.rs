@@ -1,8 +1,8 @@
-//! Status bar items: `connection`, `workspace`, `working`, `usage.meters`, `usage`, `sessions`,
+//! Status bar items: `connection`, `workspace`, `working`, `update`, `usage.meters`, `usage`, `sessions`,
 //! `attention`, `approvals`, `density`, `theme`, `palette_hint`, the editor's items, and the dock
 //! buttons `dock_left`, `dock_bottom`, `dock_right`. The built-in presets show `connection`,
-//! `workspace` and `attention` on the left and the editor's items, `usage.meters` and `working`
-//! on the right ([`StatusBarLayout`]; `palette_hint`, the palette's key, is off by default); an
+//! `workspace` and `attention` on the left and the editor's items, `usage.meters`, `working`
+//! and `update` (a newer Hutan to offer, UPDATES-1) on the right ([`StatusBarLayout`]; `palette_hint`, the palette's key, is off by default); an
 //! item with nothing to say draws nothing. `connection` always has
 //! something to say: the daemon's state is never only in a menu (FX-STATUSBAR).
 //!
@@ -22,7 +22,7 @@ use crate::icons::{Icon, glyph, icon};
 use crate::sessions::usage::{MeterView, Severity};
 use crate::theme::DensityExt as _;
 use crate::workbench::actions::{
-    JumpToNextAttention, OpenJump, ReviewApprovals, ShowAgentsPage, ToggleBottomDock,
+    JumpToNextAttention, OpenJump, ReviewApprovals, ShowAgentsPage, ShowUpdate, ToggleBottomDock,
     ToggleDensity, ToggleLeftDock, TogglePalette, ToggleRightDock, daemon,
 };
 use crate::workbench::model::DockPosition;
@@ -385,6 +385,30 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                         .enumerate()
                         .map(|(index, meter)| usage_meter(index, meter, ctx)),
                 )
+                .into_any_element()
+        }),
+    });
+    // A newer Hutan, Homebrew updating it, or the relaunch it waits for (UPDATES-1): the one
+    // item that invites the user. Nothing to say, nothing drawn; a click opens the update sheet.
+    registry.register(StatusItemSpec {
+        id: "update",
+        default_side: StatusSide::Right,
+        render: gives_way(|ctx: &StatusContext<'_>| {
+            use crate::sessions::update::ItemTone;
+            let Some(update) = &ctx.data.update else {
+                return div().id("status-update").into_any_element();
+            };
+            let color = match update.tone {
+                ItemTone::Offer => ctx.theme.accent,
+                ItemTone::Busy => ctx.theme.muted,
+                ItemTone::Done => ctx.theme.success,
+                ItemTone::Failed => ctx.theme.danger,
+            };
+            clickable("status-update", ctx)
+                .text_color(color)
+                .tooltip(tooltip(update.tooltip.clone()))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowUpdate), cx))
+                .child(SharedString::from(update.text.clone()))
                 .into_any_element()
         }),
     });
@@ -881,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_status_bar_is_connection_workspace_attention_then_working() {
+    fn the_default_status_bar_is_connection_workspace_attention_then_working_and_update() {
         use crate::workbench::registry::StatusBarLayout;
         let bar = StatusBarLayout::default();
         assert_eq!(bar.left, ["connection", "workspace", "attention"]);
@@ -894,7 +918,8 @@ mod tests {
                 "editor.wrap",
                 "editor.language",
                 "usage.meters",
-                "working"
+                "working",
+                "update"
             ]
         );
         // Every item the built-in bar names is registered, and so is every item it does not

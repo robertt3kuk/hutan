@@ -248,6 +248,7 @@ impl Render for Workbench {
         let folders_popover = self.render_folders_popover(window, cx);
         let fork_popover = self.render_fork_popover(window, cx);
         let recovery = self.render_recovery_summary(cx);
+        let update_sheet = self.render_update_sheet(cx);
         let sheet = self.render_settings_sheet(cx);
         let setup = self.render_setup(window, cx);
         // A tooltip shown before a sheet, menu or palette opened must not stay over it.
@@ -358,6 +359,7 @@ impl Render for Workbench {
         .children(folders_popover)
         .children(fork_popover)
         .children(recovery)
+        .children(update_sheet)
         .children(palette)
         .children(picker)
         .children(agent_picker)
@@ -600,6 +602,10 @@ impl Workbench {
                 this.open_settings(Some(&a.0), window, cx);
             }),
         )
+        .on_action(cx.listener(|this, _: &actions::CheckForUpdates, _, cx| {
+            this.check_for_updates(cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::ShowUpdate, _, cx| this.show_update(cx)))
         .on_action(cx.listener(|this, _: &actions::About, _, cx| {
             this.set_notice(concat!("Hutan desktop ", env!("CARGO_PKG_VERSION")), cx);
         }))
@@ -3180,6 +3186,7 @@ impl Workbench {
             editor: self.editor_status(cx),
             usage: self.env.usage.read(cx).status(),
             meters: self.env.usage.read(cx).meters(),
+            update: self.update_item(cx),
         }
     }
 

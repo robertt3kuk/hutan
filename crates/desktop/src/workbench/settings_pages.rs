@@ -203,7 +203,7 @@ impl Workbench {
                     self.refresh_mawas_grants(cx);
                     self.refresh_providers(cx);
                 }
-                "notifications" | "sessions_restore" | "control" | "agents_tools" => {
+                "notifications" | "sessions_restore" | "updates" | "control" | "agents_tools" => {
                     daemon = true;
                 }
                 _ => {}

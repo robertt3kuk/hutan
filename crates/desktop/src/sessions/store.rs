@@ -3401,6 +3401,30 @@ impl SessionsStore {
         })
     }
 
+    /// `update.install` (protocol 0.60): the daemon runs Homebrew in a terminal session. The
+    /// session is remembered until its events arrive, so the window can show it at once.
+    pub fn update_install(
+        &mut self,
+        method: hutan_protocol::update::InstallMethod,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::update::UpdateInstalling, String>> {
+        let connection = self.connection.clone();
+        cx.spawn(async move |this, cx| {
+            let answer = connection
+                .update_install(method)
+                .await
+                .map_err(|e| e.to_string())?;
+            let remembered = answer.session.clone();
+            this.update(cx, |this, _| {
+                if !this.state.sessions.iter().any(|s| s.id == remembered.id) {
+                    this.recent.insert(remembered.id, remembered);
+                }
+            })
+            .ok();
+            Ok(answer)
+        })
+    }
+
     /// `account.add`: a managed account with an empty home (protocol 0.50).
     pub fn account_add(
         &mut self,

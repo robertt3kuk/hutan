@@ -1,0 +1,422 @@
+//! What the window says about updates (UPDATES-1, protocol 0.60, ADR 0024): the words of the
+//! *Update to x.y.z* status item and of the sheet — what will happen, what the buttons are —
+//! derived from the daemon's [`UpdateStatus`]. Pure data, no GPUI.
+//!
+//! The daemon checks and installs; the window only words it. Nothing here decides whether an
+//! update happens: every step is a button the user presses.
+
+use hutan_protocol::update::{
+    CheckOutcome, InstallMethod, InstallState, UpdateCheck, UpdateInstall, UpdateRelease,
+    UpdateStatus,
+};
+
+/// How the status item looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemTone {
+    /// An update waits: the item is a link-like invitation, never a warning.
+    Offer,
+    /// Homebrew is running.
+    Busy,
+    /// Homebrew finished: relaunch.
+    Done,
+    /// Homebrew did not finish.
+    Failed,
+}
+
+/// The `update` status item: its words and its tooltip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemView {
+    pub text: String,
+    pub tooltip: String,
+    pub tone: ItemTone,
+}
+
+/// The status item, or `None` when there is nothing to say: no newer release, or one the user
+/// skipped (a check the user asks for still shows it, in the sheet).
+pub fn item(status: &UpdateStatus) -> Option<ItemView> {
+    if let Some(install) = &status.install {
+        let version = &install.version;
+        match install.state {
+            InstallState::Running => {
+                return Some(ItemView {
+                    text: format!("Updating to {version}…"),
+                    tooltip: "Homebrew is updating Hutan in a terminal · click for details"
+                        .to_owned(),
+                    tone: ItemTone::Busy,
+                });
+            }
+            InstallState::Succeeded => {
+                return Some(ItemView {
+                    text: format!("Relaunch for {version}"),
+                    tooltip: format!("Hutan {version} is installed · click to relaunch"),
+                    tone: ItemTone::Done,
+                });
+            }
+            InstallState::Failed => {
+                return Some(ItemView {
+                    text: "Update failed".to_owned(),
+                    tooltip: "Homebrew did not finish · click for details".to_owned(),
+                    tone: ItemTone::Failed,
+                });
+            }
+        }
+    }
+    let release = status.available.as_ref()?;
+    if status.skipped.as_deref() == Some(release.version.as_str()) {
+        return None;
+    }
+    Some(ItemView {
+        text: format!("Update to {}", release.version),
+        tooltip: format!(
+            "Hutan {} is available (this is {}) · click for what's new",
+            release.version, status.version
+        ),
+        tone: ItemTone::Offer,
+    })
+}
+
+/// The main button of the sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Primary {
+    /// *Update now*: the daemon runs Homebrew.
+    UpdateNow,
+    /// Homebrew is running; nothing to press but the terminal.
+    Running,
+    /// *Relaunch*: Homebrew finished.
+    Relaunch,
+    /// *Try again*: Homebrew failed.
+    TryAgain,
+    /// Hutan cannot update itself here: *Open release page* and the words that say why.
+    Manual,
+}
+
+/// Everything the sheet shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SheetView {
+    pub title: String,
+    /// `You have 0.3.1 · pre-release · published 2026-10-29`.
+    pub subtitle: String,
+    /// The release notes (Markdown), as the daemon bounded them.
+    pub notes: String,
+    pub notes_truncated: bool,
+    pub notes_url: String,
+    /// What will happen, one short paragraph each (what runs, what a running session meets).
+    pub will_happen: Vec<String>,
+    pub primary: Primary,
+    /// The install's outcome, when one ran: `Homebrew finished` / `Homebrew exited with 1`.
+    pub outcome: Option<String>,
+    /// The command to run by hand where Hutan runs nothing itself.
+    pub manual_command: Option<String>,
+}
+
+/// The sheet for the status, or `None` when there is no release to show.
+pub fn sheet(status: &UpdateStatus, live_sessions: usize) -> Option<SheetView> {
+    let release = status.available.as_ref()?;
+    let primary = match (&status.install, status.method) {
+        (Some(install), _) if install.state == InstallState::Running => Primary::Running,
+        (Some(install), _) if install.state == InstallState::Succeeded => Primary::Relaunch,
+        (Some(_), InstallMethod::Cask | InstallMethod::Formula) => Primary::TryAgain,
+        (None, InstallMethod::Cask | InstallMethod::Formula) => Primary::UpdateNow,
+        _ => Primary::Manual,
+    };
+    Some(SheetView {
+        title: format!("Update to Hutan {}", release.version),
+        subtitle: subtitle(status, release),
+        notes: release.notes.clone(),
+        notes_truncated: release.notes_truncated,
+        notes_url: release.notes_url.clone(),
+        will_happen: will_happen(status, release, live_sessions, primary == Primary::Relaunch),
+        primary,
+        outcome: status.install.as_ref().and_then(outcome),
+        manual_command: match status.method {
+            InstallMethod::Cask | InstallMethod::Formula => None,
+            InstallMethod::Bundle | InstallMethod::Unknown => {
+                Some(hutan_protocol::update::CASK_COMMAND.to_owned())
+            }
+        },
+    })
+}
+
+fn subtitle(status: &UpdateStatus, release: &UpdateRelease) -> String {
+    let mut parts = vec![format!("You have {}", status.version)];
+    if release.prerelease {
+        parts.push("pre-release".to_owned());
+    }
+    if let Some(published) = release.published.as_deref().and_then(|p| p.get(..10)) {
+        parts.push(format!("published {published}"));
+    }
+    parts.join(" · ")
+}
+
+fn outcome(install: &UpdateInstall) -> Option<String> {
+    match install.state {
+        InstallState::Running => None,
+        InstallState::Succeeded => Some(format!("Hutan {} is installed.", install.version)),
+        InstallState::Failed => Some(match install.exit_code {
+            Some(code) => format!("Homebrew exited with {code}. Its terminal shows why."),
+            None => "Homebrew was stopped before it finished.".to_owned(),
+        }),
+    }
+}
+
+/// What the user is told before pressing *Update now*, and after it ran.
+fn will_happen(
+    status: &UpdateStatus,
+    release: &UpdateRelease,
+    live_sessions: usize,
+    installed: bool,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    match status.method {
+        InstallMethod::Cask | InstallMethod::Formula => {
+            if !installed {
+                let command = status.command.as_deref().unwrap_or_default();
+                lines.push(format!(
+                    "Hutan runs `{command}` in a terminal you can watch. Homebrew may ask for \
+                     your password, and macOS may ask you to approve Hutan {} the first time you \
+                     open it.",
+                    release.version
+                ));
+            }
+            if status.method == InstallMethod::Formula {
+                lines.push(
+                    "This install is the command line and the daemon only; the app is not part \
+                     of it."
+                        .to_owned(),
+                );
+            }
+            lines.push(running_sessions(live_sessions, installed));
+        }
+        InstallMethod::Bundle => lines.push(
+            "This Hutan.app was copied here by hand, so Hutan cannot replace it yet. Download \
+             the release and replace the app, or install Hutan with Homebrew."
+                .to_owned(),
+        ),
+        InstallMethod::Unknown => lines.push(
+            "Hutan does not know how it was installed (a development build, or a folder it \
+             cannot write to). Update it the way you installed it."
+                .to_owned(),
+        ),
+    }
+    lines
+}
+
+fn running_sessions(live: usize, installed: bool) -> String {
+    let sessions = match live {
+        0 => "Nothing is running now.".to_owned(),
+        1 => "1 session is running and keeps running while Homebrew works.".to_owned(),
+        n => format!("{n} sessions are running and keep running while Homebrew works."),
+    };
+    let after = if installed {
+        "Relaunching quits the app and opens the new one; the background service stays up."
+    } else {
+        "Nothing changes until you relaunch."
+    };
+    let restart = if live == 0 {
+        "A service with nothing running moves onto the new build by itself."
+    } else {
+        "A service with sessions running asks first (Restart now or Later): terminals are \
+         restored, and agent turns in progress are interrupted."
+    };
+    format!("{sessions} {after} {restart}")
+}
+
+/// What *Check for Updates…* tells the user when it found nothing to offer: up to date, or why
+/// the check could not finish. `None` when the sheet has something to show.
+pub fn check_note(status: &UpdateStatus) -> Option<String> {
+    if status.available.is_some() {
+        return None;
+    }
+    match status.last_check.as_ref() {
+        Some(check) if check.outcome != CheckOutcome::Checked => Some(format!(
+            "Could not check for updates: {}",
+            check.message.as_deref().unwrap_or("no answer")
+        )),
+        _ => Some(format!("Hutan {} is up to date", status.version)),
+    }
+}
+
+/// Whether the daemon checks by itself (`updates.check = "auto"`).
+pub fn checks_automatically(status: &UpdateStatus) -> bool {
+    status.check == UpdateCheck::Auto
+}
+
+#[cfg(test)]
+mod tests {
+    use hutan_core::SessionId;
+    use hutan_protocol::update::{
+        CASK_COMMAND, UpdateAsset, UpdateChannel, UpdateCheckInfo, UpdateInstall,
+    };
+
+    use super::*;
+
+    fn release() -> UpdateRelease {
+        UpdateRelease {
+            version: "0.3.2".into(),
+            tag: "v0.3.2".into(),
+            prerelease: true,
+            published: Some("2026-10-29T10:15:00Z".into()),
+            notes_url: "https://github.com/robertt3kuk/hutan/releases/tag/v0.3.2".into(),
+            notes: "## Hutan 0.3.2\n\n- Update check".into(),
+            notes_truncated: false,
+            assets: vec![UpdateAsset {
+                name: "Hutan-0.3.2-arm64.zip".into(),
+                size: 1,
+                sha256: None,
+            }],
+        }
+    }
+
+    fn status(method: InstallMethod) -> UpdateStatus {
+        UpdateStatus {
+            version: "0.3.1".into(),
+            check: UpdateCheck::Auto,
+            channel: UpdateChannel::Prerelease,
+            method,
+            install_path: Some("/Applications/Hutan.app".into()),
+            command: matches!(method, InstallMethod::Cask).then(|| CASK_COMMAND.to_owned()),
+            available: Some(release()),
+            skipped: None,
+            last_check: Some(UpdateCheckInfo {
+                at_ms: 1,
+                outcome: CheckOutcome::Checked,
+                message: None,
+            }),
+            install: None,
+        }
+    }
+
+    fn install(state: InstallState, exit_code: Option<i32>) -> UpdateInstall {
+        UpdateInstall {
+            method: InstallMethod::Cask,
+            session_id: SessionId::new(),
+            version: "0.3.2".into(),
+            command: CASK_COMMAND.into(),
+            state,
+            exit_code,
+        }
+    }
+
+    #[test]
+    fn the_item_offers_the_version_and_goes_when_it_is_skipped_or_there_is_none() {
+        let mut s = status(InstallMethod::Cask);
+        let shown = item(&s).unwrap();
+        assert_eq!(shown.text, "Update to 0.3.2");
+        assert_eq!(shown.tone, ItemTone::Offer);
+        assert!(shown.tooltip.contains("0.3.1"));
+        s.skipped = Some("0.3.2".into());
+        assert_eq!(item(&s), None);
+        s.skipped = Some("0.3.1".into());
+        assert!(item(&s).is_some(), "another version's skip does not count");
+        s.available = None;
+        assert_eq!(item(&s), None);
+    }
+
+    #[test]
+    fn the_item_follows_the_install() {
+        let mut s = status(InstallMethod::Cask);
+        s.install = Some(install(InstallState::Running, None));
+        assert_eq!(item(&s).unwrap().text, "Updating to 0.3.2…");
+        s.install = Some(install(InstallState::Succeeded, Some(0)));
+        let done = item(&s).unwrap();
+        assert_eq!(done.text, "Relaunch for 0.3.2");
+        assert_eq!(done.tone, ItemTone::Done);
+        s.install = Some(install(InstallState::Failed, Some(1)));
+        assert_eq!(item(&s).unwrap().tone, ItemTone::Failed);
+        // A skipped version still shows its install: the user pressed it.
+        s.skipped = Some("0.3.2".into());
+        assert!(item(&s).is_some());
+    }
+
+    #[test]
+    fn the_sheet_says_what_will_happen_to_running_sessions() {
+        let s = status(InstallMethod::Cask);
+        let none = sheet(&s, 0).unwrap();
+        assert_eq!(none.title, "Update to Hutan 0.3.2");
+        assert_eq!(
+            none.subtitle,
+            "You have 0.3.1 · pre-release · published 2026-10-29"
+        );
+        assert_eq!(none.primary, Primary::UpdateNow);
+        let text = none.will_happen.join(" ");
+        assert!(text.contains(CASK_COMMAND), "{text}");
+        assert!(text.contains("Nothing is running now"), "{text}");
+        assert!(
+            text.contains("moves onto the new build by itself"),
+            "{text}"
+        );
+
+        let busy = sheet(&s, 3).unwrap().will_happen.join(" ");
+        assert!(
+            busy.contains("3 sessions are running and keep running"),
+            "{busy}"
+        );
+        assert!(busy.contains("asks first (Restart now or Later)"), "{busy}");
+        let one = sheet(&s, 1).unwrap().will_happen.join(" ");
+        assert!(one.contains("1 session is running"), "{one}");
+    }
+
+    #[test]
+    fn the_primary_button_follows_the_method_and_the_install() {
+        let mut cask = status(InstallMethod::Cask);
+        assert_eq!(sheet(&cask, 0).unwrap().primary, Primary::UpdateNow);
+        cask.install = Some(install(InstallState::Running, None));
+        assert_eq!(sheet(&cask, 0).unwrap().primary, Primary::Running);
+        cask.install = Some(install(InstallState::Failed, Some(2)));
+        let failed = sheet(&cask, 0).unwrap();
+        assert_eq!(failed.primary, Primary::TryAgain);
+        assert_eq!(
+            failed.outcome.as_deref(),
+            Some("Homebrew exited with 2. Its terminal shows why.")
+        );
+        cask.install = Some(install(InstallState::Succeeded, Some(0)));
+        let done = sheet(&cask, 2).unwrap();
+        assert_eq!(done.primary, Primary::Relaunch);
+        assert!(
+            done.will_happen
+                .join(" ")
+                .contains("Relaunching quits the app")
+        );
+        assert!(!done.will_happen.join(" ").contains("Hutan runs `"));
+
+        for method in [InstallMethod::Bundle, InstallMethod::Unknown] {
+            let manual = sheet(&status(method), 0).unwrap();
+            assert_eq!(manual.primary, Primary::Manual);
+            assert_eq!(manual.manual_command.as_deref(), Some(CASK_COMMAND));
+        }
+        assert_eq!(
+            sheet(&status(InstallMethod::Formula), 0).unwrap().primary,
+            Primary::UpdateNow
+        );
+    }
+
+    #[test]
+    fn the_notes_come_through_and_a_status_without_a_release_has_no_sheet() {
+        let mut s = status(InstallMethod::Cask);
+        let view = sheet(&s, 0).unwrap();
+        assert!(view.notes.starts_with("## Hutan 0.3.2"));
+        assert!(!view.notes_truncated);
+        s.available = None;
+        assert_eq!(sheet(&s, 0), None);
+    }
+
+    #[test]
+    fn a_check_the_user_asked_for_says_up_to_date_or_why_not() {
+        let mut s = status(InstallMethod::Cask);
+        assert_eq!(check_note(&s), None, "a release has the sheet");
+        s.available = None;
+        assert_eq!(check_note(&s).unwrap(), "Hutan 0.3.1 is up to date");
+        s.last_check = Some(UpdateCheckInfo {
+            at_ms: 1,
+            outcome: CheckOutcome::Offline,
+            message: Some("GitHub could not be reached".into()),
+        });
+        assert_eq!(
+            check_note(&s).unwrap(),
+            "Could not check for updates: GitHub could not be reached"
+        );
+        assert!(checks_automatically(&s));
+        s.check = UpdateCheck::Off;
+        assert!(!checks_automatically(&s));
+    }
+}

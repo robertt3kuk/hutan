@@ -85,6 +85,9 @@ pub struct WorkbenchOptions {
     /// build or from elsewhere is restarted onto it or reported (`lifecycle.rs`). `None` checks
     /// nothing.
     pub own_daemon: Option<hutan_client::DaemonIdentity>,
+    /// Opens the installed app again after *Relaunch* quits this one (`update.rs`); `None`
+    /// opens nothing and the sheet says to quit and open Hutan again.
+    pub relauncher: Option<Arc<dyn super::update::Relauncher>>,
 }
 
 impl WorkbenchOptions {
@@ -109,7 +112,14 @@ impl WorkbenchOptions {
             package_runner: None,
             custom_home: std::env::var_os("HUTAN_HOME").is_some_and(|home| !home.is_empty()),
             own_daemon: None,
+            relauncher: None,
         }
+    }
+
+    /// The same options relaunching the app through `relauncher` after an update.
+    pub fn with_relauncher(mut self, relauncher: Arc<dyn super::update::Relauncher>) -> Self {
+        self.relauncher = Some(relauncher);
+        self
     }
 
     /// The same options with these macOS services.
@@ -422,6 +432,9 @@ pub enum Region {
     RecoveryChip(BadgeSite, SessionId),
     /// A control of the restart summary, by name (`sheet`, `close`, `dismiss-all`).
     Recovery(&'static str),
+    /// A part of the update sheet (`sheet`, `title`, `notes`, `notes-link`, `outcome`, `skip`,
+    /// `later`, `now`, `running`, `relaunch`, `terminal`, `copy-command`, `open-release`).
+    Update(&'static str),
     /// A control of the "agent not recognised" strip of a terminal (`strip`, `track`).
     Untracked(&'static str),
     /// The containment chip of a terminal (`chip`): what Hutan's Seatbelt holds back (protocol 0.52).
@@ -1014,6 +1027,12 @@ pub struct Workbench {
     /// The Rewind preview sheet, the Checkpoints list and the "Restored … · Undo" toast
     /// (`rewind.rs`).
     pub(crate) rewind: super::rewind::RewindState,
+    /// What the daemon says about updates (`update.rs`).
+    pub(crate) updates: Entity<super::update::UpdateDirectory>,
+    /// The update sheet is on screen.
+    pub(crate) update_open: bool,
+    /// What *Relaunch* opens the installed app with.
+    pub(crate) relauncher: Option<Arc<dyn super::update::Relauncher>>,
     /// The restart summary is on screen (`recovery_summary.rs`).
     pub(crate) recovery_open: bool,
     /// A large sidebar's one-row summary was opened into the full list ("Review").
@@ -1171,6 +1190,7 @@ impl Workbench {
             crate::instructions::HarnessHomes::from_env(),
         ));
         let usage = cx.new(|cx| super::usage::UsageDirectory::new(sessions.clone(), cx));
+        let updates = cx.new(|cx| super::update::UpdateDirectory::new(sessions.clone(), cx));
         let files_expanded = options
             .state_path
             .as_deref()
@@ -1396,6 +1416,7 @@ impl Workbench {
             ),
             cx.observe(&harnesses, |this, _, cx| this.on_harnesses_changed(cx)),
             cx.observe(&usage, |this, _, cx| this.on_usage_changed(cx)),
+            cx.observe(&updates, |this, _, cx| this.on_update_changed(cx)),
             cx.observe_window_activation(window, |this, window, cx| {
                 this.window_active = window.is_window_active();
                 this.sync_session_focus(cx);
@@ -1641,6 +1662,9 @@ impl Workbench {
             restore_toast_exit: super::ui::motion::Ghost::default(),
             attention_toasts: super::attention_toast::AttentionToasts::default(),
             rewind: super::rewind::RewindState::new(cx),
+            updates,
+            update_open: false,
+            relauncher: options.relauncher,
             recovery_open: false,
             recovery_review: false,
             last_title: String::new(),

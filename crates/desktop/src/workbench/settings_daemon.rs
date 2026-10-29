@@ -76,6 +76,11 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                 "notify.expire_secs",
             ],
         }],
+        "updates" => &[Section {
+            title: "",
+            help: "",
+            keys: &["updates.check", "updates.channel", "updates.skip_version"],
+        }],
         "sessions_restore" => &[
             Section {
                 title: "",
@@ -659,6 +664,10 @@ impl Workbench {
         }
         if key.starts_with("mcp.") {
             self.mcp_changed(key);
+        }
+        if key.starts_with("updates.") {
+            // The channel and the skipped version change what the status item offers.
+            self.updates.update(cx, |updates, cx| updates.refresh(cx));
         }
     }
 

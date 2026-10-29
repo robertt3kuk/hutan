@@ -272,6 +272,19 @@ impl TestDaemon {
         )
     }
 
+    /// A daemon whose `daemon.toml` is `daemon_toml` and whose configuration `tweak` changes
+    /// before it starts (the update check's source and install layout, say).
+    #[allow(dead_code)]
+    pub fn start_tweaked(daemon_toml: &str, tweak: impl FnOnce(&mut DaemonConfig)) -> Self {
+        Self::start_configured(
+            Some(daemon_toml),
+            None,
+            hutan_daemon::GatewayConfig::default(),
+            None,
+            tweak,
+        )
+    }
+
     pub fn start_with_gateway(gateway: hutan_daemon::GatewayConfig) -> Self {
         Self::start_configured(None, None, gateway, None, |_| {})
     }

@@ -153,7 +153,7 @@ fn the_notifications_page_lists_the_daemons_values_and_a_live_change_needs_no_re
         assert!(!state.restart_pending());
     });
     // Every field of the page, in the order its sections are drawn, is a row of the keyboard's
-    // list: General's own, the Notifications section's, then Sessions & restore's.
+    // list: General's own, the Notifications section's, Sessions & restore's, then Updates'.
     let rows = view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx));
     assert_eq!(
         rows,
@@ -180,7 +180,10 @@ fn the_notifications_page_lists_the_daemons_values_and_a_live_change_needs_no_re
             "d:projects.auto",
             "d:worktrees.cleanup",
             "d:worktrees.cleanup_idle_days",
-            "d:worktrees.wait_for_setup"
+            "d:worktrees.wait_for_setup",
+            "d:updates.check",
+            "d:updates.channel",
+            "d:updates.skip_version"
         ]
     );
 

@@ -665,6 +665,49 @@ fn the_background_step_has_both_toggles_off_and_applies_them_when_left(cx: &mut 
 }
 
 #[gpui::test]
+fn the_background_step_asks_whether_to_check_for_updates_and_tells_the_daemon(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let env = Env::new();
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::Background);
+    // On by default, as the daemon is: the answer is the user's to change.
+    view.read_with(cx, |wb, _| assert!(wb.setup().unwrap().update_check));
+    let toml = |daemon: &TestDaemon| {
+        std::fs::read_to_string(daemon.home().join("daemon.toml")).unwrap_or_default()
+    };
+
+    click(&view, cx, Region::Setup("update-check"));
+    view.read_with(cx, |wb, _| assert!(!wb.setup().unwrap().update_check));
+    assert!(
+        !toml(&daemon).contains("[updates]"),
+        "nothing before Continue"
+    );
+
+    click(&view, cx, Region::Setup("continue"));
+    wait_until(
+        cx,
+        "daemon.toml to say updates are only checked on request",
+        |_| toml(&daemon).contains("check = \"off\""),
+    );
+}
+
+#[gpui::test]
+fn skipping_the_background_step_leaves_the_update_check_as_it_is(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let env = Env::new();
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::Background);
+    click(&view, cx, Region::Setup("update-check"));
+    view.update(cx, |wb, cx| wb.setup_skip_step(cx));
+    cx.run_until_parked();
+    assert_eq!(step(&view, cx), Some(SetupStep::CommandLine));
+    let text = std::fs::read_to_string(daemon.home().join("daemon.toml")).unwrap_or_default();
+    assert!(!text.contains("updates"), "{text}");
+}
+
+#[gpui::test]
 fn keep_running_in_the_setup_does_not_register_the_login_item(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();

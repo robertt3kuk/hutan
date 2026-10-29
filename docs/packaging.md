@@ -207,6 +207,34 @@ For a **clean start** (the first screen again, as on a new Mac), remove the data
 `brew install --cask robertt3kuk/hutan/hutan`. `--zap` removes the application support folder,
 logs and preferences listed above; export what you want to keep first.
 
+### Updates (the check and the brew update)
+
+ADR 0024, protocol 0.60 (`docs/protocol.md` § Updates); the desktop's side is `docs/design.md` § Updates. Hutan tells you when a newer version exists and updates itself the way you installed it, when you ask. It never updates by itself.
+
+**What is contacted.** The daemon (never the app) asks GitHub's public release list, at most once every 24 hours and whenever you choose *Check for Updates…* (the Hutan menu, ⌘K) or run `hutan update check`:
+
+```text
+GET https://api.github.com/repos/robertt3kuk/hutan/releases?per_page=30
+User-Agent: Hutan/<version>
+Accept: application/vnd.github+json
+```
+
+Nothing else is sent: no identifier, no token, no cookie, nothing about your machine or your work except what any request reveals (your address, the Hutan version). GitHub's unauthenticated limit is 60 requests an hour per address; offline or rate limited, the check is silent and tries again after an hour. A development build (`cargo run`, `target/debug`) never checks by itself. The first-run setup (Background step) and **Settings → General → Updates** show the same words.
+
+**How to turn it off.** `updates.check = "off"` in `daemon.toml` (Settings → General → Updates → *Check for updates*: *Only when I ask*, or `hutan config set updates.check off`): the daemon then contacts nothing until you ask. `updates.channel = "stable"` ignores releases that are marked pre-release (every release is one for now, so it offers nothing yet). `updates.skip_version` is what *Skip this version* writes.
+
+**What counts as an update.** The highest version above the running one in the channel whose release carries `Hutan-<version>-arm64.zip`. The daemon keeps the release notes (bounded to 32 KiB) and the digests GitHub computed, and tells the desktop (`update.available`): *Update to x.y.z* in the status bar, with the notes in a sheet.
+
+**How Hutan was installed decides how it updates.** The daemon reads it from its own executable and Homebrew's Caskroom and Cellar (read-only; it never runs `brew` to find out): a cask (`brew install --cask robertt3kuk/hutan/hutan`), a formula (`brew install robertt3kuk/hutan/hutan`, CLI and daemon only), a bundle copied by hand, or unknown (a development build, a folder it cannot write).
+
+- **Cask**: *Update now* (or `hutan update install`) opens a terminal session that runs `brew update && brew upgrade --cask robertt3kuk/hutan/hutan`. You see Homebrew's output, its password prompt and trust questions, and macOS's own dialogs (the release is ad-hoc signed: see § Security and uninstall). When Homebrew exits 0 the window offers *Relaunch*; a non-zero exit is said with its code and the terminal stays.
+- **Formula**: the same with `brew update && brew upgrade robertt3kuk/hutan/hutan`; only the command line and the daemon change.
+- **Bundle copied by hand** and **unknown**: the release and its notes are shown, with the command to copy; nothing is offered automatically. (UPDATES-2 adds the in-place update of a copied bundle.)
+
+`update.install` is **user-only**: an agent can never update or downgrade Hutan. What the update does to running work is in § Updates and the running daemon below: sessions keep running while Homebrew works; after the relaunch an idle daemon moves onto the new build by itself, and one with sessions running asks first. `hutan update status|check|install [--wait]` does the same from a terminal.
+
+**Tests** run a real daemon against a local mock of the releases API and a fake `brew` first on `PATH` (`crates/daemon/tests/it/update.rs`, `crates/cli/tests/it/update.rs`, `crates/desktop/tests/it/update_gpui.rs`): no test contacts GitHub, runs a real `brew upgrade` or touches `/Applications`. By hand, `HUTAN_UPDATE_API=http://127.0.0.1:<port>` points a `hutand` at a mock (it also lets a development build check by itself); the recorded release JSON the screenshots use is the one the tests serve.
+
 ### Updates and the running daemon
 
 An update replaces the bundle while the old `hutand` may still run (started by the old app, by
