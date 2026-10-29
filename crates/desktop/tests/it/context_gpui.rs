@@ -453,3 +453,277 @@ fn a_codex_chat_shows_tokens_not_cost_and_offers_no_breakdown(cx: &mut TestAppCo
     // No breakdown block is drawn for it either.
     assert!(bounds(&view, cx, Region::Context("breakdown")).is_none());
 }
+
+// ---- the timeline: Fork… and Rewind… on a turn's row --------------------------------------------
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// A Codex chat in a git repository whose two turns are held until the test says go, so each
+/// turn can change files as the agent would: the first edits `a.txt`, the second changes none.
+struct Timeline {
+    env: ChatEnv,
+    daemon: TestDaemon,
+    session: SessionInfo,
+    root: PathBuf,
+    gates: Vec<PathBuf>,
+}
+
+fn timeline() -> Timeline {
+    let env = ChatEnv::new();
+    let base = env.cwd();
+    git(&base, &["init", "-q", "-b", "main", "repo"]);
+    let root = base.join("repo");
+    std::fs::write(root.join("a.txt"), "alpha\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "init"]);
+    let gates: Vec<PathBuf> = (0..2).map(|n| base.join(format!("gate-{n}"))).collect();
+    let held = common::chat::held_turns(&base, &gates);
+    let script = base.join("script");
+    std::fs::create_dir_all(&script).unwrap();
+    std::fs::copy(&held, script.join("00-held.jsonl")).unwrap();
+    let daemon = TestDaemon::start_with_codex_tweaked(env.replay(&script), |c| {
+        c.checkpoints.git_env = [
+            ("GIT_CONFIG_GLOBAL".to_owned(), "/dev/null".to_owned()),
+            ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
+        ]
+        .into();
+    });
+    let session = create_chat(&daemon, "codex", &root, "Auth work");
+    Timeline {
+        env,
+        daemon,
+        session,
+        root,
+        gates,
+    }
+}
+
+impl Timeline {
+    /// Turn `n`: the agent runs while `edit` changes files, then the turn ends and the panel
+    /// lists it.
+    fn turn(
+        &self,
+        panel: &Entity<ContextPanel>,
+        cx: &mut VisualTestContext,
+        n: usize,
+        edit: impl FnOnce(&Path),
+    ) {
+        send(&self.daemon, self.session.id, &format!("turn {n}"));
+        edit(&self.root);
+        std::fs::write(&self.gates[n], "").unwrap();
+        wait_turns(panel, cx, n as u64 + 1);
+        wait_until(cx, "no turn to run", |cx| {
+            panel.read_with(cx, |p, cx| {
+                p.fork_gate(cx) == hutan_desktop::workbench::panels::ContextForkGate::Ready
+            })
+        });
+    }
+}
+
+#[gpui::test]
+fn a_turn_row_forks_at_its_turn_and_rewinds_the_files_it_changed(cx: &mut TestAppContext) {
+    let t = timeline();
+    let (view, cx) = open(cx, &t.daemon);
+    show_chat(&view, cx, t.session.id);
+    let panel = panel(&view, cx);
+    t.turn(&panel, cx, 0, |root| {
+        std::fs::write(root.join("a.txt"), "alpha t1\n").unwrap();
+    });
+    t.turn(&panel, cx, 1, |_| {});
+    let rows = panel.read_with(cx, |p, _| p.turn_lines().to_vec());
+    assert_eq!(rows.len(), 2);
+    // The fixture's turns report no file change of their own (the files here are the
+    // checkpoint's business), so the rows say none.
+    assert!(rows.iter().all(|r| r.files.is_none()));
+    wait_region(&view, cx, Region::ContextTurnAction(0, "fork"));
+    wait_region(&view, cx, Region::ContextTurnAction(1, "fork"));
+    // Rewind… only where the turn changed files and has a checkpoint to restore.
+    wait_region(&view, cx, Region::ContextTurnAction(1, "rewind"));
+    assert!(
+        bounds(&view, cx, Region::ContextTurnAction(0, "rewind")).is_none(),
+        "a turn that changed nothing has nothing to rewind"
+    );
+
+    // Fork… on the first turn's row opens CHAT-FORK-B's popover at that turn.
+    click(&view, cx, Region::ContextTurnAction(1, "fork"));
+    wait_until(cx, "the fork popover", |cx| {
+        view.read_with(cx, |wb, _| wb.fork_popover_session()) == Some(t.session.id)
+    });
+    wait_region(&view, cx, Region::Fork("fork"));
+    settle(cx);
+    let said = view.read_with(cx, |wb, cx| wb.fork_popover_lines(cx));
+    assert_eq!(said[0], "title: Fork from turn 1", "{said:#?}");
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    wait_until(cx, "the popover to close", |cx| {
+        view.read_with(cx, |wb, _| wb.fork_popover_session().is_none())
+    });
+
+    // Rewind… opens the preview of that turn's checkpoint.
+    click(&view, cx, Region::ContextTurnAction(1, "rewind"));
+    wait_until(cx, "the rewind preview", |cx| {
+        view.read_with(cx, |wb, _| wb.rewind_sheet().is_some())
+    });
+    let _ = &t.env;
+}
+
+// ---- following, and the honest empty states ----------------------------------------------------
+
+fn wait_empty(
+    panel: &Entity<ContextPanel>,
+    cx: &mut VisualTestContext,
+    what: &str,
+    mut check: impl FnMut(Option<&ContextEmpty>) -> bool,
+) {
+    wait_until(cx, what, |cx| panel.read_with(cx, |p, _| check(p.empty())));
+}
+
+#[gpui::test]
+fn the_panel_follows_the_session_in_view_and_says_why_it_has_nothing_to_show(
+    cx: &mut TestAppContext,
+) {
+    let daemon = acp_daemon("omp", "insight-omp");
+    let work = tempfile::tempdir().unwrap();
+    let chat = create_chat(&daemon, "omp", work.path(), "Migrate auth");
+    let shell = daemon.create_session(&["sh", "-c", "exec cat"], None);
+    let agent = daemon.create_session(&["sh", "-c", "exec cat"], None);
+    let _: hutan_protocol::messages::AgentApplied = daemon.call(Request::AgentReport(
+        hutan_protocol::messages::AgentReportRequest {
+            pid: None,
+            session_id: agent.id,
+            source: "test-hooks".into(),
+            agent: "omp".into(),
+            state: Some(hutan_protocol::messages::AgentState::Working),
+            message: None,
+            seq: 1,
+            agent_session_id: None,
+            resume_argv: None,
+            node: None,
+        },
+    ));
+    let (view, cx) = open(cx, &daemon);
+    let panel = panel(&view, cx);
+    // No session in view yet.
+    wait_empty(&panel, cx, "the no-session state", |e| {
+        e == Some(&ContextEmpty::NoSession)
+    });
+    assert_eq!(panel.read_with(cx, |p, _| p.session()), None);
+    wait_region(&view, cx, Region::Context("empty"));
+
+    // A shell is no agent.
+    show_chat(&view, cx, shell.id);
+    wait_empty(&panel, cx, "the shell's state", |e| {
+        e == Some(&ContextEmpty::NotAnAgent)
+    });
+    assert_eq!(panel.read_with(cx, |p, _| p.session()), Some(shell.id));
+
+    // A terminal with an agent: its state is all Hutan has; no Measure, no turns, no Fork.
+    show_chat(&view, cx, agent.id);
+    wait_empty(
+        &panel,
+        cx,
+        "the terminal agent's state",
+        |e| matches!(e, Some(ContextEmpty::Terminal { app: Some(app), .. }) if app == "omp"),
+    );
+    assert_eq!(panel.read_with(cx, |p, _| p.session()), Some(agent.id));
+    assert!(bounds(&view, cx, Region::Context("measure")).is_none());
+    assert!(panel.read_with(cx, |p, _| p.turn_lines().is_empty()));
+
+    // A chat: the panel moves to it and reads it.
+    show_chat(&view, cx, chat.id);
+    wait_until(cx, "the chat's insight", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.session() == Some(chat.id) && *p.load() == ContextLoad::Ready
+        })
+    });
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.empty().cloned()),
+        Some(ContextEmpty::Nothing),
+        "a chat nothing has reported on says so"
+    );
+}
+
+#[gpui::test]
+fn the_context_panel_is_on_the_right_rail_after_changes_and_follows_the_layout(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let rail = view.read_with(cx, |wb, _| {
+        wb.state()
+            .docks
+            .right
+            .panels
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    });
+    let at = |name: &str| rail.iter().position(|p| p == name).unwrap();
+    assert_eq!(at("context"), at("changes") + 1, "{rail:?}");
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .panel_registry()
+            .get(&hutan_desktop::workbench::model::PanelId::new("context"))
+            .is_some()),
+        "a registered panel"
+    );
+    // The panel does nothing while it is not on screen.
+    let shown = view.read_with(cx, |wb, _| wb.panel::<ContextPanel>("context"));
+    assert!(shown.is_none_or(|p| !p.read_with(cx, |p, _| p.is_visible())));
+}
+
+#[gpui::test]
+fn a_file_row_opens_the_file_and_has_no_diff_outside_a_checkout(cx: &mut TestAppContext) {
+    // The recorded Claude exchange edits an absolute path under /tmp/hutan-fixture.
+    let daemon = acp_daemon("claude", "insight-claude");
+    let work = tempfile::tempdir().unwrap();
+    let chat = create_chat(&daemon, "claude", work.path(), "Fix it");
+    let (view, cx) = open(cx, &daemon);
+    show_chat(&view, cx, chat.id);
+    let panel = panel(&view, cx);
+    send(&daemon, chat.id, "Fix it.");
+    wait_turns(&panel, cx, 1);
+    let path = PathBuf::from("/tmp/hutan-fixture/src/lib.rs");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "fn main() {}\n").unwrap();
+    wait_region(&view, cx, Region::ContextFile(0, "open"));
+    assert!(
+        bounds(&view, cx, Region::ContextFile(0, "diff")).is_none(),
+        "the chat's folder is no git checkout: no diff to show"
+    );
+    click(&view, cx, Region::ContextFile(0, "open"));
+    wait_until(cx, "the file's tab", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.state()
+                .active_center_item()
+                .and_then(|item| {
+                    item.as_file()
+                        .map(|p| p.ends_with("hutan-fixture/src/lib.rs"))
+                })
+                .unwrap_or(false)
+        })
+    });
+    std::fs::remove_file(&path).ok();
+}

@@ -34,7 +34,6 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::common::{panel_toolbar, session_icon};
 use super::context_model::{self as model, Swatch, TurnLine, TurnState};
-use crate::icons;
 use crate::sessions::card;
 use crate::settings::ContextPanelSettings;
 use crate::theme::{DensityExt as _, Theme, Tokens};
