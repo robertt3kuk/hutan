@@ -2,8 +2,9 @@
 //! was installed (protocol 0.60, capability `update`, ADR 0024; `docs/packaging.md` § Updates).
 //!
 //! `status` contacts nothing. `check` is the one request to GitHub's releases that the user asks
-//! for. `install` has the daemon run Homebrew in a visible terminal session; nothing here ever
-//! runs `brew` itself.
+//! for. `install` has the daemon run Homebrew in a visible terminal session (a cask or formula),
+//! or download, verify and unpack the new app of a Hutan.app copied by hand (`--apply` then
+//! replaces it, UPDATES-2); nothing here ever runs `brew` itself.
 
 use hutan_protocol::messages::Request;
 use hutan_protocol::messages::{Empty, Event, Subscribed};

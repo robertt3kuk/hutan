@@ -298,8 +298,13 @@ Then, from the tap checkout, commit the generated definitions and publish:
 ```sh
 git add Casks/hutan.rb Formula/hutan.rb README.md
 git commit -m "hutan 0.3.0"
-git push origin main
+git tag -a v0.3.0 -m "hutan 0.3.0"
+git push origin main v0.3.0
 ```
+
+The tap's tag is the release's tag: a Hutan.app copied by hand checks its download against
+`Casks/hutan.rb` **at that tag** (§ A bundle copied by hand); without the tag it reads the
+tap's `main`, which is only right until the next release is published there.
 
 These are manual publishing commands, not actions performed by `xtask release`.
 Hutan is MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`; the formula says

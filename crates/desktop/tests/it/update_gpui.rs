@@ -25,18 +25,18 @@ use hutan_settings::{SettingsPaths, SettingsStore};
 use serde_json::json;
 use tempfile::TempDir;
 
-const RELEASES: &str = "/repos/robertt3kuk/hutan/releases";
+pub(crate) const RELEASES: &str = "/repos/robertt3kuk/hutan/releases";
 
 // ---- fixtures ---------------------------------------------------------------------------------
 
 /// A mock of GitHub's releases API on a runtime of its own (the daemon's is another).
-struct Releases {
+pub(crate) struct Releases {
     _runtime: tokio::runtime::Runtime,
-    server: MockServer,
+    pub(crate) server: MockServer,
 }
 
 impl Releases {
-    fn serving(tags: &[&str]) -> Self {
+    pub(crate) fn serving(tags: &[&str]) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -51,7 +51,7 @@ impl Releases {
         releases
     }
 
-    fn serve(&self, tags: &[&str]) {
+    pub(crate) fn serve(&self, tags: &[&str]) {
         let list: Vec<_> = tags
             .iter()
             .map(|tag| {
@@ -161,7 +161,7 @@ impl Relauncher for Recorder {
     }
 }
 
-fn open<'a>(
+pub(crate) fn open<'a>(
     cx: &'a mut TestAppContext,
     daemon: &TestDaemon,
     recorder: Arc<Recorder>,
@@ -176,13 +176,13 @@ fn open<'a>(
     (view, cx)
 }
 
-fn item_text(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<String> {
+pub(crate) fn item_text(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<String> {
     view.read_with(cx, |wb, cx| {
         wb.update_directory().read(cx).item().map(|item| item.text)
     })
 }
 
-fn item_drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+pub(crate) fn item_drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
     draw(cx);
     view.read_with(cx, |wb, _| {
         wb.region_bounds(Region::StatusItem("update"))
@@ -190,13 +190,13 @@ fn item_drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
     })
 }
 
-fn drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) -> bool {
+pub(crate) fn drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) -> bool {
     draw(cx);
     view.read_with(cx, |wb, _| wb.region_bounds(region).is_some())
 }
 
 /// Clicks `region` as the frame drawn last shows it.
-fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
+pub(crate) fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
     wait_until(cx, &format!("{region:?} to be drawn"), |cx| {
         drawn(view, cx, region)
     });
@@ -207,17 +207,17 @@ fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
     cx.run_until_parked();
 }
 
-fn sheet_open(view: &Entity<Workbench>, cx: &VisualTestContext) -> bool {
+pub(crate) fn sheet_open(view: &Entity<Workbench>, cx: &VisualTestContext) -> bool {
     view.read_with(cx, |wb, _| wb.update_sheet_open())
 }
 
-fn wait_for_item(view: &Entity<Workbench>, cx: &mut VisualTestContext, text: &str) {
+pub(crate) fn wait_for_item(view: &Entity<Workbench>, cx: &mut VisualTestContext, text: &str) {
     wait_until(cx, &format!("the update item to say {text:?}"), |cx| {
         item_text(view, cx).as_deref() == Some(text) && item_drawn(view, cx)
     });
 }
 
-fn daemon_toml(daemon: &TestDaemon) -> String {
+pub(crate) fn daemon_toml(daemon: &TestDaemon) -> String {
     std::fs::read_to_string(daemon.home().join("daemon.toml")).unwrap_or_default()
 }
 

@@ -60,6 +60,7 @@ hutan-gateway = { workspace = true, features = ["test-support"] }
 hutan-storage.workspace = true
 image.workspace = true
 rusqlite.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 

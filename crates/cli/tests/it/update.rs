@@ -213,3 +213,229 @@ async fn install_without_wait_names_the_session_and_a_hand_made_install_is_refus
     );
     t.stop().await;
 }
+
+// ---- a Hutan.app copied by hand (UPDATES-2) ---------------------------------------------------
+
+fn bundle_at(dir: &std::path::Path, version: &str, marker: &str) -> PathBuf {
+    let bundle = dir.join("Hutan.app");
+    std::fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+    std::fs::create_dir_all(bundle.join("Contents/Resources")).unwrap();
+    std::fs::write(bundle.join("Contents/MacOS/hutand"), b"").unwrap();
+    std::fs::write(
+        bundle.join("Contents/Info.plist"),
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.hutan.Hutan</string><key>CFBundleShortVersionString</key><string>{version}</string></dict></plist>\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(bundle.join("Contents/Resources/marker.txt"), marker).unwrap();
+    bundle
+}
+
+/// A fake program at a stable path named by its content (macOS vets every new executable once).
+fn fake_tool(name: &str, body: &str) -> PathBuf {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let text = format!("#!/bin/sh\n{body}\n");
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    let dir = std::env::temp_dir().join("hutan-test-fake-clis");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{:016x}-cli-{name}", hasher.finish()));
+    if std::fs::read_to_string(&path).is_ok_and(|have| have == text) {
+        return path;
+    }
+    let staging = dir.join(format!(".{}-cli-{name}", std::process::id()));
+    std::fs::write(&staging, &text).unwrap();
+    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(&staging, &path).unwrap();
+    path
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hand_copied_app_is_prepared_then_applied_from_the_terminal() {
+    use sha2::{Digest as _, Sha256};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let old = bundle_at(&root.join("Copied"), "0.3.1", "old");
+    let new_dir = root.join("new");
+    let new = bundle_at(&new_dir, "0.3.2", "new");
+    let zip = root.join("Hutan.zip");
+    assert!(
+        std::process::Command::new("/usr/bin/ditto")
+            .args(["-c", "-k", "--keepParent"])
+            .arg(&new)
+            .arg(&zip)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let archive = std::fs::read(&zip).unwrap();
+    let digest = format!("{:x}", Sha256::digest(&archive));
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    symlink(
+        fake_tool(
+            "codesign",
+            "echo \"$@\" >> \"$(dirname \"$0\")/codesign.log\"",
+        ),
+        bin.join("codesign"),
+    )
+    .unwrap();
+    symlink(
+        fake_tool("open", "echo \"$@\" >> \"$(dirname \"$0\")/open.log\""),
+        bin.join("open"),
+    )
+    .unwrap();
+
+    let server = MockServer::start().await;
+    let release = json!([{
+        "tag_name": "v0.3.2",
+        "prerelease": true,
+        "html_url": "https://github.com/robertt3kuk/hutan/releases/tag/v0.3.2",
+        "body": "notes",
+        "assets": [{
+            "name": "Hutan-0.3.2-arm64.zip",
+            "size": archive.len(),
+            "digest": format!("sha256:{digest}"),
+        }],
+    }]);
+    server.set_route(
+        "GET",
+        RELEASES,
+        Reply::json(200, &serde_json::to_string(&release).unwrap()),
+    );
+    let mut body = Reply::fixed(200, "application/zip", "");
+    body.steps = vec![hutan_gateway::testing::Step::Send(archive)];
+    server.set_route(
+        "GET",
+        "/robertt3kuk/hutan/releases/download/v0.3.2/Hutan-0.3.2-arm64.zip",
+        body,
+    );
+    server.set_route(
+        "GET",
+        "/robertt3kuk/homebrew-hutan/v0.3.2/Casks/hutan.rb",
+        Reply::fixed(
+            200,
+            "text/plain",
+            &format!("cask \"hutan\" do\n  version \"0.3.2\"\n  sha256 \"{digest}\"\nend\n"),
+        ),
+    );
+    let tuning = UpdateTuning {
+        api_base: Some(server.url()),
+        version: "0.3.1".to_owned(),
+        exe: Some(old.join("Contents/MacOS/hutand")),
+        brew_prefixes: vec![root.join("no-brew-here")],
+        startup_delay: Duration::ZERO,
+        download_base: server.url(),
+        tap_base: server.url(),
+        tools: hutan_daemon::update::Tools {
+            ditto: PathBuf::from("/usr/bin/ditto"),
+            codesign: bin.join("codesign"),
+            open: bin.join("open"),
+        },
+        trash: std::sync::Arc::new(hutan_daemon::files::trash::FolderTrash::new(
+            root.join("trash"),
+        )),
+        ..UpdateTuning::default()
+    };
+    let t = TestDaemon::start_toml("[updates]\ncheck = \"off\"\n", move |config| {
+        config.updates = tuning;
+    })
+    .await;
+
+    let text = t.hutan(&["update", "check"]).await.ok().stdout;
+    assert!(text.contains("a Hutan.app copied by hand"), "{text}");
+    assert!(text.contains("hutan update install --apply"), "{text}");
+
+    // Prepared: downloaded, checked against both digests and codesign, unpacked.
+    let out = t.hutan(&["update", "install", "--wait"]).await.ok();
+    assert!(out.stdout.contains("is downloaded and verified"), "{out:?}");
+    let status = t.hutan(&["update", "status", "--json"]).await.ok().json();
+    assert_eq!(status["install"]["stage"], "ready");
+    assert_eq!(status["install"]["state"], "running");
+    assert!(status["install"].get("session_id").is_none());
+    let marker = |bundle: &PathBuf| {
+        std::fs::read_to_string(bundle.join("Contents/Resources/marker.txt")).unwrap()
+    };
+    assert_eq!(marker(&old), "old", "nothing changed yet");
+
+    // --after-pid belongs to --apply.
+    let out = t.hutan(&["update", "install", "--after-pid", "1"]).await;
+    assert_eq!(out.code, 2, "{out:?}");
+
+    // Applied: the old app is in the Trash, the new one in place, nothing opened (no pid).
+    let out = t
+        .hutan(&["update", "install", "--apply", "--wait"])
+        .await
+        .ok();
+    assert!(
+        out.stdout.contains("is in place of the old Hutan.app"),
+        "{out:?}"
+    );
+    assert_eq!(marker(&old), "new");
+    assert_eq!(marker(&root.join("trash/0/Hutan.app")), "old");
+    assert_eq!(
+        std::fs::read_to_string(bin.join("open.log")).unwrap_or_default(),
+        ""
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_download_that_does_not_match_fails_the_command_with_the_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let old = bundle_at(&root.join("Copied"), "0.3.1", "old");
+    let server = MockServer::start().await;
+    let release = json!([{
+        "tag_name": "v0.3.2",
+        "prerelease": true,
+        "html_url": "https://github.com/robertt3kuk/hutan/releases/tag/v0.3.2",
+        "body": "notes",
+        "assets": [{
+            "name": "Hutan-0.3.2-arm64.zip",
+            "size": 3,
+            "digest": format!("sha256:{}", "cd".repeat(32)),
+        }],
+    }]);
+    server.set_route(
+        "GET",
+        RELEASES,
+        Reply::json(200, &serde_json::to_string(&release).unwrap()),
+    );
+    server.set_route(
+        "GET",
+        "/robertt3kuk/hutan/releases/download/v0.3.2/Hutan-0.3.2-arm64.zip",
+        Reply::fixed(200, "application/zip", "abc"),
+    );
+    let tuning = UpdateTuning {
+        api_base: Some(server.url()),
+        version: "0.3.1".to_owned(),
+        exe: Some(old.join("Contents/MacOS/hutand")),
+        brew_prefixes: vec![root.join("no-brew-here")],
+        startup_delay: Duration::ZERO,
+        download_base: server.url(),
+        tap_base: server.url(),
+        trash: std::sync::Arc::new(hutan_daemon::files::trash::FolderTrash::new(
+            root.join("trash"),
+        )),
+        ..UpdateTuning::default()
+    };
+    let t = TestDaemon::start_toml("[updates]\ncheck = \"off\"\n", move |config| {
+        config.updates = tuning;
+    })
+    .await;
+    t.hutan(&["update", "check"]).await.ok();
+    let out = t.hutan(&["update", "install", "--wait"]).await;
+    assert_eq!(out.code, 1, "{out:?}");
+    assert!(
+        out.stdout.contains("stopped: the download's SHA-256"),
+        "{out:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(old.join("Contents/Resources/marker.txt")).unwrap(),
+        "old"
+    );
+    t.stop().await;
+}

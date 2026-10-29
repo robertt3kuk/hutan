@@ -300,12 +300,13 @@ impl Workbench {
                 Ok(started) => {
                     this.updates.update(cx, |updates, cx| {
                         if let Some(status) = &mut updates.status {
-                            // The daemon's events may have said more than its answer does.
-                            let newer = status.install.as_ref().is_some_and(|current| {
-                                current.method == InstallMethod::Bundle
-                                    && current.state == InstallState::Running
-                            });
-                            if !newer {
+                            // A bundle's update runs in the daemon and says every step in
+                            // `update.install` events, sent before this answer: one that
+                            // already arrived (a download refused at once) is newer than the
+                            // answer, so the answer only fills an empty place.
+                            let events_say_more = started.install.method == InstallMethod::Bundle
+                                && status.install.is_some();
+                            if !events_say_more {
                                 status.install = Some(started.install.clone());
                                 cx.notify();
                             }
