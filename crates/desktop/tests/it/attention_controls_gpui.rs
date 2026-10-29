@@ -105,7 +105,10 @@ fn the_jump_goes_to_a_request_before_a_session_that_is_only_done(cx: &mut TestAp
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon, None);
     // Listed first: a session that finishes (done, unread). Listed second: an agent that blocks.
-    let done = daemon.sh_titled("finishes", "read x").clone();
+    // It works in a repository with an uncommitted file: a clean exit with nothing changed is
+    // only ended (FX-UI-A 4).
+    let repo = TestDaemon::dirty_repo(daemon.home());
+    let done = daemon.sh_titled_in("finishes", "read x", &repo).clone();
     let done_terminal = done.terminal_id.expect("a terminal");
     let blocked = daemon.sh_titled("blocks", "sleep 300").id;
     known(&view, cx, done.id);

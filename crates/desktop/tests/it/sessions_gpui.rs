@@ -437,12 +437,16 @@ fn unread_attention_is_read_when_the_session_is_focused(cx: &mut TestAppContext)
             go.display()
         ),
     );
-    let finishing = daemon.sh_titled(
+    // It works in a repository with an uncommitted file: a clean exit with nothing changed is
+    // only ended, never ready for review (FX-UI-A 4).
+    let repo = TestDaemon::dirty_repo(daemon.home());
+    let finishing = daemon.sh_titled_in(
         "finishing",
         &format!(
             "while [ ! -e {0} ]; do sleep 0.05; done; exit 0",
             go.display()
         ),
+        &repo,
     );
     let calm = daemon.sh_titled("calm", "sleep 600");
     let (view, cx) = open(cx, &daemon);
@@ -1521,10 +1525,12 @@ fn terminal_notifications_flag_attention_but_replays_after_a_reconnect_do_not(
     let mut daemon = TestDaemon::start();
     let first = daemon.home().join("first");
     let second = daemon.home().join("second");
+    // A coding agent says it runs (OSC 7501) before it notifies: a plain shell's notification is
+    // only a bell (FX-UI-A 4), an agent's is finished work.
     let info = daemon.sh_titled(
         "notifier",
         &format!(
-            "while [ ! -e {0} ]; do sleep 0.05; done; printf '\\033]9;while you were away\\007'; while [ ! -e {1} ]; do sleep 0.05; done; printf '\\033]9;built\\007'; sleep 600",
+            "printf '\\033]7501;state=idle:app=omp\\007'; while [ ! -e {0} ]; do sleep 0.05; done; printf '\\033]9;while you were away\\007'; while [ ! -e {1} ]; do sleep 0.05; done; printf '\\033]9;built\\007'; sleep 600",
             first.display(),
             second.display()
         ),

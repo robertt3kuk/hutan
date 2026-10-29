@@ -641,6 +641,51 @@ impl TestDaemon {
         created.session
     }
 
+    /// `sh -c script` as a session named `title`, started in `cwd`.
+    pub fn sh_titled_in(&self, title: &str, script: &str, cwd: &Path) -> SessionInfo {
+        let created: SessionResult = self.call(Request::SessionCreate(SessionCreate {
+            workspace_id: None,
+            spec: SessionSpec::Terminal(TerminalSpec {
+                command: vec!["sh".into(), "-c".into(), script.to_owned()],
+                title: Some(title.to_owned()),
+                cwd: Some(cwd.to_path_buf()),
+                ..TerminalSpec::default()
+            }),
+        }));
+        created.session
+    }
+
+    /// A git repository `<dir>/repo` with one uncommitted file: a session that ends in it left
+    /// work to review (FX-UI-A 4: an exit 0 with nothing changed is only *ended*).
+    pub fn dirty_repo(dir: &Path) -> PathBuf {
+        let root = std::fs::canonicalize(dir).unwrap().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                ])
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        std::fs::write(root.join("kept.txt"), "one\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "first"]);
+        std::fs::write(root.join("new.txt"), "x\n").unwrap();
+        root
+    }
+
     pub fn session(&self, id: SessionId) -> SessionInfo {
         let list: hutan_protocol::messages::SessionList =
             self.call(Request::SessionList(Default::default()));

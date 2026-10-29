@@ -275,11 +275,13 @@ fn a_shell_stays_one_line_and_an_agent_card_grows_a_line_only_with_news(cx: &mut
             && card.news.is_some_and(|n| n.kind == NewsKind::HooksHint)
     });
 
-    // A shell that rings its bell while out of sight is unread, and still one line.
+    // A shell that rings its bell while out of sight wears a bell (FX-UI-A 4: no ✓, no bold
+    // name), and is still one line.
     daemon.send_input(shell.terminal_id.unwrap(), b"\x07\r");
-    wait_until(cx, "the shell's mark", |cx| {
-        row(&sidebar, cx, "shell").lane == BadgeState::DoneUnread
+    wait_until(cx, "the shell's bell", |cx| {
+        drawn(&view, cx, Region::SessionBell(shell.id))
     });
+    assert_eq!(row(&sidebar, cx, "shell").lane, BadgeState::Idle);
     assert!(row(&sidebar, cx, "shell").news.is_none());
     assert_eq!(height(&view, cx, shell.id), one_line);
 }
@@ -517,6 +519,156 @@ fn a_chat_wears_its_harness_monogram_and_its_tab_the_state_badge(cx: &mut TestAp
                 .and_then(|s| s.chat.as_ref())
                 .is_some_and(|c| !c.turn_active)
         })
+    });
+}
+
+/// A terminal in `cwd` that echoes what it is sent, called `title`.
+fn session_in(daemon: &TestDaemon, title: &str, cwd: &Path) -> SessionInfo {
+    use hutan_protocol::messages::{SessionCreate, SessionSpec, TerminalSpec};
+    let created: SessionResult = daemon.call(Request::SessionCreate(SessionCreate {
+        workspace_id: None,
+        spec: SessionSpec::Terminal(TerminalSpec {
+            command: vec!["sh".to_owned(), "-c".to_owned(), "exec cat".to_owned()],
+            cwd: Some(cwd.to_path_buf()),
+            ..TerminalSpec::default()
+        }),
+    }));
+    let renamed: SessionResult = daemon.call(Request::SessionRename(SessionRename {
+        session_id: created.session.id,
+        title: title.to_owned(),
+    }));
+    renamed.session
+}
+
+fn live(view: &Entity<Workbench>, cx: &mut VisualTestContext, id: SessionId) -> bool {
+    view.read_with(cx, |wb, cx| {
+        wb.sessions()
+            .read(cx)
+            .session(id)
+            .is_some_and(|s| s.state.is_live())
+    })
+}
+
+/// FX-UI-A 4: a session that ended with exit 0 is a hollow ring and a faint name, keeps the glyph
+/// of the agent that ran in it (the daemon forgets the agent at the exit) and is not *Ready for
+/// review* — unless it left uncommitted files in its checkout, which are the work to review.
+#[gpui::test]
+fn a_session_that_ended_cleanly_is_a_hollow_ring_and_ready_for_review_only_with_changes(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::icons::Icon;
+    use hutan_desktop::workbench::panels::{session_icon, session_icon_with};
+
+    let daemon = TestDaemon::start();
+    let keep = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(keep.path()).unwrap().join("repo");
+    std::fs::create_dir(&root).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join("kept.txt"), "one\n").unwrap();
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "first"]);
+    // In Home, whose rows are always listed; the other one in its repository.
+    let clean = session(&daemon, "clean");
+    let dirty = session_in(&daemon, "dirty", &root);
+    let (view, cx) = open(cx, &daemon);
+    let sidebar = panel(&view, cx);
+    wait_until(cx, "the rows", |cx| rows(&sidebar, cx).len() >= 3);
+
+    // OMP runs in both; the window sees it.
+    for session in [&clean, &dirty] {
+        osc(&daemon, session, "7501;state=idle:app=omp");
+        wait_state(&view, cx, session.id, TerminalAgentState::Idle);
+    }
+    wait_until(cx, "the window to remember the agent", |cx| {
+        view.read_with(cx, |wb, cx| {
+            let store = wb.sessions().read(cx);
+            store.remembered_agent(clean.id) == Some("omp")
+                && store.remembered_agent(dirty.id) == Some("omp")
+        })
+    });
+    // The dirty checkout is counted before the sessions end.
+    std::fs::write(root.join("new.txt"), "x\n").unwrap();
+    wait_until(cx, "the checkout's file to be counted", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).changed_files_at(&root) == Some(1)
+        })
+    });
+
+    // Both programs exit 0 (EOF on `cat`).
+    for session in [&clean, &dirty] {
+        daemon.send_input(session.terminal_id.unwrap(), b"\x04");
+    }
+    wait_until(cx, "both to end", |cx| {
+        !live(&view, cx, clean.id) && !live(&view, cx, dirty.id)
+    });
+
+    // Nothing to review in the clean one: a hollow ring, no mark, still OMP's glyph.
+    wait_until(cx, "the clean one is a hollow ring", |cx| {
+        row(&sidebar, cx, "clean").lane == BadgeState::Ended
+    });
+    // The one with files left in its checkout is work to review.
+    wait_until(cx, "the dirty one is ready for review", |cx| {
+        row(&sidebar, cx, "dirty").lane == BadgeState::DoneUnread
+    });
+    let sections: Vec<String> = rows(&sidebar, cx)
+        .into_iter()
+        .filter(|r| r.kind == RowKind::Section)
+        .map(|r| r.title)
+        .collect();
+    assert!(
+        sections
+            .iter()
+            .any(|s| s.starts_with("Ready for review · 1")),
+        "{sections:?}"
+    );
+    view.read_with(cx, |wb, cx| {
+        let store = wb.sessions().read(cx);
+        assert_eq!(store.unread(clean.id), None);
+        assert_eq!(store.unread(dirty.id), Some(Unread::Done));
+        let info = store.session(clean.id).unwrap();
+        // The daemon no longer says what ran in it; the window does.
+        assert_eq!(session_icon(info), Icon::SessionTerminal);
+        assert_eq!(
+            session_icon_with(info, store.remembered_agent(clean.id)),
+            Icon::HarnessOmp
+        );
+    });
+}
+
+/// FX-UI-A 4: a plain shell that rings its bell (or notifies) while out of sight gets a bell on
+/// its row and its tab — not a bold name, a ✓ or a place in *Ready for review*; an agent that
+/// finishes a turn does keep its ✓.
+#[gpui::test]
+fn a_shell_that_rings_gets_only_a_bell(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let shell = session(&daemon, "shell");
+    let other = session(&daemon, "other");
+    let (view, cx) = open(cx, &daemon);
+    let sidebar = panel(&view, cx);
+    wait_until(cx, "the rows", |cx| rows(&sidebar, cx).len() >= 3);
+    // The shell is not the one on screen.
+    view.update_in(cx, |wb, window, cx| wb.open_session(other.id, window, cx));
+    settle(cx);
+
+    daemon.send_input(shell.terminal_id.unwrap(), b"\x07\r");
+    wait_until(cx, "the shell's bell", |cx| {
+        drawn(&view, cx, Region::SessionBell(shell.id))
+    });
+    assert_eq!(row(&sidebar, cx, "shell").lane, BadgeState::Idle);
+    assert!(
+        !rows(&sidebar, cx)
+            .iter()
+            .any(|r| r.kind == RowKind::Section && r.title.starts_with("Ready for review")),
+        "a bell is not work to review"
+    );
+    assert!(!drawn(&view, cx, Region::SessionUnread(shell.id)));
+    assert!(!drawn(&view, cx, Region::SessionBell(other.id)));
+
+    // Looking at the shell takes the bell away.
+    view.update_in(cx, |wb, window, cx| wb.open_session(shell.id, window, cx));
+    settle(cx);
+    wait_until(cx, "the bell to go", |cx| {
+        !drawn(&view, cx, Region::SessionBell(shell.id))
     });
 }
 

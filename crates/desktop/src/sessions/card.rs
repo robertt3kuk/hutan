@@ -105,8 +105,11 @@ pub fn badge_state(
         BadgeState::Failed
     } else if matches!(presentation.label.as_str(), "working" | "starting") {
         BadgeState::Working
-    } else if presentation.attention.is_some() || unread.is_some_and(Unread::is_unseen) {
-        // Ready for review, a turn nobody has read, a bell, a mark: finished, unread.
+    } else if !super::attention::bell_only(info, unread)
+        && (presentation.attention.is_some() || unread.is_some_and(Unread::is_unseen))
+    {
+        // Ready for review, a turn nobody has read, a mark: finished, unread. (A shell's bell is
+        // only a bell.)
         BadgeState::DoneUnread
     } else if !live {
         BadgeState::Ended

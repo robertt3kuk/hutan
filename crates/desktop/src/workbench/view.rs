@@ -357,6 +357,8 @@ pub enum Region {
     SessionRow(hutan_core::SessionId),
     /// The muted marker of a session's row (its notifications are muted, `notify.mute`).
     SessionMuted(hutan_core::SessionId),
+    /// The bell on a plain shell's row: it rang or sent a notification while out of sight.
+    SessionBell(hutan_core::SessionId),
     /// The name of a session's row (what gives way with "…") and its fork mark, which never does.
     SessionName(hutan_core::SessionId),
     SessionMark(hutan_core::SessionId),
@@ -1821,7 +1823,10 @@ impl Workbench {
                     .and_then(|id| self.sessions.read(cx).session(id).cloned());
                 match info {
                     Some(info) => (
-                        crate::workbench::panels::session_icon(&info),
+                        crate::workbench::panels::session_icon_with(
+                            &info,
+                            self.sessions.read(cx).remembered_agent(info.id),
+                        ),
                         self.sessions.read(cx).title_parts(&info).text().into(),
                     ),
                     None => (crate::icons::Icon::SessionTerminal, "Terminal".into()),

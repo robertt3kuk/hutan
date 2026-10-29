@@ -548,6 +548,8 @@ pub struct SessionsStore {
     /// The first line of the last reply of each chat whose turn nobody has read yet, for the
     /// news line of its card. `None` while it is being read; an entry goes with the unread mark.
     replies: HashMap<SessionId, Option<String>>,
+    /// The agent program last seen running in each terminal (`remembered_agent`).
+    agent_apps: HashMap<SessionId, String>,
     changed_in_flight: bool,
     /// Worktree roots a session worked in that a listing was asked for (never asked again for
     /// the same root: a root the listing does not know must not loop).
@@ -740,6 +742,7 @@ impl SessionsStore {
             fs_recount_again: false,
             changed_files: HashMap::new(),
             replies: HashMap::new(),
+            agent_apps: HashMap::new(),
             changed_in_flight: false,
             checkouts_tried: HashSet::new(),
             chosen_checkout: HashMap::new(),
@@ -842,6 +845,14 @@ impl SessionsStore {
             }
             let known: Vec<SessionId> = self.state.sessions.iter().map(|s| s.id).collect();
             self.recent.retain(|id, _| !known.contains(id));
+            for info in &self.state.sessions {
+                if let Some(app) = super::attention::agent_app(info)
+                    && self.agent_apps.get(&info.id).map(String::as_str) != Some(app)
+                {
+                    self.agent_apps.insert(info.id, app.to_owned());
+                }
+            }
+            self.agent_apps.retain(|id, _| known.contains(id));
         }
         // Tell every attached terminal what the daemon now says about its session. While
         // disconnected the last known state stays (a reconnect resyncs it). Terminals of
@@ -1994,6 +2005,7 @@ impl SessionsStore {
         if wanted.is_empty() {
             if !self.changed_files.is_empty() {
                 self.changed_files.clear();
+                self.revision += 1;
                 self.changed(StoreChanged::CHECKOUTS, cx);
             }
             return;
@@ -2029,6 +2041,8 @@ impl SessionsStore {
                 store.changed_in_flight = false;
                 if store.changed_files != counted {
                     store.changed_files = counted;
+                    // An ended session with changes is *Ready for review* (`Self::unread`).
+                    store.revision += 1;
                     store.changed(StoreChanged::CHECKOUTS, cx);
                 }
             })
@@ -2148,8 +2162,40 @@ impl SessionsStore {
             .map(|s| s.id)
     }
 
+    /// What the user has not looked at in `id`. A session that ended with exit 0 and left no
+    /// uncommitted change in its checkout has nothing to review: it is only *ended* (a hollow
+    /// ring, its name faint), never *Ready for review*.
     pub fn unread(&self, id: SessionId) -> Option<Unread> {
-        self.attention.unread(id)
+        let unread = self.attention.unread(id);
+        if unread == Some(Unread::Done)
+            && self
+                .session(id)
+                .is_some_and(|info| self.ended_clean_without_changes(info))
+        {
+            return None;
+        }
+        unread
+    }
+
+    /// Whether `info` exited 0 and its checkout has no uncommitted file as last counted.
+    fn ended_clean_without_changes(&self, info: &SessionInfo) -> bool {
+        matches!(
+            info.state,
+            hutan_core::SessionState::Exited {
+                code: Some(0),
+                signal: None
+            }
+        ) && !info
+            .placement
+            .as_ref()
+            .is_some_and(|placement| self.changed_files.contains_key(&placement.root))
+    }
+
+    /// The coding agent's program this window saw run in the terminal `id` (`omp`, `claude`,
+    /// …), kept after the session ended and the daemon stopped reporting it: the row and the tab
+    /// keep the harness's glyph.
+    pub fn remembered_agent(&self, id: SessionId) -> Option<&str> {
+        self.agent_apps.get(&id).map(String::as_str)
     }
 
     /// How `info` shows up: its own state, except that a live session whose main agent is
@@ -2180,7 +2226,7 @@ impl SessionsStore {
 
     /// [`presentation`](Self::presentation) before a snooze is applied.
     fn raw_presentation(&self, info: &SessionInfo) -> Presentation {
-        let mut presentation = present(info, self.attention.unread(info.id), &self.model_names);
+        let mut presentation = present(info, self.unread(info.id), &self.model_names);
         if presentation.attention.is_none()
             && info.state.is_live()
             && let Some(tree) = self.state.trees.get(&info.id)
@@ -2321,7 +2367,9 @@ impl SessionsStore {
         {
             return cached.clone();
         }
-        let unread = self.attention.unread_map();
+        // What the sidebar says is unread, so the Agents page agrees with it (`Self::unread`).
+        let mut unread = self.attention.unread_map().clone();
+        unread.retain(|id, _| self.unread(*id).is_some());
         let mut reviews: HashSet<SessionId> = HashSet::new();
         let mut seen: HashSet<SessionId> = HashSet::new();
         for session in &self.state.sessions {
@@ -2338,7 +2386,7 @@ impl SessionsStore {
         let snoozed: HashSet<SessionId> = self.attention.snoozed_map().keys().copied().collect();
         let built = Arc::new(presentation::build(&Facts {
             state: &self.state,
-            unread,
+            unread: &unread,
             reviews: &reviews,
             changes_to_review: &seen,
             snoozed: &snoozed,

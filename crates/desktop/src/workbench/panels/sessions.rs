@@ -34,7 +34,7 @@ use hutan_protocol::worktree::{Placement, PlacementKind};
 
 use super::common::{
     age_label, agent_badge, panel_header_controls, placement, placement_badge, recovery_chip,
-    session_icon, shared_checkout_chip, time_tooltip,
+    session_icon_with, shared_checkout_chip, time_tooltip,
 };
 use crate::icons::{Icon, icon};
 use crate::sessions::PlacementBadge;
@@ -2208,7 +2208,8 @@ impl SessionsPanel {
         let presentation = self.env.sessions.read(cx).presentation(info);
         // A failure the user has looked at stays listed but no longer wears the unread dot.
         let unread_state = self.env.sessions.read(cx).unread(info.id);
-        let unread = unread_state.is_some_and(crate::sessions::Unread::is_unseen);
+        let belled = crate::sessions::bell_only(info, unread_state);
+        let unread = unread_state.is_some_and(crate::sessions::Unread::is_unseen) && !belled;
         let live = info.state.is_live();
         let hover = card_hover(&theme);
         let id = info.id.to_string();
@@ -2239,6 +2240,22 @@ impl SessionsPanel {
                 &self.env.regions,
                 cx,
             )
+        });
+        // A plain shell that rang or notified while out of sight: only a bell (no bold name, no
+        // ✓, no group): the tab rings too.
+        let mut bell = belled.then(|| {
+            div()
+                .id(SharedString::from(format!("session-bell-{id}")))
+                .relative()
+                .flex_none()
+                .tooltip(|_, cx| {
+                    cx.new(|_| {
+                        TextTooltip::new("Rang or sent a notification while out of sight".into())
+                    })
+                    .into()
+                })
+                .child(icon(Icon::StateBell, 12.0, theme.accent))
+                .child(probe(&self.env.regions, Region::SessionBell(info.id)))
         });
         // The marker of a session whose notifications are muted (`notify.mute`).
         let mut muted = info.muted.then(|| {
@@ -2313,7 +2330,7 @@ impl SessionsPanel {
                 })
                 .child(ui::row_lane(
                     SharedString::from(format!("row-lane-{id}")),
-                    session_icon(info),
+                    session_icon_with(info, self.env.sessions.read(cx).remembered_agent(info.id)),
                     lane_state,
                     ground,
                     selected,
@@ -2497,6 +2514,7 @@ impl SessionsPanel {
                     .children(badge.take())
                     .children(recovery.take())
                     .children(review.take())
+                    .children(bell.take())
                     .children(muted.take()),
                 "age" => {
                     // Since something last happened in it, not since it was made.

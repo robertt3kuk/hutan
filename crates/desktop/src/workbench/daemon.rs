@@ -921,7 +921,10 @@ impl Workbench {
                     (3, presentation.label.clone())
                 };
                 let row = ModalRow {
-                    icon: super::panels::common::session_icon(info),
+                    icon: super::panels::common::session_icon_with(
+                        info,
+                        store.remembered_agent(info.id),
+                    ),
                     tone: presentation.tone,
                     title: info.title.clone().into(),
                     status: status.into(),

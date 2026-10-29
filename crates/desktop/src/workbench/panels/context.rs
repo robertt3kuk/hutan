@@ -32,7 +32,7 @@ use hutan_protocol::control::ErrorCode;
 use hutan_protocol::messages::SessionInfo;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::common::{panel_toolbar, session_icon};
+use super::common::{panel_toolbar, session_icon_with};
 use super::context_model::{self as model, Swatch, TurnLine, TurnState};
 use crate::sessions::card;
 use crate::settings::ContextPanelSettings;
@@ -769,7 +769,7 @@ impl ContextPanel {
         let state = card::badge_state(info, &presentation, None);
         let lane = ui::row_lane(
             SharedString::from("context-lane"),
-            session_icon(info),
+            session_icon_with(info, store.remembered_agent(info.id)),
             state,
             theme.right_sidebar,
             false,

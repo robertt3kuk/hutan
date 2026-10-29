@@ -47,17 +47,19 @@ fn store<R>(
     view.read_with(cx, |wb, cx| f(wb.sessions().read(cx)))
 }
 
-/// A session that runs `exit <code>` once `go` exists.
+/// A session that runs `exit <code>` once `go` exists. One that exits 0 works in a repository
+/// with an uncommitted file: its exit leaves work to review (a clean exit with nothing changed
+/// is only *ended*, FX-UI-A 4).
 fn ends_with(daemon: &TestDaemon, title: &str, go: &Path, code: i32) -> SessionId {
-    daemon
-        .sh_titled(
-            title,
-            &format!(
-                "while [ ! -e {} ]; do sleep 0.05; done; exit {code}",
-                go.display()
-            ),
-        )
-        .id
+    let script = format!(
+        "while [ ! -e {} ]; do sleep 0.05; done; exit {code}",
+        go.display()
+    );
+    if code == 0 {
+        let repo = TestDaemon::dirty_repo(daemon.home());
+        return daemon.sh_titled_in(title, &script, &repo).id;
+    }
+    daemon.sh_titled(title, &script).id
 }
 
 /// Whether the status bar draws the count of requests.

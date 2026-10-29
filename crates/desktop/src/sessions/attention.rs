@@ -259,8 +259,11 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
     match &info.state {
         SessionState::Starting => quiet("starting", String::new(), Tone::Accent, false),
         // Finished work of a running session the user has not seen: a terminal notification.
-        // Never a request.
-        SessionState::Running | SessionState::Idle if unread == Some(Unread::Done) => {
+        // Never a request; and of a plain shell it is only a bell (the tab's, `bell_only`), not
+        // work to review.
+        SessionState::Running | SessionState::Idle
+            if unread == Some(Unread::Done) && !is_plain_shell(info) =>
+        {
             Presentation {
                 label: "review".into(),
                 detail: "notification".into(),
@@ -748,6 +751,23 @@ fn present_terminal_agent(agent: &TerminalAgent, unread: Option<Unread>) -> Pres
         filled,
         attention,
     }
+}
+
+/// A terminal in which no coding agent is known to run: a shell.
+pub fn is_plain_shell(info: &SessionInfo) -> bool {
+    info.chat.is_none()
+        && info.kind == hutan_core::SessionKind::Terminal
+        && agent_app(info).is_none()
+}
+
+/// Whether `unread` is, for `info`, only a bell: a plain shell that is still running and rang
+/// its bell or sent a notification while it was out of sight. The tab rings; the row says so with
+/// a small bell and nothing more — no bold name, no ✓, no *Ready for review*: a shell has no
+/// work to review.
+pub fn bell_only(info: &SessionInfo, unread: Option<Unread>) -> bool {
+    info.state.is_live()
+        && is_plain_shell(info)
+        && matches!(unread, Some(Unread::Done | Unread::Bell))
 }
 
 /// The program of the coding agent in a live session, from what the terminal said or an
