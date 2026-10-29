@@ -42,6 +42,8 @@ pub struct UsageDirectory {
     due: Vec<UsageWarning>,
     /// The connection the summary was asked on (`Connection::generation`).
     loaded_on: Option<u64>,
+    /// The first answer of the connection is still on its way.
+    loading: bool,
     /// A refresh (the harnesses are asked) is in flight.
     refreshing: bool,
     refreshed_at: Option<Instant>,
@@ -75,6 +77,7 @@ impl UsageDirectory {
             warnings: UsageWarnings::default(),
             due: Vec::new(),
             loaded_on: None,
+            loading: false,
             refreshing: false,
             refreshed_at: None,
             _subscriptions: subscriptions,
@@ -93,6 +96,13 @@ impl UsageDirectory {
     /// Whether the harnesses are being asked what is left.
     pub fn refreshing(&self) -> bool {
         self.refreshing
+    }
+
+    /// Whether a request to the daemon (the summary of a new connection, a refresh) is still
+    /// unanswered. Its answer replaces whatever summary was applied meanwhile, so a test that
+    /// applies its own waits for this to be `false` first.
+    pub fn pending(&self) -> bool {
+        self.loading || self.refreshing
     }
 
     /// The words of the status item now.
@@ -136,14 +146,21 @@ impl UsageDirectory {
             return;
         }
         self.loaded_on = Some(generation);
-        cx.spawn(
-            async move |this, cx| match connection.usage_summary(false).await {
-                Ok(summary) => {
-                    this.update(cx, |this, cx| this.apply(summary, cx)).ok();
+        self.loading = true;
+        cx.spawn(async move |this, cx| {
+            let answer = connection.usage_summary(false).await;
+            this.update(cx, |this, cx| {
+                this.loading = false;
+                match answer {
+                    Ok(summary) => this.apply(summary, cx),
+                    Err(error) => {
+                        tracing::debug!(%error, "no usage summary");
+                        cx.notify();
+                    }
                 }
-                Err(error) => tracing::debug!(%error, "no usage summary"),
-            },
-        )
+            })
+            .ok();
+        })
         .detach();
     }
 

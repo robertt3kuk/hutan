@@ -93,6 +93,33 @@ fn summary(used: f64, resets: u64) -> UsageSummary {
     }
 }
 
+/// A daemon whose usage already holds Codex at `used` % of its 5-hour window, which resets at
+/// `resets`: what the window is told when it connects, and the first summary it sees. The rows are
+/// written between two runs of the daemon, so the test owns what the daemon answers.
+fn daemon_with_codex_at(used: f64, resets: u64) -> TestDaemon {
+    let mut daemon = TestDaemon::start();
+    daemon.stop();
+    let storage = hutan_storage::Storage::open(&daemon.paths.database).unwrap();
+    storage
+        .usage()
+        .upsert_limits(vec![hutan_storage::UsageLimitRow {
+            harness: "codex".into(),
+            account: String::new(),
+            provider: "openai".into(),
+            window_id: "5h".into(),
+            label: "5-hour".into(),
+            used_percent: used,
+            window_minutes: Some(300),
+            resets_at_ms: Some(resets),
+            plan: None,
+            observed_at_ms: now(),
+        }])
+        .unwrap();
+    storage.close();
+    daemon.restart();
+    daemon
+}
+
 fn settings_in(daemon: &TestDaemon, toml: &str) -> SettingsStore {
     let paths = SettingsPaths::in_dir(daemon.home());
     std::fs::create_dir_all(daemon.home()).unwrap();
@@ -114,7 +141,19 @@ fn open<'a>(
     (view, cx)
 }
 
+/// Waits until the daemon has answered every request the directory sent (the summary of the new
+/// connection, the refresh the Agents page asks for). An answer replaces the summary that was
+/// applied before it landed, so a test that gives its own fixture first would lose it under load
+/// (FX-AFTER-033).
+fn daemon_answered(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    wait_until(cx, "the daemon's answers about usage", |cx| {
+        view.read_with(cx, |wb, cx| !wb.usage_directory().read(cx).pending())
+    });
+}
+
+/// Applies `summary` as the daemon's word, once the daemon has said all it was asked to say.
 fn give(view: &Entity<Workbench>, cx: &mut VisualTestContext, summary: UsageSummary) {
+    daemon_answered(view, cx);
     view.update(cx, |wb, cx| {
         wb.usage_directory()
             .update(cx, |usage, cx| usage.apply(summary, cx));
@@ -133,6 +172,44 @@ fn item_drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext, id: &'static
 
 fn toast(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<String> {
     view.read_with(cx, |wb, _| wb.usage_toast().map(|t| t.text.to_string()))
+}
+
+// ---- the directory and the daemon's answers ----------------------------------------------------
+
+#[gpui::test]
+fn a_request_is_pending_until_its_answer_is_applied_and_a_fixture_given_after_survives_the_page(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open_with(cx, settings_in(&daemon, ""), daemon.connection(), None);
+    // The summary the daemon sends on connecting lands together with the end of the request:
+    // there is no moment at which the daemon's answer is known and a second one is still owed.
+    wait_until(cx, "the daemon's first answer", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.usage_directory().read(cx).summary().is_some()
+        })
+    });
+    assert!(
+        !view.read_with(cx, |wb, cx| wb.usage_directory().read(cx).pending()),
+        "the first answer ends the request"
+    );
+
+    // The Agents page asks the harnesses when it opens; that request is pending until its answer
+    // is applied, and a fixture given after that is the last word, however slow the answer was.
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_agents_page(AgentsRequest::default(), window, cx);
+    });
+    settle(cx);
+    give(&view, cx, summary(72.0, now() + 3 * HOUR));
+    assert!(
+        !view.read_with(cx, |wb, cx| wb.usage_directory().read(cx).pending()),
+        "nothing is owed after the fixture"
+    );
+    for _ in 0..3 {
+        draw(cx);
+    }
+    let rings = meters(&view, cx);
+    assert_eq!(rings.len(), 2, "the fixture stands: {rings:?}");
 }
 
 // ---- the status item -------------------------------------------------------------------------
@@ -405,8 +482,11 @@ fn a_click_on_a_ring_opens_the_agents_page_where_the_usage_section_is(cx: &mut T
             wb.state().active_center_item() == Some(page.clone())
         })
     });
-    // Its Usage section is the first thing under the filter band.
+    // Its Usage section is the first thing under the filter band. Opening the page asked the
+    // harnesses, and the daemon's answer (nothing known) replaces the fixture: the fixture is
+    // given again once that answer is in.
     settle(cx);
+    give(&view, cx, summary(72.0, now() + 3 * HOUR));
     wait_until(cx, "the Usage section", |cx| {
         view.read_with(cx, |wb, _| {
             wb.region_bounds(Region::AgentsPage("usage")).is_some()
@@ -440,6 +520,8 @@ fn the_agents_page_shows_each_harness_with_bars_resets_and_estimate_labels(
         wb.open_agents_page(AgentsRequest::default(), window, cx);
     });
     settle(cx);
+    // The page asked the harnesses on opening; the daemon's own answer (nothing known) is in.
+    daemon_answered(&view, cx);
     let drawn = |view: &Entity<Workbench>, cx: &mut VisualTestContext, region| {
         draw(cx);
         view.read_with(cx, |wb, _| wb.region_bounds(region))
@@ -504,10 +586,23 @@ fn the_agents_page_shows_each_harness_with_bars_resets_and_estimate_labels(
 fn a_limit_warns_at_80_and_at_95_once_per_window_and_not_for_what_was_there_at_the_start(
     cx: &mut TestAppContext,
 ) {
-    let daemon = TestDaemon::start();
-    let (view, cx) = open(cx, &daemon, "");
     let window = now() + 3 * HOUR;
-    // The first summary seeds: the window is at 85 % when the app opens, and that is no news.
+    // The first summary seeds: the window is at 85 % when the app opens (the daemon says so when
+    // the window connects), and that is no news.
+    let daemon = daemon_with_codex_at(85.0, window);
+    let (view, cx) = open(cx, &daemon, "");
+    daemon_answered(&view, cx);
+    assert_eq!(
+        view.read_with(cx, |wb, cx| {
+            wb.usage_directory()
+                .read(cx)
+                .summary()
+                .map(|s| s.harnesses.len())
+        }),
+        Some(1),
+        "the daemon's own answer is what the window started from"
+    );
+    assert_eq!(toast(&view, cx), None);
     give(&view, cx, summary(85.0, window));
     assert_eq!(toast(&view, cx), None);
     give(&view, cx, summary(90.0, window));
