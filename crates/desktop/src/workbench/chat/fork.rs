@@ -40,14 +40,20 @@ pub struct EndedTurn {
     pub newest: bool,
 }
 
-/// The turns of `transcript` that ended, oldest first. `complete`: the transcript starts at the
-/// chat's first event.
+/// The turns of `transcript` that ended, oldest first, without measurements (`/context`, which is
+/// no turn of the conversation: it has no ordinal and is never the latest turn to fork at, to
+/// rewind to or to name). `complete`: the transcript starts at the chat's first event. Every
+/// "latest turn" of the window — the sidebar's ⑂, the popover's default, the ⌘K command — reads
+/// this list.
 pub fn ended_turns(transcript: &Transcript, complete: bool) -> Vec<EndedTurn> {
     let mut out: Vec<EndedTurn> = Vec::new();
     for (index, entry) in transcript.entries().iter().enumerate() {
         let (Body::Footer(_), Some(turn)) = (&entry.body, entry.turn) else {
             continue;
         };
+        if transcript.is_measurement(entry) {
+            continue;
+        }
         if out.iter().any(|ended| ended.turn == turn) {
             continue;
         }
