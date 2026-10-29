@@ -650,12 +650,12 @@ impl Focusable for ContextPanel {
 fn swatch_color(swatch: Swatch, theme: &Theme) -> gpui::Hsla {
     match swatch {
         Swatch::System | Swatch::Fixed => theme.accent,
-        Swatch::Tools => theme.link,
+        Swatch::Tools => theme.warning,
         Swatch::Project => theme.success,
-        Swatch::Skills => theme.warning,
-        Swatch::Messages => theme.diff_modified,
-        Swatch::Mcp => theme.diff_renamed,
-        Swatch::Agents => theme.muted,
+        Swatch::Skills => theme.fg.opacity(0.55),
+        Swatch::Messages => theme.muted,
+        Swatch::Mcp => theme.faint,
+        Swatch::Agents => theme.muted.opacity(0.6),
         Swatch::Other => theme.faint,
         Swatch::Buffer => theme.border,
         Swatch::Free => gpui::transparent_black(),

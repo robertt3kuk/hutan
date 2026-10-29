@@ -165,8 +165,8 @@ fn the_fill_chart_is_the_context_after_each_turn_and_needs_two_points() {
     let chart = fill_chart(&i, 40).expect("a chart");
     assert_eq!(
         chart.bars,
-        [0.05, 0.2],
-        "against the window when there is one"
+        [0.25, 1.0],
+        "the shape of the conversation, not the window"
     );
     let chart = fill_chart(&i, 1).expect("a chart");
     assert_eq!(chart.bars.len(), 1);

@@ -180,7 +180,7 @@ pub fn breakdown(context: &InsightContext) -> Option<Breakdown> {
 pub fn kind_note(kind: BreakdownKind) -> Option<&'static str> {
     match kind {
         BreakdownKind::Used => None,
-        BreakdownKind::Buffer => Some("reserved for compaction"),
+        BreakdownKind::Buffer => Some("reserved"),
         BreakdownKind::Free => Some("free"),
         BreakdownKind::Deferred => Some("loaded when needed"),
     }
@@ -318,7 +318,7 @@ fn turn_line(
         tokens,
         tools,
         files,
-        duration: turn.duration_ms.map(duration),
+        duration: turn.duration_ms.filter(|ms| *ms > 0).map(duration),
         cost: turn.cost_usd.map(money),
         started_ms: turn.started_ms,
         detail: detail.join(" · "),
@@ -340,8 +340,7 @@ pub fn thousands(value: u64) -> String {
 }
 
 /// The bars of *Fill by turn*: the context after each of the newest `limit` turns that
-/// reported one, oldest first, as shares of the largest figure (or of the window when it is
-/// larger), and the peak.
+/// reported one, oldest first, as shares of the largest figure, and the peak.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FillChart {
     pub bars: Vec<f32>,
@@ -359,13 +358,9 @@ pub fn fill_chart(insight: &AgentInsight, limit: usize) -> Option<FillChart> {
     }
     let values = &values[values.len().saturating_sub(limit)..];
     let peak = values.iter().copied().max()?;
-    let scale = insight
-        .context
-        .as_ref()
-        .and_then(|context| context.window)
-        .filter(|window| *window >= peak)
-        .unwrap_or(peak)
-        .max(1);
+    // The largest turn fills the chart: it shows the shape of the conversation, not the window
+    // (the meter above is the window).
+    let scale = peak.max(1);
     Some(FillChart {
         bars: values
             .iter()
@@ -509,7 +504,8 @@ pub fn tool_lines(insight: &AgentInsight) -> Vec<ToolLine> {
             if tool.failed > 0 {
                 parts.push(format!("{} failed", tool.failed));
             }
-            if let Some(ms) = tool.ms {
+            // A harness that timed nothing says 0 ms; that is no time.
+            if let Some(ms) = tool.ms.filter(|ms| *ms > 0) {
                 parts.push(duration(ms));
             }
             ToolLine {
