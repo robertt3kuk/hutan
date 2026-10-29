@@ -1549,7 +1549,6 @@ impl Workbench {
                         &theme,
                         &tokens,
                     )
-                    .ghost()
                     .compact()
                     .selected(on)
                     .tooltip(tip)

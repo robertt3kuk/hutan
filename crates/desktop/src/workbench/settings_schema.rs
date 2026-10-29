@@ -231,9 +231,9 @@ pub fn refine_kind(namespace: &str, key: &str, kind: &FieldKind) -> FieldKind {
             FieldKind::ChoiceList(own(&crate::settings::SidebarSettings::NAV_ROWS))
         }
         // Mappings are keys written as in Vim (`<C-w>`, `<Esc>`): settings.toml holds them, the
-        // Keyboard page lists them.
+        // Keyboard section lists them.
         ("editor", "vim_mappings.insert" | "vim_mappings.normal" | "vim_mappings.visual", _) => {
-            FieldKind::Unsupported("edit settings.toml; listed on the Keyboard page".to_owned())
+            FieldKind::Unsupported("edit settings.toml; listed in Keyboard".to_owned())
         }
         _ => kind.clone(),
     }

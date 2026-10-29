@@ -31,7 +31,7 @@ use super::modal::{Modal, ModalChoice};
 use super::model::PanelId;
 use super::panels::{HistoryPanel, format_bytes};
 use super::render::probe;
-use super::settings_labels::{namespace_description, namespace_title, page_title, words};
+use super::settings_labels::{namespace_description, namespace_title, words};
 use super::settings_rows::{SheetRow, note, sheet_row};
 use super::settings_schema::{Field, Filters, PAGES};
 use super::settings_sheet::SettingsSheet;
@@ -271,7 +271,7 @@ impl Workbench {
     }
 
     /// The sections of `page` as the sheet draws them: each under its own head (a page of one
-    /// section, or a section called like its page, has none), what used to be the page below
+    /// section has none, and the first section of a page is what its title and line say), what used to be the page below
     /// it. The head of each is probed (`Region::SettingsSection`), which is where a deep link
     /// scrolls to.
     pub(super) fn render_page_sections(
@@ -319,7 +319,7 @@ impl Workbench {
             if daemon_section && owner != Some(*section) && self.daemon_gate(cx).is_err() {
                 continue;
             }
-            if headed && namespace_title(section) != page_title(page) {
+            if headed && section != &nav.sections[0] {
                 out.push(
                     super::ui::page_section_head(
                         namespace_title(section),
