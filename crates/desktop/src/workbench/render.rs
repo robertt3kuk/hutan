@@ -2699,6 +2699,7 @@ impl Workbench {
         })
     }
 
+    #[allow(clippy::too_many_arguments)] // one call site; a struct would only rename them
     fn render_tab(
         &mut self,
         pane_id: PaneId,
