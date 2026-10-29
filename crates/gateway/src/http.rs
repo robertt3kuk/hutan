@@ -94,6 +94,78 @@ impl Http {
     pub fn config(&self) -> &HttpConfig {
         &self.config
     }
+
+    /// One `GET url` that is not a model provider's: the daemon's update check. Sends only the
+    /// given `User-Agent` and `Accept`, never follows a redirect, never retries, and reads at
+    /// most `max_bytes` of the body (a longer one is a [`GatewayError::Protocol`]). Any status is
+    /// an answer: the caller decides what a 403 or a 404 means.
+    pub async fn get_bounded(
+        &self,
+        url: &str,
+        user_agent: &str,
+        accept: &str,
+        max_bytes: usize,
+    ) -> Result<Fetched, GatewayError> {
+        let url = Url::parse(url).map_err(|e| GatewayError::InvalidUrl(e.to_string()))?;
+        debug!(host = url.host_str().unwrap_or(""), "bounded GET");
+        let mut response = self
+            .client
+            .get(url)
+            .header(reqwest::header::USER_AGENT, user_agent)
+            .header(reqwest::header::ACCEPT, accept)
+            .timeout(self.config.request_timeout)
+            .send()
+            .await
+            .map_err(|error| fetch_error(&error))?;
+        let status = response.status().as_u16();
+        let rate_limit_exhausted = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.trim() == "0");
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| fetch_error(&error))?
+        {
+            if body.len() + chunk.len() > max_bytes {
+                return Err(GatewayError::Protocol(format!(
+                    "the reply is longer than {max_bytes} bytes"
+                )));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(Fetched {
+            status,
+            rate_limit_exhausted,
+            body,
+        })
+    }
+}
+
+/// The answer of [`Http::get_bounded`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fetched {
+    pub status: u16,
+    /// The server said no requests are left (`x-ratelimit-remaining: 0`).
+    pub rate_limit_exhausted: bool,
+    pub body: Vec<u8>,
+}
+
+fn fetch_error(error: &reqwest::Error) -> GatewayError {
+    if error.is_timeout() {
+        GatewayError::Timeout
+    } else if error.is_connect() {
+        GatewayError::Connect {
+            attempts: 1,
+            message: describe(error),
+        }
+    } else {
+        GatewayError::Stream {
+            message: describe(error),
+        }
+    }
 }
 
 /// Where a provider lives and how to reach it: shared by the adapters.

@@ -50,6 +50,8 @@
 //! - [`lsp`]: language servers: the `LspHub` (one server per (server, root), shared by every client),
 //!   `doc.*` mirrors, `lsp.*`, folder trust, idle stop, `max_servers` (protocol 0.39).
 //! - [`mcp_wiring`]: how `hutan mcp` is registered with the agents Hutan starts.
+//! - [`update`]: the check for a newer Hutan, how this Hutan was installed, and the Homebrew
+//!   update (`update.status|check|install`, protocol 0.60, ADR 0024).
 //! - [`daemon_settings`]: `daemon.toml` as a list of settings: `daemon.settings.get` / `.set`
 //!   validate, edit the file in place and apply what can change live (protocol 0.28).
 
@@ -110,6 +112,7 @@ pub mod terminals;
 pub mod testing;
 pub mod tree;
 pub mod uihub;
+pub mod update;
 pub mod usage;
 pub mod worktrees;
 

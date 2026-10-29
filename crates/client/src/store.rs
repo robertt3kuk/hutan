@@ -137,6 +137,15 @@ pub enum Notice {
     UsageChanged {
         summary: Box<hutan_protocol::usage::UsageSummary>,
     },
+    /// A check found a release newer than the running Hutan that was not announced yet
+    /// (`update.available`, protocol 0.60).
+    UpdateAvailable {
+        release: Box<hutan_protocol::update::UpdateRelease>,
+    },
+    /// The install `update.install` started changed state (`update.install`, protocol 0.60).
+    UpdateInstall {
+        install: Box<hutan_protocol::update::UpdateInstall>,
+    },
     /// Mawas's memory changed, or a proposal arrived or was answered (`memory.changed`,
     /// protocol 0.32): list the entries and proposals again.
     MemoryChanged {
@@ -510,6 +519,12 @@ impl StoreState {
             }
             Event::UsageChanged { summary } => {
                 effects.notices.push(Notice::UsageChanged { summary });
+            }
+            Event::UpdateAvailable { release } => {
+                effects.notices.push(Notice::UpdateAvailable { release });
+            }
+            Event::UpdateInstallChanged { install } => {
+                effects.notices.push(Notice::UpdateInstall { install });
             }
             Event::MemoryChanged {
                 scope,

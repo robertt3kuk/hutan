@@ -96,6 +96,11 @@
 //! read_deny = ["~/.ssh"]         # folders no contained session may read (default: Keychains, ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh, ~/.netrc; Hutan's own folder always)
 //! bin = "/usr/bin/sandbox-exec"  # the Seatbelt tool
 //!
+//! [updates]                      # the check for a newer Hutan (protocol 0.60, docs/packaging.md § Updates)
+//! check = "auto"                 # "auto": ask GitHub's releases at most every 24 h, and on request; "off": only on request
+//! channel = "prerelease"         # "prerelease": every release counts; "stable": releases not marked pre-release
+//! skip_version = "0.3.2"         # the version the user chose to skip (set by the desktop's "Skip this version")
+//!
 //! [worktrees]                    # worktree setup and retention (protocol 0.49, docs/orchestration.md § Setup and cleanup)
 //! cleanup = "never"              # "never", "merged" (branch merged into the default branch) or "idle" (untouched for cleanup_idle_days)
 //! cleanup_idle_days = 14         # with "idle": days without a commit or a change of git state
@@ -204,6 +209,19 @@ pub struct DaemonSettings {
     /// start.
     pub hooks: Vec<HookSettings>,
     pub worktrees: WorktreeSettings,
+    /// `[updates]`: the check for a newer Hutan (protocol 0.60, ADR 0024).
+    pub updates: UpdatesSettings,
+}
+
+/// `[updates]` of `daemon.toml`: when the daemon asks GitHub whether a newer Hutan exists, which
+/// releases count, and the version the user skipped (ADR 0024).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdatesSettings {
+    pub check: hutan_protocol::update::UpdateCheck,
+    pub channel: hutan_protocol::update::UpdateChannel,
+    /// The version the user chose to skip; empty (the default) skips none.
+    pub skip_version: String,
 }
 
 /// `[projects]` of `daemon.toml`: automatic projects (protocol 0.19).
@@ -1230,6 +1248,8 @@ struct File {
     hooks: Vec<HookSettings>,
     #[serde(default)]
     worktrees: WorktreeSettings,
+    #[serde(default)]
+    updates: UpdatesSettings,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1369,6 +1389,7 @@ impl DaemonSettings {
             lsp: file.lsp,
             hooks: file.hooks,
             worktrees: file.worktrees,
+            updates: file.updates,
         })
     }
 }

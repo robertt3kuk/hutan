@@ -163,6 +163,7 @@ fn run_daemon(
         config.native = native;
         config.menu_bar = menu_bar;
         config.usage_probes = true;
+        config.updates = hutan_daemon::update::UpdateTuning::github();
         let daemon = hutan_daemon::start(config).await?;
         start_error::clear(&paths);
         started.store(true, Ordering::Release);

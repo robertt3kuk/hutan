@@ -92,6 +92,8 @@ rustix = { version = "1.1.5", features = ["fs"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 schemars = "1.2.3"
+# Orders the version of the running Hutan against the releases of the update check (ADR 0024).
+semver = "1.0.28"
 # macOS Keychain for provider credentials (ADR 0008).
 security-framework = "3.7.0"
 serde = { version = "1.0.229", features = ["derive"] }

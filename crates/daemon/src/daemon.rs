@@ -53,6 +53,7 @@ use crate::router::{Router, Services};
 use crate::tasks::TaskService;
 use crate::terminals::TerminalHub;
 use crate::uihub::UiHub;
+use crate::update::{STATE_FILE as UPDATE_STATE_FILE, UpdateInputs, UpdateService, UpdateTuning};
 use crate::usage::UsageService;
 use crate::worktrees::{WorktreeConfig, WorktreeService};
 
@@ -132,6 +133,10 @@ pub struct DaemonConfig {
     /// user's own logins, so only `hutand` turns this on; a test that wants it points the
     /// harness CLIs at fakes first.
     pub usage_probes: bool,
+    /// Where the check for a newer Hutan looks and how it is scheduled. The default has no
+    /// source (it never checks and no test contacts GitHub); `hutand` sets GitHub
+    /// ([`UpdateTuning::github`]), a test a mock server.
+    pub updates: UpdateTuning,
 }
 
 impl DaemonConfig {
@@ -156,6 +161,7 @@ impl DaemonConfig {
             checkpoints: checkpoint_turns::Tuning::default(),
             lsp: LspTuning::default(),
             usage_probes: false,
+            updates: UpdateTuning::default(),
         }
     }
 }
@@ -538,6 +544,14 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         hutan_bin,
         socket: paths.socket.clone(),
     });
+    let updates = UpdateService::new(UpdateInputs {
+        settings: settings.updates.clone(),
+        tuning: config.updates.clone(),
+        state_file: paths.base.join(UPDATE_STATE_FILE),
+        bus: bus.clone(),
+        registry: registry.clone(),
+    });
+    updates.start(shutdown.clone());
     let settings_service = SettingsService::new(
         paths.config_file.clone(),
         paths.user_home.clone(),
@@ -551,6 +565,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             memory: memory.clone(),
             registry: registry.clone(),
             worktrees: worktrees.clone(),
+            updates: updates.clone(),
         },
     );
     let router = Router::new(
@@ -572,6 +587,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             ui,
             hooks,
             insight,
+            updates,
             settings: settings_service,
         },
         bus.clone(),

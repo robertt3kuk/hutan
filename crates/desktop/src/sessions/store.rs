@@ -394,6 +394,16 @@ pub struct UsageSummaryChanged {
     pub summary: Box<hutan_protocol::usage::UsageSummary>,
 }
 
+/// Emitted by [`SessionsStore`] when the daemon says something about updates (`update.available`
+/// and `update.install`, protocol 0.60); the window's update model folds it in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateChanged {
+    /// A release newer than the running Hutan was found.
+    Available(Box<hutan_protocol::update::UpdateRelease>),
+    /// The install `update.install` started changed state.
+    Install(Box<hutan_protocol::update::UpdateInstall>),
+}
+
 /// Emitted by [`SessionsStore`] when Mawas's memory changed or a proposal arrived or was answered
 /// (`memory.changed`, protocol 0.32): whoever lists memory asks again.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -660,6 +670,7 @@ impl EventEmitter<AgentAttentionChanged> for SessionsStore {}
 impl EventEmitter<UiOpenRequested> for SessionsStore {}
 impl EventEmitter<AccountsChanged> for SessionsStore {}
 impl EventEmitter<UsageSummaryChanged> for SessionsStore {}
+impl EventEmitter<UpdateChanged> for SessionsStore {}
 impl EventEmitter<MemoryChanged> for SessionsStore {}
 impl EventEmitter<SessionClosed> for SessionsStore {}
 impl EventEmitter<CheckoutActivity> for SessionsStore {}
@@ -1252,6 +1263,11 @@ impl SessionsStore {
             Notice::UsageChanged { summary } => cx.emit(UsageSummaryChanged {
                 summary: summary.clone(),
             }),
+            // The window's update model folds it in (status item, sheet).
+            Notice::UpdateAvailable { release } => {
+                cx.emit(UpdateChanged::Available(release.clone()));
+            }
+            Notice::UpdateInstall { install } => cx.emit(UpdateChanged::Install(install.clone())),
             // The Memory page listens for itself and lists again when it is on screen.
             Notice::MemoryChanged { scope_revision, .. } => cx.emit(MemoryChanged {
                 scope_revision: *scope_revision,

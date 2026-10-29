@@ -2677,6 +2677,7 @@ dependencies = [
  "regex",
  "rusqlite",
  "rustix",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

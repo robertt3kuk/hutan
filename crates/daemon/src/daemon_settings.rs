@@ -38,6 +38,7 @@ use crate::memory::MemoryService;
 use crate::notify::NotifyService;
 use crate::registry::RegistryHandle;
 use crate::tasks::TaskService;
+use crate::update::UpdateService;
 use crate::worktrees::WorktreeService;
 use hutan_terminal::EnvInherit;
 
@@ -109,6 +110,7 @@ enum Group {
     Finish,
     Worktrees,
     Checkpoints,
+    Updates,
 }
 
 struct Spec {
@@ -174,6 +176,20 @@ fn restore_mode_name(mode: RestoreMode) -> &'static str {
     match mode {
         RestoreMode::Respawn => "respawn",
         RestoreMode::Stopped => "stopped",
+    }
+}
+
+fn update_check_name(check: hutan_protocol::update::UpdateCheck) -> &'static str {
+    match check {
+        hutan_protocol::update::UpdateCheck::Auto => "auto",
+        hutan_protocol::update::UpdateCheck::Off => "off",
+    }
+}
+
+fn update_channel_name(channel: hutan_protocol::update::UpdateChannel) -> &'static str {
+    match channel {
+        hutan_protocol::update::UpdateChannel::Prerelease => "prerelease",
+        hutan_protocol::update::UpdateChannel::Stable => "stable",
     }
 }
 
@@ -461,6 +477,24 @@ fn build_specs() -> Vec<Spec> {
         ),
         live("finish.push", Kind::Bool, Group::Finish, |c| {
             json!(c.finish.push)
+        }),
+        // The check for a newer Hutan (protocol 0.60, ADR 0024): the daemon's update service
+        // takes all three at once. `skip_version` is what "Skip this version" writes; empty
+        // skips nothing.
+        live(
+            "updates.check",
+            Kind::Enum(&["auto", "off"]),
+            Group::Updates,
+            |c| json!(update_check_name(c.updates.check)),
+        ),
+        live(
+            "updates.channel",
+            Kind::Enum(&["prerelease", "stable"]),
+            Group::Updates,
+            |c| json!(update_channel_name(c.updates.channel)),
+        ),
+        live("updates.skip_version", Kind::String, Group::Updates, |c| {
+            json!(c.updates.skip_version)
         }),
         restart("sandbox.network", Kind::Bool, |c| json!(c.sandbox.network)),
         restart("sandbox.extra_write", Kind::StringList(None), |c| {
@@ -1333,6 +1367,7 @@ pub struct SettingsService {
     memory: Arc<MemoryService>,
     registry: RegistryHandle,
     worktrees: Arc<WorktreeService>,
+    updates: Arc<UpdateService>,
     /// One edit of the file at a time.
     write: Mutex<()>,
 }
@@ -1348,6 +1383,7 @@ pub struct Targets {
     pub memory: Arc<MemoryService>,
     pub registry: RegistryHandle,
     pub worktrees: Arc<WorktreeService>,
+    pub updates: Arc<UpdateService>,
 }
 
 impl SettingsService {
@@ -1369,6 +1405,7 @@ impl SettingsService {
             memory: targets.memory,
             registry: targets.registry,
             worktrees: targets.worktrees,
+            updates: targets.updates,
             write: Mutex::new(()),
         })
     }
@@ -1390,6 +1427,7 @@ impl SettingsService {
         running.finish.push = self.worktrees.finish_push();
         running.worktrees = self.worktrees.settings();
         running.checkpoints = self.registry.chats().checkpoints().settings();
+        running.updates = self.updates.settings();
         running
     }
 
@@ -1526,6 +1564,7 @@ impl SettingsService {
                 .chats()
                 .checkpoints()
                 .apply_settings(fresh.checkpoints.clone()),
+            Group::Updates => self.updates.apply_settings(fresh.updates.clone()),
         }
         Ok(())
     }
@@ -1628,11 +1667,18 @@ mod tests {
             // (`[lsp.servers.<id>]`, `[lsp.projects.<p>]`); `daemon.toml` is where they are set
             // (`docs/lsp.md`).
             lsp: _,
+            // `[updates]` is three settings of the table: check, channel, skip_version.
+            updates,
             // User hooks are commands the daemon runs: they are written by hand in
             // `daemon.toml` and are no setting of the table, so neither `hutan config` nor an
             // agent can add or change one (`docs/integrations.md` § User hooks).
             hooks: _,
         } = Config::default();
+        let config::UpdatesSettings {
+            check: _,
+            channel: _,
+            skip_version: _,
+        } = updates;
         let config::HistorySettings {
             enabled: _,
             range_days: _,
@@ -1797,6 +1843,9 @@ mod tests {
             "worktrees.cleanup",
             "worktrees.cleanup_idle_days",
             "worktrees.wait_for_setup",
+            "updates.check",
+            "updates.channel",
+            "updates.skip_version",
             "checkpoints.mode",
             "checkpoints.max_file_bytes",
             "checkpoints.snapshot_budget_bytes",

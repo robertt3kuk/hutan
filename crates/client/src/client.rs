@@ -241,6 +241,9 @@ pub(crate) const SESSION_DIRS_CAPABILITY: &str = "session.dirs";
 /// Capability for `agent.insight`, `agent.measure_context` and the `agent.insight_updated`
 /// event (protocol 0.59).
 pub(crate) const AGENT_INSIGHT_CAPABILITY: &str = "agent.insight";
+/// Capability for `update.status|check|install` and the `update.available` and `update.install`
+/// events (protocol 0.60).
+pub(crate) const UPDATE_CAPABILITY: &str = "update";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -303,6 +306,7 @@ const CAPABILITIES: &[&str] = &[
     SESSION_DIRS_CAPABILITY,
     AGENT_INSIGHT_CAPABILITY,
     CHAT_FORK_WORKTREE_CAPABILITY,
+    UPDATE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -948,6 +952,39 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == HOOKS_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `update` (protocol 0.60): `update.status`,
+    /// `update.check` and `update.install`.
+    pub fn supports_update(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == UPDATE_CAPABILITY)
+    }
+
+    /// `update.status`: the running version, how Hutan was installed and the newest release
+    /// above it that the daemon knows of. Contacts nothing.
+    pub async fn update_status(&self) -> Result<hutan_protocol::update::UpdateStatus, ClientError> {
+        self.call(Request::UpdateStatus(Empty {})).await
+    }
+
+    /// `update.check`: asks GitHub's releases now, whatever `updates.check` says; a check that
+    /// could not finish is in `last_check` of the answer.
+    pub async fn update_check(&self) -> Result<hutan_protocol::update::UpdateStatus, ClientError> {
+        self.call(Request::UpdateCheck(Empty {})).await
+    }
+
+    /// `update.install`: has the daemon run Homebrew for this install in a visible terminal
+    /// session. Refused with `forbidden` for a client that runs inside an agent's session.
+    pub async fn update_install(
+        &self,
+        method: hutan_protocol::update::InstallMethod,
+    ) -> Result<hutan_protocol::update::UpdateInstalling, ClientError> {
+        self.call(Request::UpdateInstall(
+            hutan_protocol::update::UpdateInstallRequest { method },
+        ))
+        .await
     }
 
     /// `hooks.list`: the user's `[[hooks]]` with their counters and last runs.

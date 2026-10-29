@@ -33,7 +33,7 @@ pub use credentials::{
 };
 pub use discovery::{Discovered, ProbeTarget};
 pub use error::GatewayError;
-pub use http::{Http, HttpConfig, validate_base_url};
+pub use http::{Fetched, Http, HttpConfig, validate_base_url};
 pub use provider::{Provider, ProviderConfig, connect};
 pub use redact::Redactor;
 pub use secret::Secret;

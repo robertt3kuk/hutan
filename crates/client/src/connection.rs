@@ -1170,6 +1170,35 @@ impl Connection {
             .is_some_and(|client| client.supports_hooks())
     }
 
+    /// True while connected to a daemon that advertised capability `update`; false when
+    /// disconnected.
+    pub fn supports_update(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_update())
+    }
+
+    /// `update.status` ([`Client::update_status`]).
+    pub async fn update_status(&self) -> Result<hutan_protocol::update::UpdateStatus, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.update_status().await
+    }
+
+    /// `update.check` ([`Client::update_check`]).
+    pub async fn update_check(&self) -> Result<hutan_protocol::update::UpdateStatus, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.update_check().await
+    }
+
+    /// `update.install` ([`Client::update_install`]).
+    pub async fn update_install(
+        &self,
+        method: hutan_protocol::update::InstallMethod,
+    ) -> Result<hutan_protocol::update::UpdateInstalling, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.update_install(method).await
+    }
+
     /// `hooks.list` ([`Client::hooks_list`]).
     pub async fn hooks_list(&self) -> Result<hutan_protocol::hooks::HooksList, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;

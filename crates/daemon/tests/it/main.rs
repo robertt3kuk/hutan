@@ -50,6 +50,7 @@ mod tasks;
 mod term_agent;
 mod terminal_search;
 mod transport;
+mod update;
 mod usage;
 mod workspaces;
 mod worktree_review;

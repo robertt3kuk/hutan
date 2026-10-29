@@ -42,6 +42,7 @@ use crate::resources::{Actor, ResourceService, audit};
 use crate::tasks::TaskService;
 use crate::terminals::TerminalHub;
 use crate::uihub::UiHub;
+use crate::update::UpdateService;
 use crate::usage::UsageService;
 use crate::worktrees::WorktreeService;
 use hutan_protocol::ui::{SessionSendText, SessionTextSent};
@@ -67,6 +68,7 @@ pub struct Services {
     pub ui: Arc<UiHub>,
     pub hooks: Arc<HooksService>,
     pub insight: Arc<InsightHub>,
+    pub updates: Arc<UpdateService>,
     pub settings: Arc<SettingsService>,
 }
 
@@ -93,6 +95,7 @@ pub struct Router {
     ui: Arc<UiHub>,
     hooks: Arc<HooksService>,
     insight: Arc<InsightHub>,
+    updates: Arc<UpdateService>,
     settings: Arc<SettingsService>,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
     forget: AtomicBool,
@@ -129,6 +132,7 @@ impl Router {
             ui: services.ui,
             hooks: services.hooks,
             insight: services.insight,
+            updates: services.updates,
             settings: services.settings,
             forget: AtomicBool::new(false),
         }
@@ -518,6 +522,9 @@ impl Router {
             Request::HooksList(_) => ok(&self.hooks.list()),
             Request::HooksLog(req) => ok(&self.hooks.log(req)),
             Request::HooksTest(req) => ok(&self.hooks.test(req).await?),
+            Request::UpdateStatus(_) => ok(&self.updates.status()),
+            Request::UpdateCheck(_) => ok(&self.updates.check().await),
+            Request::UpdateInstall(req) => ok(&self.updates.install(req).await?),
             Request::NotifyList(_) => ok(&NotifyList {
                 intents: self.notify.list(),
             }),
@@ -1156,6 +1163,13 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // adds or changes a hook: they live in the user's `daemon.toml`.
         Request::HooksList(_) => ("hooks.list", UserOnly),
         Request::HooksLog(_) => ("hooks.log", UserOnly),
+        // What is known about updates, without contacting anything.
+        Request::UpdateStatus(_) => ("update.status", Read),
+        // A request to GitHub on the user's behalf: what a mutation is, for an agent.
+        Request::UpdateCheck(_) => ("update.check", Mutate),
+        // Replacing Hutan runs Homebrew in a terminal: an agent can never update or downgrade
+        // it (ADR 0024).
+        Request::UpdateInstall(_) => ("update.install", UserOnly),
         Request::HooksTest(_) => ("hooks.test", UserOnly),
         Request::NotifyList(_) => ("notify.list", Read),
         Request::NotifyAck(_) => ("notify.ack", Mutate),

@@ -248,7 +248,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "chat.fork",
             "session.dirs",
             "chat.fork.worktree",
-            "agent.insight"
+            "agent.insight",
+            "update"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);
