@@ -60,6 +60,9 @@ pub(crate) enum Signal {
     Cwd(PathBuf),
 }
 
+/// `CSI ? 996 n`, the colour-scheme query, and `CSI ? 2031 h/l/$p`, its notification mode.
+const SCHEME_QUERY: u32 = 996;
+const SCHEME_MODE: u32 = 2031;
 /// Longest sequence of digits in one CSI parameter that is still tracked exactly.
 const PARAM_SATURATION: u32 = 1 << 20;
 
@@ -84,6 +87,15 @@ pub(crate) struct Scan {
     pub(crate) signals: Vec<(usize, Signal)>,
     /// `CSI 16 t` (the engine does not answer it).
     pub(crate) cell_sizes: Vec<usize>,
+    /// `CSI ? 996 n`: the program asks whether the terminal is light or dark (colour-scheme
+    /// notifications, the contour/ghostty/kitty protocol).
+    pub(crate) scheme_queries: Vec<usize>,
+    /// `CSI ? 2031 h` (true) and `l` (false): the program asks for, or stops, `CSI ? 997 ; n n`
+    /// when the scheme changes.
+    pub(crate) scheme_modes: Vec<(usize, bool)>,
+    /// `CSI ? 2031 $ p`: the program asks whether the terminal knows that mode (DECRQM), which
+    /// is how it learns that it may rely on the notifications.
+    pub(crate) scheme_mode_queries: Vec<usize>,
     /// `CSI 3 J` and `ESC c`.
     pub(crate) erases: Vec<HistoryClear>,
     /// Byte ranges (start, end) of whole OSC 7 / OSC 133 strings, `ESC ]` through BEL or ST,
@@ -97,6 +109,19 @@ pub(crate) struct Scan {
 enum ClearParam {
     Empty,
     Three,
+    Other,
+}
+
+/// What a CSI looks like so far, for the few private sequences the scanner answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// Digits only (or nothing yet).
+    Plain,
+    /// `?` then digits.
+    Question,
+    /// `?`, digits, then `$`.
+    QuestionDollar,
+    /// Anything else.
     Other,
 }
 
@@ -116,6 +141,7 @@ enum State {
         value: u32,
         plain: bool,
         param: ClearParam,
+        shape: Shape,
     },
 }
 
@@ -236,6 +262,7 @@ impl StreamScanner {
                             value: 0,
                             plain: true,
                             param: ClearParam::Empty,
+                            shape: Shape::Plain,
                         },
                         b'c' => {
                             scan.erases.push(HistoryClear {
@@ -273,6 +300,7 @@ impl StreamScanner {
                     value,
                     plain,
                     param,
+                    shape,
                 } => match byte {
                     b'0'..=b'9' => State::Csi {
                         start,
@@ -286,13 +314,37 @@ impl StreamScanner {
                         } else {
                             ClearParam::Other
                         },
+                        shape,
                     },
                     0x20..=0x3f => State::Csi {
                         start,
                         value,
                         plain: false,
                         param: ClearParam::Other,
+                        shape: match (shape, byte) {
+                            (Shape::Plain, b'?') if plain && value == 0 => Shape::Question,
+                            (Shape::Question, b'$') => Shape::QuestionDollar,
+                            _ => Shape::Other,
+                        },
                     },
+                    b'n' => {
+                        if shape == Shape::Question && value == SCHEME_QUERY {
+                            scan.scheme_queries.push(i);
+                        }
+                        State::Ground
+                    }
+                    b'h' | b'l' => {
+                        if shape == Shape::Question && value == SCHEME_MODE {
+                            scan.scheme_modes.push((i, byte == b'h'));
+                        }
+                        State::Ground
+                    }
+                    b'p' => {
+                        if shape == Shape::QuestionDollar && value == SCHEME_MODE {
+                            scan.scheme_mode_queries.push(i);
+                        }
+                        State::Ground
+                    }
                     b't' => {
                         if plain && value == 16 {
                             scan.cell_sizes.push(i);
@@ -324,12 +376,14 @@ impl StreamScanner {
                 value,
                 plain,
                 param,
+                shape,
                 ..
             } => State::Csi {
                 start: None,
                 value,
                 plain,
                 param,
+                shape,
             },
             other => other,
         };
@@ -566,6 +620,30 @@ mod tests {
     }
 
     #[test]
+    fn colour_scheme_sequences_are_found_whole_and_split() {
+        let stream: &[u8] = b"a\x1b[?996nb\x1b[?2031hc\x1b[?2031l\x1b[?2031$p";
+        let whole = scan_all(&[stream]);
+        assert_eq!(whole.scheme_queries, [8]);
+        assert_eq!(whole.scheme_modes, [(17, true), (26, false)]);
+        assert_eq!(whole.scheme_mode_queries, [35]);
+        let split: Vec<&[u8]> = stream.chunks(1).collect();
+        let by_byte = scan_all(&split);
+        // Offsets are per call when split: what must agree is how many, and which way.
+        assert_eq!(by_byte.scheme_queries.len(), 1);
+        assert_eq!(
+            by_byte.scheme_modes.iter().map(|m| m.1).collect::<Vec<_>>(),
+            [true, false]
+        );
+        assert_eq!(by_byte.scheme_mode_queries.len(), 1);
+        // Other private modes and parameters are not the scheme's.
+        let other =
+            scan_all(&[b"\x1b[?996h\x1b[?2030n\x1b[996n\x1b[?1;2031h\x1b[?2031;1n\x1b[?2026$p"]);
+        assert!(other.scheme_queries.is_empty(), "{other:?}");
+        assert!(other.scheme_modes.is_empty(), "{other:?}");
+        assert!(other.scheme_mode_queries.is_empty(), "{other:?}");
+    }
+
+    #[test]
     fn esc_inside_osc_ends_it_and_starts_a_new_sequence() {
         let got = sniff(&[b"\x1b]0;a\x1b]0;b\x07"]);
         assert_eq!(
@@ -592,6 +670,9 @@ mod tests {
             let mut scan = Scan::default();
             scanner.feed(chunk, &mut Vec::new(), &mut scan);
             total.cell_sizes.extend(scan.cell_sizes);
+            total.scheme_queries.extend(scan.scheme_queries);
+            total.scheme_modes.extend(scan.scheme_modes);
+            total.scheme_mode_queries.extend(scan.scheme_mode_queries);
             total.erases.extend(scan.erases);
         }
         total
@@ -859,6 +940,9 @@ mod tests {
                 events += found.color_queries.len()
                     + found.signals.len()
                     + found.cell_sizes.len()
+                    + found.scheme_queries.len()
+                    + found.scheme_modes.len()
+                    + found.scheme_mode_queries.len()
                     + found.erases.len();
                 at += take;
             }

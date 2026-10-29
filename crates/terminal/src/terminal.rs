@@ -475,7 +475,10 @@ impl Terminal {
     /// Changes the colours answering OSC 10/11/12 queries (see
     /// [`Emulator::set_default_colors`]). Takes effect for queries read after this returns.
     pub fn set_default_colors(&self, colors: DefaultColors) {
-        self.core.engine.lock().set_default_colors(colors);
+        let mut engine = self.core.engine.lock();
+        engine.set_default_colors(colors);
+        // A program that asked for colour-scheme notifications hears of a change at once.
+        self.core.publish(&mut engine, false);
     }
 
     pub fn size(&self) -> TerminalSize {

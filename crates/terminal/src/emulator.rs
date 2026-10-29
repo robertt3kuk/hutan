@@ -68,6 +68,21 @@ pub struct DefaultColors {
     pub cursor: (u8, u8, u8),
 }
 
+impl DefaultColors {
+    /// Whether the background is dark: what a program reads from the colour-scheme report
+    /// (`CSI ? 997 ; 1 n` dark, `2` light) and decides its own palette by.
+    pub fn is_dark(&self) -> bool {
+        let (r, g, b) = self.background;
+        // Rec. 601 luma, 0..=255.
+        (u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000 < 128
+    }
+}
+
+/// The reply to `CSI ? 996 n` and the notification of a change (colour-scheme notifications).
+fn scheme_report(dark: bool) -> String {
+    format!("\x1b[?997;{}n", if dark { 1 } else { 2 })
+}
+
 impl Default for DefaultColors {
     fn default() -> Self {
         Self {
@@ -165,6 +180,9 @@ pub struct Emulator {
     meta: Vec<TerminalMeta>,
     replies: Vec<u8>,
     default_colors: DefaultColors,
+    /// The program turned on colour-scheme notifications (`CSI ? 2031 h`): it is told with
+    /// `CSI ? 997 ; n n` when [`Self::set_default_colors`] changes light to dark or back.
+    scheme_notify: bool,
     title: Option<String>,
     size: TerminalSize,
     /// Bumped whenever the visible state may have changed.
@@ -200,6 +218,12 @@ enum Break {
     Reply,
     /// `CSI 16 t`.
     CellSize,
+    /// `CSI ? 996 n`: light or dark?
+    SchemeReport,
+    /// `CSI ? 2031 h` / `l`.
+    SchemeMode(bool),
+    /// `CSI ? 2031 $ p`: is the mode known? (the engine's own reply says it is not and is dropped)
+    SchemeModeReport,
     /// A prompt mark or working directory for the block index.
     Signal(Signal),
     /// Just before `CSI 3 J` / `ESC c`: rows scrolled so far must be counted first.
@@ -248,6 +272,7 @@ impl Emulator {
             meta: Vec::new(),
             replies: Vec::new(),
             default_colors: DefaultColors::default(),
+            scheme_notify: false,
             title: None,
             size,
             generation: 1,
@@ -276,7 +301,13 @@ impl Emulator {
     /// Changes the colours reported for OSC 10/11/12 queries from now on; colours the
     /// application set itself still win.
     pub fn set_default_colors(&mut self, colors: DefaultColors) {
+        let before = self.default_colors.is_dark();
         self.default_colors = colors;
+        // A program that asked to hear about it (`CSI ? 2031 h`) is told the scheme changed;
+        // its reply goes out with the next batch of replies the terminal forwards.
+        if self.scheme_notify && colors.is_dark() != before {
+            self.push_reply(scheme_report(colors.is_dark()).as_bytes());
+        }
     }
 
     pub fn size(&self) -> TerminalSize {
@@ -318,6 +349,21 @@ impl Emulator {
             scan.cell_sizes
                 .into_iter()
                 .map(|end| (end, Break::CellSize)),
+        );
+        breaks.extend(
+            scan.scheme_queries
+                .into_iter()
+                .map(|end| (end, Break::SchemeReport)),
+        );
+        breaks.extend(
+            scan.scheme_modes
+                .into_iter()
+                .map(|(end, on)| (end, Break::SchemeMode(on))),
+        );
+        breaks.extend(
+            scan.scheme_mode_queries
+                .into_iter()
+                .map(|end| (end, Break::SchemeModeReport)),
         );
         for erase in scan.erases {
             breaks.push((erase.start, Break::EraseStart));
@@ -366,6 +412,16 @@ impl Emulator {
             match brk {
                 Break::Reply | Break::EraseStart => {}
                 Break::CellSize => self.push_reply(&cell_size_report(self.size)),
+                Break::SchemeReport => {
+                    let report = scheme_report(self.default_colors.is_dark());
+                    self.push_reply(report.as_bytes());
+                }
+                Break::SchemeMode(on) => self.scheme_notify = on,
+                Break::SchemeModeReport => {
+                    // DECRQM: 1 = set, 2 = reset; the mode is known, whichever it is.
+                    let report = format!("\x1b[?2031;{}$y", if self.scheme_notify { 1 } else { 2 });
+                    self.push_reply(report.as_bytes());
+                }
                 Break::Signal(signal) => self.signal(signal),
                 Break::Erased { reset } => {
                     // `ESC c` also wipes the screen, which no scrolling accounts for.
@@ -1200,6 +1256,9 @@ impl Emulator {
         let requests = std::mem::take(&mut self.sink.0.lock().requests);
         for request in requests {
             let text = match request {
+                // The engine does not know mode 2031 and says so (`…;0$y`); the scanner answered
+                // for it, in stream order.
+                Request::Text(text) if text.starts_with("\x1b[?2031;") => continue,
                 Request::Text(text) => text,
                 Request::Color(index, format) => format(self.color_value(index)),
                 // The engine's format is `height = lines * cell_height`, `width = cols *

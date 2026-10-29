@@ -316,3 +316,62 @@ fn a_flood_of_queries_is_answered_within_a_bounded_reply_buffer() {
     em.feed(b"\x1b[18t");
     assert_eq!(em.drain_replies(), b"\x1b[8;3;10t");
 }
+
+// ---- colour scheme (FX-UI-B, P3-14): a program that asks is told whether the terminal is light ----
+
+fn light() -> DefaultColors {
+    DefaultColors {
+        foreground: (0x1f, 0x1e, 0x1d),
+        background: (0xfa, 0xf9, 0xf5),
+        cursor: (0x1f, 0x1e, 0x1d),
+    }
+}
+
+fn reply(em: &mut Emulator) -> String {
+    String::from_utf8_lossy(&em.drain_replies()).into_owned()
+}
+
+#[test]
+fn the_scheme_query_is_answered_from_the_background_the_osc_11_query_gets() {
+    let mut em = emulator(10, 3);
+    // Dark by default (CSI ? 997 ; 1 n), the colour the program asks for the same way.
+    em.feed(b"\x1b[?996n\x1b]11;?\x07");
+    assert_eq!(reply(&mut em), "\x1b[?997;1n\x1b]11;rgb:1e1e/1e1e/1e1e\x07");
+    em.set_default_colors(light());
+    em.feed(b"\x1b[?996n\x1b]11;?\x07");
+    assert_eq!(reply(&mut em), "\x1b[?997;2n\x1b]11;rgb:fafa/f9f9/f5f5\x07");
+}
+
+#[test]
+fn a_program_that_turned_notifications_on_hears_of_a_change_and_one_that_did_not_does_not() {
+    let mut em = emulator(10, 3);
+    em.set_default_colors(light());
+    assert_eq!(reply(&mut em), "", "nobody asked");
+    // DECRQM for the mode: known, reset (2); the engine's own "not recognised" is not sent too.
+    em.feed(b"\x1b[?2031$p");
+    assert_eq!(reply(&mut em), "\x1b[?2031;2$y");
+    em.feed(b"\x1b[?2031h\x1b[?2031$p");
+    assert_eq!(reply(&mut em), "\x1b[?2031;1$y");
+    // Light to dark and back: one notification each, none when the scheme stays.
+    em.set_default_colors(DefaultColors::default());
+    assert_eq!(reply(&mut em), "\x1b[?997;1n");
+    em.set_default_colors(DefaultColors {
+        foreground: (0xee, 0xee, 0xee),
+        ..DefaultColors::default()
+    });
+    assert_eq!(reply(&mut em), "");
+    em.set_default_colors(light());
+    assert_eq!(reply(&mut em), "\x1b[?997;2n");
+    em.feed(b"\x1b[?2031l");
+    em.set_default_colors(DefaultColors::default());
+    assert_eq!(reply(&mut em), "", "turned off");
+}
+
+#[test]
+fn the_scheme_sequences_work_split_over_reads() {
+    let mut em = emulator(10, 3);
+    for byte in b"\x1b[?2031h\x1b[?996n\x1b[?2031$p" {
+        em.feed(&[*byte]);
+    }
+    assert_eq!(reply(&mut em), "\x1b[?997;1n\x1b[?2031;1$y");
+}
