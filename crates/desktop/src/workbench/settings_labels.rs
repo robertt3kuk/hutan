@@ -62,6 +62,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("panels.files", "Files"),
     ("panels.problems", "Problems"),
     ("panels.instructions", "Instructions"),
+    ("panels.context", "Context"),
     ("panels.search", "Search"),
     ("status", "Status bar"),
     ("workspaces", "Workspaces"),
@@ -207,6 +208,10 @@ const NAMESPACE_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "panels.instructions",
         "The Instructions panel and the files it lists.",
+    ),
+    (
+        "panels.context",
+        "The Context panel: how the agent's context is filled and its turns.",
     ),
     ("panels.search", "Search options and limits."),
     ("status", "What the status bar shows."),
@@ -799,6 +804,19 @@ const FIELDS: &[FieldText] = &[
         "show_user_files",
         "List my own instruction files",
         "Lists ~/.codex/AGENTS.md, ~/.claude/CLAUDE.md and ~/.omp/agent/AGENTS.md under the project's files, read-only. Off, the panel never looks at them.",
+    ),
+    // ---- context ----
+    field(
+        "panels.context",
+        "show_fill_chart",
+        "Show the context after each turn",
+        "Draws a small bar chart of how full the context was after each turn above the turn list.",
+    ),
+    field(
+        "panels.context",
+        "show_sources",
+        "Say where the numbers come from",
+        "Lists at the end of the panel which block came from the chat's own report and which from the harness's /context.",
     ),
     // ---- status bar ----
     field(

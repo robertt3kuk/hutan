@@ -4,7 +4,7 @@
 use gpui::{Context, Window};
 
 use super::model::{DockPosition, ItemRef, LayoutPreset, PanelId};
-use super::panels::{AssistantPanel, ScopeKey};
+use super::panels::{AssistantPanel, ContextPanel, ScopeKey};
 use super::view::Workbench;
 use crate::sessions::{MawasFocus, UiOpenRequested};
 
@@ -73,6 +73,61 @@ impl Workbench {
             let watch = cx.observe(&panel, |this, _, cx| this.sync_mawas_focus(cx));
             self.mawas_watch = Some((panel.entity_id(), watch));
         }
+    }
+
+    /// Keeps the Context panel and the sessions store informed, every frame: whether the panel
+    /// is on screen (it does nothing otherwise), which session it follows while it is shown in an
+    /// active window (`client.focus`, so the daemon pushes that session's insight), and the first
+    /// lines of the prompts of its turns from the transcript the window holds. Changes reach the
+    /// panel after the frame: GPUI drops a notification made while drawing.
+    pub(crate) fn sync_context_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let visible = self.page_visible("context");
+        let Some(panel) = self.panel::<ContextPanel>("context") else {
+            self.sessions
+                .update(cx, |store, cx| store.set_context_followed(None, cx));
+            return;
+        };
+        let (shown, session, missing, from) = {
+            let panel = panel.read(cx);
+            (
+                panel.is_visible(),
+                panel.session(),
+                visible
+                    .then(|| panel.turns_without_prompt())
+                    .unwrap_or_default(),
+                panel.prompts_from(),
+            )
+        };
+        let followed = (window.is_window_active() && visible)
+            .then_some(session)
+            .flatten();
+        self.sessions
+            .update(cx, |store, cx| store.set_context_followed(followed, cx));
+        let prompts = session
+            .filter(|_| !missing.is_empty())
+            .and_then(|session| Some((session, self.chat_model_of(session)?)))
+            .map(|(session, model)| {
+                let entries = model.read(cx).transcript().len();
+                (session, model, entries)
+            })
+            .filter(|(session, _, entries)| from != Some((*session, *entries)));
+        if shown == visible && prompts.is_none() {
+            return;
+        }
+        cx.defer_in(window, move |_, _, cx| {
+            panel.update(cx, |panel, cx| {
+                panel.set_visible(visible, cx);
+                if let Some((session, model, entries)) = prompts {
+                    let found = missing
+                        .iter()
+                        .filter_map(|turn| {
+                            Some((*turn, super::rewind::turn_prompt(model.read(cx), *turn)?))
+                        })
+                        .collect();
+                    panel.set_prompts(session, entries, found, cx);
+                }
+            });
+        });
     }
 
     /// Files, Search and Problems follow Mawas's scope while Mawas Home is the focused center

@@ -162,6 +162,7 @@ fn default_state_is_valid() {
         ids(&[
             "files",
             "changes",
+            "context",
             "agents",
             "history",
             "inspector",
@@ -545,7 +546,14 @@ fn panel_moves_between_docks_and_reveals_target() {
     check(&state);
     assert_eq!(
         state.docks.right.panels,
-        ids(&["files", "changes", "agents", "history", "resources"])
+        ids(&[
+            "files",
+            "changes",
+            "context",
+            "agents",
+            "history",
+            "resources"
+        ])
     );
     assert_eq!(state.docks.right.active, Some(PanelId::new("files")));
     // A panel that leaves the dock leaves its ⋯ list too.
@@ -603,7 +611,14 @@ fn panel_drop_into_new_split_from_dock() {
     assert_eq!(state.panes().len(), 2);
     assert_eq!(
         state.docks.right.panels,
-        ids(&["files", "changes", "agents", "history", "resources"])
+        ids(&[
+            "files",
+            "changes",
+            "context",
+            "agents",
+            "history",
+            "resources"
+        ])
     );
 }
 
@@ -1079,7 +1094,14 @@ fn the_explorer_left_preset_moves_files_to_the_left_sidebar_and_back() {
     assert!(explorer.docks.left.visible && explorer.docks.right.visible);
     assert_eq!(
         explorer.docks.right.panels,
-        ids(&["changes", "agents", "history", "inspector", "resources"]),
+        ids(&[
+            "changes",
+            "context",
+            "agents",
+            "history",
+            "inspector",
+            "resources"
+        ]),
         "the right rail has no Files"
     );
     assert_eq!(explorer.docks.right.active, Some(PanelId::new("changes")));
@@ -1420,7 +1442,7 @@ fn json_roundtrip_preserves_state() {
         .unwrap();
     let json = state.to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 9);
+    assert_eq!(value["version"], 10);
     let back = WorkbenchState::from_json(&json).unwrap();
     assert_eq!(back, state);
     check(&back);
@@ -1647,6 +1669,7 @@ fn builtin_presets_place_the_pages_and_the_strip_and_never_the_assistant() {
     let strip = ids(&[
         "files",
         "changes",
+        "context",
         "agents",
         "history",
         "inspector",
@@ -1804,11 +1827,11 @@ fn as_version_1_json(state: &WorkbenchState) -> String {
 }
 
 #[test]
-fn the_state_version_is_nine() {
+fn the_state_version_is_ten() {
     let value: serde_json::Value =
         serde_json::from_str(&WorkbenchState::default().to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 9);
-    assert_eq!(STATE_VERSION, 9);
+    assert_eq!(value["version"], 10);
+    assert_eq!(STATE_VERSION, 10);
 }
 
 /// Whether a tab of the center is `panel`.
@@ -2089,6 +2112,7 @@ fn a_version_1_layout_moves_to_the_orca_arrangement_and_keeps_the_center() {
             "files",
             "history",
             "changes",
+            "context",
             "inspector",
             "agents",
             "resources"
@@ -2168,7 +2192,7 @@ fn migration_keeps_sizes_the_user_changed_a_visible_bottom_dock_and_center_panel
     );
     assert_eq!(
         migrated.docks.right.panels,
-        ids(&["files", "changes", "inspector"])
+        ids(&["files", "changes", "context", "inspector"])
     );
 }
 
@@ -2745,7 +2769,7 @@ fn files_moves_to_the_right_dock_once_and_only_from_the_built_in_left_dock() {
     assert_eq!(moved.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(
         moved.docks.right.panels,
-        ids(&["files", "changes", "agents", "history"])
+        ids(&["files", "changes", "context", "agents", "history"])
     );
     // A left dock the user arranged keeps its Files.
     let arranged =
@@ -2763,7 +2787,7 @@ fn files_moves_to_the_right_dock_once_and_only_from_the_built_in_left_dock() {
     .unwrap();
     assert_eq!(
         placed.docks.right.panels,
-        ids(&["changes", "files", "agents"])
+        ids(&["changes", "context", "files", "agents"])
     );
     // A layout saved at this version is the user's own: nothing moves.
     let current = WorkbenchState::from_json(&saved_with(
@@ -2812,7 +2836,7 @@ fn files_still_moves_when_memory_joined_the_built_in_left_dock() {
     );
     assert_eq!(
         migrated.docks.right.panels,
-        ids(&["files", "changes", "agents", "history"])
+        ids(&["files", "changes", "context", "agents", "history"])
     );
     assert!(!in_center(&migrated, &PanelId::new(MEMORY_PAGE)));
 }
@@ -2832,6 +2856,7 @@ fn a_layout_without_files_anywhere_gets_it_on_the_right_rail_once_with_a_note() 
                 "files",
                 "history",
                 "changes",
+                "context",
                 "inspector",
                 "agents",
                 "resources"
@@ -2875,7 +2900,10 @@ fn a_layout_without_files_anywhere_gets_it_on_the_right_rail_once_with_a_note() 
     ))
     .unwrap();
     assert!(notes.is_empty());
-    assert_eq!(kept.docks.right.panels, ids(&["changes", "files"]));
+    assert_eq!(
+        kept.docks.right.panels,
+        ids(&["changes", "context", "files"])
+    );
     let mut tabbed = WorkbenchState::default();
     tabbed.docks.left = Dock::new(&["sessions", "tasks"], 280.0, true);
     tabbed.docks.right = Dock::new(&right, 350.0, true);
@@ -2895,4 +2923,77 @@ fn a_layout_without_files_anywhere_gets_it_on_the_right_rail_once_with_a_note() 
             .unwrap();
     assert!(notes.is_empty());
     assert!(!hidden.docks.right.panels.contains(&PanelId::new("files")));
+}
+
+#[test]
+fn a_layout_older_than_version_ten_gets_the_context_panel_after_changes_once() {
+    let right = ["files", "changes", "agents", "history"];
+    let with_context = ids(&["files", "changes", "context", "agents", "history"]);
+    for version in [6, 7, 8, 9] {
+        let state = WorkbenchState::from_json(&saved_with(version, &["sessions", "tasks"], &right))
+            .unwrap();
+        check(&state);
+        assert_eq!(state.docks.right.panels, with_context, "version {version}");
+    }
+    // The next save writes version 10 and is read as it is: a Context panel the user closed
+    // does not come back.
+    let closed =
+        WorkbenchState::from_json(&saved_with(STATE_VERSION, &["sessions", "tasks"], &right))
+            .unwrap();
+    assert_eq!(closed.docks.right.panels, ids(&right));
+
+    // Where the user put it stays: in the left dock, in the center, or already on the rail.
+    let moved =
+        WorkbenchState::from_json(&saved_with(9, &["sessions", "tasks", "context"], &right))
+            .unwrap();
+    assert_eq!(moved.docks.right.panels, ids(&right));
+    assert_eq!(
+        moved.docks.find(&PanelId::new("context")),
+        Some(DockPosition::Left)
+    );
+    let mut tabbed = WorkbenchState::default();
+    tabbed.docks.right = Dock::new(&right, 350.0, true);
+    tabbed.open_panel_in_center(&PanelId::new("context"));
+    let mut value: serde_json::Value = serde_json::from_str(&tabbed.to_json().unwrap()).unwrap();
+    value["version"] = 9.into();
+    let kept = WorkbenchState::from_json(&value.to_string()).unwrap();
+    assert_eq!(kept.docks.right.panels, ids(&right));
+    assert!(in_center(&kept, &PanelId::new("context")));
+    let placed = WorkbenchState::from_json(&saved_with(
+        9,
+        &["sessions", "tasks"],
+        &["context", "files", "changes"],
+    ))
+    .unwrap();
+    assert_eq!(
+        placed.docks.right.panels,
+        ids(&["context", "files", "changes"])
+    );
+
+    // A right dock without Changes (the user took it out) is left alone.
+    let plain =
+        WorkbenchState::from_json(&saved_with(9, &["sessions", "tasks"], &["files", "agents"]))
+            .unwrap();
+    assert_eq!(plain.docks.right.panels, ids(&["files", "agents"]));
+
+    // The overview stash and the layout of a workspace that is not shown get it too.
+    let mut with_stash = WorkbenchState::default();
+    with_stash.docks.right = Dock::new(&right, 350.0, true);
+    let stashed = with_stash.clone();
+    with_stash.stashed = Some(Box::new(SavedLayout::of(&stashed)));
+    let mut value: serde_json::Value =
+        serde_json::from_str(&with_stash.to_json().unwrap()).unwrap();
+    value["version"] = 9.into();
+    let migrated = WorkbenchState::from_json(&value.to_string()).unwrap();
+    let stash = migrated.stashed.as_deref().expect("the stash is kept");
+    assert_eq!(stash.docks.right.panels, with_context);
+    let mut old = WorkbenchState::default();
+    old.docks.right = Dock::new(&right, 350.0, true);
+    old.adopt_workspace("a");
+    old.switch_workspace("b");
+    let mut value: serde_json::Value = serde_json::from_str(&old.to_json().unwrap()).unwrap();
+    value["version"] = 9.into();
+    let migrated = WorkbenchState::from_json(&value.to_string()).unwrap();
+    let parked = &migrated.parked["a"].layout;
+    assert_eq!(parked.docks.right.panels, with_context);
 }

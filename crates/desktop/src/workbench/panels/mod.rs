@@ -7,6 +7,8 @@ mod assistant;
 mod assistant_rail;
 mod changes;
 pub(crate) mod common;
+mod context;
+pub mod context_model;
 mod files;
 mod files_git;
 mod files_names;
@@ -53,6 +55,10 @@ pub use common::{
     shared_checkout_chip, state_dot, time_tooltip, tone_color,
 };
 pub(crate) use common::{edit_text, field_box};
+pub use context::{
+    ContextPanel, Empty as ContextEmpty, FOLD_WIDTH as CONTEXT_FOLD_WIDTH, Load as ContextLoad,
+    Measure as ContextMeasure, RewindOffer as ContextRewindOffer,
+};
 pub use files::{
     AgentFile, DIAGNOSTICS_READ_EVERY as FILES_DIAGNOSTICS_READ_EVERY,
     DiagCounts as FilesDiagCounts, DiagMarks as FilesDiagMarks, DraggedRows as FilesDragged,
@@ -207,6 +213,16 @@ pub fn builtin_panels() -> PanelRegistry {
             let panel = cx.new(|cx| ChangesPanel::new(env, cx));
             panel.update(cx, |panel, cx| panel.follow_window(window, cx));
             AnyView::from(panel)
+        }),
+    });
+    registry.register(PanelSpec {
+        id: "context".into(),
+        title: "Context".into(),
+        icon: crate::icons::Icon::PanelContext,
+        default_dock: DockPosition::Right,
+        factory: Rc::new(|env, _window, cx| {
+            let env = env.clone();
+            AnyView::from(cx.new(|cx| ContextPanel::new(env, cx)))
         }),
     });
     registry.register(PanelSpec {

@@ -46,9 +46,10 @@ impl LayoutPreset {
     }
 
     /// The right side's activity rail (CL-CHROME, the clean default; SB-ATTACH): Files first
-    /// (Orca puts the explorer on the right), then Changes, Agents, History as icons; Requests
-    /// (the inspector) and Resources listed in its `⋯` menu, Requests coming onto the rail with
-    /// its count while a request waits. A fresh layout's body opens on Files (EX-1: Changes is
+    /// (Orca puts the explorer on the right), then Changes, Context (how the agent's context is
+    /// filled, its turns with Fork and Rewind), Agents, History as icons; Requests (the
+    /// inspector) and Resources listed in its `⋯` menu, Requests coming onto the rail with its
+    /// count while a request waits. A fresh layout's body opens on Files (EX-1: Changes is
     /// empty on a new project and keeps its count badge on the rail); a saved layout keeps the
     /// panel it left open.
     fn right(visible: bool) -> Dock {
@@ -56,6 +57,7 @@ impl LayoutPreset {
             &[
                 "files",
                 "changes",
+                "context",
                 "agents",
                 "history",
                 "inspector",
@@ -71,7 +73,14 @@ impl LayoutPreset {
     /// the left sidebar there; the body opens on Changes.
     fn right_without_files(visible: bool) -> Dock {
         Dock::new(
-            &["changes", "agents", "history", "inspector", "resources"],
+            &[
+                "changes",
+                "context",
+                "agents",
+                "history",
+                "inspector",
+                "resources",
+            ],
             Self::RIGHT_SIZE,
             visible,
         )

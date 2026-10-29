@@ -572,6 +572,9 @@ pub struct SessionsStore {
     focus_task: Option<(u64, Task<()>)>,
     /// The session of the Assistant panel while the panel has the focus.
     assistant_focused: Option<SessionId>,
+    /// The session the Context panel shows while the panel is on screen in an active window:
+    /// the daemon sends `agent.insight_updated` only to connections that look at the session.
+    context_followed: Option<SessionId>,
     /// Mawas Home is the focused center tab, showing this scope: Files, Search and Problems
     /// follow it instead of the active container.
     mawas_focus: Option<MawasFocus>,
@@ -740,6 +743,7 @@ impl SessionsStore {
             focus_sent: None,
             focus_task: None,
             assistant_focused: None,
+            context_followed: None,
             mawas_focus: None,
             hold_unread: None,
             reviews_seen: HashMap::new(),
@@ -2521,9 +2525,31 @@ impl SessionsStore {
     }
 
     /// The session the user is looking at for `client.focus`: the focused item's session, else
-    /// the docked Assistant's while it has the focus.
+    /// the docked Assistant's while it has the focus, else the one the visible Context panel
+    /// follows.
     fn looked_at(&self) -> Option<SessionId> {
-        self.focused.or(self.assistant_focused)
+        self.focused
+            .or(self.assistant_focused)
+            .or(self.context_followed)
+    }
+
+    /// The Context panel is on screen (or no longer) in an active window, following `session`.
+    /// Only the daemon's idea of "looked at" changes.
+    pub fn set_context_followed(&mut self, session: Option<SessionId>, cx: &mut Context<Self>) {
+        if self.context_followed != session {
+            self.context_followed = session;
+            self.report_focus(cx);
+        }
+    }
+
+    /// Whether the daemon's `client.focus` is as it will be for `session`: acknowledged on this
+    /// connection, or not going to be reported at all (the session is not looked at, or the
+    /// daemon cannot be told). What `agent.insight` is read after, so no change falls between
+    /// the snapshot and the first `agent.insight_updated`.
+    pub fn focus_settled_for(&self, session: SessionId) -> bool {
+        self.looked_at() != Some(session)
+            || !self.connection.supports_notify()
+            || self.focus_reported() == Some(Some(session))
     }
 
     /// The Assistant panel has (or no longer has) the focus with `session` shown. Only the
@@ -2587,6 +2613,8 @@ impl SessionsStore {
                 match sent {
                     Ok(sent_on) => {
                         this.focus_sent = Some((sent_on, focused));
+                        // The Context panel reads the insight once the daemon knows the focus.
+                        cx.notify();
                         this.report_focus(cx);
                     }
                     Err(error) => tracing::debug!(%error, "could not report the focus"),

@@ -1206,16 +1206,26 @@ mod tests {
                 .map(|i| dock.panels[*i].to_string())
                 .collect()
         };
-        // Files, Changes, Agents, History as icons; Requests and Resources behind ⋯.
+        // Files, Changes, Context, Agents, History as icons; Requests and Resources behind ⋯.
         let (shown, more) = rail_split(&dock, none, 600.0);
-        assert_eq!(names(&shown), ["files", "changes", "agents", "history"]);
+        assert_eq!(
+            names(&shown),
+            ["files", "changes", "context", "agents", "history"]
+        );
         assert_eq!(names(&more), ["inspector", "resources"]);
         // A waiting request brings Requests onto the rail with its count; Resources stays.
         let requests = |p: &PanelId| p.as_str() == "inspector";
         let (shown, more) = rail_split(&dock, requests, 600.0);
         assert_eq!(
             names(&shown),
-            ["files", "changes", "agents", "history", "inspector"]
+            [
+                "files",
+                "changes",
+                "context",
+                "agents",
+                "history",
+                "inspector"
+            ]
         );
         assert_eq!(names(&more), ["resources"]);
         // The panel the body shows is always an icon.
@@ -1224,7 +1234,14 @@ mod tests {
         let (shown, more) = rail_split(&active, none, 600.0);
         assert_eq!(
             names(&shown),
-            ["files", "changes", "agents", "history", "resources"]
+            [
+                "files",
+                "changes",
+                "context",
+                "agents",
+                "history",
+                "resources"
+            ]
         );
         assert_eq!(names(&more), ["inspector"]);
         // Short of room, icons join ⋯ and the More button keeps its slot (130 pt: three slots).
@@ -1232,13 +1249,13 @@ mod tests {
         assert_eq!(names(&shown), ["files", "changes"]);
         assert_eq!(
             names(&more),
-            ["agents", "history", "inspector", "resources"]
+            ["context", "agents", "history", "inspector", "resources"]
         );
         // A layout without `more` (saved before the clean default) keeps every icon.
         let mut old = dock.clone();
         old.more.clear();
         let (shown, more) = rail_split(&old, none, 600.0);
-        assert_eq!(shown.len(), 6);
+        assert_eq!(shown.len(), 7);
         assert!(more.is_empty());
     }
 }

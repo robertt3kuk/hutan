@@ -170,6 +170,7 @@ impl Render for Workbench {
         let mismatch = self.render_daemon_mismatch_banner();
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
+        self.sync_context_panel(window, cx);
         self.sync_agents_page(cx);
         let edge_targets = self.render_hidden_dock_targets(cx);
         let collapse_preview = self.render_collapse_preview();

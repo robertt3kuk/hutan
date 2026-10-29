@@ -886,6 +886,31 @@ impl Setting for InstructionsPanelSettings {
     const NAMESPACE: &'static str = "panels.instructions";
 }
 
+/// The `panels.context` namespace: the Context panel (how the focused agent's context is
+/// filled, what each turn used, fork and rewind from any turn).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ContextPanelSettings {
+    /// Draw the context after each turn as a small bar chart above the turn list.
+    pub show_fill_chart: bool,
+    /// Say at the end of the panel where each block's numbers came from (the chat's journal,
+    /// the harness's `/context`).
+    pub show_sources: bool,
+}
+
+impl Default for ContextPanelSettings {
+    fn default() -> Self {
+        Self {
+            show_fill_chart: true,
+            show_sources: true,
+        }
+    }
+}
+
+impl Setting for ContextPanelSettings {
+    const NAMESPACE: &'static str = "panels.context";
+}
+
 /// The `panels.search` namespace: the Search panel (find and replace across the active
 /// project, E-13b). The header's toggles write the three switches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2205,6 +2230,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<FilesPanelSettings>();
     store.register::<ProblemsPanelSettings>();
     store.register::<InstructionsPanelSettings>();
+    store.register::<ContextPanelSettings>();
     store.register::<SearchPanelSettings>();
     store.register::<StatusSettings>();
     store.register::<WorkspacesSettings>();
@@ -2786,6 +2812,7 @@ mod tests {
             "panels.files",
             "panels.problems",
             "panels.instructions",
+            "panels.context",
             "panels.search",
             "workspaces",
             "history",

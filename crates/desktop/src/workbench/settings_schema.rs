@@ -444,7 +444,13 @@ pub const PAGES: &[NavPage] = &[
     NavPage {
         id: "agents",
         group: NavGroup::Agents,
-        sections: &["agents", "chat", "launcher", "panels.inspector"],
+        sections: &[
+            "agents",
+            "chat",
+            "launcher",
+            "panels.inspector",
+            "panels.context",
+        ],
     },
     NavPage {
         id: "accounts",
@@ -525,6 +531,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<FilesPanelSettings>(),
         CatalogEntry::of::<crate::settings::ProblemsPanelSettings>(),
         CatalogEntry::of::<crate::settings::InstructionsPanelSettings>(),
+        CatalogEntry::of::<crate::settings::ContextPanelSettings>(),
         CatalogEntry::of::<crate::settings::SearchPanelSettings>(),
         CatalogEntry::of::<crate::settings::StatusSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),

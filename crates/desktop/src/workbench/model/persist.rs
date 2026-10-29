@@ -29,8 +29,11 @@ use super::{
 /// existed (the first release's left dock was Projects and Tasks) never named it, and a saved
 /// layout wins over the presets, so Files was missing for good; such a layout gets `files` at the
 /// front of the right dock ([`migrate_v8`]) and one note, once. A Files panel hidden in a
-/// version 9 layout stays hidden. The next save writes version 9.
-pub const STATE_VERSION: u32 = 9;
+/// version 9 layout stays hidden. 10 (CONTEXT-PANEL) adds the Context panel to the rail: a layout
+/// whose right dock lists `changes` and has `context` nowhere gets it right after Changes
+/// ([`migrate_v9`]); the user's order and a Context panel they placed or closed stay. The next
+/// save writes version 10.
+pub const STATE_VERSION: u32 = 10;
 
 /// What loading a saved layout changed that the user is told once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +53,7 @@ pub struct LoadOutcome {
 }
 
 impl WorkbenchState {
-    /// `{ "version": 9, "docks": …, "center": …, … }`, pretty-printed.
+    /// `{ "version": 10, "docks": …, "center": …, … }`, pretty-printed.
     pub fn to_json(&self) -> Result<String, ModelError> {
         let mut value =
             serde_json::to_value(self).map_err(|e| ModelError::Invalid(e.to_string()))?;
@@ -71,7 +74,7 @@ impl WorkbenchState {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| ModelError::Invalid(e.to_string()))?;
         let version = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(v @ (1..=9)) => v,
+            Some(v @ (1..=10)) => v,
             Some(v) => return Err(ModelError::Invalid(format!("unsupported version {v}"))),
             None => return Err(ModelError::Invalid("missing version".to_owned())),
         };
@@ -99,6 +102,9 @@ impl WorkbenchState {
         if version <= 8 && migrate_v8(&mut state) {
             notes.push(LayoutNote::FilesRestored);
         }
+        if version <= 9 {
+            migrate_v9(&mut state);
+        }
         state.normalize();
         Ok((state, notes))
     }
@@ -118,6 +124,52 @@ impl WorkbenchState {
             },
         }
     }
+}
+
+/// The one-time addition of the Context panel to a layout older than version 10 (the live layout,
+/// the overview stash and every parked workspace layout): a right dock that lists `changes` gets
+/// `context` right after it, unless the layout has Context somewhere already. Nothing moves or
+/// goes; a layout whose right dock has no Changes panel (the user took it out) is left alone.
+/// Logged once per read, only when something was added.
+pub fn migrate_v9(state: &mut WorkbenchState) {
+    let mut added = usize::from(ensure_context(&mut state.docks, &state.center));
+    if let Some(saved) = state.stashed.as_deref_mut() {
+        added += usize::from(ensure_context(&mut saved.docks, &saved.center));
+    }
+    for parked in state.parked.values_mut() {
+        added += usize::from(ensure_context(
+            &mut parked.layout.docks,
+            &parked.layout.center,
+        ));
+        if let Some(saved) = parked.stashed.as_deref_mut() {
+            added += usize::from(ensure_context(&mut saved.docks, &saved.center));
+        }
+    }
+    if added > 0 {
+        tracing::info!(
+            layouts = added,
+            "saved layout: the Context panel joined the right rail after Changes"
+        );
+    }
+}
+
+/// Puts `context` after `changes` in the right dock unless the layout has it somewhere; whether
+/// it did.
+fn ensure_context(docks: &mut Docks, center: &PaneTree) -> bool {
+    let context = PanelId::new("context");
+    let in_center = center
+        .panes()
+        .iter()
+        .any(|pane| pane.items.iter().any(|i| i.as_panel() == Some(&context)));
+    if docks.find(&context).is_some() || in_center {
+        return false;
+    }
+    let changes = PanelId::new("changes");
+    let Some(at) = docks.right.panels.iter().position(|p| *p == changes) else {
+        return false;
+    };
+    docks.right.panels.insert(at + 1, context);
+    true
 }
 
 /// The one-time move of a layout older than version 7 to Memory in the sidebar: a `mawas-memory`

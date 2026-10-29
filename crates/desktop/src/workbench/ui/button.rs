@@ -864,6 +864,11 @@ mod audit {
             "the placement badge (a pill that opens a menu, inside a row)",
         ),
         (
+            "desktop/src/workbench/panels/context.rs",
+            1,
+            "a file row of the files block (a row that opens the file)",
+        ),
+        (
             "desktop/src/workbench/panels/files.rs",
             2,
             "a file tree row, the scope chip that opens the root switcher (a pill that opens a menu)",

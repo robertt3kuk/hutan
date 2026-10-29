@@ -579,6 +579,15 @@ pub enum Region {
     InstructionRow(usize),
     /// A control of the "Shared one file with every agent · Undo" toast (`toast`, `undo`).
     InstructionsToast(&'static str),
+    /// A control or block of the Context panel (`measure`, `meter`, `breakdown`, `empty`,
+    /// `chart`, `totals`, `tools`, `files`, `time`, `sources`, `notes`, `fork-session`).
+    Context(&'static str),
+    /// Turn row `index` of the Context panel, newest first.
+    ContextTurn(usize),
+    /// A button of Context-panel turn row `index` (`fork`, `rewind`, `undo`).
+    ContextTurnAction(usize, &'static str),
+    /// File row `index` of the Context panel's files block (`open`: the row, `diff`: its diff).
+    ContextFile(usize, &'static str),
     /// A control of the Problems panel's header (`severity`, `refresh`).
     Problems(&'static str),
     /// The Restart button of the Problems panel's server line `index` (top to bottom).

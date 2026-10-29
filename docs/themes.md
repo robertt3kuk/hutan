@@ -661,6 +661,7 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `item.folder-open`
 - `panel.files`
 - `panel.instructions`
+- `panel.context`
 - `action.collapse-all`
 - `action.new-file`
 - `action.new-folder`
