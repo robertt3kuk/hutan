@@ -94,9 +94,11 @@ impl Workbench {
                 panel.is_visible(),
                 panel.is_active(),
                 panel.session(),
-                visible
-                    .then(|| panel.turns_without_prompt())
-                    .unwrap_or_default(),
+                if visible {
+                    panel.turns_without_prompt()
+                } else {
+                    Vec::new()
+                },
                 panel.prompts_from(),
             )
         };
