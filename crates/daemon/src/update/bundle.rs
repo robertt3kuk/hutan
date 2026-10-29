@@ -31,7 +31,7 @@ use hutan_protocol::update::{
 use hutan_terminal::procs::{self, ProcState};
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::install::writable;
 use super::releases::REPOSITORY;
@@ -95,6 +95,25 @@ fn stop(stage: InstallStage, message: impl Into<String>) -> Stop {
     Stop {
         stage,
         message: message.into(),
+    }
+}
+
+/// What the install says when a release's archive is not served yet (a status other than 2xx,
+/// or a body far shorter than GitHub lists): a failure of the download, never of the digest.
+pub const NOT_DOWNLOADABLE_YET: &str =
+    "This release isn't downloadable yet — try again in a minute";
+
+/// Why an archive did not arrive.
+enum Fetch {
+    /// GitHub lists the asset but does not serve it yet.
+    NotReady,
+    /// Anything else, in words.
+    Failed(String),
+}
+
+impl From<String> for Fetch {
+    fn from(why: String) -> Self {
+        Self::Failed(why)
     }
 }
 
@@ -392,19 +411,17 @@ impl UpdateService {
             )
         })?;
         let zip = work.join(&name);
-        let url = format!(
-            "{}/{}/releases/download/{}/{}",
-            self.tuning.download_base.trim_end_matches('/'),
-            REPOSITORY,
-            release.tag,
-            name
-        );
-        let (digest, _) = self.fetch_archive(&url, &zip, asset).await.map_err(|why| {
-            stop(
-                Downloading,
-                format!("{name} could not be downloaded: {why}"),
-            )
-        })?;
+        let url = self.archive_url(release);
+        let (digest, _) = self
+            .fetch_archive(&url, &zip, asset)
+            .await
+            .map_err(|why| match why {
+                Fetch::NotReady => stop(Downloading, NOT_DOWNLOADABLE_YET),
+                Fetch::Failed(why) => stop(
+                    Downloading,
+                    format!("{name} could not be downloaded: {why}"),
+                ),
+            })?;
 
         self.stage(Verifying);
         let listed = asset.sha256.as_deref().map(str::to_ascii_lowercase);
@@ -657,22 +674,52 @@ impl UpdateService {
         }
     }
 
+    /// Where `release`'s archive is downloaded from.
+    fn archive_url(&self, release: &UpdateRelease) -> String {
+        format!(
+            "{}/{}/releases/download/{}/{}",
+            self.tuning.download_base.trim_end_matches('/'),
+            REPOSITORY,
+            release.tag,
+            archive_name(release)
+        )
+    }
+
+    /// Whether `release`'s archive answers a `HEAD` with a 2xx: GitHub lists a release's assets
+    /// (with their digests) a while before its download URL serves them (`Not Found`, 40 s
+    /// measured with 0.3.3), and a release whose archive cannot be had yet is not an update
+    /// yet. Any other answer, or none, is "not yet": the check looks again later.
+    pub(super) async fn archive_downloadable(&self, release: &UpdateRelease) -> bool {
+        let Some(http) = &self.http else {
+            return false;
+        };
+        let agent = format!("Hutan/{}", self.running);
+        match http.head_status(&self.archive_url(release), &agent).await {
+            Ok(status) => (200..300).contains(&status),
+            Err(error) => {
+                debug!(%error, "the release's archive could not be asked about");
+                false
+            }
+        }
+    }
+
     /// Downloads `url` to `dest`, bounded; returns the SHA-256 (lowercase hex) and the size.
     async fn fetch_archive(
         &self,
         url: &str,
         dest: &Path,
         asset: &UpdateAsset,
-    ) -> Result<(String, u64), String> {
+    ) -> Result<(String, u64), Fetch> {
         let Some(http) = &self.downloader else {
-            return Err("the update download could not set up its HTTP client".to_owned());
+            return Err("the update download could not set up its HTTP client"
+                .to_owned()
+                .into());
         };
         let limit = self.tuning.max_archive;
         if asset.size > limit {
-            return Err(format!(
-                "it is {} bytes, more than the {limit} allowed",
-                asset.size
-            ));
+            return Err(
+                format!("it is {} bytes, more than the {limit} allowed", asset.size).into(),
+            );
         }
         let agent = format!("Hutan/{}", self.running);
         let all = async {
@@ -680,14 +727,18 @@ impl UpdateService {
                 .get_stream(url, &agent, "application/octet-stream")
                 .await
                 .map_err(|error| describe(&error))?;
-            if download.status != 200 {
-                return Err(format!("GitHub answered HTTP {}", download.status));
+            if !(200..300).contains(&download.status) {
+                debug!(
+                    status = download.status,
+                    "the archive's download was refused"
+                );
+                return Err(Fetch::NotReady);
             }
             let total = download
                 .content_length
                 .or_else(|| (asset.size > 0).then_some(asset.size));
             if total.is_some_and(|total| total > limit) {
-                return Err(format!("it is more than the {limit} bytes allowed"));
+                return Err(format!("it is more than the {limit} bytes allowed").into());
             }
             self.change_install(|install| install.total = total);
             let mut file = tokio::fs::File::create(dest)
@@ -699,7 +750,7 @@ impl UpdateService {
             while let Some(chunk) = download.chunk().await.map_err(|error| describe(&error))? {
                 got += chunk.len() as u64;
                 if got > limit {
-                    return Err(format!("it is more than the {limit} bytes allowed"));
+                    return Err(format!("it is more than the {limit} bytes allowed").into());
                 }
                 hasher.update(&chunk);
                 file.write_all(&chunk)
@@ -714,17 +765,28 @@ impl UpdateService {
                 .await
                 .map_err(|error| format!("{} cannot be written: {error}", dest.display()))?;
             self.change_install(|install| install.downloaded = Some(got));
+            if asset.size > 0 && got.saturating_mul(2) < asset.size {
+                // `Not Found` (9 bytes) in place of an archive of megabytes: the file is not
+                // there yet, whatever status said so.
+                debug!(
+                    got,
+                    listed = asset.size,
+                    "the archive's download was far too short"
+                );
+                return Err(Fetch::NotReady);
+            }
             if asset.size > 0 && got != asset.size {
                 return Err(format!(
                     "{got} bytes arrived, but GitHub lists {} for it",
                     asset.size
-                ));
+                )
+                .into());
             }
             Ok((format!("{:x}", hasher.finalize()), got))
         };
         tokio::time::timeout(self.tuning.download_timeout, all)
             .await
-            .map_err(|_| "it took too long".to_owned())?
+            .map_err(|_| Fetch::from("it took too long".to_owned()))?
     }
 
     /// The SHA-256 the tap's `Casks/hutan.rb` lists for this release: read at the release's tag

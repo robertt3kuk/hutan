@@ -95,6 +95,9 @@ pub struct UpdateTuning {
     pub interval: Duration,
     /// After a check that could not finish (one hour).
     pub retry: Duration,
+    /// After a check that found a release whose archive cannot be downloaded yet (five
+    /// minutes): GitHub serves a new release's files some time after it lists them.
+    pub unready_retry: Duration,
     /// Before the first automatic check of a daemon that has not checked recently (30 seconds).
     pub startup_delay: Duration,
     /// The whole request.
@@ -129,6 +132,7 @@ impl Default for UpdateTuning {
             brew_prefixes: default_prefixes(std::env::var("HOMEBREW_PREFIX").ok().as_deref()),
             interval: Duration::from_secs(24 * 3600),
             retry: Duration::from_secs(3600),
+            unready_retry: Duration::from_secs(300),
             startup_delay: Duration::from_secs(30),
             request_timeout: Duration::from_secs(15),
             download_base: bundle::DOWNLOAD_BASE.to_owned(),
@@ -150,10 +154,16 @@ impl UpdateTuning {
         let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
         let over = env(API_ENV);
         let default = Self::default();
+        // A mock of the releases API also answers the question whether a release's archive can
+        // be downloaded yet, unless another server is named for the downloads: a source set by
+        // hand never leads to GitHub's own download URLs.
+        let download_base = env(DOWNLOADS_ENV)
+            .or_else(|| over.clone())
+            .unwrap_or(default.download_base.clone());
         Self {
             auto_anywhere: over.is_some(),
             api_base: Some(over.unwrap_or_else(|| GITHUB_API.to_owned())),
-            download_base: env(DOWNLOADS_ENV).unwrap_or(default.download_base.clone()),
+            download_base,
             tap_base: env(TAP_ENV).unwrap_or(default.tap_base.clone()),
             ..default
         }
@@ -178,6 +188,10 @@ struct Persisted {
     last_checked_ms: Option<u64>,
     #[serde(default)]
     available: Option<UpdateRelease>,
+    /// When a check last found a release whose archive could not be downloaded yet; cleared by
+    /// the next check that finds it can (or finds nothing).
+    #[serde(default)]
+    unready_ms: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -190,6 +204,9 @@ struct State {
     last_ok_ms: Option<u64>,
     /// When a check last failed, while it is later than `last_ok_ms`.
     last_failed_ms: Option<u64>,
+    /// When the last check found a release it did not offer, because its archive was not
+    /// downloadable yet (persisted).
+    unready_ms: Option<u64>,
     install: Option<UpdateInstall>,
     /// The verified new bundle a hand-copied install waits to put in place.
     staged: Option<bundle::Staged>,
@@ -278,6 +295,7 @@ impl UpdateService {
             announced: available.as_ref().map(|r| r.version.clone()),
             available,
             last_ok_ms: persisted.last_checked_ms,
+            unready_ms: persisted.unready_ms,
             ..State::default()
         };
         Arc::new(Self {
@@ -400,6 +418,7 @@ impl UpdateService {
             since_start,
             state.last_ok_ms,
             state.last_failed_ms,
+            state.unready_ms,
         )
     }
 
@@ -413,6 +432,27 @@ impl UpdateService {
             .fetch()
             .await
             .map(|list| releases::newest(list, &running, channel));
+        // A listed release is an update once its archive answers: GitHub lists the assets (and
+        // their digests) before it serves them. One `HEAD` per new release; a release that was
+        // offered before is not asked about again.
+        let mut waiting = None;
+        let result = match result {
+            Ok(Some(release)) => {
+                let offered = self
+                    .state
+                    .lock()
+                    .available
+                    .as_ref()
+                    .is_some_and(|known| known.version == release.version);
+                if offered || self.archive_downloadable(&release).await {
+                    Ok(Some(release))
+                } else {
+                    waiting = Some(release.version);
+                    Ok(None)
+                }
+            }
+            other => other,
+        };
         let mut announce = None;
         {
             let mut state = self.state.lock();
@@ -426,15 +466,23 @@ impl UpdateService {
                     });
                     state.last_ok_ms = Some(at_ms);
                     state.last_failed_ms = None;
-                    match &found {
-                        Some(release) if state.announced.as_ref() != Some(&release.version) => {
-                            announce = Some(release.clone());
-                            state.announced = Some(release.version.clone());
+                    if let Some(version) = waiting {
+                        // Neither offered nor forgotten: what was offered before stays, and
+                        // the check looks again soon.
+                        debug!(%version, "a newer release is listed, but its archive is not downloadable yet");
+                        state.unready_ms = Some(at_ms);
+                    } else {
+                        state.unready_ms = None;
+                        match &found {
+                            Some(release) if state.announced.as_ref() != Some(&release.version) => {
+                                announce = Some(release.clone());
+                                state.announced = Some(release.version.clone());
+                            }
+                            Some(_) => {}
+                            None => state.announced = None,
                         }
-                        Some(_) => {}
-                        None => state.announced = None,
+                        state.available = found;
                     }
-                    state.available = found;
                     self.persist(&state);
                 }
                 Err((outcome, message)) => {
@@ -505,6 +553,7 @@ impl UpdateService {
         let persisted = Persisted {
             last_checked_ms: state.last_ok_ms,
             available: state.available.clone(),
+            unready_ms: state.unready_ms,
         };
         if let Err(error) = save(&self.state_file, &persisted) {
             debug!(%error, file = %self.state_file.display(), "update state was not saved");
@@ -670,6 +719,7 @@ fn due_in(
     since_start: Duration,
     last_ok_ms: Option<u64>,
     last_failed_ms: Option<u64>,
+    unready_ms: Option<u64>,
 ) -> Option<Duration> {
     if !auto {
         return None;
@@ -678,11 +728,14 @@ fn due_in(
     // A clock that went backwards must not postpone a check for longer than the interval.
     let after =
         |time: Option<u64>, gap: Duration| time.map(|t| t.min(now_ms).saturating_add(ms(gap)));
-    let due_ms = after(last_ok_ms, tuning.interval)
-        .into_iter()
-        .chain(after(last_failed_ms, tuning.retry))
-        .max()
-        .unwrap_or(0);
+    // A release that is listed but not downloadable yet is looked at again soon, not in a day.
+    let due_ms = after(unready_ms, tuning.unready_retry).unwrap_or_else(|| {
+        after(last_ok_ms, tuning.interval)
+            .into_iter()
+            .chain(after(last_failed_ms, tuning.retry))
+            .max()
+            .unwrap_or(0)
+    });
     let wait = Duration::from_millis(due_ms.saturating_sub(now_ms));
     Some(wait.max(tuning.startup_delay.saturating_sub(since_start)))
 }
@@ -744,11 +797,19 @@ mod tests {
     fn a_daemon_that_never_checked_waits_only_the_startup_delay() {
         let tuning = tuning();
         assert_eq!(
-            due_in(true, &tuning, NOW, Duration::from_secs(5), None, None),
+            due_in(true, &tuning, NOW, Duration::from_secs(5), None, None, None),
             Some(Duration::from_secs(25))
         );
         assert_eq!(
-            due_in(true, &tuning, NOW, Duration::from_secs(31), None, None),
+            due_in(
+                true,
+                &tuning,
+                NOW,
+                Duration::from_secs(31),
+                None,
+                None,
+                None
+            ),
             Some(Duration::ZERO)
         );
     }
@@ -758,11 +819,19 @@ mod tests {
         let tuning = tuning();
         let since = Duration::from_secs(60);
         assert_eq!(
-            due_in(true, &tuning, NOW, since, Some(NOW - HOUR_MS), None),
+            due_in(true, &tuning, NOW, since, Some(NOW - HOUR_MS), None, None),
             Some(Duration::from_secs(23 * 3600))
         );
         assert_eq!(
-            due_in(true, &tuning, NOW, since, Some(NOW - 25 * HOUR_MS), None),
+            due_in(
+                true,
+                &tuning,
+                NOW,
+                since,
+                Some(NOW - 25 * HOUR_MS),
+                None,
+                None
+            ),
             Some(Duration::ZERO)
         );
     }
@@ -779,9 +848,41 @@ mod tests {
                 NOW,
                 since,
                 Some(NOW - 25 * HOUR_MS),
-                Some(NOW - 600_000)
+                Some(NOW - 600_000),
+                None
             ),
             Some(Duration::from_secs(50 * 60))
+        );
+    }
+
+    #[test]
+    fn a_release_that_is_not_downloadable_yet_is_looked_at_again_in_minutes_not_a_day() {
+        let tuning = tuning();
+        let since = Duration::from_secs(60);
+        // The check read the list a minute ago and found a release it could not offer.
+        assert_eq!(
+            due_in(
+                true,
+                &tuning,
+                NOW,
+                since,
+                Some(NOW - 60_000),
+                None,
+                Some(NOW - 60_000)
+            ),
+            Some(Duration::from_secs(4 * 60))
+        );
+        assert_eq!(
+            due_in(
+                true,
+                &tuning,
+                NOW,
+                since,
+                Some(NOW - 6 * 60_000),
+                None,
+                Some(NOW - 6 * 60_000)
+            ),
+            Some(Duration::ZERO)
         );
     }
 
@@ -795,6 +896,7 @@ mod tests {
                 NOW,
                 Duration::from_secs(60),
                 Some(NOW + 100 * HOUR_MS),
+                None,
                 None
             ),
             Some(Duration::from_secs(24 * 3600))
@@ -804,7 +906,15 @@ mod tests {
     #[test]
     fn nothing_is_scheduled_when_checking_is_off() {
         assert_eq!(
-            due_in(false, &tuning(), NOW, Duration::from_secs(60), None, None),
+            due_in(
+                false,
+                &tuning(),
+                NOW,
+                Duration::from_secs(60),
+                None,
+                None,
+                None
+            ),
             None
         );
     }

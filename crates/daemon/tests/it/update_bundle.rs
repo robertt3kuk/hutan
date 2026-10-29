@@ -80,6 +80,15 @@ fn cask(version: &str, digest: &str) -> String {
     )
 }
 
+/// How many times the archive was downloaded (not asked about with a `HEAD`).
+fn downloads(env: &Env) -> usize {
+    env.server
+        .requests_to(ARCHIVE)
+        .iter()
+        .filter(|request| request.method == "GET")
+        .count()
+}
+
 fn marker(bundle: &Path) -> String {
     std::fs::read_to_string(bundle.join("Contents/Resources/marker.txt")).unwrap_or_default()
 }
@@ -165,6 +174,9 @@ impl Env {
         env.serve_release(Some(sha256(&env.archive)), env.archive.len());
         env.server
             .set_route("GET", ARCHIVE, bytes_reply(&env.archive));
+        // The check asks with a `HEAD` before it offers the release.
+        env.server
+            .set_route("HEAD", ARCHIVE, Reply::fixed(200, "application/zip", ""));
         env.serve_cask(CASK_AT_TAG, VERSION, &sha256(&env.archive));
         env
     }
@@ -353,11 +365,17 @@ async fn the_archive_is_downloaded_verified_unpacked_and_checked_before_anything
     assert_old_app_untouched(&env);
 
     // Only a User-Agent went to the download and the tap.
-    let download = &env.server.requests_to(ARCHIVE)[0];
+    let head = &env.server.requests_to(ARCHIVE)[0];
+    assert_eq!(
+        head.method, "HEAD",
+        "the check asked before it offered the release"
+    );
+    let download = &env.server.requests_to(ARCHIVE)[1];
+    assert_eq!(download.method, "GET");
     assert_eq!(download.header("user-agent"), Some("Hutan/0.3.1"));
     let tap = &env.server.requests_to(CASK_AT_TAG)[0];
     assert_eq!(tap.header("user-agent"), Some("Hutan/0.3.1"));
-    for request in [download, tap] {
+    for request in [head, download, tap] {
         for secret in ["authorization", "cookie"] {
             assert_eq!(request.header(secret), None);
         }
@@ -574,7 +592,7 @@ async fn a_download_over_the_limit_is_refused() {
     assert_eq!(failed.state, InstallState::Failed);
     assert_eq!(failed.stage, Some(InstallStage::Downloading));
     assert!(failed.message.unwrap().contains("more than the"), "bounded");
-    assert_eq!(env.server.requests_to(ARCHIVE).len(), 0);
+    assert_eq!(downloads(&env), 0, "not a byte was asked for");
     t.stop().await;
 
     // The release lists no size: the server's own length is what is refused.
@@ -593,13 +611,30 @@ async fn a_download_over_the_limit_is_refused() {
     t.stop().await;
 }
 
+/// What the install says when GitHub lists an archive it does not serve yet.
+const NOT_YET: &str = "This release isn't downloadable yet — try again in a minute";
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_download_the_server_refuses_says_so_and_can_be_tried_again() {
     let env = Env::new().await;
-    env.server.set_route("GET", ARCHIVE, Reply::json(404, "{}"));
+    // What GitHub answered for 40 s after 0.3.3 was published: `Not Found`, though the API
+    // already listed the asset with its digest.
+    env.server
+        .set_route("GET", ARCHIVE, Reply::fixed(404, "text/plain", "Not Found"));
     let (t, failed) = refused(&env).await;
     assert_eq!(failed.stage, Some(InstallStage::Downloading));
-    assert!(failed.message.unwrap().contains("HTTP 404"));
+    assert_eq!(failed.state, InstallState::Failed);
+    assert_eq!(
+        failed.message.as_deref(),
+        Some(NOT_YET),
+        "a download failure, not a digest mismatch"
+    );
+    assert_eq!(
+        env.server.requests_to(CASK_AT_TAG).len(),
+        0,
+        "nothing was verified against the tap"
+    );
+    assert!(!staging(&t).join("Hutan-0.3.2-arm64.zip").exists());
     // Fixed upstream: the same daemon tries again.
     env.server
         .set_route("GET", ARCHIVE, bytes_reply(&env.archive));
@@ -607,6 +642,62 @@ async fn a_download_the_server_refuses_says_so_and_can_be_tried_again() {
     client.update_install(InstallMethod::Bundle).await.unwrap();
     let (_, ready) = stages_until(&mut events, InstallStage::Ready).await;
     assert_eq!(ready.state, InstallState::Running);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn any_status_that_is_not_2xx_is_the_same_download_failure() {
+    for status in [403, 500, 503] {
+        let env = Env::new().await;
+        env.server
+            .set_route("GET", ARCHIVE, Reply::fixed(status, "text/plain", "no"));
+        let (t, failed) = refused(&env).await;
+        assert_eq!(failed.stage, Some(InstallStage::Downloading), "{status}");
+        assert_eq!(failed.message.as_deref(), Some(NOT_YET), "{status}");
+        t.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_far_smaller_than_the_listed_size_is_the_same_download_failure_and_can_be_tried_again()
+ {
+    let env = Env::new().await;
+    // A 200 whose body is `Not Found` (9 bytes) in place of the archive the release lists.
+    assert!(env.archive.len() > 18);
+    env.server
+        .set_route("GET", ARCHIVE, Reply::fixed(200, "text/plain", "Not Found"));
+    let (t, failed) = refused(&env).await;
+    assert_eq!(failed.stage, Some(InstallStage::Downloading));
+    assert_eq!(
+        failed.message.as_deref(),
+        Some(NOT_YET),
+        "no digest was compared"
+    );
+    assert_eq!(env.server.requests_to(CASK_AT_TAG).len(), 0);
+    assert!(!staging(&t).join("Hutan-0.3.2-arm64.zip").exists());
+    assert_old_app_untouched(&env);
+
+    // Propagated: the same daemon tries again and the update is ready.
+    env.server
+        .set_route("GET", ARCHIVE, bytes_reply(&env.archive));
+    let (client, mut events) = t.connect_subscribed().await;
+    client.update_install(InstallMethod::Bundle).await.unwrap();
+    let (_, ready) = stages_until(&mut events, InstallStage::Ready).await;
+    assert_eq!(ready.state, InstallState::Running, "{ready:?}");
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_of_another_size_is_still_a_download_failure_in_its_own_words() {
+    let env = Env::new().await;
+    // Almost all of it arrived: not "not there yet", but not the listed file either.
+    let short = &env.archive[..env.archive.len() - 1];
+    env.server.set_route("GET", ARCHIVE, bytes_reply(short));
+    let (t, failed) = refused(&env).await;
+    assert_eq!(failed.stage, Some(InstallStage::Downloading));
+    let message = failed.message.unwrap();
+    assert!(message.contains("bytes arrived"), "{message}");
+    assert!(!message.contains("SHA-256"), "{message}");
     t.stop().await;
 }
 
@@ -920,10 +1011,6 @@ async fn an_agent_can_never_update_a_bundle() {
         remote_code(agent.update_install_apply(None).await),
         ErrorCode::Forbidden
     );
-    assert_eq!(
-        env.server.requests_to(ARCHIVE).len(),
-        0,
-        "nothing was downloaded"
-    );
+    assert_eq!(downloads(&env), 0, "nothing was downloaded");
     t.stop().await;
 }

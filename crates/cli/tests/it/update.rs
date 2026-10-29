@@ -37,6 +37,15 @@ fn serve(server: &MockServer, tags: &[&str]) {
         RELEASES,
         Reply::json(200, &serde_json::to_string(&releases).unwrap()),
     );
+    // Every archive can be downloaded: the check asks with a `HEAD` before it offers a release.
+    for tag in tags {
+        let version = tag.trim_start_matches('v');
+        server.set_route(
+            "HEAD",
+            &format!("/robertt3kuk/hutan/releases/download/{tag}/Hutan-{version}-arm64.zip"),
+            Reply::fixed(200, "application/zip", ""),
+        );
+    }
 }
 
 /// A fake `brew` at a stable path named by its content (macOS vets every new executable once).
@@ -95,11 +104,14 @@ async fn daemon(server: &MockServer, layout: &Layout) -> TestDaemon {
     // Checking is only on request: the commands are the sync points.
     TestDaemon::start_toml("[updates]\ncheck = \"off\"\n", move |config| {
         config.updates = UpdateTuning {
-            api_base: Some(api),
+            api_base: Some(api.clone()),
             version: "0.3.1".to_owned(),
             exe: Some(exe),
             brew_prefixes: vec![prefix],
             startup_delay: Duration::ZERO,
+            // The mock also answers whether an archive can be downloaded: nothing here asks
+            // GitHub.
+            download_base: api,
             ..UpdateTuning::default()
         };
     })
@@ -141,7 +153,11 @@ async fn check_finds_the_newer_release_and_says_how_to_get_it() {
     let json = t.hutan(&["update", "check", "--json"]).await.ok().json();
     assert_eq!(json["available"]["version"], "0.3.2");
     assert_eq!(json["last_check"]["outcome"], "checked");
-    assert_eq!(server.requests().len(), 2);
+    assert_eq!(
+        server.requests().len(),
+        3,
+        "two lists, and the archive of 0.3.2 asked about once"
+    );
 
     // Nothing newer: up to date. A server that fails is said, not an error.
     serve(&server, &["v0.3.1"]);
@@ -305,6 +321,11 @@ async fn a_hand_copied_app_is_prepared_then_applied_from_the_terminal() {
         RELEASES,
         Reply::json(200, &serde_json::to_string(&release).unwrap()),
     );
+    server.set_route(
+        "HEAD",
+        "/robertt3kuk/hutan/releases/download/v0.3.2/Hutan-0.3.2-arm64.zip",
+        Reply::fixed(200, "application/zip", ""),
+    );
     let mut body = Reply::fixed(200, "application/zip", "");
     body.steps = vec![hutan_gateway::testing::Step::Send(archive)];
     server.set_route(
@@ -403,6 +424,11 @@ async fn a_download_that_does_not_match_fails_the_command_with_the_reason() {
         "GET",
         RELEASES,
         Reply::json(200, &serde_json::to_string(&release).unwrap()),
+    );
+    server.set_route(
+        "HEAD",
+        "/robertt3kuk/hutan/releases/download/v0.3.2/Hutan-0.3.2-arm64.zip",
+        Reply::fixed(200, "application/zip", ""),
     );
     server.set_route(
         "GET",

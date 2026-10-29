@@ -13,7 +13,7 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use futures::stream::{self, BoxStream};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
-use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
+use reqwest::{Client, Method, RequestBuilder, Response, StatusCode, Url};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
@@ -154,23 +154,58 @@ impl Http {
         user_agent: &str,
         accept: &str,
     ) -> Result<Download, GatewayError> {
+        let response = self
+            .send_following(Method::GET, url, user_agent, accept, None)
+            .await?;
+        Ok(Download {
+            status: response.status().as_u16(),
+            content_length: response.content_length(),
+            response,
+        })
+    }
+
+    /// The status a `HEAD url` ends in: the daemon's question whether a release's archive can be
+    /// downloaded yet, asked without downloading it. Redirects are followed as
+    /// [`get_stream`](Self::get_stream) follows them, only the given `User-Agent` is sent, nothing
+    /// is retried, and every request is bounded by the configured request timeout. Any status is
+    /// an answer.
+    pub async fn head_status(&self, url: &str, user_agent: &str) -> Result<u16, GatewayError> {
+        let response = self
+            .send_following(
+                Method::HEAD,
+                url,
+                user_agent,
+                "*/*",
+                Some(self.config.request_timeout),
+            )
+            .await?;
+        Ok(response.status().as_u16())
+    }
+
+    /// `method url` and the redirects it leads to, up to [`DOWNLOAD_REDIRECTS`]; the first
+    /// answer that is not a redirect.
+    async fn send_following(
+        &self,
+        method: Method,
+        url: &str,
+        user_agent: &str,
+        accept: &str,
+        timeout: Option<Duration>,
+    ) -> Result<Response, GatewayError> {
         let mut url = Url::parse(url).map_err(|e| GatewayError::InvalidUrl(e.to_string()))?;
         for _ in 0..=DOWNLOAD_REDIRECTS {
-            debug!(host = url.host_str().unwrap_or(""), "streaming GET");
-            let response = self
+            debug!(host = url.host_str().unwrap_or(""), %method, "following GET or HEAD");
+            let mut request = self
                 .client
-                .get(url.clone())
+                .request(method.clone(), url.clone())
                 .header(reqwest::header::USER_AGENT, user_agent)
-                .header(reqwest::header::ACCEPT, accept)
-                .send()
-                .await
-                .map_err(|error| fetch_error(&error))?;
+                .header(reqwest::header::ACCEPT, accept);
+            if let Some(timeout) = timeout {
+                request = request.timeout(timeout);
+            }
+            let response = request.send().await.map_err(|error| fetch_error(&error))?;
             if !response.status().is_redirection() {
-                return Ok(Download {
-                    status: response.status().as_u16(),
-                    content_length: response.content_length(),
-                    response,
-                });
+                return Ok(response);
             }
             let next = response
                 .headers()
@@ -193,7 +228,7 @@ impl Http {
     }
 }
 
-/// Most redirects [`Http::get_stream`] follows.
+/// Most redirects [`Http::get_stream`] and [`Http::head_status`] follow.
 pub const DOWNLOAD_REDIRECTS: usize = 5;
 
 /// The answer of [`Http::get_stream`], body not read yet.

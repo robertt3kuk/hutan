@@ -151,6 +151,10 @@ impl Fixture {
             Reply::json(200, &serde_json::to_string(&release).unwrap()),
         );
         self.serve_archive(releases, &self.archive);
+        // The check asks with a `HEAD` before it offers the release.
+        releases
+            .server
+            .set_route("HEAD", ARCHIVE, Reply::fixed(200, "application/zip", ""));
         releases.server.set_route(
             "GET",
             CASK,

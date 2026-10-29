@@ -55,12 +55,35 @@ fn release(tag: &str, prerelease: bool, archive: bool) -> Value {
     })
 }
 
+/// The path of a release's archive on the download host (`<base>/<this>`).
+pub(crate) fn archive_path(tag: &str) -> String {
+    let version = tag.trim_start_matches('v');
+    format!("/robertt3kuk/hutan/releases/download/{tag}/Hutan-{version}-arm64.zip")
+}
+
+/// The releases API lists `releases`; the archive of each that has one answers `HEAD` at once
+/// (a test that wants it not to calls [`hold_back`]).
 fn serve(server: &MockServer, releases: &[Value]) {
     server.set_route(
         "GET",
         RELEASES,
         Reply::json(200, &serde_json::to_string(releases).unwrap()),
     );
+    for release in releases {
+        let tag = release["tag_name"].as_str().unwrap();
+        let version = tag.trim_start_matches('v');
+        let wanted = format!("Hutan-{version}-arm64.zip");
+        let has_archive = release["assets"]
+            .as_array()
+            .is_some_and(|assets| assets.iter().any(|a| a["name"] == wanted.as_str()));
+        if has_archive {
+            server.set_route(
+                "HEAD",
+                &archive_path(tag),
+                Reply::fixed(200, "application/zip", ""),
+            );
+        }
+    }
 }
 
 /// A fake program at a stable path named by its content (macOS vets every new executable once,
@@ -173,14 +196,20 @@ impl Layout {
     fn tune(&self, api: Option<String>) -> impl FnOnce(&mut DaemonConfig) + use<> {
         let (exe, prefix) = (self.exe.clone(), self.prefix.clone());
         move |config: &mut DaemonConfig| {
-            config.updates = UpdateTuning {
-                api_base: api,
+            let mut tuning = UpdateTuning {
+                api_base: api.clone(),
                 version: RUNNING.to_owned(),
                 exe: Some(exe),
                 brew_prefixes: vec![prefix],
                 startup_delay: Duration::ZERO,
                 ..UpdateTuning::default()
             };
+            // The mock also serves the downloads: no test ever asks GitHub whether an archive
+            // can be had.
+            if let Some(api) = api {
+                tuning.download_base = api;
+            }
+            config.updates = tuning;
         }
     }
 }
@@ -267,20 +296,33 @@ async fn a_newer_prerelease_is_found_announced_once_and_sends_only_a_user_agent(
     .await;
     assert_eq!(announced, "0.3.2");
 
-    // Exactly one request, carrying the User-Agent and nothing identifying.
+    // The list, and one `HEAD` for the new release's archive, each carrying the User-Agent and
+    // nothing identifying.
     let requests = server.requests();
-    assert_eq!(requests.len(), 1);
-    let request = &requests[0];
-    assert_eq!(request.method, "GET");
-    assert_eq!(request.path(), RELEASES);
-    assert_eq!(request.header("user-agent"), Some("Hutan/0.3.1"));
-    for secret in ["authorization", "cookie", "x-github-token"] {
-        assert_eq!(request.header(secret), None, "{secret} is never sent");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        (requests[0].method.as_str(), requests[0].path()),
+        ("GET", RELEASES)
+    );
+    assert_eq!(
+        (requests[1].method.as_str(), requests[1].path()),
+        ("HEAD", archive_path("v0.3.2").as_str())
+    );
+    for request in &requests {
+        assert_eq!(request.header("user-agent"), Some("Hutan/0.3.1"));
+        for secret in ["authorization", "cookie", "x-github-token"] {
+            assert_eq!(request.header(secret), None, "{secret} is never sent");
+        }
     }
 
-    // A second check finds the same release and does not announce it again: the next
-    // announcement is the newer one.
+    // A second check finds the same release and does not announce it again, nor ask about its
+    // archive again: the list is the only request. The next announcement is the newer one.
     client.update_check().await.unwrap();
+    assert_eq!(
+        server.requests().len(),
+        3,
+        "an offered release is not asked about twice"
+    );
     serve(
         &server,
         &[release("v0.3.4", true, true), release("v0.3.2", true, true)],
@@ -313,6 +355,160 @@ async fn older_equal_and_archiveless_releases_find_nothing() {
     let checked = client.update_check().await.unwrap();
     assert_eq!(checked.available, None);
     assert_eq!(checked.last_check.unwrap().outcome, CheckOutcome::Checked);
+    t.stop().await;
+}
+
+/// Requests the mock got with `method`.
+fn count(server: &MockServer, method: &str) -> usize {
+    server
+        .requests()
+        .iter()
+        .filter(|request| request.method == method)
+        .count()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_is_not_offered_until_its_archive_answers_a_head_with_2xx() {
+    let server = MockServer::start().await;
+    let release = release("v0.3.2", true, true);
+    serve(&server, std::slice::from_ref(&release));
+    // Right after `gh release create`: the API lists the asset and its digest, the download URL
+    // says `Not Found` (9 bytes, HTTP 404) for a while, then the file.
+    let archive = archive_path("v0.3.2");
+    server.set_route(
+        "HEAD",
+        &archive,
+        Reply::fixed(404, "text/plain", "Not Found"),
+    );
+    server.route("HEAD", &archive, Reply::fixed(200, "application/zip", ""));
+    let layout = Layout::cask(&fake_brew(0, false));
+    let t = start(&server, &layout, MANUAL).await;
+    let (client, mut events) = t.connect_subscribed().await;
+
+    let early = client.update_check().await.unwrap();
+    assert_eq!(early.available, None, "listed, but not downloadable yet");
+    let last = early.last_check.unwrap();
+    assert_eq!(
+        last.outcome,
+        CheckOutcome::Checked,
+        "quiet: no failure to show"
+    );
+    assert_eq!(last.message, None);
+    assert_eq!(count(&server, "HEAD"), 1);
+    assert!(events.try_recv().is_err(), "nothing was announced");
+
+    let later = client.update_check().await.unwrap();
+    assert_eq!(later.available.unwrap().version, "0.3.2");
+    assert_eq!(count(&server, "HEAD"), 2);
+    let announced = wait_event(&mut events, "update.available", |event| match event {
+        Event::UpdateAvailable { release } => Some(release.version.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(announced, "0.3.2");
+    let head = &server.requests_to(&archive)[0];
+    assert_eq!(head.method, "HEAD");
+    assert_eq!(head.header("user-agent"), Some("Hutan/0.3.1"));
+    for secret in ["authorization", "cookie"] {
+        assert_eq!(head.header(secret), None);
+    }
+
+    // Offered once, not asked about again: one extra request per new release, none after.
+    client.update_check().await.unwrap();
+    client.update_check().await.unwrap();
+    assert_eq!(count(&server, "HEAD"), 2);
+    assert_eq!(count(&server, "GET"), 4);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_head_follows_the_redirect_to_the_asset_host() {
+    let server = MockServer::start().await;
+    serve(&server, &[release("v0.3.2", true, true)]);
+    // GitHub answers 302 to its asset host, which is what says whether the file is there.
+    let moved = "/objects/Hutan-0.3.2-arm64.zip";
+    server.set_route(
+        "HEAD",
+        &archive_path("v0.3.2"),
+        Reply::json(302, "").header("location", moved),
+    );
+    server.set_route("HEAD", moved, Reply::fixed(404, "text/plain", "Not Found"));
+    let layout = Layout::cask(&fake_brew(0, false));
+    let t = start(&server, &layout, MANUAL).await;
+    let client = t.connect().await;
+    assert_eq!(client.update_check().await.unwrap().available, None);
+    assert_eq!(
+        server.requests_to(moved).len(),
+        1,
+        "the redirect was followed"
+    );
+
+    server.set_route("HEAD", moved, Reply::fixed(200, "application/zip", ""));
+    assert!(client.update_check().await.unwrap().available.is_some());
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_that_is_not_downloadable_yet_leaves_what_was_offered_before() {
+    let server = MockServer::start().await;
+    serve(&server, &[release("v0.3.2", true, true)]);
+    let layout = Layout::cask(&fake_brew(0, false));
+    let t = start(&server, &layout, MANUAL).await;
+    let client = t.connect().await;
+    assert_eq!(
+        client
+            .update_check()
+            .await
+            .unwrap()
+            .available
+            .unwrap()
+            .version,
+        "0.3.2"
+    );
+    // 0.3.3 is listed, its archive is not served yet: 0.3.2 stays the update.
+    serve(
+        &server,
+        &[release("v0.3.2", true, true), release("v0.3.3", true, true)],
+    );
+    server.set_route(
+        "HEAD",
+        &archive_path("v0.3.3"),
+        Reply::fixed(404, "text/plain", "Not Found"),
+    );
+    let checked = client.update_check().await.unwrap();
+    assert_eq!(checked.available.unwrap().version, "0.3.2");
+    assert_eq!(checked.last_check.unwrap().outcome, CheckOutcome::Checked);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_that_checks_by_itself_looks_again_soon_for_a_release_that_is_not_there_yet() {
+    let server = MockServer::start().await;
+    serve(&server, &[release("v0.3.2", true, true)]);
+    let archive = archive_path("v0.3.2");
+    server.set_route(
+        "HEAD",
+        &archive,
+        Reply::fixed(404, "text/plain", "Not Found"),
+    );
+    server.route("HEAD", &archive, Reply::fixed(200, "application/zip", ""));
+    let layout = Layout::cask(&fake_brew(0, false));
+    let tune = layout.tune(Some(server.url()));
+    // `check = "auto"`, no startup delay, and a short wait for the second look: the daemon is
+    // not asked, it finds the release by itself once its archive is served.
+    let t = TestDaemon::start_with("", move |config| {
+        tune(config);
+        config.updates.unready_retry = Duration::from_millis(20);
+    })
+    .await;
+    let client = t.connect().await;
+    let found = status_where(&client, "the release", |s| s.available.is_some()).await;
+    assert_eq!(found.available.unwrap().version, "0.3.2");
+    assert_eq!(
+        count(&server, "HEAD"),
+        2,
+        "not downloadable, then downloadable"
+    );
     t.stop().await;
 }
 
@@ -429,7 +625,11 @@ async fn a_check_on_request_works_when_checking_is_off_and_without_a_source() {
     let off = status(&client).await;
     assert_eq!(off.check, UpdateCheck::Off);
     assert!(client.update_check().await.unwrap().available.is_some());
-    assert_eq!(server.requests().len(), 1, "off means: only when asked");
+    assert_eq!(
+        server.requests().len(),
+        2,
+        "off means: only when asked (the list, and the new release's archive)"
+    );
     t.stop().await;
 
     // A daemon with no update source says so instead of failing.
@@ -452,7 +652,11 @@ async fn an_installed_hutan_checks_by_itself_and_remembers_it_across_a_restart()
     let client = t.connect().await;
     let found = status_where(&client, "the release", |s| s.available.is_some()).await;
     assert_eq!(found.available.unwrap().version, "0.3.2");
-    assert_eq!(server.requests().len(), 1);
+    assert_eq!(
+        server.requests().len(),
+        2,
+        "the list, and the archive's HEAD"
+    );
 
     // A restart on the same home neither forgets the release nor asks again at once: it checked
     // less than 24 hours ago.
@@ -463,7 +667,11 @@ async fn an_installed_hutan_checks_by_itself_and_remembers_it_across_a_restart()
     assert_eq!(remembered.last_check, None, "no check since the restart");
     // A check on request is the sync point: had the daemon asked by itself, it would have by now.
     client.update_check().await.unwrap();
-    assert_eq!(server.requests().len(), 2, "the 24 hour throttle held");
+    assert_eq!(
+        server.requests().len(),
+        3,
+        "the 24 hour throttle held: only the list, the release was offered before"
+    );
     t.stop().await;
 }
 
@@ -480,8 +688,8 @@ async fn a_development_build_does_not_check_by_itself() {
     client.update_check().await.unwrap();
     assert_eq!(
         server.requests().len(),
-        1,
-        "only the request that was asked for"
+        2,
+        "only the request that was asked for (the list, and the new release's archive)"
     );
     t.stop().await;
 }

@@ -75,6 +75,15 @@ impl Releases {
             RELEASES,
             Reply::json(200, &serde_json::to_string(&list).unwrap()),
         );
+        // Every archive can be downloaded: the check asks with a `HEAD` before it offers one.
+        for tag in tags {
+            let version = tag.trim_start_matches('v');
+            self.server.set_route(
+                "HEAD",
+                &format!("/robertt3kuk/hutan/releases/download/{tag}/Hutan-{version}-arm64.zip"),
+                Reply::fixed(200, "application/zip", ""),
+            );
+        }
     }
 }
 
@@ -140,11 +149,14 @@ fn daemon(releases: &Releases, cask: &Cask, toml: &str) -> TestDaemon {
     );
     TestDaemon::start_tweaked(toml, move |config| {
         config.updates = UpdateTuning {
-            api_base: Some(api),
+            api_base: Some(api.clone()),
             version: "0.3.1".to_owned(),
             exe: Some(exe),
             brew_prefixes: vec![prefix],
             startup_delay: Duration::ZERO,
+            // The mock also answers whether an archive can be downloaded: nothing here asks
+            // GitHub.
+            download_base: api,
             ..UpdateTuning::default()
         };
     })
