@@ -120,6 +120,7 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
         ids(&[
             "files",
             "changes",
+            "context",
             "agents",
             "history",
             "inspector",
@@ -170,18 +171,18 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     );
     assert!(painted(&view, cx, Region::Toolbar("start")));
     assert!(painted(&view, cx, Region::Toolbar("settings")));
-    // The right rail: four icons (Files first) and ⋯, 32 pt targets under the title bar row, outside the
+    // The right rail: five icons (Files first) and ⋯, 32 pt targets under the title bar row, outside the
     // body; Requests and Resources are in ⋯ (CL-CHROME).
     let rail = bounds(&view, cx, Region::Rail(DockPosition::Right));
     assert_size(rail.size.width, 40.0);
     assert!(rail.left() >= right.right());
-    for index in 0..4 {
+    for index in 0..5 {
         let icon = bounds(&view, cx, Region::DockTab(DockPosition::Right, index));
         assert!(rail.contains(&icon.center()), "icon {index}");
         assert!(icon.origin.y >= titlebar.bottom(), "icon {index}");
         assert_size(icon.size.height, 32.0);
     }
-    for index in 4..6 {
+    for index in 5..7 {
         assert!(!painted(
             &view,
             cx,
@@ -457,7 +458,13 @@ fn the_right_strip_switches_tabs(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     let active = |cx: &VisualTestContext| state(&view, cx).docks.right.active.unwrap();
     assert_eq!(active(cx).as_str(), "files", "Files is the default tab");
-    for (index, panel) in [(2, "agents"), (3, "history"), (1, "changes"), (0, "files")] {
+    for (index, panel) in [
+        (3, "agents"),
+        (4, "history"),
+        (2, "context"),
+        (1, "changes"),
+        (0, "files"),
+    ] {
         click(&view, cx, Region::DockTab(DockPosition::Right, index));
         assert_eq!(active(cx).as_str(), panel);
         assert_eq!(
@@ -488,12 +495,15 @@ fn icons_that_do_not_fit_move_into_the_more_menu(cx: &mut TestAppContext) {
         .map(|(label, _)| label.to_string())
         .collect();
     // The icon that did not fit, then the panels the dock lists in ⋯.
-    assert_eq!(labels, ["Agents", "History", "Requests", "Resources"]);
+    assert_eq!(
+        labels,
+        ["Context", "Agents", "History", "Requests", "Resources"]
+    );
 
     // Choosing one makes it the active tab, and the active tab never hides.
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(0, window, cx));
     let s = state(&view, cx);
-    assert_eq!(s.docks.right.active, Some(PanelId::new("agents")));
+    assert_eq!(s.docks.right.active, Some(PanelId::new("context")));
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 2)));
 }
 
@@ -535,6 +545,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
         ids(&[
             "files",
             "changes",
+            "context",
             "agents",
             "history",
             "inspector",
@@ -658,6 +669,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
             "files",
             "history",
             "changes",
+            "context",
             "inspector",
             "agents",
             "resources"
@@ -686,7 +698,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
         ]
     );
 
-    // The next save is version 9, and loading that again changes nothing.
+    // The next save is version 10, and loading that again changes nothing.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
     });
@@ -695,7 +707,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 9);
+    assert_eq!(on_disk["version"], 10);
     let reloaded = load_state(&path);
     assert_eq!(reloaded.docks, state(&view, cx).docks);
     assert_eq!(reloaded.center, state(&view, cx).center);

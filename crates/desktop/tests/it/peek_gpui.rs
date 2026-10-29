@@ -113,7 +113,7 @@ fn center_point(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Point<P
     point(center.left() + px(40.0), center.center().y)
 }
 
-/// The rail icon of the right side's panel `index` (Files 0, Changes 1, Agents 2, History 3).
+/// The rail icon of the right side's panel `index` (Files 0, Changes 1, Context 2, Agents 3, History 4).
 fn icon(index: usize) -> Region {
     Region::DockTab(Right, index)
 }
@@ -137,7 +137,7 @@ fn the_window_width_decides_push_or_peek(cx: &mut TestAppContext) {
         cx.simulate_keystrokes("cmd-l");
         resize(cx, width);
         assert_eq!(chosen(&view, cx, Right), Compact, "{width}");
-        click(&view, cx, icon(2));
+        click(&view, cx, icon(3));
         if peeks {
             assert_eq!(peeking(&view, cx), Some(Right), "{width}: a peek");
             assert!(painted(&view, cx, Region::Peek), "{width}");
@@ -225,14 +225,20 @@ fn the_peek_floats_over_the_center_at_the_docks_width_and_changes_nothing(cx: &m
 fn every_right_panel_peeks_and_a_second_icon_switches_it(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     resize(cx, 1100.0);
-    for (index, panel) in [(0, "files"), (1, "changes"), (2, "agents"), (3, "history")] {
+    for (index, panel) in [
+        (0, "files"),
+        (1, "changes"),
+        (2, "context"),
+        (3, "agents"),
+        (4, "history"),
+    ] {
         click(&view, cx, icon(index));
         assert_eq!(peeking(&view, cx), Some(Right), "{panel}");
         assert_eq!(active(&view, cx, Right), Some(PanelId::new(panel)));
         assert!(painted(&view, cx, Region::Peek), "{panel}");
     }
     // The icon of the panel shown closes it.
-    click(&view, cx, icon(3));
+    click(&view, cx, icon(4));
     assert_eq!(peeking(&view, cx), None);
     assert!(!painted(&view, cx, Region::Peek));
     assert_eq!(shown(&view, cx, Right), Compact);
@@ -310,8 +316,8 @@ fn a_click_outside_closes_the_peek_and_does_not_reach_what_is_under_it(cx: &mut 
 fn the_same_icon_and_cmd_l_close_the_peek(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     resize(cx, 1100.0);
-    click(&view, cx, icon(2));
-    click(&view, cx, icon(2));
+    click(&view, cx, icon(3));
+    click(&view, cx, icon(3));
     assert_eq!(peeking(&view, cx), None);
     // ⌘L opens the remembered panel as a peek and closes it again.
     cx.simulate_keystrokes("cmd-l");

@@ -2611,7 +2611,9 @@ impl SessionsStore {
                     Ok(sent_on) => {
                         this.focus_sent = Some((sent_on, focused));
                         // The Context panel reads the insight once the daemon knows the focus.
-                        cx.notify();
+                        if this.context_followed.is_some() {
+                            cx.notify();
+                        }
                         this.report_focus(cx);
                     }
                     Err(error) => tracing::debug!(%error, "could not report the focus"),

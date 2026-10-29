@@ -676,6 +676,7 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `settings.panels.files`
 - `settings.panels.problems`
 - `settings.panels.instructions`
+- `settings.panels.context`
 - `settings.panels.search`
 - `settings.status`
 - `settings.workspaces`

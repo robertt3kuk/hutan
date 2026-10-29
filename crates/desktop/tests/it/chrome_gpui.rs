@@ -105,6 +105,7 @@ fn a_new_home_gets_the_clean_default_and_saves_it_as_the_golden(cx: &mut TestApp
         ids(&[
             "files",
             "changes",
+            "context",
             "agents",
             "history",
             "inspector",
@@ -125,18 +126,18 @@ fn a_new_home_gets_the_clean_default_and_saves_it_as_the_golden(cx: &mut TestApp
     );
     assert!(!offered(&view, cx), "a new home is not offered what it has");
 
-    // The rail: four icons (Files first, SB-ATTACH) and ⋯, nothing for Requests or Resources.
+    // The rail: five icons (Files first, SB-ATTACH) and ⋯, nothing for Requests or Resources.
     wait_until(cx, "the rail", |cx| {
         painted(&view, cx, Region::Rail(DockPosition::Right))
     });
-    for index in 0..4 {
+    for index in 0..5 {
         assert!(painted(
             &view,
             cx,
             Region::DockTab(DockPosition::Right, index)
         ));
     }
-    for index in 4..6 {
+    for index in 5..7 {
         assert!(!painted(
             &view,
             cx,
@@ -283,9 +284,9 @@ fn the_more_menu_lists_requests_and_resources_and_opens_them(cx: &mut TestAppCon
     assert_eq!(s.docks.right.active, Some(PanelId::new("resources")));
     assert!(s.docks.right.is_expanded());
     wait_until(cx, "the Resources icon", |cx| {
-        painted(&view, cx, Region::DockTab(DockPosition::Right, 5))
+        painted(&view, cx, Region::DockTab(DockPosition::Right, 6))
     });
-    assert!(!painted(&view, cx, Region::DockTab(DockPosition::Right, 4)));
+    assert!(!painted(&view, cx, Region::DockTab(DockPosition::Right, 5)));
     // The ⌘⌥R-style panel command opens a panel listed in ⋯ the same way.
     cx.dispatch_action(actions::OpenPanel("inspector".into()));
     assert_eq!(

@@ -309,7 +309,7 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     assert_size(bounds(&view, cx, Region::Dock(Right)).size.width, 350.0);
     click(&view, cx, Region::DockTab(Right, 0));
     assert_eq!(chosen(&view, cx, Right), Compact);
-    click(&view, cx, Region::DockTab(Right, 2));
+    click(&view, cx, Region::DockTab(Right, 3));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
@@ -328,7 +328,7 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
 #[gpui::test]
 fn cmd_l_toggles_the_body_and_keeps_the_rail_and_the_panel(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
-    click(&view, cx, Region::DockTab(Right, 3));
+    click(&view, cx, Region::DockTab(Right, 4));
     assert_eq!(
         state(&view, cx).docks.right.active,
         Some(PanelId::new("history"))
@@ -974,7 +974,7 @@ fn opening_a_dock_in_a_narrow_window_keeps_it_open_until_the_window_grows(cx: &m
     assert_eq!(shown(&view, cx, Left), Expanded, "it stays");
     // A rail icon opens the right panel too — but with the sidebar open the center has no room
     // for the body beside it, so it is a peek over the center (EX-2) and the dock stays a rail.
-    click(&view, cx, Region::DockTab(Right, 2));
+    click(&view, cx, Region::DockTab(Right, 3));
     assert_eq!(shown(&view, cx, Right), Compact);
     assert_eq!(view.read_with(cx, |wb, _| wb.peek_dock()), Some(Right));
     assert_eq!(
@@ -1153,7 +1153,7 @@ fn a_new_approval_does_not_expand_a_collapsed_right_panel(cx: &mut TestAppContex
     assert_eq!(chosen(&view, cx, Right), Compact, "still collapsed");
     assert!(!painted(&view, cx, Region::Dock(Right)));
     assert!(
-        painted(&view, cx, Region::DockTab(Right, 4)),
+        painted(&view, cx, Region::DockTab(Right, 5)),
         "the Requests icon is on the rail"
     );
     assert!(
@@ -1168,7 +1168,7 @@ fn a_new_approval_does_not_expand_a_collapsed_right_panel(cx: &mut TestAppContex
         state(&view, cx).docks.right.active,
         Some(PanelId::new("files"))
     );
-    click(&view, cx, Region::DockTab(Right, 4));
+    click(&view, cx, Region::DockTab(Right, 5));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
