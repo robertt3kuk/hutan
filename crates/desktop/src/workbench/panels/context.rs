@@ -1271,7 +1271,7 @@ impl ContextPanel {
                     .w_full()
                     .h(relative(share.max(0.04)))
                     .rounded_t(px(1.5))
-                    .bg(theme.accent_soft),
+                    .bg(theme.accent.opacity(0.6)),
             )
         });
         block(
