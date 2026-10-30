@@ -108,7 +108,9 @@ pub enum CheckOutcome {
 pub struct UpdateCheckInfo {
     pub at_ms: u64,
     pub outcome: CheckOutcome,
-    /// What went wrong, for the outcomes other than `checked`.
+    /// What went wrong, for the outcomes other than `checked`; with `checked`, a note such as
+    /// "Hutan x.y.z was just published; it can be installed in a minute" (a newer release whose
+    /// archive is not downloadable yet).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
