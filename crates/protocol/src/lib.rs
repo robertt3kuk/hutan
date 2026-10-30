@@ -3,6 +3,9 @@
 //! - [`board`]: `agents.board` — every agent across workspaces in one bounded, read-only,
 //!   redacted answer: state and group of the shared reducer, what each waits for, where its facts
 //!   come from (protocol 0.63, capability `agents.board`, ADR 0025).
+//! - [`suggest`], [`chat`]: `ask.suggest` and the `suggestion` of a pending approval or question
+//!   — an advisory, unsent answer from Mawas that the user may *Use* or dismiss — with the
+//!   `ask.suggestion` event (protocol 0.64, capability `ask.suggest`, ADR 0025 R2).
 //! - [`grants`] and [`chat`] also carry the target-bound grants of Mawas acting on another agent:
 //!   `ControlGrant.target_session_id`, `ApprovalInfo.target` (who is addressed and the whole
 //!   text), `QueuedMessage.origin` and the `origin` of a user message's payload (protocol 0.62,
@@ -143,6 +146,7 @@ pub mod provider;
 pub mod recovery;
 pub mod render;
 pub mod resources;
+pub mod suggest;
 pub mod task;
 pub mod terminal_search;
 pub mod tree;
@@ -161,7 +165,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 63,
+    minor: 64,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::assistant::Attachment;
 use crate::checkpoint::CheckpointRestored;
 use crate::messages::SessionInfo;
+use crate::suggest::Suggestion;
 use crate::worktree::WorktreeSetup;
 
 /// Most events one `chat.history` returns, whatever `limit` asks for.
@@ -638,6 +639,10 @@ pub struct ApprovalInfo {
     /// Mawas acts on, and the exact text it would send. Absent for every other approval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ControlTarget>,
+    /// Protocol 0.64 (capability `ask.suggest`): the answer Mawas suggested, if she did; the
+    /// user's click on *Use* is their own `approval.respond`. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<Suggestion>,
 }
 
 /// The agent a `control` approval of Mawas acts on (protocol 0.62): what the card shows besides
@@ -688,6 +693,10 @@ pub struct QuestionInfo {
     #[serde(flatten)]
     pub spec: QuestionSpec,
     pub requested_at_ms: u64,
+    /// Protocol 0.64 (capability `ask.suggest`): the answer Mawas suggested, if she did; the
+    /// user's click on *Use* is their own `question.answer`. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<Suggestion>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

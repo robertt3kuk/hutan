@@ -1,0 +1,1 @@
+{"data":{"suggestion":{"answer":{"kind":"option","option_id":"allow_once"},"from":"01K7F3B5N2Q9W8E4R6T1Y0V3KN","reason":"Same command you allowed twice today, and it only touches the build folder.","suggested_at_ms":1791894185000},"target":{"id":"01K7F3B5N2Q9W8E4R6T1Y0V3AP","kind":"approval"}},"epoch":"01K7F3B5N2Q9W8E4R6T1Y0V3PQ","event":"ask.suggestion","seq":1117}

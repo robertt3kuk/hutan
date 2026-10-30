@@ -57,6 +57,7 @@ use hutan_protocol::provider::*;
 use hutan_protocol::recovery::*;
 use hutan_protocol::render::*;
 use hutan_protocol::resources::*;
+use hutan_protocol::suggest::*;
 use hutan_protocol::task::*;
 use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch, TerminalSearchResult};
 use hutan_protocol::tree::*;
@@ -501,6 +502,7 @@ fn approval_info() -> ApprovalInfo {
         detail: Some("in /repo".into()),
         options: permission_options(),
         requested_at_ms: 1_791_894_170_500,
+        suggestion: None,
         target: None,
     }
 }
@@ -587,6 +589,7 @@ fn question_info() -> QuestionInfo {
         turn_id: Some(turn()),
         spec: question_spec(),
         requested_at_ms: 1_791_894_170_600,
+        suggestion: None,
     }
 }
 
@@ -1200,6 +1203,7 @@ fn control_approval() -> ApprovalInfo {
             },
         ],
         requested_at_ms: 1_791_894_180_000,
+        suggestion: None,
         target: None,
     }
 }
@@ -1235,6 +1239,7 @@ fn control_grants_approval() -> ApprovalInfo {
             option("deny", "Deny", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: 1_791_894_180_000,
+        suggestion: None,
         target: None,
     }
 }
@@ -1273,6 +1278,7 @@ fn control_target_approval() -> ApprovalInfo {
             option("deny", "Deny", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: 1_791_894_180_000,
+        suggestion: None,
         target: Some(ControlTarget {
             session_id: sid2(),
             title: "api".into(),
@@ -1372,6 +1378,7 @@ fn memory_approval() -> ApprovalInfo {
             option("reject", "Reject", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: 1_791_894_180_000,
+        suggestion: None,
         target: None,
     }
 }
@@ -4047,7 +4054,45 @@ fn requests() -> Vec<(&'static str, Request)> {
                 workspace_id: None,
             }),
         ),
+        (
+            "ask_suggest_approval",
+            Request::AskSuggest(AskSuggest {
+                target: AskTarget::Approval { id: approval() },
+                answer: SuggestedAnswer::Option {
+                    option_id: "allow_once".into(),
+                },
+                reason: "Same command you allowed twice today.".into(),
+            }),
+        ),
+        (
+            "ask_suggest_question",
+            Request::AskSuggest(AskSuggest {
+                target: AskTarget::Question { id: question() },
+                answer: SuggestedAnswer::Values {
+                    values: question_answer_values(),
+                },
+                reason: "The project already uses sqlite.".into(),
+            }),
+        ),
+        (
+            "ask_suggest_decline",
+            Request::AskSuggest(AskSuggest {
+                target: AskTarget::Question { id: question() },
+                answer: SuggestedAnswer::Decline,
+                reason: "It asks for a token that is not needed here.".into(),
+            }),
+        ),
     ]
+}
+
+fn suggestion_fixture(answer: SuggestedAnswer) -> Suggestion {
+    Suggestion {
+        answer,
+        reason: "Same command you allowed twice today, and it only touches the build folder."
+            .into(),
+        from: sid2(),
+        suggested_at_ms: 1_791_894_185_000,
+    }
 }
 
 fn checkpoint_id(n: u8) -> CheckpointId {
@@ -5524,6 +5569,22 @@ fn events() -> Vec<(&'static str, Event)> {
             Event::ApprovalRequired {
                 approval: Box::new(control_target_approval()),
             },
+        ),
+        (
+            "ask_suggestion_set",
+            Event::AskSuggestion(Box::new(AskSuggestion {
+                target: AskTarget::Approval { id: approval() },
+                suggestion: Some(suggestion_fixture(SuggestedAnswer::Option {
+                    option_id: "allow_once".into(),
+                })),
+            })),
+        ),
+        (
+            "ask_suggestion_cleared",
+            Event::AskSuggestion(Box::new(AskSuggestion {
+                target: AskTarget::Question { id: question() },
+                suggestion: None,
+            })),
         ),
     ]
 }
@@ -7857,6 +7918,62 @@ fn responses_match_fixtures() {
                         chat_session_id: Some(sid()),
                         target_session_id: Some(sid2()),
                         created_ms: 1_791_894_195_000,
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "ask_suggested",
+            ControlMessage::ok(
+                903,
+                &AskSuggested {
+                    target: AskTarget::Approval { id: approval() },
+                    suggestion: suggestion_fixture(SuggestedAnswer::Option {
+                        option_id: "allow_once".into(),
+                    }),
+                    replaced: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "ask_suggested_replaced",
+            ControlMessage::ok(
+                904,
+                &AskSuggested {
+                    target: AskTarget::Question { id: question() },
+                    suggestion: suggestion_fixture(SuggestedAnswer::Decline),
+                    replaced: true,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "approval_list_suggestion",
+            ControlMessage::ok(
+                905,
+                &ApprovalList {
+                    approvals: vec![ApprovalInfo {
+                        suggestion: Some(suggestion_fixture(SuggestedAnswer::Option {
+                            option_id: "accept".into(),
+                        })),
+                        ..approval_info()
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "question_list_suggestion",
+            ControlMessage::ok(
+                906,
+                &QuestionList {
+                    questions: vec![QuestionInfo {
+                        suggestion: Some(suggestion_fixture(SuggestedAnswer::Values {
+                            values: question_answer_values(),
+                        })),
+                        ..question_info()
                     }],
                 },
             )

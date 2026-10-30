@@ -63,6 +63,7 @@ use crate::render::Row;
 use crate::resources::{
     AgentInterrupt, ProcessSignal, ResourceSample, ResourcesListRequest, ResourcesSubscribe,
 };
+use crate::suggest::{AskSuggest, AskSuggestion};
 use crate::task::{TaskCreate, TaskDelete, TaskListRequest, TaskRef, TaskReview, TaskUpdate};
 use crate::terminal_search::TerminalSearch;
 use crate::tree::{AgentTreeRequest, NodeReport};
@@ -294,6 +295,11 @@ pub enum Request {
     /// Capability `chat.questions`: answer a question (values), decline it or cancel it.
     #[serde(rename = "question.answer")]
     QuestionAnswer(QuestionAnswer),
+    /// Capability `ask.suggest` (protocol 0.64): a Mawas chat attaches an advisory, unsent
+    /// answer to a pending approval or question; answered with `AskSuggested`. Never answers
+    /// anything: the user's click is their own `approval.respond` / `question.answer`.
+    #[serde(rename = "ask.suggest")]
+    AskSuggest(AskSuggest),
     /// Capability `chat.direct` (protocol 0.11): the configured model providers; answered with
     /// `ProviderList`.
     #[serde(rename = "provider.list")]
@@ -1728,6 +1734,10 @@ pub enum Event {
         session_id: SessionId,
         insight: Box<hutan_core::insight::AgentInsight>,
     },
+    /// Capability `ask.suggest` (protocol 0.64): the suggestion of a pending approval or
+    /// question changed (`suggestion` absent: it went away with the request).
+    #[serde(rename = "ask.suggestion")]
+    AskSuggestion(Box<AskSuggestion>),
 }
 
 impl Event {
@@ -1800,6 +1810,7 @@ impl Event {
         "agent.insight_updated",
         "update.available",
         "update.install",
+        "ask.suggestion",
     ];
 }
 
