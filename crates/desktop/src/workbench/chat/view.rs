@@ -56,6 +56,14 @@ pub struct CatchUp {
     pub open: Rc<dyn Fn(&mut Window, &mut App)>,
 }
 
+impl std::fmt::Debug for CatchUp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CatchUp")
+            .field("text", &self.text)
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct ChatView {
     pub(super) session: SessionId,
     pub(super) model: Entity<ChatModel>,

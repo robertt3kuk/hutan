@@ -2461,6 +2461,7 @@ impl Render for AssistantPanel {
         let rem_px = f32::from(window.rem_size());
         self.ensure_memory(cx);
         self.ensure_recent(cx);
+        self.sync_catch_up(cx);
         let rail = (!self.folded && self.rail_open && connected)
             .then(|| self.render_rail(&look, false, rem_px, cx));
         let asks = self.render_chat_asks(&look, cx);

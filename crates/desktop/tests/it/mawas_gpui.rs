@@ -2440,3 +2440,92 @@ fn a_terminal_agent_is_reviewed_from_its_menu_entry_and_the_chip_says_what_is_no
         assert!(text.contains(part), "missing {part:?} in\n{text}");
     }
 }
+
+// ---- MAWAS-DIGEST-A: the Catch up chip -----------------------------------------------------------
+
+fn chip_drawn(view: &Entity<Workbench>, cx: &VisualTestContext) -> bool {
+    view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("catch-up")))
+        .is_some()
+}
+
+fn chip_text(panel: &Entity<AssistantPanel>, cx: &VisualTestContext) -> Option<gpui::SharedString> {
+    panel.read_with(cx, |p, cx| {
+        p.session(cx)
+            .and_then(|s| p.chat_view(s))
+            .and_then(|view| view.read(cx).catch_up_text())
+    })
+}
+
+#[gpui::test]
+fn the_catch_up_chip_says_what_waits_and_one_click_opens_the_recent_tab(cx: &mut TestAppContext) {
+    let env = started();
+    let target = env.daemon.sh("sleep 600");
+    let other = reported_agent(&env);
+    let (view, cx, panel) = open_wide(cx, &env);
+    // A request waits: something the user was away for.
+    let _asked = env
+        .daemon
+        .call_from_in_background::<SessionResult>(other.id, rename_request(target.id, "x"));
+    wait_needs(&panel, cx, 1);
+    wait_until(cx, "the chip", |cx| chip_drawn(&view, cx));
+    let text = chip_text(&panel, cx).expect("the chip has its line");
+    assert!(
+        text.contains("1 request waits for you"),
+        "the one summary line of the daemon's records: {text}"
+    );
+    // Zero tokens: no turn was started to say it.
+    let session = panel.read_with(cx, |p, cx| p.session(cx)).unwrap();
+    assert!(
+        !env.daemon
+            .session(session)
+            .chat
+            .is_some_and(|c| c.turn_active)
+    );
+
+    // The rail is hidden: one click opens it on the Recent tab, and remembers both.
+    panel.update(cx, |p, cx| p.set_rail_open(false, cx));
+    wait_until(cx, "the rail hidden", |cx| {
+        !panel.read_with(cx, |p, _| p.rail_open())
+    });
+    click(&view, cx, Region::Chat("catch-up"));
+    wait_until(cx, "the rail open on Recent", |cx| {
+        panel.read_with(cx, |p, _| p.rail_open())
+            && written_tab(&view, cx).as_deref() == Some("recent")
+    });
+    wait_until(cx, "the Recent tab", |cx| {
+        painted(&view, cx, "today-recent-since")
+    });
+}
+
+#[gpui::test]
+fn marking_as_seen_takes_the_chip_away_and_an_empty_home_has_none(cx: &mut TestAppContext) {
+    // Nothing happened: the empty conversation has no chip, and the read that found out was made.
+    let env = started();
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_until(cx, "the read of the catch-up", |cx| {
+        panel.read_with(cx, |p, _| p.recent_activity().is_some())
+    });
+    assert!(chip_text(&panel, cx).is_none());
+    assert!(!chip_drawn(&view, cx), "nothing happened: no chip");
+
+    // Something did: the chip; Mark as seen moves the point past it and the chip goes.
+    let target = env.daemon.sh("sleep 600");
+    let other = reported_agent(&env);
+    let _asked = env
+        .daemon
+        .call_from_in_background::<SessionResult>(other.id, rename_request(target.id, "x"));
+    wait_until(cx, "the chip", |cx| {
+        cx.executor().advance_clock(Duration::from_millis(500));
+        chip_drawn(&view, cx)
+    });
+    click(&view, cx, Region::Chat("catch-up"));
+    wait_until(cx, "the Recent tab", |cx| {
+        painted(&view, cx, "today-recent-seen")
+    });
+    click_region(&view, cx, "today-recent-seen");
+    wait_until(cx, "the chip gone", |cx| {
+        cx.executor().advance_clock(Duration::from_millis(500));
+        chip_text(&panel, cx).is_none()
+    });
+    assert!(!chip_drawn(&view, cx));
+}

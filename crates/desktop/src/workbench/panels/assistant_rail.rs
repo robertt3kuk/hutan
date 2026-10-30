@@ -1265,12 +1265,65 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    /// Reads the catch-up once the Recent tab is on screen, again when the point the user caught
-    /// up at moved, and again — at most every two seconds — when the agents' state changed. A
-    /// hidden rail and the other tabs do no work.
+    /// Whether the empty conversation of Mawas is on screen: the *Catch up* chip would be drawn,
+    /// so what it says is wanted.
+    fn catch_up_wanted(&self, cx: &App) -> bool {
+        let Some(model) = self
+            .session(cx)
+            .and_then(|session| self.chat_model(session))
+        else {
+            return false;
+        };
+        let model = model.read(cx);
+        matches!(model.status(), crate::workbench::chat::LoadStatus::Ready)
+            && model.transcript().is_empty()
+    }
+
+    /// What Mawas Home's empty conversation offers: the line of what happened since the user
+    /// last caught up (the Recent tab's own read, `ActivitySummary::line`), or nothing. Set on
+    /// the shown chat every frame; nothing here asks a model.
+    pub(super) fn sync_catch_up(&self, cx: &mut Context<Self>) {
+        let Some(view) = self.session(cx).and_then(|session| self.chat_view(session)) else {
+            return;
+        };
+        let line = self
+            .recent
+            .activity
+            .as_ref()
+            .and_then(|activity| activity.summary.line());
+        let chip = line.map(|line| {
+            let panel = cx.entity().downgrade();
+            chat::CatchUp {
+                text: line.into(),
+                open: std::rc::Rc::new(move |_window, cx| {
+                    panel.update(cx, |panel, cx| panel.open_recent(cx)).ok();
+                }),
+            }
+        });
+        view.read(cx).set_catch_up(chip);
+    }
+
+    /// The *Catch up* chip's click: the rail's Recent tab, opening the rail first when it is
+    /// hidden (below 640 pt, where Today is a page of its own, that page).
+    pub fn open_recent(&mut self, cx: &mut Context<Self>) {
+        self.set_rail_tab(RailTab::Recent, cx);
+        if self.folded() {
+            if !self.today_only() {
+                self.toggle_today_only(cx);
+            }
+        } else if !self.rail_open {
+            self.set_rail_open(true, cx);
+        }
+    }
+
+    /// Reads the catch-up once the Recent tab is on screen or the *Catch up* chip is wanted,
+    /// again when the point the user caught up at moved, and again — at most every two seconds —
+    /// when the agents' state changed. A hidden rail with a conversation under way, and the other
+    /// tabs, do no work.
     pub(super) fn ensure_recent(&mut self, cx: &mut Context<Self>) {
-        let wanted = self.rail_open
-            && self.env.settings.get::<AssistantSettings>().rail_tab == RailTab::Recent;
+        let wanted = (self.rail_open
+            && self.env.settings.get::<AssistantSettings>().rail_tab == RailTab::Recent)
+            || self.catch_up_wanted(cx);
         if !wanted || self.recent.loading || self.recent.unsupported || !self.connected(cx) {
             return;
         }
