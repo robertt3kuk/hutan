@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Mawas Home, Global first, with the Now rail (agents board)</title>
+<desc>Mock: Mawas Home opens Global; a Focus chip replaces the scope dropdown; the chat column is centered with drag handles; the right rail has tabs Now / Recent / Memory, showing every agent across workspaces. Invented data.</desc>
+<rect x="0" y="0" width="1440" height="900" fill="#141413"/>
+<rect x="0" y="0" width="1440" height="36" fill="#1F1E1D"/>
+<circle cx="18" cy="18" r="5" fill="#E5675F"/>
+<circle cx="36" cy="18" r="5" fill="#E2AE45"/>
+<circle cx="54" cy="18" r="5" fill="#6BBF85"/>
+<text x="720.0" y="22" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="middle">Hutan — invented data, scratch home</text>
+<line x1="0" y1="36" x2="1440" y2="36" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="0" y="37" width="236" height="839" fill="#1F1E1D"/>
+<line x1="236" y1="37" x2="236" y2="876" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="18" y="60" width="12" height="12" fill="#AEACA4" rx="3"/>
+<text x="40" y="71" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Agents</text>
+<rect x="196" y="59" width="20" height="18" fill="#262624" rx="9" stroke="#E2AE45" stroke-width="1"/>
+<text x="203" y="71.5" font-size="10" fill="#E2AE45" font-weight="400" text-anchor="start">2</text>
+<rect x="8" y="84" width="220" height="28" fill="#262624" rx="6"/>
+<rect x="18" y="90" width="12" height="12" fill="#EA7A43" rx="3"/>
+<text x="40" y="101" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Mawas</text>
+<rect x="18" y="120" width="12" height="12" fill="#AEACA4" rx="3"/>
+<text x="40" y="131" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Memory</text>
+<rect x="196" y="119" width="20" height="18" fill="#262624" rx="9" stroke="#E2AE45" stroke-width="1"/>
+<text x="203" y="131.5" font-size="10" fill="#E2AE45" font-weight="400" text-anchor="start">2</text>
+<rect x="18" y="150" width="12" height="12" fill="#AEACA4" rx="3"/>
+<text x="40" y="161" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Tasks</text>
+<line x1="8" y1="182" x2="228" y2="182" stroke="#2F2E2C" stroke-width="1"/>
+<text x="18" y="204" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" letter-spacing="0.8">PROJECTS</text>
+<text x="18" y="232" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">▾ api</text>
+<circle cx="30" cy="252" r="4" fill="#E2AE45"/>
+<text x="44" y="256" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Fix flaky auth test</text>
+<circle cx="30" cy="274" r="4" fill="#E5675F"/>
+<text x="44" y="278" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Add rate limiter</text>
+<text x="18" y="306" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">▾ web</text>
+<circle cx="30" cy="326" r="4" fill="#E2AE45"/>
+<text x="44" y="330" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Migrate to router v7</text>
+<text x="18" y="358" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">▾ infra</text>
+<circle cx="30" cy="378" r="4" fill="#EA7A43"/>
+<text x="44" y="382" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Rotate staging certs</text>
+<rect x="0" y="876" width="1440" height="24" fill="#1F1E1D"/>
+<line x1="0" y1="876" x2="1440" y2="876" stroke="#2F2E2C" stroke-width="1"/>
+<circle cx="14" cy="888" r="4" fill="#6BBF85"/>
+<text x="24" y="892" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">daemon ok</text>
+<text x="1428" y="892" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">usage  OMP 41%   Codex 72%   Claude 18%</text>
+<rect x="237" y="37" width="1203" height="32" fill="#141413"/>
+<rect x="245" y="42" width="108" height="26" fill="#1F1E1D" rx="6"/>
+<text x="257" y="59" font-size="12" fill="#F5F4EF" font-weight="500" text-anchor="start">✦ Mawas</text>
+<line x1="237" y1="69" x2="1440" y2="69" stroke="#2F2E2C" stroke-width="1"/>
+<text x="253" y="96" font-size="13.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Mawas</text>
+<rect x="313" y="80" width="155" height="24" fill="#262624" rx="12" stroke="#2F2E2C" stroke-width="1"/>
+<text x="323" y="96.025" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Focus: All projects ▾</text>
+<rect x="476" y="80" width="142" height="24" fill="#262624" rx="12" stroke="#2F2E2C" stroke-width="1"/>
+<text x="486" y="96.025" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Ask before acting ▾</text>
+<circle cx="632" cy="92" r="3.5" fill="#6BBF85"/>
+<text x="642" y="96" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OMP · claude-sonnet-4.5</text>
+<text x="1078" y="97" font-size="16" fill="#AEACA4" font-weight="400" text-anchor="end">⋯</text>
+<text x="1056" y="96" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="end">New chat</text>
+<line x1="237" y1="114" x2="1100" y2="114" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="1100" y="70" width="340" height="44" fill="#141413"/>
+<line x1="1100" y1="70" x2="1100" y2="876" stroke="#2F2E2C" stroke-width="1"/>
+<line x1="1100" y1="114" x2="1440" y2="114" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="1400" y="79" width="26" height="26" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="1407" y="85" width="12" height="14" fill="none" rx="2" stroke="#F5F4EF" stroke-width="1.3"/>
+<line x1="1415" y1="85" x2="1415" y2="99" stroke="#F5F4EF" stroke-width="1.3"/>
+<rect x="1416" y="86" width="2.5" height="12" fill="#F5F4EF"/>
+<rect x="290.5" y="330" width="4" height="56" fill="#3A3936" rx="2"/>
+<rect x="1042.5" y="330" width="4" height="56" fill="#3A3936" rx="2"/>
+<rect x="300.5" y="140" width="736" height="24" fill="none"/>
+<rect x="420.5" y="140" width="616" height="34" fill="#262624" rx="10"/>
+<text x="434.5" y="162" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">What are my agents doing, and who is waiting on me?</text>
+<rect x="300.5" y="192" width="239" height="20" fill="#141413" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="308.5" y="205.675" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">⚙ agents_board · 4 agents · 3 projects</text>
+<rect x="550.5" y="192" width="216" height="20" fill="#141413" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="558.5" y="205.675" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">⚙ agent_insight · Add rate limiter</text>
+<text x="300.5" y="240" font-size="13" fill="#F5F4EF" font-weight="400" text-anchor="start">Four agents across three projects. Two wait on you, one works, one failed:</text>
+<rect x="300.5" y="264" width="736" height="54" fill="#1F1E1D" rx="8" stroke="#2F2E2C" stroke-width="1"/>
+<circle cx="316.5" cy="284" r="4.5" fill="#E2AE45"/>
+<text x="330.5" y="288" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">api · Fix flaky auth test</text>
+<text x="330.5" y="306" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Codex · asks to run `cargo test -p auth` · waiting 6 min</text>
+<rect x="958.5" y="274" width="42" height="18" fill="#141413" rx="9" stroke="#2F2E2C" stroke-width="1"/>
+<text x="965.5" y="286.5" font-size="10" fill="#6BBF85" font-weight="400" text-anchor="start">exact</text>
+<rect x="300.5" y="326" width="736" height="54" fill="#1F1E1D" rx="8" stroke="#2F2E2C" stroke-width="1"/>
+<circle cx="316.5" cy="346" r="4.5" fill="#E2AE45"/>
+<text x="330.5" y="350" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">web · Migrate to router v7</text>
+<text x="330.5" y="368" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Claude Code (terminal) · asks “keep the old /legacy routes?” · waiting 41 min</text>
+<rect x="958.5" y="336" width="70" height="18" fill="#141413" rx="9" stroke="#2F2E2C" stroke-width="1"/>
+<text x="965.5" y="348.5" font-size="10" fill="#E2AE45" font-weight="400" text-anchor="start">state only</text>
+<rect x="300.5" y="388" width="736" height="54" fill="#1F1E1D" rx="8" stroke="#2F2E2C" stroke-width="1"/>
+<circle cx="316.5" cy="408" r="4.5" fill="#EA7A43"/>
+<text x="330.5" y="412" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">infra · Rotate staging certs</text>
+<text x="330.5" y="430" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OMP · turn 3, 14 min · 6 files changed (+112 −40) · nothing waiting</text>
+<rect x="958.5" y="398" width="42" height="18" fill="#141413" rx="9" stroke="#2F2E2C" stroke-width="1"/>
+<text x="965.5" y="410.5" font-size="10" fill="#6BBF85" font-weight="400" text-anchor="start">exact</text>
+<rect x="300.5" y="450" width="736" height="54" fill="#1F1E1D" rx="8" stroke="#2F2E2C" stroke-width="1"/>
+<circle cx="316.5" cy="470" r="4.5" fill="#E5675F"/>
+<text x="330.5" y="474" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">api · Add rate limiter</text>
+<text x="330.5" y="492" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OMP · turn 5 failed: “the provider failed” · retry is available</text>
+<rect x="958.5" y="460" width="42" height="18" fill="#141413" rx="9" stroke="#2F2E2C" stroke-width="1"/>
+<text x="965.5" y="472.5" font-size="10" fill="#6BBF85" font-weight="400" text-anchor="start">exact</text>
+<text x="300.5" y="526" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">I answered the two questions only from what Hutan recorded. I cannot answer them for you.</text>
+<rect x="300.5" y="552" width="736" height="40" fill="none" rx="8" stroke="#2F2E2C" stroke-width="1"/>
+<text x="314.5" y="569" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="start">Sources: chat journals ×3 (exact) · terminal hook ×1 (state only)</text>
+<text x="314.5" y="585" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="start">Not visible to me: agents running outside Hutan.</text>
+<rect x="300.5" y="790" width="736" height="76" fill="#1F1E1D" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="316.5" y="818" font-size="12.5" fill="#6F6D66" font-weight="400" text-anchor="start">Ask Mawas…</text>
+<rect x="316.5" y="834" width="63" height="22" fill="#262624" rx="11" stroke="#2F2E2C" stroke-width="1"/>
+<text x="324.5" y="848.675" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">＋ Attach</text>
+<rect x="390.5" y="834" width="281" height="22" fill="#262624" rx="11" stroke="#2F2E2C" stroke-width="1"/>
+<text x="398.5" y="848.675" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">agent · Fix flaky auth test · last 5 turns  ×</text>
+<text x="1020.5" y="850" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">↵ send</text>
+<rect x="590.5" y="744" width="153" height="20" fill="#141413" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="599.5" y="757.675" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">46 rem · drag the edges</text>
+<rect x="1101" y="115" width="339" height="761" fill="#1F1E1D"/>
+<rect x="1114" y="124" width="66" height="26" fill="#262624" rx="6"/>
+<text x="1123" y="141" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Now · 4</text>
+<text x="1193" y="141" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Recent</text>
+<text x="1256" y="141" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Memory · 2</text>
+<line x1="1101" y1="160" x2="1440" y2="160" stroke="#2F2E2C" stroke-width="1"/>
+<text x="1114" y="178" font-size="10" fill="#E2AE45" font-weight="700" text-anchor="start" letter-spacing="0.8">NEEDS YOU · 2</text>
+<rect x="1110" y="190" width="320" height="72" fill="#262624" rx="8"/>
+<text x="1122" y="212" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Run `cargo test -p auth`</text>
+<text x="1122" y="228" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">api · Fix flaky auth test · 6 min</text>
+<rect x="1122" y="234" width="86" height="22" fill="#F5F4EF" rx="6"/>
+<text x="1165.0" y="250" font-size="11.5" fill="#141413" font-weight="600" text-anchor="middle">Allow once</text>
+<rect x="1214" y="234" width="48" height="22" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="1238.0" y="250" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Open</text>
+<rect x="1110" y="270" width="320" height="72" fill="#262624" rx="8"/>
+<text x="1122" y="292" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">“Keep the old /legacy routes?”</text>
+<text x="1122" y="308" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">web · Migrate to router v7 · 41 min</text>
+<rect x="1122" y="314" width="60" height="22" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="1152.0" y="330" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Reply…</text>
+<rect x="1188" y="314" width="48" height="22" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="1212.0" y="330" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Open</text>
+<text x="1114" y="362" font-size="10" fill="#EA7A43" font-weight="700" text-anchor="start" letter-spacing="0.8">WORKING · 1</text>
+<rect x="1110" y="372" width="320" height="50" fill="#262624" rx="8"/>
+<circle cx="1124" cy="390" r="4.5" fill="#EA7A43"/>
+<text x="1136" y="394" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Rotate staging certs</text>
+<text x="1136" y="411" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">infra · OMP · turn 3 · 14 min</text>
+<text x="1114" y="442" font-size="10" fill="#E5675F" font-weight="700" text-anchor="start" letter-spacing="0.8">FAILED · 1</text>
+<rect x="1110" y="452" width="320" height="50" fill="#262624" rx="8"/>
+<circle cx="1124" cy="470" r="4.5" fill="#E5675F"/>
+<text x="1136" y="474" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Add rate limiter</text>
+<text x="1136" y="491" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">api · OMP · turn 5 · the provider failed</text>
+<text x="1114" y="522" font-size="10" fill="#6F6D66" font-weight="700" text-anchor="start" letter-spacing="0.8">IDLE · 3 hidden</text>
+<text x="1426" y="522" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">Show</text>
+<line x1="1110" y1="824" x2="1430" y2="824" stroke="#2F2E2C" stroke-width="1"/>
+<text x="1114" y="846" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Live from Hutan&#x27;s store: no polling.</text>
+<text x="1114" y="862" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Every project, whatever the Focus says.</text>
+</svg>

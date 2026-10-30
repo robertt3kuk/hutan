@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="760" viewBox="0 0 1440 760" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Mawas rail: Recent (since you were away) and Memory</title>
+<desc>Mock: the two other tabs of the right rail. Recent: a catch-up computed from recorded facts with no model call and one button to ask Mawas to summarise it. Memory: proposals waiting, newest entries, add. Invented data.</desc>
+<rect x="0" y="0" width="1440" height="760" fill="#141413"/>
+<text x="24" y="34" font-size="15" fill="#F5F4EF" font-weight="600" text-anchor="start">Rail tabs, 340 px: one column, tabs instead of five stacked panels</text>
+<text x="24" y="54" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Left: Recent (deterministic, no model call). Right: Memory. The Now tab is the first mock.</text>
+<rect x="60" y="80" width="400" height="640" fill="#1F1E1D" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="83" y="107" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Now · 4</text>
+<rect x="144" y="90" width="59" height="26" fill="#262624" rx="6"/>
+<text x="153" y="107" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Recent</text>
+<text x="216" y="107" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Memory · 2</text>
+<line x1="60" y1="126" x2="460" y2="126" stroke="#2F2E2C" stroke-width="1"/>
+<text x="76" y="150" font-size="10" fill="#6F6D66" font-weight="700" text-anchor="start" letter-spacing="0.8">SINCE YOU WERE AWAY · 9 h</text>
+<text x="444" y="150" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">since 21:40</text>
+<rect x="70" y="164" width="380" height="54" fill="#262624" rx="8"/>
+<text x="86" y="196" font-size="15" fill="#6BBF85" font-weight="700" text-anchor="middle">✓</text>
+<text x="104" y="188" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">6 turns finished</text>
+<text x="104" y="205" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">api ×4 · infra ×2 · 18 min of agent time</text>
+<rect x="70" y="226" width="380" height="54" fill="#262624" rx="8"/>
+<text x="86" y="258" font-size="15" fill="#E2AE45" font-weight="700" text-anchor="middle">!</text>
+<text x="104" y="250" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">2 requests waited</text>
+<text x="104" y="267" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">6 min and 41 min (still open)</text>
+<rect x="70" y="288" width="380" height="54" fill="#262624" rx="8"/>
+<text x="86" y="320" font-size="15" fill="#E5675F" font-weight="700" text-anchor="middle">✕</text>
+<text x="104" y="312" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">1 turn failed</text>
+<text x="104" y="329" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">api · Add rate limiter · “the provider failed”</text>
+<rect x="70" y="350" width="380" height="54" fill="#262624" rx="8"/>
+<text x="86" y="382" font-size="15" fill="#AEACA4" font-weight="700" text-anchor="middle">≈</text>
+<text x="104" y="374" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">27 files changed</text>
+<text x="104" y="391" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">+640 −210 · 5 checkpoints kept</text>
+<rect x="70" y="412" width="380" height="54" fill="#262624" rx="8"/>
+<text x="86" y="444" font-size="15" fill="#AEACA4" font-weight="700" text-anchor="middle">◇</text>
+<text x="104" y="436" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">1 task done, 1 blocked</text>
+<text x="104" y="453" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">“Rotate staging certs” done · “Seed data” blocked by it</text>
+<rect x="74" y="480" width="170" height="24" fill="#F5F4EF" rx="6"/>
+<text x="159.0" y="496" font-size="11.5" fill="#141413" font-weight="600" text-anchor="middle">Summarise with Mawas</text>
+<rect x="252" y="480" width="110" height="24" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="307.0" y="496" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Choose time ▾</text>
+<rect x="70" y="524" width="380" height="90" fill="none" rx="8" stroke="#2F2E2C" stroke-width="1"/>
+<text x="82" y="546" font-size="11" fill="#F5F4EF" font-weight="600" text-anchor="start">How complete is this?</text>
+<text x="82" y="564" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Chats: every turn, request and file (exact).</text>
+<text x="82" y="580" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Terminal agents: only the state they reported.</text>
+<text x="82" y="596" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">Agents outside Hutan: not seen.</text>
+<rect x="500" y="80" width="400" height="640" fill="#1F1E1D" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="523" y="107" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Now · 4</text>
+<text x="593" y="107" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Recent</text>
+<rect x="647" y="90" width="87" height="26" fill="#262624" rx="6"/>
+<text x="656" y="107" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">Memory · 2</text>
+<line x1="500" y1="126" x2="900" y2="126" stroke="#2F2E2C" stroke-width="1"/>
+<text x="516" y="150" font-size="10" fill="#E2AE45" font-weight="700" text-anchor="start" letter-spacing="0.8">WAITING FOR YOU · 2</text>
+<rect x="510" y="164" width="380" height="82" fill="#262624" rx="8"/>
+<text x="522" y="188" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">“Uses jj for version control.”</text>
+<text x="522" y="204" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">proposed by Mawas · web</text>
+<rect x="522" y="214" width="67" height="22" fill="#F5F4EF" rx="6"/>
+<text x="555.5" y="230" font-size="11.5" fill="#141413" font-weight="600" text-anchor="middle">Approve</text>
+<rect x="595" y="214" width="48" height="22" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="619.0" y="230" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Edit</text>
+<rect x="649" y="214" width="60" height="22" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="679.0" y="230" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Reject</text>
+<rect x="510" y="254" width="380" height="82" fill="#262624" rx="8"/>
+<text x="522" y="278" font-size="12" fill="#F5F4EF" font-weight="600" text-anchor="start">“Staging deploys need the VPN.”</text>
+<text x="522" y="294" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">edited in a memory file</text>
+<rect x="522" y="304" width="67" height="22" fill="#F5F4EF" rx="6"/>
+<text x="555.5" y="320" font-size="11.5" fill="#141413" font-weight="600" text-anchor="middle">Approve</text>
+<rect x="595" y="304" width="48" height="22" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="619.0" y="320" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Edit</text>
+<rect x="649" y="304" width="60" height="22" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="679.0" y="320" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Reject</text>
+<text x="516" y="354" font-size="10" fill="#6F6D66" font-weight="700" text-anchor="start" letter-spacing="0.8">LATEST · 5 OF 38</text>
+<line x1="514" y1="364" x2="886" y2="364" stroke="#2F2E2C" stroke-width="1"/>
+<text x="516" y="384" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Prefers small commits, no squash</text>
+<text x="884" y="384" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="end">profile</text>
+<line x1="514" y1="394" x2="886" y2="394" stroke="#2F2E2C" stroke-width="1"/>
+<text x="516" y="414" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">api uses nextest, not cargo test</text>
+<text x="884" y="414" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="end">fact · api</text>
+<line x1="514" y1="424" x2="886" y2="424" stroke="#2F2E2C" stroke-width="1"/>
+<text x="516" y="444" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Release branches are cut on Thursdays</text>
+<text x="884" y="444" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="end">note · web</text>
+<rect x="514" y="468" width="76" height="24" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="552.0" y="484" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">＋ Add…</text>
+<rect x="598" y="468" width="112" height="24" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="654.0" y="484" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Open Memory ›</text>
+<text x="516" y="520" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">Memory keeps its page in the left sidebar; the rail only</text>
+<text x="516" y="536" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">shows what is waiting and what is newest.</text>
+<rect x="940" y="80" width="440" height="230" fill="#1F1E1D" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="956" y="108" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Settings → Mawas → Layout</text>
+<text x="956" y="136" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Chat width</text>
+<text x="1270" y="136" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="end">46 rem   [Reset]</text>
+<text x="956" y="151" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">assistant.chat_width_rem</text>
+<text x="956" y="178" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Show the side panel</text>
+<text x="1270" y="178" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="end">On</text>
+<text x="956" y="193" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">assistant.rail_open</text>
+<text x="956" y="220" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Side panel width  (with the Now tab)</text>
+<text x="1270" y="220" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="end">340 px</text>
+<text x="956" y="235" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">assistant.rail_width</text>
+<text x="956" y="262" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Hide idle agents  (with the Now tab)</text>
+<text x="1270" y="262" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="end">On</text>
+<text x="956" y="277" font-size="10" fill="#6F6D66" font-weight="400" text-anchor="start">assistant.rail_hide_idle</text>
+<text x="940" y="342" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="start">Dragging an edge writes these keys on release;</text>
+<text x="940" y="358" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="start">⌘K: “Mawas: Reset Chat Width”, “Mawas: Toggle Today”.</text>
+</svg>

@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="12">
+<title>Mawas Home with the rail hidden: a wide chat column, a turn review, a gated nudge</title>
+<desc>Mock: the rail is hidden (toggle shows a badge for 2 requests), the chat column was dragged to 66 rem, a review card summarises one turn, and a message Mawas wants to queue for another agent waits for the user with only Allow once / Deny. Invented data.</desc>
+<rect x="0" y="0" width="1440" height="900" fill="#141413"/>
+<rect x="0" y="0" width="1440" height="36" fill="#1F1E1D"/>
+<circle cx="18" cy="18" r="5" fill="#E5675F"/>
+<circle cx="36" cy="18" r="5" fill="#E2AE45"/>
+<circle cx="54" cy="18" r="5" fill="#6BBF85"/>
+<text x="720.0" y="22" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="middle">Hutan — invented data, scratch home</text>
+<line x1="0" y1="36" x2="1440" y2="36" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="0" y="37" width="236" height="839" fill="#1F1E1D"/>
+<line x1="236" y1="37" x2="236" y2="876" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="18" y="60" width="12" height="12" fill="#AEACA4" rx="3"/>
+<text x="40" y="71" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Agents</text>
+<rect x="196" y="59" width="20" height="18" fill="#262624" rx="9" stroke="#E2AE45" stroke-width="1"/>
+<text x="203" y="71.5" font-size="10" fill="#E2AE45" font-weight="400" text-anchor="start">2</text>
+<rect x="8" y="84" width="220" height="28" fill="#262624" rx="6"/>
+<rect x="18" y="90" width="12" height="12" fill="#EA7A43" rx="3"/>
+<text x="40" y="101" font-size="13" fill="#F5F4EF" font-weight="500" text-anchor="start">Mawas</text>
+<rect x="18" y="120" width="12" height="12" fill="#AEACA4" rx="3"/>
+<text x="40" y="131" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Memory</text>
+<rect x="196" y="119" width="20" height="18" fill="#262624" rx="9" stroke="#E2AE45" stroke-width="1"/>
+<text x="203" y="131.5" font-size="10" fill="#E2AE45" font-weight="400" text-anchor="start">2</text>
+<rect x="18" y="150" width="12" height="12" fill="#AEACA4" rx="3"/>
+<text x="40" y="161" font-size="13" fill="#AEACA4" font-weight="400" text-anchor="start">Tasks</text>
+<line x1="8" y1="182" x2="228" y2="182" stroke="#2F2E2C" stroke-width="1"/>
+<text x="18" y="204" font-size="10" fill="#6F6D66" font-weight="600" text-anchor="start" letter-spacing="0.8">PROJECTS</text>
+<text x="18" y="232" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">▾ api</text>
+<circle cx="30" cy="252" r="4" fill="#E2AE45"/>
+<text x="44" y="256" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Fix flaky auth test</text>
+<circle cx="30" cy="274" r="4" fill="#E5675F"/>
+<text x="44" y="278" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Add rate limiter</text>
+<text x="18" y="306" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">▾ web</text>
+<circle cx="30" cy="326" r="4" fill="#E2AE45"/>
+<text x="44" y="330" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Migrate to router v7</text>
+<text x="18" y="358" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">▾ infra</text>
+<circle cx="30" cy="378" r="4" fill="#EA7A43"/>
+<text x="44" y="382" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="start">Rotate staging certs</text>
+<rect x="0" y="876" width="1440" height="24" fill="#1F1E1D"/>
+<line x1="0" y1="876" x2="1440" y2="876" stroke="#2F2E2C" stroke-width="1"/>
+<circle cx="14" cy="888" r="4" fill="#6BBF85"/>
+<text x="24" y="892" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">daemon ok</text>
+<text x="1428" y="892" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="end">usage  OMP 41%   Codex 72%   Claude 18%</text>
+<rect x="237" y="37" width="1203" height="32" fill="#141413"/>
+<rect x="245" y="42" width="108" height="26" fill="#1F1E1D" rx="6"/>
+<text x="257" y="59" font-size="12" fill="#F5F4EF" font-weight="500" text-anchor="start">✦ Mawas</text>
+<line x1="237" y1="69" x2="1440" y2="69" stroke="#2F2E2C" stroke-width="1"/>
+<text x="253" y="96" font-size="13.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Mawas</text>
+<rect x="313" y="80" width="97" height="24" fill="#262624" rx="12" stroke="#2F2E2C" stroke-width="1"/>
+<text x="323" y="96.025" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Focus: api ▾</text>
+<rect x="418" y="80" width="142" height="24" fill="#262624" rx="12" stroke="#2F2E2C" stroke-width="1"/>
+<text x="428" y="96.025" font-size="11.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Ask before acting ▾</text>
+<circle cx="574" cy="92" r="3.5" fill="#6BBF85"/>
+<text x="584" y="96" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">OMP · claude-sonnet-4.5</text>
+<rect x="1402" y="79" width="26" height="26" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="1409" y="85" width="12" height="14" fill="none" rx="2" stroke="#F5F4EF" stroke-width="1.3"/>
+<line x1="1417" y1="85" x2="1417" y2="99" stroke="#F5F4EF" stroke-width="1.3"/>
+<circle cx="1427" cy="79" r="8" fill="#E2AE45"/>
+<text x="1427" y="83" font-size="10" fill="#141413" font-weight="700" text-anchor="middle">2</text>
+<text x="1378" y="97" font-size="16" fill="#AEACA4" font-weight="400" text-anchor="end">⋯</text>
+<text x="1356" y="96" font-size="12" fill="#AEACA4" font-weight="400" text-anchor="end">New chat</text>
+<text x="1282" y="96" font-size="12" fill="#E5675F" font-weight="500" text-anchor="end">Stop</text>
+<line x1="237" y1="114" x2="1440" y2="114" stroke="#2F2E2C" stroke-width="1"/>
+<rect x="300.5" y="330" width="4" height="56" fill="#EA7A43" rx="2"/>
+<rect x="1372.5" y="330" width="4" height="56" fill="#EA7A43" rx="2"/>
+<rect x="708.5" y="744" width="283" height="20" fill="#141413" rx="10" stroke="#EA7A43" stroke-width="1"/>
+<text x="717.5" y="757.675" font-size="10.5" fill="#EA7A43" font-weight="400" text-anchor="start">66 rem · double-click an edge: back to 46 rem</text>
+<rect x="610.5" y="130" width="756" height="34" fill="#262624" rx="10"/>
+<text x="624.5" y="152" font-size="12.5" fill="#F5F4EF" font-weight="400" text-anchor="start">Review what Fix flaky auth test did in its last turn.</text>
+<rect x="310.5" y="182" width="151" height="20" fill="#141413" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="318.5" y="195.675" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">⚙ agent_review · turn 4</text>
+<rect x="480.5" y="182" width="116" height="20" fill="#141413" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="488.5" y="195.675" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">⚙ checkpoint_diff</text>
+<rect x="610.5" y="182" width="151" height="20" fill="#141413" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="618.5" y="195.675" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="start">⚙ diagnostics · 3 files</text>
+<rect x="310.5" y="216" width="1056" height="232" fill="#1F1E1D" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="326.5" y="242" font-size="13" fill="#F5F4EF" font-weight="600" text-anchor="start">Review · Fix flaky auth test · turn 4 · 3 min 12 s</text>
+<rect x="1176.5" y="226" width="145" height="20" fill="#141413" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="1184.5" y="239.5" font-size="10" fill="#6BBF85" font-weight="400" text-anchor="start">from the journal: exact</text>
+<text x="326.5" y="270" font-size="10" fill="#6F6D66" font-weight="700" text-anchor="start" letter-spacing="0.8">CHANGED</text>
+<text x="326.5" y="290" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">3 files · +41 −7</text>
+<text x="326.5" y="310" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">auth/session.rs  +28 −3</text>
+<text x="326.5" y="330" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">auth/tests/flaky.rs  +12 −4</text>
+<text x="326.5" y="350" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">Cargo.lock  +1 −0</text>
+<text x="666.5" y="270" font-size="10" fill="#6F6D66" font-weight="700" text-anchor="start" letter-spacing="0.8">RAN</text>
+<text x="666.5" y="290" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">cargo test -p auth  ✓ 24 passed</text>
+<text x="666.5" y="310" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">cargo clippy -p auth  ✓</text>
+<text x="666.5" y="330" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">no other command failed</text>
+<text x="1006.5" y="270" font-size="10" fill="#6F6D66" font-weight="700" text-anchor="start" letter-spacing="0.8">SIGNALS (HEURISTICS)</text>
+<text x="1006.5" y="290" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">lockfile changed</text>
+<text x="1006.5" y="310" font-size="11.5" fill="#E2AE45" font-weight="400" text-anchor="start">a sleep(200ms) added in a test</text>
+<text x="1006.5" y="330" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">no change outside api/</text>
+<line x1="326.5" y1="384" x2="1350.5" y2="384" stroke="#2F2E2C" stroke-width="1"/>
+<text x="326.5" y="408" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">Mawas: the fix passes, but the sleep hides the race instead of removing it. I&#x27;d ask the agent to wait on the</text>
+<text x="326.5" y="426" font-size="12" fill="#F5F4EF" font-weight="400" text-anchor="start">event instead.</text>
+<rect x="1116.5" y="408" width="96" height="24" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="1164.5" y="424" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Open Changes</text>
+<rect x="1220.5" y="408" width="76" height="24" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="1258.5" y="424" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Rewind…</text>
+<rect x="310.5" y="468" width="1056" height="152" fill="#1F1E1D" rx="10" stroke="#E2AE45" stroke-width="1"/>
+<text x="326.5" y="492" font-size="12.5" fill="#F5F4EF" font-weight="600" text-anchor="start">Mawas asks to queue a message for “Fix flaky auth test” (Codex, api)</text>
+<rect x="326.5" y="506" width="1024" height="52" fill="#141413" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="338.5" y="526" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">“Replace the sleep in flaky.rs with a wait on the session-ready event, then re-run</text>
+<text x="338.5" y="544" font-size="11.5" fill="#AEACA4" font-weight="400" text-anchor="start">cargo test -p auth. Do not touch Cargo.lock.”  (full text, 214 characters)</text>
+<rect x="326.5" y="570" width="96" height="24" fill="#F5F4EF" rx="6"/>
+<text x="374.5" y="586" font-size="11.5" fill="#141413" font-weight="600" text-anchor="middle">Allow once</text>
+<rect x="430.5" y="570" width="60" height="24" fill="#262624" rx="6" stroke="#2F2E2C" stroke-width="1"/>
+<text x="460.5" y="586" font-size="11.5" fill="#F5F4EF" font-weight="500" text-anchor="middle">Deny</text>
+<text x="510.5" y="586" font-size="11" fill="#6F6D66" font-weight="400" text-anchor="start">Delivered after the current turn, in the agent&#x27;s queue: you can edit or remove it there.</text>
+<text x="326.5" y="608" font-size="11" fill="#E2AE45" font-weight="400" text-anchor="start">No “always allow”: messages to other agents ask every time, per agent.</text>
+<rect x="310.5" y="790" width="1056" height="76" fill="#1F1E1D" rx="10" stroke="#2F2E2C" stroke-width="1"/>
+<text x="326.5" y="818" font-size="12.5" fill="#6F6D66" font-weight="400" text-anchor="start">Ask Mawas…</text>
+<rect x="326.5" y="834" width="63" height="22" fill="#262624" rx="11" stroke="#2F2E2C" stroke-width="1"/>
+<text x="334.5" y="848.675" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">＋ Attach</text>
+<rect x="400.5" y="834" width="281" height="22" fill="#262624" rx="11" stroke="#2F2E2C" stroke-width="1"/>
+<text x="408.5" y="848.675" font-size="10.5" fill="#AEACA4" font-weight="400" text-anchor="start">agent · Fix flaky auth test · last 5 turns  ×</text>
+<text x="1350.5" y="850" font-size="10.5" fill="#6F6D66" font-weight="400" text-anchor="end">↵ send</text>
+</svg>
