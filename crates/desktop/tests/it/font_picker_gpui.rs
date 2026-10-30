@@ -14,7 +14,9 @@ use std::sync::Arc;
 use common::{click_at, draw, offline_connection, open_options, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_desktop::macos::{FakeFonts, FontFamily, MacServices};
-use hutan_desktop::workbench::{FontField, FontRowKind, Region, Workbench, WorkbenchOptions, actions};
+use hutan_desktop::workbench::{
+    FontField, FontRowKind, Region, Workbench, WorkbenchOptions, actions,
+};
 use hutan_settings::SettingsStore;
 
 const FIELD: FontField = FontField::TerminalFamily;
@@ -153,7 +155,14 @@ fn the_list_is_read_once_sorted_and_follows_the_systems_changes(cx: &mut TestApp
     open_terminal_page(&view, cx);
     assert_eq!(
         names(&view, cx),
-        ["Avenir", "Courier New", "Fira Code", "Helvetica", "Menlo", "Zapfino"],
+        [
+            "Avenir",
+            "Courier New",
+            "Fira Code",
+            "Helvetica",
+            "Menlo",
+            "Zapfino"
+        ],
         "sorted, without the hidden family and the duplicate"
     );
     assert_eq!(fixture.fonts.reads(), 1);
@@ -172,10 +181,7 @@ fn the_list_is_read_once_sorted_and_follows_the_systems_changes(cx: &mut TestApp
         view.read_with(cx, |wb, _| wb.fonts_generation()) > generation
     });
     assert!(names(&view, cx).contains(&"Berkeley Mono".to_owned()));
-    assert_eq!(
-        names(&view, cx).iter().filter(|n| *n == "Menlo").count(),
-        1
-    );
+    assert_eq!(names(&view, cx).iter().filter(|n| *n == "Menlo").count(), 1);
 }
 
 // ---- what the picker lists -----------------------------------------------------------------------
@@ -193,7 +199,10 @@ fn only_monospaced_families_are_listed_until_show_all_and_the_current_value_is_f
         ["Helvetica", "", "Courier New", "Fira Code", "Menlo"]
     );
     let kinds: Vec<FontRowKind> = view.read_with(cx, |wb, _| {
-        wb.font_rows(FIELD, "").into_iter().map(|r| r.kind).collect()
+        wb.font_rows(FIELD, "")
+            .into_iter()
+            .map(|r| r.kind)
+            .collect()
     });
     assert_eq!(kinds[0], FontRowKind::Family { monospaced: false });
     assert_eq!(kinds[1], FontRowKind::SystemDefault);
@@ -203,7 +212,15 @@ fn only_monospaced_families_are_listed_until_show_all_and_the_current_value_is_f
     assert!(view.read_with(cx, |wb, _| wb.settings_sheet().unwrap().font_show_all()));
     assert_eq!(
         values(&view, cx, ""),
-        ["Helvetica", "", "Avenir", "Courier New", "Fira Code", "Menlo", "Zapfino"]
+        [
+            "Helvetica",
+            "",
+            "Avenir",
+            "Courier New",
+            "Fira Code",
+            "Menlo",
+            "Zapfino"
+        ]
     );
     click_region(&view, cx, Region::SettingsItem("font-all", FIELD.index()));
     assert!(!view.read_with(cx, |wb, _| wb.settings_sheet().unwrap().font_show_all()));
@@ -214,7 +231,10 @@ fn while_unset_system_default_is_the_current_value_and_comes_first(cx: &mut Test
     let (view, _fixture, cx) = open(cx, "", installed());
     open_terminal_page(&view, cx);
     open_picker(&view, cx);
-    assert_eq!(values(&view, cx, ""), ["", "Courier New", "Fira Code", "Menlo"]);
+    assert_eq!(
+        values(&view, cx, ""),
+        ["", "Courier New", "Fira Code", "Menlo"]
+    );
     assert_eq!(view.read_with(cx, |wb, _| wb.font_explicit(FIELD)), None);
 }
 
@@ -228,17 +248,29 @@ fn typing_searches_the_families_and_return_writes_the_setting_once(cx: &mut Test
     let before = fixture.generation();
 
     cx.simulate_keystrokes("f i r");
-    assert_eq!(view.read_with(cx, |wb, _| wb.font_filter().to_owned()), "fir");
-    assert_eq!(values(&view, cx, "fir"), ["Fira Code", "fir"]);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.font_filter().to_owned()),
+        "fir"
+    );
+    assert_eq!(values(&view, cx, "fir"), ["Fira Code"]);
     assert_eq!(cursor(&view, cx).as_deref(), Some("Fira Code"));
     cx.simulate_keystrokes("x backspace");
-    assert_eq!(view.read_with(cx, |wb, _| wb.font_filter().to_owned()), "fir");
-    assert_eq!(fixture.generation(), before, "nothing is written by searching");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.font_filter().to_owned()),
+        "fir"
+    );
+    assert_eq!(
+        fixture.generation(),
+        before,
+        "nothing is written by searching"
+    );
 
     cx.simulate_keystrokes("enter");
     draw(cx);
     assert!(
-        fixture.settings_file().contains("font_family = \"Fira Code\""),
+        fixture
+            .settings_file()
+            .contains("font_family = \"Fira Code\""),
         "{}",
         fixture.settings_file()
     );
@@ -250,7 +282,8 @@ fn typing_searches_the_families_and_return_writes_the_setting_once(cx: &mut Test
     );
     assert_eq!(view.read_with(cx, |wb, _| wb.font_filter().to_owned()), "");
     assert_eq!(
-        view.read_with(cx, |wb, _| wb.font_explicit(FIELD)).as_deref(),
+        view.read_with(cx, |wb, _| wb.font_explicit(FIELD))
+            .as_deref(),
         Some("Fira Code")
     );
     let written = fixture.generation();
@@ -283,7 +316,9 @@ fn the_arrow_keys_move_through_the_list_and_a_click_on_a_family_picks_it(cx: &mu
     // The lines are System default, Courier New, Fira Code, Menlo: the third is index 2.
     click_region(&view, cx, Region::SettingsItem("font-option", 2));
     assert!(
-        fixture.settings_file().contains("font_family = \"Fira Code\""),
+        fixture
+            .settings_file()
+            .contains("font_family = \"Fira Code\""),
         "{}",
         fixture.settings_file()
     );
@@ -342,7 +377,11 @@ fn the_wheel_scrolls_a_long_list_and_the_arrow_keys_keep_the_cursor_in_view(
     view.update(cx, |wb, cx| wb.font_wheel(26.0 * 3.0, cx));
     assert_eq!(view.read_with(cx, |wb, _| wb.font_top()), 3);
     view.update(cx, |wb, cx| wb.font_wheel(-26.0 * 10.0, cx));
-    assert_eq!(view.read_with(cx, |wb, _| wb.font_top()), 0, "stops at the top");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.font_top()),
+        0,
+        "stops at the top"
+    );
     view.update(cx, |wb, cx| wb.font_wheel(26.0 * 1000.0, cx));
     let total = values(&view, cx, "").len();
     assert_eq!(
@@ -370,7 +409,7 @@ fn a_typed_name_that_is_not_installed_still_works_and_is_warned_about(cx: &mut T
     let rows = view.read_with(cx, |wb, _| wb.font_rows(FIELD, "berkeley mono"));
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].kind, FontRowKind::Typed { installed: false });
-    assert_eq!(rows[0].label, "Use “berkeley mono” (not installed)");
+    assert_eq!(rows[0].label, "Use “berkeley mono”");
     assert_eq!(cursor(&view, cx).as_deref(), Some("berkeley mono"));
     assert_eq!(view.read_with(cx, |wb, _| wb.font_warning(FIELD)), None);
 
@@ -385,7 +424,9 @@ fn a_typed_name_that_is_not_installed_still_works_and_is_warned_about(cx: &mut T
     );
     let warning = view.read_with(cx, |wb, _| wb.font_warning(FIELD));
     assert!(
-        warning.as_deref().is_some_and(|w| w.contains("berkeley mono") && w.contains("not installed")),
+        warning
+            .as_deref()
+            .is_some_and(|w| w.contains("berkeley mono") && w.contains("not installed")),
         "{warning:?}"
     );
     // The row lists it first, marked missing.
@@ -433,7 +474,10 @@ fn beginning_to_edit_the_font_opens_the_picker_instead_of_a_text_box(cx: &mut Te
     open_terminal_page(&view, cx);
     view.update(cx, |wb, cx| wb.sheet_begin_edit("font_family", cx));
     draw(cx);
-    assert_eq!(view.read_with(cx, |wb, _| wb.open_font_picker()), Some(FIELD));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.open_font_picker()),
+        Some(FIELD)
+    );
     assert!(view.read_with(cx, |wb, _| wb.settings_sheet().unwrap().edit().is_none()));
 }
 
@@ -453,7 +497,9 @@ fn install_font_hands_the_file_to_the_system_and_the_list_follows(cx: &mut TestA
     assert_eq!(fixture.fonts.installed(), [path]);
     let notice = view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string));
     assert!(
-        notice.as_deref().is_some_and(|n| n.contains("Scratch Mono.ttf")),
+        notice
+            .as_deref()
+            .is_some_and(|n| n.contains("Scratch Mono.ttf")),
         "{notice:?}"
     );
 }
@@ -462,13 +508,18 @@ fn install_font_hands_the_file_to_the_system_and_the_list_follows(cx: &mut TestA
 fn a_font_the_system_refuses_says_why_and_changes_nothing(cx: &mut TestAppContext) {
     let (view, fixture, cx) = open(cx, "", installed());
     open_terminal_page(&view, cx);
-    fixture.fonts.refuse_installs(Some("Could not install x.ttf: not a font"));
-    view.update(cx, |wb, cx| wb.font_install(PathBuf::from("/tmp/x.ttf"), cx));
+    fixture
+        .fonts
+        .refuse_installs(Some("Could not install x.ttf: not a font"));
+    view.update(cx, |wb, cx| {
+        wb.font_install(PathBuf::from("/tmp/x.ttf"), cx)
+    });
     wait_until(cx, "the refusal to be said", |cx| {
         view.read_with(cx, |wb, _| wb.notice().is_some())
     });
     assert_eq!(
-        view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string)).as_deref(),
+        view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string))
+            .as_deref(),
         Some("Could not install x.ttf: not a font")
     );
     assert!(fixture.fonts.installed().is_empty());

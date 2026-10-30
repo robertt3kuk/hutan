@@ -222,7 +222,10 @@ mod system {
                     // SAFETY: `font` is a live CTFont.
                     #[allow(unsafe_code)]
                     let traits = unsafe { font.symbolic_traits() };
-                    FontFamily::new(name_text, traits.contains(CTFontSymbolicTraits::MonoSpaceTrait))
+                    FontFamily::new(
+                        name_text,
+                        traits.contains(CTFontSymbolicTraits::MonoSpaceTrait),
+                    )
                 })
                 .collect();
             tidy(families)
@@ -371,7 +374,11 @@ mod tests {
         assert_eq!(find("Menlo").map(|f| f.monospaced), Some(true));
         assert_eq!(find("Helvetica").map(|f| f.monospaced), Some(false));
         assert!(families.iter().all(|f| !f.name.starts_with('.')));
-        assert!(families.windows(2).all(|w| w[0].name.to_lowercase() <= w[1].name.to_lowercase()));
+        assert!(
+            families
+                .windows(2)
+                .all(|w| w[0].name.to_lowercase() <= w[1].name.to_lowercase())
+        );
     }
 
     #[cfg(target_os = "macos")]

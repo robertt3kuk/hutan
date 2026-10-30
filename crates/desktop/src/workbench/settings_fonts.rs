@@ -124,7 +124,8 @@ fn family_kind(family: &FontFamily) -> FontRowKind {
 /// The lines of a picker over `families` for the search `filter`: the current value first (the
 /// family the setting holds, or *System default* while it is not set), then *System default*,
 /// then every family that fits — only the monospaced ones when `mono_only` — in name order, and
-/// last the typed text as `Use “text”` when no line of the list is that name.
+/// last the typed text as `Use “text”` when no family fits it, so a name the system does not
+/// list can still be used.
 pub fn font_rows(
     families: &[FontFamily],
     current: Option<&str>,
@@ -173,15 +174,14 @@ pub fn font_rows(
                 kind: family_kind(f),
             }),
     );
-    if !typed.is_empty() && !rows.iter().any(|r| same_name(&r.value, typed)) {
+    let listed = rows
+        .iter()
+        .any(|r| matches!(r.kind, FontRowKind::Family { .. } | FontRowKind::Missing));
+    if !typed.is_empty() && !listed {
         let is_installed = installed(typed).is_some();
         rows.push(FontRow {
             value: typed.to_owned(),
-            label: if is_installed {
-                format!("Use “{typed}”")
-            } else {
-                format!("Use “{typed}” (not installed)")
-            },
+            label: format!("Use “{typed}”"),
             kind: FontRowKind::Typed {
                 installed: is_installed,
             },
@@ -697,46 +697,46 @@ impl Workbench {
             && !rows
                 .iter()
                 .any(|r| matches!(r.kind, FontRowKind::Family { .. }));
-        let list = div()
-            .id("font-list")
-            .flex()
-            .flex_col()
-            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
-                // A positive pixel delta moves the content down: toward the start.
-                let delta = event.delta.pixel_delta(px(LINE_HEIGHT)).y;
-                this.font_wheel(-f32::from(delta), cx);
-                cx.stop_propagation();
-            }))
-            .children(
-                (start > 0).then(|| {
+        let list =
+            div()
+                .id("font-list")
+                .flex()
+                .flex_col()
+                .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                    // A positive pixel delta moves the content down: toward the start.
+                    let delta = event.delta.pixel_delta(px(LINE_HEIGHT)).y;
+                    this.font_wheel(-f32::from(delta), cx);
+                    cx.stop_propagation();
+                }))
+                .children((start > 0).then(|| {
                     note(format!("{start} more above"), &theme, &tokens).into_any_element()
-                }),
-            )
-            .children(rows[start..end].iter().enumerate().map(|(i, row)| {
-                self.render_font_option(
-                    font,
-                    row,
-                    start + i,
-                    row.value == current,
-                    cursor.as_deref().is_some_and(|c| c == row.value),
-                    &default_family,
-                    cx,
-                )
-            }))
-            .children((end < rows.len()).then(|| {
-                note(format!("{} more below", rows.len() - end), &theme, &tokens).into_any_element()
-            }))
-            .children(loading.then(|| {
-                note("Reading the installed fonts…", &theme, &tokens).into_any_element()
-            }))
-            .children(no_mono_match.then(|| {
-                note(
-                    "No monospaced font matches: turn on Show all to search every family.",
-                    &theme,
-                    &tokens,
-                )
-                .into_any_element()
-            }));
+                }))
+                .children(rows[start..end].iter().enumerate().map(|(i, row)| {
+                    self.render_font_option(
+                        font,
+                        row,
+                        start + i,
+                        row.value == current,
+                        cursor.as_deref().is_some_and(|c| c == row.value),
+                        &default_family,
+                        cx,
+                    )
+                }))
+                .children((end < rows.len()).then(|| {
+                    note(format!("{} more below", rows.len() - end), &theme, &tokens)
+                        .into_any_element()
+                }))
+                .children(loading.then(|| {
+                    note("Reading the installed fonts…", &theme, &tokens).into_any_element()
+                }))
+                .children(no_mono_match.then(|| {
+                    note(
+                        "No monospaced font matches: turn on Show all to search every family.",
+                        &theme,
+                        &tokens,
+                    )
+                    .into_any_element()
+                }));
 
         // The preview: the family under the cursor, at the setting's size.
         let previewed = rows.get(at).map(|r| match r.kind {
@@ -941,24 +941,26 @@ mod tests {
         let rows = font_rows(&installed(), None, "ou", false);
         assert_eq!(values(&rows[..1]), ["Courier New"]);
         let rows = font_rows(&installed(), None, "fira c", true);
-        assert_eq!(values(&rows), ["Fira Code", "fira c"]);
+        assert_eq!(values(&rows), ["Fira Code"]);
         // The search finds System default too.
         let rows = font_rows(&installed(), None, "system", true);
         assert_eq!(rows[0].kind, FontRowKind::SystemDefault);
     }
 
     #[test]
-    fn a_typed_name_that_is_no_line_is_offered_and_marked_when_not_installed() {
+    fn a_typed_name_that_no_family_fits_is_offered_and_marked_when_not_installed() {
         let rows = font_rows(&installed(), None, "  Berkeley Mono ", true);
         let typed = rows.last().unwrap();
         assert_eq!(typed.value, "Berkeley Mono");
-        assert_eq!(typed.label, "Use “Berkeley Mono” (not installed)");
+        assert_eq!(typed.label, "Use “Berkeley Mono”");
         assert_eq!(typed.kind, FontRowKind::Typed { installed: false });
         // A proportional family hidden by the monospace filter is offered, installed.
         let rows = font_rows(&installed(), None, "Helvetica", true);
         assert_eq!(values(&rows), ["Helvetica"]);
         assert_eq!(rows[0].kind, FontRowKind::Typed { installed: true });
-        // A line that is the name already is not offered twice.
+        // A family that fits the text is listed instead: no line for the text itself.
+        let rows = font_rows(&installed(), None, "men", true);
+        assert_eq!(values(&rows), ["Menlo"]);
         let rows = font_rows(&installed(), None, "menlo", true);
         assert_eq!(values(&rows), ["Menlo"]);
         assert!(matches!(rows[0].kind, FontRowKind::Family { .. }));

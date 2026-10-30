@@ -419,7 +419,10 @@ impl Workbench {
             .and_then(|f| super::settings_fonts::FontField::of(f.namespace, &f.dotted()))
         {
             // The families that fit the search; what the arrow keys move through.
-            return Some((self.font_options(font), self.font_explicit(font).or(Some(String::new()))));
+            return Some((
+                self.font_options(font),
+                self.font_explicit(font).or(Some(String::new())),
+            ));
         }
         let FieldKind::Enum(values) = self.sheet_kind(tag)? else {
             return None;
