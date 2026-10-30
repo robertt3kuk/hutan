@@ -2081,7 +2081,7 @@ impl ChatManager {
     ) -> Result<QueuedMessage, ErrorBody> {
         check_message(&text, false)?;
         self.queues.load(id).await?;
-        let (item, changed) = self.queues.add(id, text, false)?;
+        let (item, changed) = self.queues.add(id, text, false, None)?;
         self.emit_queue(Some(changed));
         self.deliver_soon(id);
         Ok(item)
@@ -2237,7 +2237,7 @@ impl ChatManager {
                         None => Some(text),
                     };
                     if let Some(text) = item {
-                        let (_, changed) = self.queues.add(id, text, true)?;
+                        let (_, changed) = self.queues.add(id, text, true, None)?;
                         self.emit_queue(Some(changed));
                     }
                     self.release_queue(id);
@@ -2256,7 +2256,7 @@ impl ChatManager {
         // The agent takes nothing while it works: the message goes first, the turn is stopped,
         // and its end sends it. The journal says the turn was interrupted for it.
         if let Now::Text(text) = what {
-            let (_, changed) = self.queues.add(id, text, true)?;
+            let (_, changed) = self.queues.add(id, text, true, None)?;
             self.emit_queue(Some(changed));
         }
         self.release_queue(id);

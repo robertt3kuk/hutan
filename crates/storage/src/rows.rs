@@ -157,6 +157,9 @@ pub struct QueuedRow {
     pub item_id: u64,
     pub text: String,
     pub queued_at_ms: u64,
+    /// Schema 22, protocol 0.62: the JSON of the message's `MessageOrigin` when the user did not
+    /// write it (a message Mawas queued with the user's approval).
+    pub origin_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,13 +268,15 @@ pub struct WorktreeSetupTrustRow {
 
 /// One grant of the control gate (`control_grants`, protocol 0.31): `tool` may run without an
 /// approval for Mawas chats of `workspace_id`, or for the chat `chat_session_id` alone (exactly
-/// one of the two is set).
+/// one of the two is set). With `target_session_id` (schema 22, protocol 0.62) the grant covers
+/// `tool` toward that agent only; it belongs to a chat grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantRow {
     pub id: u64,
     pub tool: String,
     pub workspace_id: Option<WorkspaceId>,
     pub chat_session_id: Option<SessionId>,
+    pub target_session_id: Option<SessionId>,
     pub created_ms: u64,
     /// The client that answered the approval (`desktop`, `cli`, ...).
     pub created_by: String,

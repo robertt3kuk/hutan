@@ -623,6 +623,7 @@ impl ControlService {
             tool: grant.tool.clone(),
             workspace_id,
             chat_session_id,
+            target_session_id: None,
             created_ms: grant.created_ms,
             created_by: by.to_owned(),
         };
@@ -902,7 +903,7 @@ fn grant_of_row(row: GrantRow) -> ControlGrant {
         tool: row.tool,
         workspace_id: row.workspace_id,
         chat_session_id: row.chat_session_id,
-        target_session_id: None,
+        target_session_id: row.target_session_id,
         created_ms: row.created_ms,
     }
 }

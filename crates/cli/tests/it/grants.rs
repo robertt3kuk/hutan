@@ -38,6 +38,7 @@ async fn with_grants() -> TestDaemon {
                     tool: tool.into(),
                     workspace_id,
                     chat_session_id,
+                    target_session_id: None,
                     created_ms: 1_791_894_190_000 + id,
                     created_by: "desktop".into(),
                 })

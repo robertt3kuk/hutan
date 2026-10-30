@@ -297,8 +297,9 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
         Write::InsertGrant(row) => {
             conn.execute(
                 "INSERT INTO control_grants \
-                     (id, tool, workspace_id, chat_session_id, created_ms, created_by) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (id) DO NOTHING",
+                     (id, tool, workspace_id, chat_session_id, created_ms, created_by, \
+                      target_session_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (id) DO NOTHING",
                 params![
                     ms(row.id),
                     row.tool,
@@ -306,6 +307,7 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
                     row.chat_session_id.map(|s| s.to_string()),
                     ms(row.created_ms),
                     row.created_by,
+                    row.target_session_id.map(|s| s.to_string()),
                 ],
             )
             .map_err(StorageError::sqlite("writing a control grant"))?;
@@ -1058,8 +1060,9 @@ fn set_chat_queue(conn: &Connection, session: SessionId, items: &[QueuedRow]) ->
             [session.to_string()],
         )?;
         let mut insert = conn.prepare_cached(
-            "INSERT INTO chat_queue (session_id, item_id, position, text, queued_at_ms) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO chat_queue \
+                 (session_id, item_id, position, text, queued_at_ms, origin_json) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
         for (position, item) in items.iter().enumerate() {
             insert.execute(params![
@@ -1067,7 +1070,8 @@ fn set_chat_queue(conn: &Connection, session: SessionId, items: &[QueuedRow]) ->
                 ms(item.item_id),
                 i64::try_from(position).unwrap_or(i64::MAX),
                 item.text,
-                ms(item.queued_at_ms)
+                ms(item.queued_at_ms),
+                item.origin_json
             ])?;
         }
         Ok::<(), rusqlite::Error>(())
@@ -1088,8 +1092,8 @@ pub fn chat_queue(conn: &Connection, session: SessionId) -> Result<Vec<QueuedRow
     let context = "reading a chat queue";
     let mut stmt = conn
         .prepare(
-            "SELECT item_id, text, queued_at_ms FROM chat_queue WHERE session_id = ?1 \
-             ORDER BY position",
+            "SELECT item_id, text, queued_at_ms, origin_json FROM chat_queue \
+             WHERE session_id = ?1 ORDER BY position",
         )
         .map_err(StorageError::sqlite(context))?;
     let rows = stmt
@@ -1099,6 +1103,7 @@ pub fn chat_queue(conn: &Connection, session: SessionId) -> Result<Vec<QueuedRow
                 item_id: unms(row.get(0)?),
                 text: row.get(1)?,
                 queued_at_ms: unms(row.get(2)?),
+                origin_json: row.get(3)?,
             })
         })
         .map_err(StorageError::sqlite(context))?;
@@ -1223,7 +1228,8 @@ pub fn control_grants(conn: &Connection) -> Result<Vec<GrantRow>> {
     let context = "reading control grants";
     let mut stmt = conn
         .prepare(
-            "SELECT id, tool, workspace_id, chat_session_id, created_ms, created_by \
+            "SELECT id, tool, workspace_id, chat_session_id, created_ms, created_by, \
+                    target_session_id \
              FROM control_grants ORDER BY id DESC",
         )
         .map_err(StorageError::sqlite(context))?;
@@ -1297,6 +1303,7 @@ fn grant_from(row: &Row<'_>) -> Result<GrantRow> {
     let id: i64 = row.get(0).map_err(read_err)?;
     let workspace: Option<String> = row.get(2).map_err(read_err)?;
     let chat: Option<String> = row.get(3).map_err(read_err)?;
+    let target: Option<String> = row.get(6).map_err(read_err)?;
     Ok(GrantRow {
         id: unms(id),
         tool: row.get(1).map_err(read_err)?,
@@ -1310,6 +1317,12 @@ fn grant_from(row: &Row<'_>) -> Result<GrantRow> {
             .map(|text| {
                 text.parse()
                     .map_err(|e| StorageError::corrupt("control_grants.chat_session_id", e))
+            })
+            .transpose()?,
+        target_session_id: target
+            .map(|text| {
+                text.parse()
+                    .map_err(|e| StorageError::corrupt("control_grants.target_session_id", e))
             })
             .transpose()?,
         created_ms: unms(row.get(4).map_err(read_err)?),

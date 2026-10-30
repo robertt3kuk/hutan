@@ -133,6 +133,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "usage_account",
         sql: include_str!("../migrations/0021_usage_account.sql"),
     },
+    Migration {
+        version: 22,
+        name: "mawas_target",
+        sql: include_str!("../migrations/0022_mawas_target.sql"),
+    },
 ];
 
 /// Schema version recorded in the database; 0 for a database without `app_meta`.

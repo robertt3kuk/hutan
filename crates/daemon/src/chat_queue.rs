@@ -14,7 +14,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use hutan_core::SessionId;
 use hutan_protocol::chat::{
-    ChatQueue, QUEUE_MAX_BYTES, QUEUE_MAX_ITEMS, QueueChange, QueueHold, QueuedMessage,
+    ChatQueue, MessageOrigin, QUEUE_MAX_BYTES, QUEUE_MAX_ITEMS, QueueChange, QueueHold,
+    QueuedMessage,
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_storage::{QueuedRow, Storage};
@@ -75,14 +76,14 @@ impl Queue {
         Ok(())
     }
 
-    fn new_item(&mut self, text: String) -> QueuedMessage {
+    fn new_item(&mut self, text: String, origin: Option<MessageOrigin>) -> QueuedMessage {
         let id = self.next_id.max(1);
         self.next_id = id + 1;
         QueuedMessage {
             id,
             text,
             queued_at_ms: registry::now_ms(),
-            origin: None,
+            origin,
         }
     }
 }
@@ -140,7 +141,9 @@ impl Queues {
                         id: row.item_id,
                         text: row.text,
                         queued_at_ms: row.queued_at_ms,
-                        origin: None,
+                        origin: row
+                            .origin_json
+                            .and_then(|json| serde_json::from_str(&json).ok()),
                     })
                     .collect(),
                 next_id,
@@ -178,6 +181,10 @@ impl Queues {
                 item_id: item.id,
                 text: item.text.clone(),
                 queued_at_ms: item.queued_at_ms,
+                origin_json: item
+                    .origin
+                    .as_ref()
+                    .and_then(|origin| serde_json::to_string(origin).ok()),
             })
             .collect();
         // Under the lock: the writer applies the queues in the order they changed.
@@ -198,12 +205,13 @@ impl Queues {
         id: SessionId,
         text: String,
         front: bool,
+        origin: Option<MessageOrigin>,
     ) -> Result<(QueuedMessage, Changed), ErrorBody> {
         let (added, queue) = self.with(id, |queue| {
             if let Err(error) = queue.room_for(text.len(), 0, true) {
                 return (false, Err(error));
             }
-            let item = queue.new_item(text);
+            let item = queue.new_item(text, origin);
             if front {
                 queue.items.push_front(item.clone());
             } else {
@@ -232,6 +240,8 @@ impl Queues {
                 return (false, Err(error));
             }
             queue.items[at].text = text;
+            // The words are the user's now: the label of an approved message no longer fits.
+            queue.items[at].origin = None;
             (true, Ok(queue.items[at].clone()))
         });
         let edited = edited?;

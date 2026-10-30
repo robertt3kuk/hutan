@@ -613,6 +613,7 @@ async fn a_destructive_request_always_asks_even_with_a_grant_in_the_database() {
         tool: tool.into(),
         workspace_id: Some(ws),
         chat_session_id: None,
+        target_session_id: None,
         created_ms: 1,
         created_by: "test".into(),
     };

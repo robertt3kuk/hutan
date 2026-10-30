@@ -1504,6 +1504,7 @@ fn a_chat_queue_is_replaced_whole_kept_in_order_and_removed_with_its_session() {
         item_id,
         text: text.to_owned(),
         queued_at_ms: 100 + item_id,
+        origin_json: None,
     };
     let id;
     {
@@ -2144,6 +2145,7 @@ fn control_grants_are_stored_listed_newest_first_and_deleted() {
         tool: tool.to_owned(),
         workspace_id: workspace.then(WorkspaceId::new),
         chat_session_id: (!workspace).then(SessionId::new),
+        target_session_id: None,
         created_ms: 10 + id,
         created_by: "desktop".to_owned(),
     };
@@ -2164,6 +2166,78 @@ fn control_grants_are_stored_listed_newest_first_and_deleted() {
     };
     assert!(storage.control_grants().insert(both).is_err());
     storage.close();
+}
+
+#[test]
+fn a_target_bound_grant_and_a_message_origin_are_stored_and_older_rows_have_neither() {
+    use crate::QueuedRow;
+    let dir = tempfile::tempdir().unwrap();
+    let (chat, target, old_queue_session);
+    {
+        // A database as schema 21 left it: a grant and a queued message without the new columns.
+        let storage = Storage::open_with_migrations(db(&dir), &migrate::MIGRATIONS[..21]).unwrap();
+        chat = SessionId::new();
+        target = SessionId::new();
+        old_queue_session = chat_session(&storage);
+        storage.close();
+        let conn = rusqlite::Connection::open(db(&dir)).unwrap();
+        conn.execute(
+            "INSERT INTO control_grants (id, tool, workspace_id, chat_session_id, created_ms, \
+             created_by) VALUES (1, 'chat.send', NULL, ?1, 10, 'desktop')",
+            [chat.to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chat_queue (session_id, item_id, position, text, queued_at_ms) \
+             VALUES (?1, 1, 0, 'old', 5)",
+            [old_queue_session.to_string()],
+        )
+        .unwrap();
+    }
+    let storage = Storage::open(db(&dir)).unwrap();
+    assert_eq!(storage.app_meta().schema_version().unwrap(), newest());
+    let grants = storage.control_grants().list().unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(
+        grants[0].target_session_id, None,
+        "an older grant has no target"
+    );
+    let queue = storage.chat().queue(old_queue_session).unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].origin_json, None);
+
+    // New rows keep both.
+    let bound = crate::GrantRow {
+        id: 2,
+        tool: "chat.queue.add".to_owned(),
+        workspace_id: None,
+        chat_session_id: Some(chat),
+        target_session_id: Some(target),
+        created_ms: 11,
+        created_by: "desktop".to_owned(),
+    };
+    storage.control_grants().insert(bound.clone()).unwrap();
+    assert_eq!(storage.control_grants().list().unwrap()[0], bound);
+    let from_mawas = QueuedRow {
+        session_id: old_queue_session,
+        item_id: 2,
+        text: "from mawas".to_owned(),
+        queued_at_ms: 6,
+        origin_json: Some("{\"kind\":\"mawas\"}".to_owned()),
+    };
+    storage
+        .chat()
+        .set_queue(
+            old_queue_session,
+            vec![queue[0].clone(), from_mawas.clone()],
+        )
+        .unwrap();
+    assert_eq!(
+        storage.chat().queue(old_queue_session).unwrap(),
+        [queue[0].clone(), from_mawas]
+    );
+    storage.close();
+    integrity_ok(&db(&dir));
 }
 
 // Mawas memory (MW-2) ---------------------------------------------------------------------------
