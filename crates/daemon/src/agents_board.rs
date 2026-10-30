@@ -6,8 +6,9 @@
 //! marks, snoozes, answers not yet confirmed) is empty here; the daemon says instead what it
 //! can know without a user present:
 //!
-//! - a session that failed (a non-zero exit, a signal, a spawn failure) stays in *Failed* —
-//!   what the window shows after the user looked at it ([`Unread::FailedSeen`]);
+//! - an agent the reducer finds failed (a non-zero exit, a signal, a spawn failure, an agent
+//!   that reported its own failure) stays in *Failed* — what the window shows after the user
+//!   looked at it ([`Unread::FailedSeen`]);
 //! - a session whose task finished and waits for a reviewer is *Ready for review*;
 //! - nothing is *Snoozed*, and an unseen completion is no reason.
 //!
@@ -23,7 +24,7 @@ use hutan_agents_view::presentation::{
     AgentRecord, Counts, Facts, Group, Link, ReasonKind, Role, Scope, State, build,
 };
 use hutan_core::task::{DeliveryState, Task, TaskState};
-use hutan_core::{AgentObservation, SessionId, SessionState};
+use hutan_core::{AgentObservation, SessionId};
 use hutan_protocol::board::{
     AgentsBoard, AgentsBoardRequest, BOARD_MAX_AGENTS, BOARD_MAX_BYTES, BOARD_TEXT_CHARS,
     BoardAgent, BoardCheckout, BoardCounts, BoardCoverage, BoardGroup, BoardKind, BoardRef,
@@ -62,29 +63,41 @@ pub fn build_board(
             format!("no workspace {id}"),
         ));
     }
-    let unread: BTreeMap<SessionId, Unread> = inputs
-        .sessions
-        .iter()
-        .filter(|s| failed_for_good(&s.state))
-        .map(|s| (s.id, Unread::FailedSeen))
-        .collect();
     let reviews = awaiting_review(inputs.tasks);
-    let presentation = build(&Facts {
-        link: Link::Online,
-        workspaces: inputs.workspaces,
-        sessions: inputs.sessions,
-        approvals: inputs.approvals,
-        questions: inputs.questions,
-        trees: inputs.trees,
-        unread: &unread,
-        reviews: &reviews,
-        changes_to_review: &HashSet::new(),
-        snoozed: &HashSet::new(),
-        answered_approvals: &HashMap::new(),
-        answered_questions: &HashSet::new(),
-        model_names: &ModelNames::default(),
-        revision: 0,
-    });
+    let reduce = |unread: &BTreeMap<SessionId, Unread>| {
+        build(&Facts {
+            link: Link::Online,
+            workspaces: inputs.workspaces,
+            sessions: inputs.sessions,
+            approvals: inputs.approvals,
+            questions: inputs.questions,
+            trees: inputs.trees,
+            unread,
+            reviews: &reviews,
+            changes_to_review: &HashSet::new(),
+            snoozed: &HashSet::new(),
+            answered_approvals: &HashMap::new(),
+            answered_questions: &HashSet::new(),
+            model_names: &ModelNames::default(),
+            revision: 0,
+        })
+    };
+    // A window keeps a failure in *Failed* after the user has looked at it, until a new run
+    // starts. With nobody to look, the daemon says the same of every agent the reducer finds
+    // failed: a non-zero exit, a signal, a spawn failure, or an agent that reported its own
+    // failure. A second reduction, with those marked, puts them there.
+    let first = reduce(&BTreeMap::new());
+    let failed: BTreeMap<SessionId, Unread> = first
+        .records
+        .iter()
+        .filter(|record| record.state == State::Failed)
+        .map(|record| (record.session, Unread::FailedSeen))
+        .collect();
+    let presentation = if failed.is_empty() {
+        first
+    } else {
+        reduce(&failed)
+    };
     let scope = req.workspace_id.map_or(Scope::All, Scope::Workspace);
     let in_scope: Vec<&AgentRecord> = presentation.in_scope(scope).collect();
     let by_id: HashMap<SessionId, &SessionInfo> =
@@ -129,15 +142,6 @@ pub fn build_board(
         board.agents.push(agent);
     }
     Ok(board)
-}
-
-/// A session that ended badly: what a window keeps in *Failed* until the user clears it.
-fn failed_for_good(state: &SessionState) -> bool {
-    match state {
-        SessionState::Exited { code, signal } => *code != Some(0) || signal.is_some(),
-        SessionState::Failed { .. } => true,
-        _ => false,
-    }
 }
 
 /// The sessions whose finished task waits for a reviewer.
@@ -333,7 +337,10 @@ fn text(value: &str) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use hutan_core::{SessionKind, WorkspaceId};
+    use hutan_core::{
+        AgentNode, Liveness, NodeKind, NodeOutcome, NodeState, SessionKind, SessionState,
+        WorkspaceId,
+    };
     use hutan_protocol::messages::{AgentReport, AgentState, WorkspaceKind};
 
     use super::*;
@@ -551,6 +558,57 @@ mod tests {
         assert_eq!(board.agents[0].group, BoardGroup::Failed);
         assert_eq!(board.agents[0].state, BoardState::Failed);
         assert_eq!(board.agents[0].detail, "Exited with code 2");
+    }
+
+    #[test]
+    fn an_agent_that_reported_its_own_failure_is_in_failed_while_its_session_runs() {
+        let project = workspace("hutan", WorkspaceKind::Project);
+        let hooked = session(&project, "flaky", "omp-extension", 5);
+        let root = AgentNode {
+            pid: None,
+            node_id: "root".into(),
+            parent: None,
+            kind: NodeKind::Main,
+            source: "omp-extension".into(),
+            agent: "omp".into(),
+            name: None,
+            agent_type: None,
+            state: NodeState::Idle,
+            outcome: Some(NodeOutcome::Failed),
+            liveness: Liveness::Alive,
+            model: None,
+            started_at_ms: Some(1),
+            ended_at_ms: Some(4),
+            last_activity_ms: 4,
+            activity: None,
+            usage: None,
+            transcript_path: None,
+        };
+        let trees = BTreeMap::from([(
+            hooked.id,
+            AgentObservation {
+                session_id: hooked.id,
+                root: "root".into(),
+                nodes: BTreeMap::from([("root".to_owned(), root)]),
+            },
+        )]);
+        let board = build_board(
+            &BoardInputs {
+                now_ms: 9,
+                workspaces: std::slice::from_ref(&project),
+                sessions: std::slice::from_ref(&hooked),
+                approvals: &[],
+                questions: &[],
+                trees: &trees,
+                tasks: &[],
+            },
+            AgentsBoardRequest::default(),
+        )
+        .unwrap();
+        assert_eq!(board.counts.failed, 1);
+        assert_eq!(board.agents[0].state, BoardState::Failed);
+        assert_eq!(board.agents[0].group, BoardGroup::Failed);
+        assert_eq!(board.agents[0].source, BoardSource::Hook);
     }
 
     #[test]

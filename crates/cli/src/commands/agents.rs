@@ -336,7 +336,12 @@ fn agent_lines(agent: &BoardAgent, now_ms: u64) -> Vec<String> {
             wait.title
         ));
     }
-    if let Some(activity) = &agent.activity {
+    // The message of a blocked terminal agent is already its wait.
+    if let Some(activity) = agent
+        .activity
+        .as_ref()
+        .filter(|activity| !agent.waiting.iter().any(|wait| &wait.title == *activity))
+    {
         lines.push(format!("{indent}{activity}"));
     }
     if !agent.detail.is_empty() {
