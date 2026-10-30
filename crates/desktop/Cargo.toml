@@ -27,6 +27,7 @@ hutan-code-view.workspace = true
 hutan-core.workspace = true
 hutan-protocol.workspace = true
 hutan-settings.workspace = true
+hutan-syntax.workspace = true
 hutan-terminal-view.workspace = true
 hutan-ui.workspace = true
 hutan-vim.workspace = true

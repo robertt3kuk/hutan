@@ -65,6 +65,7 @@ mod mac_gpui;
 mod mawas_files_gpui;
 mod mawas_gpui;
 mod mcp_gpui;
+mod md_preview_gpui;
 mod memory_gpui;
 mod motion_gpui;
 mod notify_gpui;

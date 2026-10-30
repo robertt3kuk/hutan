@@ -22,14 +22,21 @@ use crate::workbench::style::{TerminalStyle, UiStyle};
 use crate::workbench::ui::{Button, StyledExt as _, prose_font};
 use crate::workbench::view::Region;
 
+/// Opens the target of a link.
+pub type OpenLink = Box<dyn Fn(&str, &mut Window, &mut App)>;
+/// The file an image's url names.
+pub type ImageFile = Box<dyn Fn(&str) -> Option<PathBuf>>;
+/// The text runs of a block of code in a language.
+pub type CodeRuns = Box<dyn Fn(&str, Option<&str>) -> Option<Vec<TextRun>>>;
+
 /// What a Markdown file's preview adds to a message's look.
 pub struct Doc {
     /// Opens the target of a link (any text a link had, as written).
-    pub open: Box<dyn Fn(&str, &mut Window, &mut App)>,
+    pub open: OpenLink,
     /// The file an image's url names, when the preview may draw it (`None`: its alt text).
-    pub image: Box<dyn Fn(&str) -> Option<PathBuf>>,
+    pub image: ImageFile,
     /// The text runs of a fenced block of `lang` (`None`: plain), colored by its syntax.
-    pub code: Box<dyn Fn(&str, Option<&str>) -> Option<Vec<TextRun>>>,
+    pub code: CodeRuns,
 }
 
 impl std::fmt::Debug for Doc {

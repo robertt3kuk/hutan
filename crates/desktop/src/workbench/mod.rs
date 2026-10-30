@@ -45,6 +45,8 @@ mod lsp_bar;
 mod lsp_complete;
 mod lsp_nav;
 mod mac;
+mod markdown_open;
+pub mod markdown_preview;
 mod modal;
 pub mod model;
 mod monitor;

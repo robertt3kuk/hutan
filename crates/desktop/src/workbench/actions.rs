@@ -234,6 +234,13 @@ actions!(
         /// Show the language server's trust bar of the focused file's folder again (the status
         /// bar's `untrusted`).
         ReviewLspTrust,
+        /// Markdown (MD-PREVIEW): switch the focused Markdown tab between its text and its
+        /// rendered page (with `editor.markdown_preview = "side"`: open the page beside it);
+        /// in a preview tab, go back to the text. ⇧⌘V.
+        ToggleMarkdownPreview,
+        /// Markdown (MD-PREVIEW): open the focused Markdown file's rendered page in a split to
+        /// the right, following the file's edits and scrolling.
+        OpenMarkdownPreviewSide,
         /// Show the Search panel (find in the active project's files) with the keyboard in its
         /// query; the focused file tab's selection becomes the query.
         ShowSearch,
@@ -903,6 +910,11 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         ),
         command("Problems: Show Problems Panel", ShowProblems),
         command("Editor: Review Language Server Trust", ReviewLspTrust),
+        command("Markdown: Toggle Preview", ToggleMarkdownPreview),
+        command(
+            "Markdown: Open Preview to the Side",
+            OpenMarkdownPreviewSide,
+        ),
         command("App: Command Palette", TogglePalette),
         command("App: Settings…", OpenSettings),
         command("App: About Hutan", About),
@@ -1218,6 +1230,7 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
         bind::<OpenJump>("cmd-j", None),
         bind::<QuickOpen>("cmd-p", None),
         bind::<ShowFiles>("cmd-shift-e", None),
+        bind::<ToggleMarkdownPreview>("cmd-shift-v", None),
         bind::<ShowProblems>("cmd-shift-m", None),
         bind::<ShowSearch>("cmd-shift-f", None),
         bind::<ShowSearchReplace>("cmd-shift-h", None),
@@ -1542,6 +1555,7 @@ fn zed_global_bindings() -> Vec<BindingSpec> {
         bind::<TogglePalette>("cmd-shift-p", None),
         bind::<QuickOpen>("cmd-p", None),
         bind::<ShowFiles>("cmd-shift-e", None),
+        bind::<ToggleMarkdownPreview>("cmd-shift-v", None),
         bind::<ShowProblems>("cmd-shift-m", None),
         bind::<ShowSearch>("cmd-shift-f", None),
         bind::<ShowSearchReplace>("cmd-shift-h", None),
@@ -1791,6 +1805,7 @@ mod tests {
             "cmd-j | workbench::OpenJump | -",
             "cmd-p | workbench::QuickOpen | -",
             "shift-cmd-e | workbench::ShowFiles | -",
+            "shift-cmd-v | workbench::ToggleMarkdownPreview | -",
             "shift-cmd-m | workbench::ShowProblems | -",
             "shift-cmd-f | workbench::ShowSearch | -",
             "shift-cmd-h | workbench::ShowSearchReplace | -",

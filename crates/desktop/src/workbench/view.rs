@@ -980,6 +980,12 @@ pub struct Workbench {
     pub(crate) revision_views: HashMap<(String, String), Entity<super::file_history::RevisionView>>,
     /// The views of compare tabs (two files, or a file and HEAD), by tab.
     pub(crate) compare_views: HashMap<ItemRef, Entity<super::file_compare::CompareView>>,
+    /// The Markdown preview of every preview tab, by pane and path (see `markdown_open.rs`).
+    pub(crate) md_previews:
+        HashMap<(PaneId, String), Entity<super::markdown_preview::MarkdownPreview>>,
+    pub(crate) md_preview_subscriptions: HashMap<(PaneId, String), Subscription>,
+    /// Markdown files whose next file tab starts rendered (a link in a preview opened them).
+    pub(crate) md_rendered_on_open: std::collections::HashSet<String>,
     /// The buffers of the files tabs show (see `files.rs`).
     pub(crate) buffers: super::files::BufferStore,
     /// The pending ledger of agents' edits (see `agent_edits.rs`).
@@ -997,6 +1003,9 @@ pub struct Workbench {
     pub(crate) file_subscriptions: HashMap<(PaneId, String), Subscription>,
     pub(crate) rendered_files: std::collections::HashSet<(PaneId, String)>,
     pub(crate) pruned_files: Vec<Entity<super::file_view::FileView>>,
+    pub(crate) rendered_previews: std::collections::HashSet<(PaneId, String)>,
+    /// Pages of closed preview tabs, kept until focus is checked (`rescue_orphaned_focus`).
+    pub(crate) pruned_previews: Vec<Entity<super::markdown_preview::MarkdownPreview>>,
     /// The status items that follow the focused code view, made at the first status bar.
     pub(crate) editor_items: Option<super::editor_status::EditorItems>,
     pub(crate) notice: Option<SharedString>,
@@ -1641,6 +1650,9 @@ impl Workbench {
             history_subscriptions: HashMap::new(),
             revision_views: HashMap::new(),
             compare_views: HashMap::new(),
+            md_previews: HashMap::new(),
+            md_preview_subscriptions: HashMap::new(),
+            md_rendered_on_open: std::collections::HashSet::new(),
             buffers: super::files::BufferStore::default(),
             agent_ledger: super::agent_edits::AgentLedger::for_state(options.state_path.as_deref()),
             lsp,
@@ -1652,6 +1664,8 @@ impl Workbench {
             file_subscriptions: HashMap::new(),
             rendered_files: std::collections::HashSet::new(),
             pruned_files: Vec::new(),
+            rendered_previews: std::collections::HashSet::new(),
+            pruned_previews: Vec::new(),
             notice: None,
             close_toast: None,
             toast_rev: 0,
@@ -1928,6 +1942,14 @@ impl Workbench {
                 crate::icons::Icon::ItemFile,
                 hutan_code_view::file_name(std::path::Path::new(path)).into(),
             ),
+            ItemRef::Preview { path } => (
+                crate::icons::Icon::ItemFile,
+                format!(
+                    "Preview {}",
+                    hutan_code_view::file_name(std::path::Path::new(path))
+                )
+                .into(),
+            ),
             ItemRef::History { path } => (
                 crate::icons::Icon::PanelHistory,
                 format!(
@@ -1957,7 +1979,7 @@ impl Workbench {
     /// What hovering the tab of `item` says: the session's title with its placement badge
     /// (`main` / `wt <branch>`) and the checkout. `None` for panels and for sessions outside git.
     pub fn item_tooltip(&self, item: &ItemRef, cx: &App) -> Option<String> {
-        if let ItemRef::File { path } = item {
+        if let ItemRef::File { path } | ItemRef::Preview { path } = item {
             return Some(path.clone());
         }
         let id = match item {
@@ -2102,6 +2124,7 @@ impl Workbench {
             .chain(self.changes_views.values().map(Entity::entity_id))
             .chain(self.file_views.values().map(Entity::entity_id))
             .chain(self.history_views.values().map(Entity::entity_id))
+            .chain(self.md_previews.values().map(Entity::entity_id))
             .chain(self.revision_views.values().map(Entity::entity_id))
             .chain(self.compare_views.values().map(Entity::entity_id))
             .chain(self.terminals.values().map(|item| item.view.entity_id()));

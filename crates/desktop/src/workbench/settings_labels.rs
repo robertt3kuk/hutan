@@ -1101,6 +1101,24 @@ const FIELDS: &[FieldText] = &[
         "Open files beside the agent",
         "While an agent (a chat or a terminal agent) is in front, a file you open — from Files, ⌘P, a link in the chat — opens in a split to its right instead of replacing it; the split is reused for the next file. Off, a file opens in the pane you are in. ⌥-click, ⌥Return and Open to the Side always open to the side.",
     ),
+    choice(
+        "editor",
+        "markdown_preview",
+        "Markdown preview",
+        "What a Markdown file offers for showing its rendered page. Toggle: ⇧⌘V (and the Source | Preview switch above the file) turns the tab into the page and back. Beside the file: ⇧⌘V opens the page in a split to the right that follows your edits and scrolling. Off: no preview. Markdown: Open Preview to the Side in the command palette always opens the split unless this is Off. No language server is involved.",
+        &[
+            ("off", "Off"),
+            ("toggle", "Toggle in the tab"),
+            ("side", "Beside the file"),
+        ],
+    ),
+    choice(
+        "editor",
+        "markdown_open",
+        "Open Markdown files as",
+        "Source shows the text, as for every file. Preview shows the rendered page, with Source one click (or ⇧⌘V) away. Only when Markdown preview is not Off.",
+        &[("source", "Source"), ("preview", "Preview")],
+    ),
     field(
         "editor",
         "scroll_beyond_last_line",

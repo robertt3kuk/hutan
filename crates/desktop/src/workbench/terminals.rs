@@ -177,6 +177,7 @@ impl Workbench {
         }
         self.sync_chats(cx);
         self.sync_files(cx);
+        self.sync_md_previews();
         self.sync_history_views();
         self.sync_compare_views();
     }
@@ -435,6 +436,17 @@ impl Workbench {
             window.focus(&view.focus_handle(cx), cx);
             return;
         }
+        if let FocusTarget::Pane(pane) = self.state.focus
+            && let Some(path) = self
+                .state
+                .active_pane()
+                .and_then(|p| p.active_item())
+                .and_then(ItemRef::as_preview)
+            && let Some(view) = self.md_previews.get(&(pane, path.to_owned()))
+        {
+            window.focus(&view.focus_handle(cx), cx);
+            return;
+        }
         if let FocusTarget::Pane(_) = self.state.focus
             && let Some(session) = self.focused_session()
         {
@@ -476,10 +488,18 @@ impl Workbench {
             || self
                 .pruned_files
                 .iter()
+                .any(|view| view.focus_handle(cx) == focused)
+            || self.md_previews.iter().any(|(key, view)| {
+                !self.rendered_previews.contains(key) && view.focus_handle(cx) == focused
+            })
+            || self
+                .pruned_previews
+                .iter()
                 .any(|view| view.focus_handle(cx) == focused);
         self.pruned.clear();
         self.pruned_chats.clear();
         self.pruned_files.clear();
+        self.pruned_previews.clear();
         if orphaned {
             self.focus_root(window, cx);
         }

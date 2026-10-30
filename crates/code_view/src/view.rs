@@ -715,6 +715,17 @@ impl CodeView {
         cx.notify();
     }
 
+    /// Scrolls so that 0-based `line` is the first one drawn (a preview hands its place over to
+    /// the text this way). The view's own limits apply: the last lines do not scroll past the
+    /// room `editor.scroll_beyond_last_line` leaves.
+    pub fn scroll_line_to_top(&mut self, line: usize, cx: &mut Context<Self>) {
+        let line_h = self.layout.map_or(16.0, |l| f32::from(l.line_height));
+        let row = self.first_row_of_line(line, cx);
+        self.scroll_y = row as f32 * line_h;
+        self.clamp_scroll(cx);
+        cx.notify();
+    }
+
     pub fn scroll_y(&self) -> f32 {
         self.scroll_y
     }

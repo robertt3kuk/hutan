@@ -378,6 +378,12 @@ pub enum ItemRef {
     CompareHead {
         path: String,
     },
+    /// The rendered page of a Markdown file (MD-PREVIEW, *Open Preview to the Side*): it
+    /// follows the file's buffer and the scroll of the tab it was opened from. By the file's
+    /// absolute path. A binary from before it reads the stored tab as a placeholder.
+    Preview {
+        path: String,
+    },
     /// A terminal tab that holds a tree of terminal splits (Ghostty / iTerm style): every leaf is
     /// its own daemon session, the tab has one title (the focused split's) and closes with its
     /// last split. A tab with one terminal is [`ItemRef::Terminal`]; this form exists while it
@@ -423,6 +429,9 @@ enum ItemRepr {
     CompareHead {
         path: String,
     },
+    Preview {
+        path: String,
+    },
     /// A tab of terminal splits: the tree (each leaf a pane of one terminal item), the focused
     /// leaf, and whether it is zoomed. A binary from before splits reads this as a placeholder
     /// (the sessions stay in the daemon and in the sessions panel).
@@ -454,6 +463,7 @@ impl From<ItemRef> for ItemRepr {
             ItemRef::Revision { path, rev } => ItemRepr::Revision { path, rev },
             ItemRef::Compare { left, right } => ItemRepr::Compare { left, right },
             ItemRef::CompareHead { path } => ItemRepr::CompareHead { path },
+            ItemRef::Preview { path } => ItemRepr::Preview { path },
             ItemRef::File { path } => ItemRepr::Placeholder {
                 title: std::path::Path::new(&path)
                     .file_name()
@@ -495,6 +505,7 @@ impl From<ItemOnDisk> for ItemRef {
                 ItemRef::Compare { left, right }
             }
             ItemOnDisk::Known(ItemRepr::CompareHead { path }) => ItemRef::CompareHead { path },
+            ItemOnDisk::Known(ItemRepr::Preview { path }) => ItemRef::Preview { path },
             ItemOnDisk::Known(ItemRepr::TerminalSplit {
                 tree,
                 focus,
@@ -546,6 +557,18 @@ impl ItemRef {
 
     pub fn compare_head(path: impl Into<String>) -> Self {
         ItemRef::CompareHead { path: path.into() }
+    }
+
+    pub fn preview(path: impl Into<String>) -> Self {
+        ItemRef::Preview { path: path.into() }
+    }
+
+    /// The path of a Markdown preview tab.
+    pub fn as_preview(&self) -> Option<&str> {
+        match self {
+            ItemRef::Preview { path } => Some(path),
+            _ => None,
+        }
     }
 
     pub fn panel(id: &str) -> Self {

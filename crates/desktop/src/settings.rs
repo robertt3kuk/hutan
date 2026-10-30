@@ -1404,6 +1404,30 @@ impl Setting for ChatSettings {
     }
 }
 
+/// What a Markdown file tab offers for rendering the page (`editor.markdown_preview`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkdownPreviewMode {
+    /// No preview: no switch in the tab, ⇧⌘V says so.
+    Off,
+    /// ⇧⌘V switches the tab between the text and the page.
+    #[default]
+    Toggle,
+    /// ⇧⌘V opens the page in a split beside the text.
+    Side,
+}
+
+/// What a Markdown file shows when it opens (`editor.markdown_open`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkdownOpen {
+    /// The text.
+    #[default]
+    Source,
+    /// The rendered page.
+    Preview,
+}
+
 /// When file tabs save by themselves (`editor.autosave`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1483,6 +1507,14 @@ pub struct EditorSettings {
     /// instead of replacing the agent. ⌥-click, ⌥Return and *Open to the Side* always open to
     /// the side. Off, a file opens in the focused pane.
     pub open_beside_agent: bool,
+    /// What a Markdown file tab offers for rendering the page: `off` (nothing), `toggle` (⇧⌘V
+    /// and the tab's *Source | Preview* switch show the page in the tab itself), `side` (⇧⌘V
+    /// and the button open the page in a split to the right and follow the file's edits and
+    /// scrolling). *Markdown: Open Preview to the Side* in ⌘K works in `toggle` and `side`.
+    pub markdown_preview: MarkdownPreviewMode,
+    /// How a Markdown file opens: `source` (the text, as every file) or `preview` (the rendered
+    /// page, with *Source* one click away). Ignored while `markdown_preview = "off"`.
+    pub markdown_open: MarkdownOpen,
 }
 
 /// `editor.large_file_bytes` by default: 16 MiB.
@@ -1520,6 +1552,8 @@ impl Default for EditorSettings {
             wrap_column: hutan_code_view::DEFAULT_WRAP_COLUMN as u64,
             preview_tabs: false,
             open_beside_agent: true,
+            markdown_preview: MarkdownPreviewMode::Toggle,
+            markdown_open: MarkdownOpen::Source,
         }
     }
 }

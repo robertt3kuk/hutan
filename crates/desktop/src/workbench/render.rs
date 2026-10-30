@@ -193,6 +193,7 @@ impl Render for Workbench {
         self.rendered_terminals.clear();
         self.rendered_chats.clear();
         self.rendered_files.clear();
+        self.rendered_previews.clear();
 
         self.sync_docks(window, cx);
         let peek = self.render_peek(window, cx);
@@ -1299,6 +1300,16 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::ReviewLspTrust, _, cx| {
             this.review_lsp_trust(cx);
         }))
+        .on_action(
+            cx.listener(|this, _: &actions::ToggleMarkdownPreview, window, cx| {
+                this.toggle_markdown_preview(window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::OpenMarkdownPreviewSide, window, cx| {
+                this.open_markdown_preview_side(window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::ShowSearch, window, cx| {
             this.show_search(false, window, cx);
         }))
@@ -3102,6 +3113,7 @@ impl Workbench {
                 cached_view(&self.regions, view)
             }
             ItemRef::File { path } => self.render_file_item(pane, path, window, cx),
+            ItemRef::Preview { path } => self.render_preview_item(pane, path, window, cx),
             ItemRef::History { path } => self.render_history_item(path, window, cx),
             ItemRef::Revision { path, rev } => self.render_revision_item(path, rev, cx),
             item @ (ItemRef::Compare { .. } | ItemRef::CompareHead { .. }) => {

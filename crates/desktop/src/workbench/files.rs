@@ -553,6 +553,7 @@ impl Workbench {
         view.update(cx, |view, cx| view.set_lsp(lsp, cx));
         // A caret move or an edit is no event here: the editor's status items read the code
         // view themselves (`editor_status.rs`), so the workbench is not notified (B12a).
+        let file = path.to_owned();
         let subscription = cx.subscribe_in(
             &view,
             window,
@@ -629,6 +630,15 @@ impl Workbench {
                     trigger,
                     retrigger,
                 } => this.lsp_signature_help(view, *request, *offset, *trigger, *retrigger, cx),
+                FileViewEvent::MarkdownToggle => {
+                    this.toggle_markdown_in_tab(pane, &file, window, cx);
+                }
+                FileViewEvent::MarkdownSide => {
+                    this.show_markdown_preview_side(pane, &file, window, cx);
+                }
+                FileViewEvent::MarkdownLink(url) => {
+                    this.open_markdown_link(&file, url, window, cx);
+                }
             },
         );
         self.file_subscriptions.insert(key.clone(), subscription);
@@ -641,6 +651,8 @@ impl Workbench {
         }
         self.sync_git_stage_availability(path, cx);
         self.sync_lsp_bars(cx);
+        // `editor.markdown_open`, or a link of a page: the tab starts as the page.
+        self.open_markdown_as_page(&view, path, window, cx);
         view
     }
 
@@ -722,12 +734,21 @@ impl Workbench {
         self.prune_preview();
         let items = self.open_file_items();
         let mut wanted: HashSet<String> = items.iter().map(|(_, path)| path.clone()).collect();
+        // A Markdown preview tab reads the same buffer.
+        wanted.extend(
+            self.state
+                .center
+                .panes()
+                .into_iter()
+                .flat_map(|pane| pane.items.iter())
+                .filter_map(|item| item.as_preview().map(str::to_owned)),
+        );
         if let Some(saved) = &self.state.stashed {
             for pane in saved.center.panes() {
                 wanted.extend(
                     pane.items
                         .iter()
-                        .filter_map(|i| i.as_file().map(str::to_owned)),
+                        .filter_map(|i| i.as_file().or(i.as_preview()).map(str::to_owned)),
                 );
             }
         }

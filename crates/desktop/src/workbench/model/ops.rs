@@ -57,7 +57,9 @@ pub fn retargeted(path: &str, from: &str, to: &str) -> Option<String> {
     Some(format!("{}/{rest}", to.trim_end_matches('/')))
 }
 
-/// Points the file tabs of `center` at `from` (and below it) at `to`.
+/// Points the file tabs of `center` — and the Markdown previews of files — at `from` (and below
+/// it) at `to`. Only file tabs are reported in `moved` (their buffers are re-keyed; a preview
+/// reads the buffer of its file).
 fn retarget_in(
     center: &mut super::PaneTree,
     from: &str,
@@ -66,15 +68,22 @@ fn retarget_in(
 ) {
     for pane in center.panes_mut() {
         for item in &mut pane.items {
-            let ItemRef::File { path } = item else {
-                continue;
-            };
-            if let Some(new) = retargeted(path, from, to) {
-                if let Some(moved) = moved.as_deref_mut() {
-                    moved.push((std::mem::replace(path, new.clone()), new));
-                } else {
-                    *path = new;
+            match item {
+                ItemRef::File { path } => {
+                    if let Some(new) = retargeted(path, from, to) {
+                        if let Some(moved) = moved.as_deref_mut() {
+                            moved.push((std::mem::replace(path, new.clone()), new));
+                        } else {
+                            *path = new;
+                        }
+                    }
                 }
+                ItemRef::Preview { path } => {
+                    if let Some(new) = retargeted(path, from, to) {
+                        *path = new;
+                    }
+                }
+                _ => {}
             }
         }
     }

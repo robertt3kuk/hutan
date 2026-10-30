@@ -199,6 +199,7 @@ pub fn menus(presets: &[LayoutPreset], current: &str, daemon_menu: &DaemonMenu) 
             MenuItem::action("Overview", actions::ToggleOverview),
             MenuItem::action("Toggle Zoom Pane", actions::ToggleZoom),
             MenuItem::action("Toggle Soft Wrap", hutan_code_view::ToggleSoftWrap),
+            MenuItem::action("Toggle Markdown Preview", actions::ToggleMarkdownPreview),
             MenuItem::separator(),
             MenuItem::submenu(Menu::new("Density").items([
                 MenuItem::action("Compact", actions::SetDensityCompact),

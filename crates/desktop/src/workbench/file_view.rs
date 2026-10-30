@@ -28,11 +28,14 @@ use hutan_settings::SettingsStore;
 use hutan_vim::ex::Ex;
 
 use super::chat::vim::Outcome;
+use super::markdown_open::{Bar, is_markdown};
+use super::markdown_preview::{MarkdownPreview, MarkdownPreviewEvent};
 use super::regions::Regions;
 use super::style::{TextTooltip, UiStyle};
 use super::text_field::FieldRef;
 use super::ui::{self, ButtonKind, FocusRingExt as _, Mascot};
 use super::vim_ui::{self, FieldEdit, VimConfig};
+use crate::settings::MarkdownPreviewMode;
 use crate::settings::{EditorSettings, LanguagesSettings, SoftWrap};
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
@@ -111,6 +114,12 @@ pub enum FileViewEvent {
         trigger: Option<char>,
         retrigger: bool,
     },
+    /// The bar's *Source | Preview* switch (MD-PREVIEW): show the page, or the text again.
+    MarkdownToggle,
+    /// The bar's *To the Side*: open the page in a split.
+    MarkdownSide,
+    /// A link of the page was clicked (MD-PREVIEW): the url as written.
+    MarkdownLink(String),
 }
 
 /// Vim's `:` line while it is open.
@@ -171,6 +180,9 @@ pub struct FileView {
     blame: bool,
     /// *Toggle Soft Wrap*: what the tab does instead of what settings say.
     wrap_override: Option<WrapMode>,
+    /// The rendered page this tab shows instead of its text (MD-PREVIEW), and what listens to it.
+    page: Option<Entity<MarkdownPreview>>,
+    page_subscriptions: Vec<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -187,7 +199,10 @@ impl EventEmitter<FileViewEvent> for FileView {}
 
 impl Focusable for FileView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.code.focus_handle(cx)
+        match &self.page {
+            Some(page) => page.focus_handle(cx),
+            None => self.code.focus_handle(cx),
+        }
     }
 }
 
@@ -316,6 +331,8 @@ impl FileView {
             lsp_bar_shown: false,
             blame: false,
             wrap_override: None,
+            page: None,
+            page_subscriptions: Vec::new(),
             _subscriptions: subscriptions,
         };
         this.sync_vim(cx);
@@ -981,11 +998,71 @@ impl FileView {
 
     /// Restyles the code (theme or font change).
     pub fn set_style(&mut self, style: CodeStyle, cx: &mut Context<Self>) {
+        if let Some(page) = &self.page {
+            page.update(cx, |page, cx| page.set_style(style.clone(), cx));
+        }
         self.code.update(cx, |code, cx| code.set_style(style, cx));
+    }
+
+    /// Whether the tab shows the rendered page (MD-PREVIEW) and not the text.
+    pub fn is_rendered(&self) -> bool {
+        self.page.is_some()
+    }
+
+    /// The page the tab shows, if it shows one.
+    pub fn page(&self) -> Option<&Entity<MarkdownPreview>> {
+        self.page.as_ref()
+    }
+
+    /// Shows `page` (the Markdown file's rendered page, starting where the text is scrolled to)
+    /// in place of the text, or the text again (`None`), starting where the page is. The
+    /// keyboard goes with it.
+    pub fn set_rendered(
+        &mut self,
+        page: Option<Entity<MarkdownPreview>>,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
+        self.page_subscriptions.clear();
+        match page {
+            Some(page) => {
+                self.page_subscriptions
+                    .push(cx.observe(&page, |_, _, cx| cx.notify()));
+                self.page_subscriptions.push(cx.subscribe(
+                    &page,
+                    |_, _, event: &MarkdownPreviewEvent, cx| match event {
+                        MarkdownPreviewEvent::OpenLink(url) => {
+                            cx.emit(FileViewEvent::MarkdownLink(url.clone()));
+                        }
+                    },
+                ));
+                // Where the text is, the page starts.
+                let code = self.code.clone();
+                page.update(cx, |page, cx| page.set_source(Some(code), false, cx));
+                if let Some(window) = window {
+                    window.focus(&page.focus_handle(cx), cx);
+                }
+                self.page = Some(page);
+            }
+            None => {
+                if let Some(page) = self.page.take() {
+                    let line = page.read(cx).top_line();
+                    self.code
+                        .update(cx, |code, cx| code.scroll_line_to_top(line, cx));
+                }
+                if let Some(window) = window {
+                    window.focus(&self.code.focus_handle(cx), cx);
+                }
+            }
+        }
+        cx.notify();
     }
 
     /// ⌘F: opens the find bar with the selection (one line of it) as the query, and focuses it.
     pub fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page.is_some() {
+            return;
+        }
         let selected = self
             .code
             .read(cx)
@@ -1587,6 +1664,34 @@ impl FileView {
         hutan_ui::scroll_y("file-conflict-diff-scroll", lines)
     }
 
+    /// The bar over a Markdown file (`editor.markdown_preview`): *Source | Preview* and
+    /// *To the Side*; none for other files or with the preview off.
+    fn render_markdown_bar(
+        &self,
+        theme: &Theme,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let mode = self.settings.get::<EditorSettings>().markdown_preview;
+        if mode == MarkdownPreviewMode::Off
+            || !is_markdown(&self.buffer.read(cx).path().display().to_string())
+        {
+            return None;
+        }
+        let toggle = cx.listener(|_, _, _, cx| cx.emit(FileViewEvent::MarkdownToggle));
+        let side = cx.listener(|_, _, _, cx| cx.emit(FileViewEvent::MarkdownSide));
+        Some(
+            Bar {
+                mode,
+                page: self.page.is_some(),
+                caption: None,
+                on_toggle: std::rc::Rc::new(toggle),
+                on_side: Some(std::rc::Rc::new(side)),
+            }
+            .element(theme, tokens),
+        )
+    }
+
     fn render_state(
         &self,
         state: &LoadState,
@@ -1722,9 +1827,10 @@ impl Render for FileView {
         if ready && !self.buffer.read(cx).text().is_empty() {
             crate::frames::content_painted();
         }
-        let find_bar =
-            (ready && self.find_open).then(|| self.render_find_bar(&theme, &tokens, window, cx));
-        let replace_bar = (ready && self.find_open && self.replace_open)
+        let showing_page = self.page.is_some();
+        let find_bar = (ready && self.find_open && !showing_page)
+            .then(|| self.render_find_bar(&theme, &tokens, window, cx));
+        let replace_bar = (ready && self.find_open && self.replace_open && !showing_page)
             .then(|| self.render_replace_bar(&theme, &tokens, window, cx));
         let conflict = self.buffer.read(cx).conflict().cloned();
         let conflict_bar = conflict
@@ -1737,7 +1843,7 @@ impl Render for FileView {
         let lsp_bar = self
             .lsp
             .as_ref()
-            .filter(|_| ready && self.lsp_bar_shown)
+            .filter(|_| ready && self.lsp_bar_shown && !showing_page)
             .and_then(|lsp| {
                 let path = self.buffer.read(cx).path().display().to_string();
                 super::lsp_bar::render(lsp, &path, &self.regions, &theme, &tokens, cx)
@@ -1751,8 +1857,14 @@ impl Render for FileView {
         }
         self.had_bar = has_bar;
         let diff = self.diff.clone().map(|lines| self.render_diff(&lines, cx));
+        let markdown_bar = (ready && !large)
+            .then(|| self.render_markdown_bar(&theme, &tokens, cx))
+            .flatten();
         let body = if ready {
-            self.code.clone().into_any_element()
+            match &self.page {
+                Some(page) => page.clone().into_any_element(),
+                None => self.code.clone().into_any_element(),
+            }
         } else {
             self.render_state(&state, &theme, &tokens, cx)
         };
@@ -1764,7 +1876,7 @@ impl Render for FileView {
             });
         }
         self.shown_bar = None;
-        let command_bar = ready
+        let command_bar = (ready && !showing_page)
             .then(|| self.render_command_bar(&theme, &tokens, window, cx))
             .flatten();
         if command_bar.is_some() && !self.had_command_bar {
@@ -1823,6 +1935,7 @@ impl Render for FileView {
             .children(conflict_bar)
             .children(agent_bar)
             .children(lsp_bar)
+            .children(markdown_bar)
             .children(diff)
             .children(find_bar)
             .children(replace_bar)

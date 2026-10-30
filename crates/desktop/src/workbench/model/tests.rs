@@ -2549,6 +2549,39 @@ fn compare_tabs_are_stored_and_read_back() {
 }
 
 #[test]
+fn a_markdown_preview_tab_is_stored_read_back_and_follows_a_rename_beside_its_file() {
+    let page = ItemRef::preview("/w/docs/a.md");
+    let json = serde_json::to_value(&page).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"preview": {"path": "/w/docs/a.md"}})
+    );
+    assert_eq!(serde_json::from_value::<ItemRef>(json).unwrap(), page);
+    assert_eq!(page.as_preview(), Some("/w/docs/a.md"));
+    assert_eq!(page.as_file(), None, "a page is not a file tab");
+
+    // The page and the text of one file are two tabs; a move of the folder takes both, and only
+    // the file tab is reported (its buffer is the one that moves).
+    let mut state = WorkbenchState::default();
+    let pane = state.active_pane_id();
+    state.add_item(pane, ItemRef::file("/w/docs/a.md")).unwrap();
+    let side = state
+        .split_pane(pane, Edge::Right, ItemRef::preview("/w/docs/a.md"))
+        .unwrap();
+    let moved = state.retarget_files("/w/docs", "/w/guide");
+    assert_eq!(
+        moved,
+        [("/w/docs/a.md".to_owned(), "/w/guide/a.md".to_owned())]
+    );
+    assert_eq!(
+        state.pane(side).unwrap().items,
+        [ItemRef::preview("/w/guide/a.md")]
+    );
+    assert!(state.find_item(&ItemRef::file("/w/guide/a.md")).is_some());
+    check(&state);
+}
+
+#[test]
 fn a_renamed_path_is_what_is_below_it_moved_and_nothing_that_merely_starts_alike() {
     assert_eq!(
         retargeted("/w/src", "/w/src", "/w/lib").as_deref(),
