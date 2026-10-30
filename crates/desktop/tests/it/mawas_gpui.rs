@@ -831,6 +831,15 @@ fn dragging_an_edge_widens_the_column_symmetrically_and_writes_once_on_release(
         "written on release, in rem"
     );
     assert_close(column_width(&view, cx), 816.0, "the column after");
+    // What the column holds follows it: the composer is no longer held to the 720 pt reading
+    // width of a chat's own tab.
+    let composer = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Chat("composer")))
+        .expect("the composer is drawn");
+    assert!(
+        composer.size.width > gpui::px(760.0) && composer.size.width <= gpui::px(816.0),
+        "the composer fills the widened column: {composer:?}"
+    );
 
     // The left edge works the same way: 40 pt inward is 80 pt narrower.
     let edge = bounds_of(&view, cx, "chat-edge-left").center();

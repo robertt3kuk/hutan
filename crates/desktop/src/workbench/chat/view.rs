@@ -60,6 +60,10 @@ pub struct ChatView {
     fit: std::cell::Cell<HeaderFit>,
     /// The header's width as last painted: a change renders the header again with it.
     header_seen: Rc<std::cell::Cell<Option<f32>>>,
+    /// The page that hosts this chat sets how wide its content is (Mawas Home's resizable
+    /// column): the cards and the composer fill it instead of stopping at the theme's reading
+    /// width (`reading.width`).
+    pub(super) fills_column: bool,
     /// What the parts of the header take with all their words, as last drawn.
     natural: std::cell::Cell<Option<HeaderWidths>>,
     /// The queue's chips as drawn last, and those that left (`queue_view.rs`).
@@ -270,6 +274,7 @@ impl ChatView {
             folded: std::cell::RefCell::default(),
             fit: std::cell::Cell::new(HeaderFit::Full),
             header_seen: Rc::default(),
+            fills_column: false,
             natural: std::cell::Cell::new(None),
             queue_seen: std::cell::RefCell::default(),
             approvals_seen: std::cell::RefCell::default(),
@@ -366,6 +371,15 @@ impl ChatView {
             Some("New output ↓".to_owned())
         } else {
             None
+        }
+    }
+
+    /// The hosting page bounds this chat's width (Mawas Home's column): its cards and composer
+    /// fill it instead of stopping at the theme's reading width. Off for a chat of its own.
+    pub fn set_fills_column(&mut self, fills: bool, cx: &mut Context<Self>) {
+        if self.fills_column != fills {
+            self.fills_column = fills;
+            cx.notify();
         }
     }
 
@@ -1846,7 +1860,9 @@ impl ChatView {
             .flex()
             .flex_col()
             .w_full()
-            .max_w(px(crate::theme::reading_width()))
+            .when(!self.fills_column, |s| {
+                s.max_w(px(crate::theme::reading_width()))
+            })
             .gap(px(tokens.spacing * 1.5))
             .p(px(tokens.spacing * 3.0))
             // A card with the inputs' hairline; no accent, focused or not (the caret shows it).

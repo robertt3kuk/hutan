@@ -223,7 +223,9 @@ impl ChatView {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(crate::theme::reading_width()))
+                    .when(!self.fills_column, |s| {
+                        s.max_w(px(crate::theme::reading_width()))
+                    })
                     .child(card),
             )
             .child(probe(&self.regions, Region::ChatEntry(index)))

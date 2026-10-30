@@ -553,17 +553,27 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = look.theme;
-        let (hover, held) = (theme.accent.opacity(0.35), theme.accent.opacity(0.6));
+        let (hover, held) = (theme.accent.opacity(0.45), theme.accent.opacity(0.8));
         let dragging = self.resizing_chat();
+        // A 2 pt line in the middle of the strip: hidden at rest, drawn while the pointer is on
+        // the strip, stronger while it drags.
+        let line = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(GUTTER / 2.0 - 1.0))
+            .w(px(2.0))
+            .rounded(px(1.0))
+            .group_hover(name, move |s| s.bg(hover))
+            .when(dragging, move |s| s.bg(held));
         let strip = div()
             .id(name)
+            .group(name)
             .absolute()
             .top_0()
             .bottom_0()
             .w(px(GUTTER))
             .cursor_col_resize()
-            .hover(move |s| s.bg(hover))
-            .when(dragging, move |s| s.bg(held))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
@@ -571,6 +581,7 @@ impl AssistantPanel {
                     cx.stop_propagation();
                 }),
             )
+            .child(line)
             .child(probe(&self.env.regions, Region::Assistant(name)));
         if sign < 0.0 {
             strip.left(px(-GUTTER))
@@ -930,7 +941,13 @@ impl AssistantPanel {
             self.env.regions.clone(),
         );
         let shown = model.clone();
-        let view = cx.new(|cx| ChatView::new(session, shown, sessions, settings, regions, cx));
+        // The conversation column (`assistant.chat_width_rem`) is the width, not the reading
+        // width a chat of its own has.
+        let view = cx.new(|cx| {
+            let mut view = ChatView::new(session, shown, sessions, settings, regions, cx);
+            view.set_fills_column(true, cx);
+            view
+        });
         self.chats.insert(session, Chat { model, view });
     }
 
