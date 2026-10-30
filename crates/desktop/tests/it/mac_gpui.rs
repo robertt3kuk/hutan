@@ -1209,7 +1209,10 @@ fn the_new_namespaces_and_fields_are_in_the_settings_sheet(cx: &mut TestAppConte
             .map(|f| f.dotted())
             .collect::<Vec<_>>()
     });
-    assert_eq!(assistant, ["enabled", "global_shortcut"]);
+    assert_eq!(
+        assistant,
+        ["enabled", "global_shortcut", "chat_width_rem", "rail_open"]
+    );
     // Drawing the sheet with the status next to the toggle must not panic.
     view.update(cx, |wb, cx| wb.select_settings_namespace("app", cx));
     draw(cx);
