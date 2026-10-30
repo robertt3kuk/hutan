@@ -310,7 +310,8 @@ static TOOLS: &[Tool] = &[
             "Stop what an agent of a session is doing without ending the session: the running \
              turn of a chat, or the ^C a user would type in a terminal agent. With `node_id` \
              (from the session's agent tree) it interrupts one subagent; `force` follows a \
-             subagent's SIGINT with SIGTERM after two seconds."
+             subagent's SIGINT with SIGTERM after two seconds. As Mawas, the user's assistant, \
+             you may not interrupt a Mawas chat, and the user approves it per agent."
         ),
         read_only: false,
         call: request("agent.interrupt"),
@@ -358,7 +359,10 @@ static TOOLS: &[Tool] = &[
         name: "chat_send",
         description: ask!(
             "Send a message to an agent chat session; the agent starts a turn. Returns the turn \
-             id; read the answer with `chat_log`. Fails while a turn is running."
+             id; read the answer with `chat_log`. Fails while a turn is running (use \
+             `chat_queue_add` to leave a message for after it). As Mawas, the user's assistant, \
+             you may not message a Mawas chat, and the user sees and approves every word (at \
+             most 2 KiB) for each agent you write to; the agent is told the message is yours."
         ),
         read_only: false,
         call: request("chat.send"),
@@ -368,6 +372,37 @@ static TOOLS: &[Tool] = &[
                 &["session_id", "text"],
             )
         },
+    },
+    Tool {
+        name: "chat_queue_add",
+        description: ask!(
+            "Leave a message for an agent chat session in its queue: it is sent when the \
+             running turn ends (at once when no turn runs), never typed into anyone's draft; the \
+             user sees it in the chat's queue, where they can remove it or send it now. Returns \
+             the queued message with its id; read what happened with `chat_log`. As Mawas, the \
+             user's assistant, you may not queue a message for a Mawas chat, and the user sees \
+             and approves every word (at most 2 KiB) for each agent you write to; the agent is \
+             told the message is yours. Never use it to answer an agent's question or \
+             approval: only the user answers those."
+        ),
+        read_only: false,
+        call: request("chat.queue.add"),
+        schema: || {
+            object(
+                json!({"session_id": session_id(), "text": text("The message.")}),
+                &["session_id", "text"],
+            )
+        },
+    },
+    Tool {
+        name: "chat_queue_list",
+        description: "List the messages that wait in an agent chat session's queue, in the \
+                      order they will be sent, each with its id, its text, when it was queued \
+                      and who wrote it (`origin`: absent for the user's own, `mawas` for yours), \
+                      and whether the queue is held and why.",
+        read_only: true,
+        call: request("chat.queue.list"),
+        schema: || object(json!({"session_id": session_id()}), &["session_id"]),
     },
     Tool {
         name: "chat_fork",
@@ -566,7 +601,8 @@ static TOOLS: &[Tool] = &[
              `note` saying what to change (sent to the task's chat as a user message when its \
              session is still live, and the task runs again). Only a done task whose work was \
              not merged or discarded can be reviewed. Reviewing is the user's decision: ask \
-             for it unless they told you to."
+             for it unless they told you to. As Mawas, the user's assistant, the user sees the \
+             note (at most 2 KiB) and the agent it goes to, and approves it per agent."
         ),
         read_only: false,
         call: request("task.review"),
@@ -1510,6 +1546,8 @@ mod tests {
             "session_reopen",
             "chat_create",
             "chat_send",
+            "chat_queue_add",
+            "chat_queue_list",
             "chat_fork",
             "chat_log",
             "approval_list",
