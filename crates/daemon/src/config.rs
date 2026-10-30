@@ -96,6 +96,9 @@
 //! read_deny = ["~/.ssh"]         # folders no contained session may read (default: Keychains, ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh, ~/.netrc; Hutan's own folder always)
 //! bin = "/usr/bin/sandbox-exec"  # the Seatbelt tool
 //!
+//! [agents]                       # what the daemon records about agents (protocol 0.67, docs/assistant.md § Flow)
+//! state_log = true               # the log of states agents report, kept 14 days, for how long a terminal agent waited; false stops it and deletes what it holds
+//!
 //! [updates]                      # the check for a newer Hutan (protocol 0.60, docs/packaging.md § Updates)
 //! check = "auto"                 # "auto": ask GitHub's releases at most every 24 h, and on request; "off": only on request
 //! channel = "prerelease"         # "prerelease": every release counts; "stable": releases not marked pre-release
@@ -211,6 +214,26 @@ pub struct DaemonSettings {
     pub worktrees: WorktreeSettings,
     /// `[updates]`: the check for a newer Hutan (protocol 0.60, ADR 0024).
     pub updates: UpdatesSettings,
+    /// `[agents]`: what the daemon records about agents (protocol 0.67, ADR 0025).
+    pub agents: AgentsSettings,
+}
+
+/// `[agents]` of `daemon.toml`: the log of agents' states (`docs/assistant.md` § Flow).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentsSettings {
+    /// `true` (default): every change of the state an agent reports about itself (a hook's
+    /// report, a terminal agent's status) is logged for 14 days, with the state word, the source,
+    /// what a blocked agent waits for and a short redacted message — never output. It is the
+    /// only way to tell how long a *terminal* agent waited for the user. `false` stops it and
+    /// deletes what the log holds.
+    pub state_log: bool,
+}
+
+impl Default for AgentsSettings {
+    fn default() -> Self {
+        Self { state_log: true }
+    }
 }
 
 /// `[updates]` of `daemon.toml`: when the daemon asks GitHub whether a newer Hutan exists, which
@@ -1250,6 +1273,8 @@ struct File {
     worktrees: WorktreeSettings,
     #[serde(default)]
     updates: UpdatesSettings,
+    #[serde(default)]
+    agents: AgentsSettings,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1390,6 +1415,7 @@ impl DaemonSettings {
             hooks: file.hooks,
             worktrees: file.worktrees,
             updates: file.updates,
+            agents: file.agents,
         })
     }
 }

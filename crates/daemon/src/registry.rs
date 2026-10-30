@@ -62,6 +62,7 @@ use crate::recovery;
 use crate::resources::SystemProcesses;
 use crate::restore::{self, Stored};
 use crate::session_names::{self, Facts, Naming};
+use crate::state_log::StateLog;
 use crate::term_agent;
 use crate::terminals::{TerminalEntry, TerminalHub};
 use crate::tree::{self, TreeState};
@@ -860,6 +861,9 @@ struct SessionEntry {
     /// The main agent's last `message` and conversation id (what `SessionInfo.agent` carries
     /// besides the state).
     agent_message: Option<String>,
+    /// The `(source, state)` last written to the state log, so that a report that changes
+    /// nothing writes nothing.
+    state_logged: Option<(String, String)>,
     agent_session_id: Option<String>,
     /// The agents of the session: the main agent and its subagents, with the sequence numbers
     /// of their reporters (`agent.report` / `agent.release`).
@@ -981,6 +985,7 @@ impl SessionEntry {
     fn forget_agent(&mut self, now_ms: u64) -> bool {
         self.tree.session_ended(now_ms);
         self.agent_message = None;
+        self.state_logged = None;
         self.agent_session_id = None;
         self.resume_ref_json.take().is_some()
     }
@@ -1041,6 +1046,8 @@ struct SessionRegistry {
     stop_all_waiters: Vec<Reply<()>>,
     chats: Arc<ChatManager>,
     storage: Storage,
+    /// The log of agents' states (`[agents] state_log`).
+    state_log: Arc<StateLog>,
     /// When sessions with unwritten title/cwd changes are written next.
     flush_at: Option<Instant>,
     /// When the earliest throttled workspace activity is applied.
@@ -1072,6 +1079,8 @@ pub struct RegistryConfig {
     /// The `hutan` CLI exported to sessions as `HUTAN_BIN`.
     pub hutan_bin: PathBuf,
     pub storage: Storage,
+    /// The log of agents' states, shared with the settings that turn it off.
+    pub state_log: Arc<StateLog>,
     pub restore: RestoreMode,
     /// The folder of the Home workspace (existing, canonical).
     pub home_folder: PathBuf,
@@ -1159,6 +1168,7 @@ pub fn spawn(
         stop_all_waiters: Vec::new(),
         chats: chats.clone(),
         storage: config.storage,
+        state_log: config.state_log,
         flush_at: None,
         activity_flush_at: None,
         tree_flush_at: None,
@@ -2667,6 +2677,7 @@ impl SessionRegistry {
             keep_live: None,
             dirty: false,
             agent_message: None,
+            state_logged: None,
             agent_session_id: None,
             tree: TreeState::new(session_id),
             chat: None,
@@ -3310,6 +3321,27 @@ impl SessionRegistry {
 
     // Agents that report in the terminal ------------------------------------------------------
 
+    /// The word of a hook-reported state in the state log.
+    fn agent_state_word(state: AgentState) -> &'static str {
+        match state {
+            AgentState::Working => "working",
+            AgentState::Blocked => "blocked",
+            AgentState::Idle => "idle",
+        }
+    }
+
+    /// The word of a terminal agent's state in the state log.
+    fn terminal_state_word(state: TerminalAgentState) -> &'static str {
+        match state {
+            TerminalAgentState::Unknown => "unknown",
+            TerminalAgentState::Idle => "idle",
+            TerminalAgentState::Working => "working",
+            TerminalAgentState::Blocked => "blocked",
+            TerminalAgentState::Done => "done",
+            TerminalAgentState::Error => "error",
+        }
+    }
+
     /// The agent of session `index` after the terminal's title became `title`; whether the
     /// agent (not the session's name) changed.
     fn apply_agent_title(&mut self, index: usize, title: Option<&str>) -> bool {
@@ -3377,6 +3409,26 @@ impl SessionRegistry {
             session.agent_message = message.filter(|_| tree_state == AgentState::Blocked);
         }
         let changed = session.info.terminal_agent.as_ref() != Some(&next);
+        // The terminal agent's states, including the ones a hook's summary has no word for
+        // (`done`, `error`): one line of the state log each time it changes.
+        let state = Self::terminal_state_word(next.state);
+        let key = (term_agent::OSC_SOURCE.to_owned(), state.to_owned());
+        if session.state_logged.as_ref() != Some(&key) {
+            self.state_log.record(
+                session.info.id,
+                now,
+                term_agent::OSC_SOURCE,
+                state,
+                next.kind.as_deref(),
+                next.message.as_deref().filter(|_| {
+                    matches!(
+                        next.state,
+                        TerminalAgentState::Blocked | TerminalAgentState::Error
+                    )
+                }),
+            );
+            session.state_logged = Some(key);
+        }
         session.info.terminal_agent = Some(next);
         if !spoken_for {
             self.tree_changed(index);
@@ -4099,6 +4151,7 @@ impl SessionRegistry {
             keep_live: None,
             dirty: false,
             agent_message: None,
+            state_logged: None,
             agent_session_id: None,
             tree: TreeState::new(session_id),
             chat: Some(spec),
@@ -5140,6 +5193,7 @@ impl SessionRegistry {
             keep_live: None,
             dirty: false,
             agent_message: None,
+            state_logged: None,
             agent_session_id: None,
             tree: TreeState::new(row.id),
             chat: Some(spec),
@@ -5370,6 +5424,7 @@ impl SessionRegistry {
                 keep_live: None,
                 dirty: false,
                 agent_message: None,
+                state_logged: None,
                 agent_session_id: None,
                 tree: TreeState::new(row.id),
                 chat: None,
@@ -5501,6 +5556,26 @@ impl SessionRegistry {
             session.agent_session_id.as_deref(),
         );
         let changed = !tree::same_summary(session.info.agent.as_ref(), next.as_ref());
+        // A hook's report that moved the agent to another state is one line of the state log (an
+        // agent that speaks through OSC 7501 is logged where its status arrives).
+        if let Some(report) = next
+            .as_ref()
+            .filter(|report| report.source != term_agent::OSC_SOURCE)
+        {
+            let state = Self::agent_state_word(report.state);
+            let key = (report.source.clone(), state.to_owned());
+            if session.state_logged.as_ref() != Some(&key) {
+                self.state_log.record(
+                    session.info.id,
+                    now_ms(),
+                    &report.source,
+                    state,
+                    None,
+                    report.message.as_deref().filter(|_| state == "blocked"),
+                );
+                session.state_logged = Some(key);
+            }
+        }
         session.info.agent = next;
         changed
     }

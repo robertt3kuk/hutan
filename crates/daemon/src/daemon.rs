@@ -371,11 +371,13 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         config.usage_probes,
     );
     let insight = crate::insight::InsightHub::new(storage.clone(), bus.clone());
+    let state_log = crate::state_log::StateLog::new(storage.clone(), settings.agents.state_log);
     let registry = registry::spawn(
         bus.clone(),
         hub.clone(),
         RegistryConfig {
             socket: paths.socket.clone(),
+            state_log: state_log.clone(),
             shell_integration_dir,
             env_inherit: settings.terminal.env_inherit,
             login_shell: config
@@ -568,6 +570,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             registry: registry.clone(),
             worktrees: worktrees.clone(),
             updates: updates.clone(),
+            state_log: state_log.clone(),
         },
     );
     let router = Router::new(

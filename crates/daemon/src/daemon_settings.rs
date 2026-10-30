@@ -37,6 +37,7 @@ use crate::history::HistoryService;
 use crate::memory::MemoryService;
 use crate::notify::NotifyService;
 use crate::registry::RegistryHandle;
+use crate::state_log::StateLog;
 use crate::tasks::TaskService;
 use crate::update::UpdateService;
 use crate::worktrees::WorktreeService;
@@ -111,6 +112,7 @@ enum Group {
     Worktrees,
     Checkpoints,
     Updates,
+    Agents,
 }
 
 struct Spec {
@@ -495,6 +497,11 @@ fn build_specs() -> Vec<Spec> {
         ),
         live("updates.skip_version", Kind::String, Group::Updates, |c| {
             json!(c.updates.skip_version)
+        }),
+        // The log of agents' states (protocol 0.67, `docs/assistant.md` § Flow): turning it off
+        // stops the writing and deletes what the log holds.
+        live("agents.state_log", Kind::Bool, Group::Agents, |c| {
+            json!(c.agents.state_log)
         }),
         restart("sandbox.network", Kind::Bool, |c| json!(c.sandbox.network)),
         restart("sandbox.extra_write", Kind::StringList(None), |c| {
@@ -1368,6 +1375,7 @@ pub struct SettingsService {
     registry: RegistryHandle,
     worktrees: Arc<WorktreeService>,
     updates: Arc<UpdateService>,
+    state_log: Arc<StateLog>,
     /// One edit of the file at a time.
     write: Mutex<()>,
 }
@@ -1384,6 +1392,7 @@ pub struct Targets {
     pub registry: RegistryHandle,
     pub worktrees: Arc<WorktreeService>,
     pub updates: Arc<UpdateService>,
+    pub state_log: Arc<StateLog>,
 }
 
 impl SettingsService {
@@ -1406,6 +1415,7 @@ impl SettingsService {
             registry: targets.registry,
             worktrees: targets.worktrees,
             updates: targets.updates,
+            state_log: targets.state_log,
             write: Mutex::new(()),
         })
     }
@@ -1428,6 +1438,7 @@ impl SettingsService {
         running.worktrees = self.worktrees.settings();
         running.checkpoints = self.registry.chats().checkpoints().settings();
         running.updates = self.updates.settings();
+        running.agents.state_log = self.state_log.enabled();
         running
     }
 
@@ -1565,6 +1576,7 @@ impl SettingsService {
                 .checkpoints()
                 .apply_settings(fresh.checkpoints.clone()),
             Group::Updates => self.updates.apply_settings(fresh.updates.clone()),
+            Group::Agents => self.state_log.set_enabled(fresh.agents.state_log).await,
         }
         Ok(())
     }
@@ -1669,11 +1681,14 @@ mod tests {
             lsp: _,
             // `[updates]` is three settings of the table: check, channel, skip_version.
             updates,
+            // `[agents]` is one setting of the table: state_log.
+            agents,
             // User hooks are commands the daemon runs: they are written by hand in
             // `daemon.toml` and are no setting of the table, so neither `hutan config` nor an
             // agent can add or change one (`docs/integrations.md` § User hooks).
             hooks: _,
         } = Config::default();
+        let config::AgentsSettings { state_log: _ } = agents;
         let config::UpdatesSettings {
             check: _,
             channel: _,
@@ -1846,6 +1861,7 @@ mod tests {
             "updates.check",
             "updates.channel",
             "updates.skip_version",
+            "agents.state_log",
             "checkpoints.mode",
             "checkpoints.max_file_bytes",
             "checkpoints.snapshot_budget_bytes",
