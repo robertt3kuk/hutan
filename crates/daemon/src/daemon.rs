@@ -406,6 +406,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             assistant_policy: crate::chat::AssistantPolicy {
                 mode: settings.assistant.mode,
                 max_actions: settings.assistant.max_actions_per_turn,
+                web: settings.assistant.web,
             },
             tmp_dir: paths.base.join("tmp"),
             scratch_dir: paths.base.join("scratch"),

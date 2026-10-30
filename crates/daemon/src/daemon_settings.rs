@@ -411,6 +411,9 @@ fn build_specs() -> Vec<Spec> {
             Group::Assistant,
             |c| json!(c.assistant.memory_files_in_project),
         ),
+        live("assistant.web", Kind::Bool, Group::Assistant, |c| {
+            json!(c.assistant.web)
+        }),
     ]);
     permission_specs!(specs, context);
     permission_specs!(specs, global_context);
@@ -1562,6 +1565,7 @@ impl SettingsService {
                 self.registry.chats().set_assistant_policy(
                     fresh.assistant.mode,
                     fresh.assistant.max_actions_per_turn,
+                    fresh.assistant.web,
                 );
                 self.assistant.apply_settings(fresh.assistant.clone());
                 self.memory.apply_settings(&fresh.assistant);
@@ -1755,6 +1759,7 @@ mod tests {
             memory: _,
             memory_max_entries: _,
             memory_files_in_project: _,
+            web: _,
             context:
                 ContextPermissions {
                     shell: _,
@@ -1853,6 +1858,7 @@ mod tests {
             "assistant.memory",
             "assistant.memory_max_entries",
             "assistant.memory_files_in_project",
+            "assistant.web",
             "notify.enabled",
             "notify.min_turn_secs",
             "notify.kinds",

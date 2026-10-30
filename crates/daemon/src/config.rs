@@ -50,6 +50,7 @@
 //! memory = true                  # Mawas: give a conversation the memory you approved (false: nothing is injected)
 //! memory_max_entries = 200       # Mawas: most active memory entries
 //! memory_files_in_project = false # Mawas: also keep a workspace's memory as Markdown in its project (`.hutan/memory/`)
+//! web = false                    # Mawas: false (the default) starts her harness with web access off (OMP fetch and web search, Claude WebFetch/WebSearch, Codex web_search); true lets her read web pages (docs/control.md § Mawas)
 //!
 //! [assistant.context]            # what assistants of project workspaces may read
 //! shell = true
@@ -530,6 +531,11 @@ pub struct AssistantSettings {
     /// (`<project>/.hutan/memory/`, protocol 0.46). Off by default: they are files of the
     /// user's repository. The global memory's files (in the Home folder) are always written.
     pub memory_files_in_project: bool,
+    /// Whether Mawas's harness may reach the web (`MAWAS-NET-GUARD`): OMP's URL reads and web
+    /// search, Claude Code's `WebFetch` and `WebSearch`, Codex's `web_search`. Off by default:
+    /// Mawas reads other agents' text, which can ask her to fetch a page with a secret in its
+    /// address. Read at each start of her harness; ordinary chats are not touched.
+    pub web: bool,
     /// What assistants of project workspaces may read.
     pub context: ContextPermissions,
     /// What the global assistant (Home) may read.
@@ -551,6 +557,7 @@ impl Default for AssistantSettings {
             memory: true,
             memory_max_entries: DEFAULT_ASSISTANT_MEMORY_MAX_ENTRIES,
             memory_files_in_project: false,
+            web: false,
             context: ContextPermissions::default(),
             global_context: ContextPermissions::global_default(),
             workspaces: std::collections::BTreeMap::new(),

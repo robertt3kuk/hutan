@@ -89,6 +89,11 @@ const FIXTURE_SONNET: &str = "gitlab-duo/duo-chat-sonnet-4-6";
 /// harness's session is the one the transcripts script (no model switch).
 const OMP_ASSISTANT: &str = "backend = \"omp\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"";
 const CLAUDE_ASSISTANT: &str = "backend = \"claude\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"";
+/// The same with `web = true` (MAWAS-NET-GUARD): her harness keeps its web access.
+const OMP_ASSISTANT_WEB: &str =
+    "backend = \"omp\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"\nweb = true";
+const CLAUDE_ASSISTANT_WEB: &str =
+    "backend = \"claude\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"\nweb = true";
 /// The same, in Advisor mode (read-only launch).
 const OMP_ADVISOR: &str =
     "backend = \"omp\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"\nmode = \"advisor\"";
@@ -1377,9 +1382,14 @@ async fn an_omp_assistant_runs_the_read_only_hutan_tools_without_asking_through_
     ];
     assert_eq!(
         std::fs::read_to_string(&overlay).unwrap(),
-        omp_overlay(&names)
+        omp_overlay(&names, false)
     );
     let text = std::fs::read_to_string(&overlay).unwrap();
+    // Web access is off by default (MAWAS-NET-GUARD): the same private file says so.
+    assert!(
+        text.contains("fetch:\n  enabled: false") && text.contains("web_search:\n  enabled: false"),
+        "{text}"
+    );
     assert!(text.contains("mcp__hutan_agents_board: allow"), "{text}");
     assert!(
         text.contains("mcp__hutan_session_rename: allow"),
@@ -1417,7 +1427,8 @@ async fn an_omp_assistant_runs_the_read_only_hutan_tools_without_asking_through_
 async fn without_an_answer_from_the_cli_the_assistant_starts_and_the_harness_keeps_asking() {
     for cli in ["exit 3", "printf 'chat send\\n'", "true"] {
         let t = B::start(Setup {
-            assistant: OMP_ASSISTANT,
+            // With the web allowed there is nothing left to say in an overlay.
+            assistant: OMP_ASSISTANT_WEB,
             reads: Some(cli),
             ..Setup::default()
         })
@@ -1457,6 +1468,13 @@ async fn a_claude_assistant_gets_the_read_only_tools_as_allowed_tools_on_session
         ]),
         "{new:?}"
     );
+    // The web is off by default (MAWAS-NET-GUARD): through the same channel.
+    let disallowed = &new[0]["params"]["_meta"]["claudeCode"]["options"]["disallowedTools"];
+    assert_eq!(
+        disallowed,
+        &serde_json::json!(["WebFetch", "WebSearch"]),
+        "{new:?}"
+    );
     t.stop().await;
 }
 
@@ -1492,6 +1510,11 @@ async fn a_codex_assistant_approves_the_read_only_tools_and_a_plain_chat_does_no
         argv.contains(&"mcp_servers.hutan.tool_timeout_sec=660.0".to_owned()),
         "{argv:?}"
     );
+    // The hosted web search is removed by default (MAWAS-NET-GUARD).
+    assert!(
+        argv.contains(&"web_search=\"disabled\"".to_owned()),
+        "{argv:?}"
+    );
     assert!(
         argv.iter()
             .any(|a| a.starts_with("mcp_servers.hutan.command=")),
@@ -1513,5 +1536,150 @@ async fn a_codex_assistant_approves_the_read_only_tools_and_a_plain_chat_does_no
         "{:?}",
         &after[before..]
     );
+    assert!(
+        !after[before..].iter().any(|a| a.contains("web_search")),
+        "an ordinary chat keeps its own web search: {:?}",
+        &after[before..]
+    );
+    t.stop().await;
+}
+
+// ---- MAWAS-NET-GUARD: Mawas's harness has no web unless `[assistant] web = true` -----------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_omp_assistant_has_its_web_off_in_its_overlay_even_when_no_tool_is_named_and_web_true_removes_it()
+ {
+    // The CLI gives no list of tools: the overlay is still written, for the web alone.
+    let t = B::start(Setup {
+        assistant: OMP_ASSISTANT,
+        reads: Some("exit 3"),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let argv = t.argv("omp");
+    let at = argv.iter().position(|a| a == "--config").unwrap();
+    let text = std::fs::read_to_string(&argv[at + 1]).unwrap();
+    assert!(
+        text.contains("fetch:\n  enabled: false\nweb_search:\n  enabled: false\n"),
+        "{text}"
+    );
+    assert!(!text.contains("tools:"), "no tool is named: {text}");
+    t.stop().await;
+
+    // `web = true`: the tools are told, the web is not touched.
+    let t = B::start(Setup {
+        assistant: OMP_ASSISTANT_WEB,
+        reads: Some(READS_CLI),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let argv = t.argv("omp");
+    let at = argv.iter().position(|a| a == "--config").unwrap();
+    let text = std::fs::read_to_string(&argv[at + 1]).unwrap();
+    assert!(text.contains("mcp__hutan_agents_board: allow"), "{text}");
+    assert!(
+        !text.contains("fetch") && !text.contains("web_search"),
+        "{text}"
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claude_assistant_cannot_call_the_web_tools_unless_web_true_and_a_plain_chat_is_untouched()
+ {
+    let t = B::start(Setup {
+        assistant: CLAUDE_ASSISTANT,
+        // No list from the CLI: the web is still taken away.
+        reads: Some("exit 3"),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let new = t.received_of("claude", "session/new");
+    let options = &new[0]["params"]["_meta"]["claudeCode"]["options"];
+    assert_eq!(
+        options["disallowedTools"],
+        serde_json::json!(["WebFetch", "WebSearch"])
+    );
+    assert!(options.get("allowedTools").is_none(), "{options}");
+    // An ordinary chat: its own settings decide.
+    let project = t.workspace("proj").await;
+    let plain = t
+        .client
+        .call::<SessionResult>(plain_chat("claude", &project, &t.project))
+        .await
+        .unwrap();
+    t.start_agent(plain.session.id).await;
+    let news = t.received_of("claude", "session/new");
+    let plain_options = &news.last().unwrap()["params"]["_meta"]["claudeCode"]["options"];
+    assert!(
+        plain_options.is_null() || plain_options.get("disallowedTools").is_none(),
+        "{plain_options}"
+    );
+    t.stop().await;
+
+    let t = B::start(Setup {
+        assistant: CLAUDE_ASSISTANT_WEB,
+        reads: Some(READS_CLI),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let new = t.received_of("claude", "session/new");
+    let options = &new[0]["params"]["_meta"]["claudeCode"]["options"];
+    assert!(options.get("disallowedTools").is_none(), "{options}");
+    assert!(options.get("allowedTools").is_some(), "{options}");
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_codex_assistant_keeps_its_web_search_only_with_web_true() {
+    let t = B::start(Setup {
+        assistant: "backend = \"codex\"\nweb = true",
+        reads: Some(READS_CLI),
+        codex_argv: true,
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let argv: Vec<String> = std::fs::read_to_string(t.logs.path().join("codex-argv.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert!(!argv.iter().any(|a| a.contains("web_search")), "{argv:?}");
+    assert!(argv.iter().any(|a| a.contains("approval_mode")), "{argv:?}");
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn assistant_web_is_a_live_daemon_setting_that_defaults_to_off() {
+    let t = B::start(Setup {
+        assistant: OMP_ASSISTANT,
+        ..Setup::default()
+    })
+    .await;
+    let value = |settings: &hutan_protocol::daemon_settings::DaemonSettings| {
+        settings
+            .entries
+            .iter()
+            .find(|e| e.key == "assistant.web")
+            .map(|e| (e.value.clone(), e.set_in_file))
+    };
+    let before = t.client.daemon_settings().await.unwrap();
+    assert_eq!(value(&before), Some((serde_json::json!(false), false)));
+    let after = t
+        .client
+        .daemon_setting_set("assistant.web", Some(serde_json::json!(true)))
+        .await
+        .unwrap();
+    assert_eq!(value(&after), Some((serde_json::json!(true), true)));
     t.stop().await;
 }

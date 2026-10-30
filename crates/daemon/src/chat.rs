@@ -67,8 +67,9 @@ use crate::harness::{
 };
 use crate::insight::{InsightHub, InsightTarget};
 use crate::mcp_wiring::{
-    ApprovedTools, McpServerSpec, McpWiring, claude_allowed_tools, codex_approval_overrides,
-    codex_window_override, omp_overlay, omp_window_env,
+    ApprovedTools, CLAUDE_WEB_TOOLS, McpServerSpec, McpWiring, claude_allowed_tools,
+    codex_approval_overrides, codex_web_override, codex_window_override, omp_overlay,
+    omp_window_env,
 };
 use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
@@ -126,6 +127,8 @@ pub struct AssistantPolicy {
     pub mode: AssistantMode,
     /// Mutating requests Mawas may make in one turn before every further one asks.
     pub max_actions: u32,
+    /// Whether her harness may reach the web (`assistant.web`, read at each start of it).
+    pub web: bool,
 }
 
 /// What a chat session is, as stored in the session row's `spec_json`.
@@ -892,8 +895,9 @@ impl ChatManager {
     }
 
     /// The Codex command line for the agent of `session`, with `hutan mcp` registered. For a
-    /// Mawas conversation (`assistant`) the tools in it are approved without Codex asking, and
-    /// a call of the server may take [`crate::mcp_wiring::MAWAS_CALL_WINDOW`].
+    /// Mawas conversation (`assistant`) the tools in it are approved without Codex asking, a
+    /// call of the server may take [`crate::mcp_wiring::MAWAS_CALL_WINDOW`], and the hosted
+    /// web search is removed unless `assistant.web`.
     async fn codex_for(
         &self,
         session: SessionId,
@@ -907,6 +911,9 @@ impl ChatManager {
                 codex.args.extend(codex_approval_overrides(&tools.all()));
                 codex.args.extend(codex_window_override());
             }
+        }
+        if assistant.is_some() && !self.assistant_policy().web {
+            codex.args.extend(codex_web_override());
         }
         Ok(codex)
     }
@@ -968,11 +975,16 @@ impl ChatManager {
         self.idle_stop_ms.store(millis(idle), Ordering::Relaxed);
     }
 
-    /// `assistant.mode` and `assistant.max_actions_per_turn` from now on. The agent of an
-    /// assistant that runs in another mode restarts before its next turn ([`Self::awake`]);
-    /// the control gate reads the mode for each request.
-    pub(crate) fn set_assistant_policy(&self, mode: AssistantMode, max_actions: u32) {
-        *lock(&self.policy) = AssistantPolicy { mode, max_actions };
+    /// `assistant.mode`, `assistant.max_actions_per_turn` and `assistant.web` from now on. The
+    /// agent of an assistant that runs in another mode restarts before its next turn
+    /// ([`Self::awake`]); the control gate reads the mode for each request; the web setting is
+    /// read when her harness next starts.
+    pub(crate) fn set_assistant_policy(&self, mode: AssistantMode, max_actions: u32, web: bool) {
+        *lock(&self.policy) = AssistantPolicy {
+            mode,
+            max_actions,
+            web,
+        };
     }
 
     /// What Mawas may do, now.
@@ -1427,15 +1439,17 @@ impl ChatManager {
         let safety = spec.safety;
         let mode = spec.assistant.then(|| self.assistant_policy().mode);
         // Mawas's harness does not ask the user itself before Hutan's tools: reads are free
-        // (R1), and a change asks once, on Hutan's own card. OMP gets a private overlay file,
-        // Claude Code `allowedTools` below.
+        // (R1), and a change asks once, on Hutan's own card. OMP gets a private overlay file
+        // (which also switches its web access off unless `assistant.web`), Claude Code
+        // `allowedTools` (and `disallowedTools` for the web) below.
         let tools = self.mawas_tools(id, spec.assistant).await;
-        let overlay = (spec.agent == AGENT_OMP && !tools.is_empty())
+        let web = self.assistant_policy().web;
+        let overlay = (spec.assistant && spec.agent == AGENT_OMP && (!tools.is_empty() || !web))
             .then(|| {
                 let wiring = self.mcp.get()?;
                 wiring
-                    .write_private("omp-approvals.yml", &omp_overlay(&tools.all()))
-                    .map_err(|error| warn!(%error, "could not write the OMP overlay; OMP keeps asking before Hutan's tools"))
+                    .write_private("omp-approvals.yml", &omp_overlay(&tools.all(), web))
+                    .map_err(|error| warn!(%error, "could not write the OMP overlay; OMP keeps asking before Hutan's tools and keeps its web access"))
                     .ok()
             })
             .flatten();
@@ -1514,10 +1528,24 @@ impl ChatManager {
             resume_thread_id: spec.thread_id.clone(),
             developer_instructions: None,
             fork: fork_from(spec),
-            session_meta: if spec.assistant && spec.agent == AGENT_CLAUDE && !tools.is_empty() {
-                Some(serde_json::json!({
-                    "claudeCode": {"options": {"allowedTools": claude_allowed_tools(&tools.all())}}
-                }))
+            session_meta: if spec.assistant
+                && spec.agent == AGENT_CLAUDE
+                && (!tools.is_empty() || !web)
+            {
+                let mut options = serde_json::Map::new();
+                if !tools.is_empty() {
+                    options.insert(
+                        "allowedTools".to_owned(),
+                        serde_json::json!(claude_allowed_tools(&tools.all())),
+                    );
+                }
+                if !web {
+                    options.insert(
+                        "disallowedTools".to_owned(),
+                        serde_json::json!(CLAUDE_WEB_TOOLS),
+                    );
+                }
+                Some(serde_json::json!({"claudeCode": {"options": options}}))
             } else {
                 spec.safety
                     .and_then(|preset| crate::safety::claude_session_meta(&spec.agent, preset))

@@ -232,19 +232,44 @@ impl McpServerSpec {
     }
 }
 
-/// The OMP overlay (`omp --config <file>`) that lets `names` run without asking:
-/// `tools.approval.<tool>: allow`, honoured in every approval mode and for this process only.
-/// OMP names an MCP tool `mcp__<server>_<tool>`.
-pub fn omp_overlay(names: &[String]) -> String {
+/// The OMP overlay (`omp --config <file>`) for Mawas's harness, for this process only:
+///
+/// - `tools.approval.<tool>: allow` for `names`, so they run without OMP's own question,
+///   honoured in every approval mode. OMP names an MCP tool `mcp__<server>_<tool>`.
+/// - Unless `web`, `fetch.enabled: false` and `web_search.enabled: false` (MAWAS-NET-GUARD):
+///   the `read`, `grep` and `glob` tools then refuse `http(s)://` ("URL reads are disabled by
+///   settings") and the web search tool is gone. `ssh://` has no switch (`docs/control.md`).
+pub fn omp_overlay(names: &[String], web: bool) -> String {
     let mut out = String::from(
-        "# Written by Hutan for Mawas's OMP: the tools of Hutan's MCP server run without OMP's own\n\
-         # question (reads ask nobody; a change asks on Hutan's card). docs/control.md. Replaced at every start.\n\
-         tools:\n  approval:\n",
+        "# Written by Hutan for Mawas's OMP, for this process only. docs/control.md. Replaced at every start.\n",
     );
-    for name in names {
-        out.push_str(&format!("    mcp__{SERVER_NAME}_{name}: allow\n"));
+    if !web {
+        out.push_str(
+            "# Web access is off (`[assistant] web = false`): Mawas reads other agents' text, which must not be\n\
+             # able to send her to a page with a secret in its address.\n\
+             fetch:\n  enabled: false\nweb_search:\n  enabled: false\n",
+        );
+    }
+    if !names.is_empty() {
+        out.push_str(
+            "# The tools of Hutan's MCP server run without OMP's own question (reads ask nobody; a change asks\n\
+             # on Hutan's card).\ntools:\n  approval:\n",
+        );
+        for name in names {
+            out.push_str(&format!("    mcp__{SERVER_NAME}_{name}: allow\n"));
+        }
     }
     out
+}
+
+/// The tools Mawas's Claude Code session may not call unless `assistant.web` (through
+/// `disallowedTools` of `_meta.claudeCode.options`, which the adapter merges with its own).
+pub const CLAUDE_WEB_TOOLS: [&str; 2] = ["WebFetch", "WebSearch"];
+
+/// The Codex override that removes Mawas's hosted web search (`web_search = "disabled"`; the
+/// default `cached` is a tool outside the sandbox).
+pub fn codex_web_override() -> [String; 2] {
+    ["-c".to_owned(), "web_search=\"disabled\"".to_owned()]
 }
 
 /// What Claude Code's `allowedTools` (SDK option, through `_meta.claudeCode.options` of
@@ -318,7 +343,7 @@ mod tests {
 
     #[test]
     fn each_harness_is_told_the_names_in_its_own_spelling() {
-        let overlay = omp_overlay(&names());
+        let overlay = omp_overlay(&names(), true);
         let body: Vec<&str> = overlay.lines().filter(|l| !l.starts_with('#')).collect();
         assert_eq!(
             body,
@@ -344,6 +369,32 @@ mod tests {
             let parsed: Result<toml::Table, _> = pair[1].parse();
             assert!(parsed.is_ok(), "{}: {parsed:?}", pair[1]);
         }
+    }
+
+    #[test]
+    fn the_web_is_switched_off_in_each_harnesss_own_words_unless_allowed() {
+        // OMP: the overlay's keys, alone when no tool is named, and not at all with the web on.
+        let off = omp_overlay(&[], false);
+        let body: Vec<&str> = off.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(
+            body,
+            [
+                "fetch:",
+                "  enabled: false",
+                "web_search:",
+                "  enabled: false"
+            ]
+        );
+        let both = omp_overlay(&names(), false);
+        assert!(both.contains("fetch:") && both.contains("mcp__hutan_agents_board: allow"));
+        let on = omp_overlay(&[], true);
+        assert!(on.lines().all(|l| l.starts_with('#')), "{on}");
+        // Claude Code and Codex.
+        assert_eq!(CLAUDE_WEB_TOOLS, ["WebFetch", "WebSearch"]);
+        let codex = codex_web_override();
+        assert_eq!(codex[0], "-c");
+        let parsed: toml::Table = codex[1].parse().unwrap();
+        assert_eq!(parsed["web_search"].as_str(), Some("disabled"));
     }
 
     #[test]
