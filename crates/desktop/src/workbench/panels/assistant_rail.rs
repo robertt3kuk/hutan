@@ -1477,7 +1477,8 @@ impl AssistantPanel {
         let label = match &row.kind {
             TodayKind::Approval { memory: true, .. } => "Memory proposal",
             TodayKind::Approval { mawas: true, .. } => "Mawas asks",
-            TodayKind::Approval { .. } | TodayKind::Blocked => "Approval",
+            TodayKind::Approval { .. } => "Approval",
+            TodayKind::Blocked => blocked_label(&row.detail),
             TodayKind::Question { plan: true, .. } => "Plan to approve",
             TodayKind::Question { .. } => "Question",
             TodayKind::Failed => "Failed",
@@ -1503,9 +1504,12 @@ impl AssistantPanel {
             .child(
                 div()
                     .text_size(px(tokens.font_size))
-                    .child(SharedString::from(row.title.clone())),
+                    .child(SharedString::from(own_words(row))),
             );
-        if !row.detail.is_empty() {
+        // A request of Mawas's own says in its label who asks; the session line would say
+        // "Mawas" a third time.
+        let by_mawas = matches!(row.kind, TodayKind::Approval { mawas: true, .. });
+        if !row.detail.is_empty() && !by_mawas {
             card = card.child(
                 div()
                     .text_color(theme.muted)
@@ -1733,7 +1737,13 @@ fn recent_summary_lines(s: &ActivitySummary) -> Vec<String> {
         (s.files_changed, s.lines_added, s.lines_removed)
     {
         lines.push(format!(
-            "Changes: {files} files · +{added} −{removed} lines"
+            "Changes: {} · +{added} −{removed} {}",
+            count_of(files, "file", "files"),
+            if added == 1 && removed == 0 || removed == 1 && added == 0 {
+                "line"
+            } else {
+                "lines"
+            }
         ));
     }
     let mut tasks = Vec::new();
@@ -1822,7 +1832,10 @@ pub fn flow_lines(flow: &hutan_protocol::stats::AgentsStats) -> Vec<String> {
             .take(3)
             .map(|(label, total)| format!("{label} {}", tokens_text(*total)))
             .collect();
-        lines.push(format!("Tokens by project: {}", top.join(" · ")));
+        lines.push(format!(
+            "Tokens by project (summed per turn as the harness reports them, cache included): {}",
+            top.join(" · ")
+        ));
     } else {
         lines.push("Tokens: none reported".to_owned());
     }
@@ -1897,7 +1910,16 @@ fn recent_event_text(detail: &ActivityDetail) -> String {
             if *run {
                 format!("task {state}")
             } else {
-                format!("task work {state}")
+                // The delivery states, in words: `awaiting_review` is not a thing to read.
+                match state.as_str() {
+                    "awaiting_review" => "task work waits for review".to_owned(),
+                    "none" => "task work no longer waits for review".to_owned(),
+                    "accepted" => "task work accepted".to_owned(),
+                    "changes_requested" => "task work: changes requested".to_owned(),
+                    "merged" => "task work merged".to_owned(),
+                    "discarded" => "task work discarded".to_owned(),
+                    other => format!("task work {}", other.replace('_', " ")),
+                }
             }
         }
         ActivityDetail::SessionStarted { chat } => {
@@ -1912,8 +1934,45 @@ fn recent_event_text(detail: &ActivityDetail) -> String {
             files,
             added,
             removed,
-        } => format!("{files} files changed · +{added} −{removed}"),
+        } => format!(
+            "{} changed · +{added} −{removed}",
+            count_of(*files, "file", "files")
+        ),
     }
+}
+
+/// `1 file`, `3 files`.
+fn count_of(count: u64, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// The label of a terminal agent that waits for the user without the reducer saying for what:
+/// what its own words are (`Permission: Bash`, `Run the migration?`), else the honest
+/// *Waiting for you*.
+fn blocked_label(detail: &str) -> &'static str {
+    let lower = detail.trim().to_lowercase();
+    if lower.starts_with("permission") || lower.contains("approval") {
+        "Approval"
+    } else if lower.starts_with("question") || lower.ends_with('?') {
+        "Question"
+    } else {
+        "Waiting for you"
+    }
+}
+
+/// What a row says of itself: for Mawas's own requests the sentence without the "Mawas asks
+/// Hutan to" the label already says, capitalised (`Suggest an answer to …`).
+fn own_words(row: &TodayRow) -> String {
+    if matches!(row.kind, TodayKind::Approval { mawas: true, .. })
+        && let Some(rest) = row.title.strip_prefix("Mawas asks Hutan to ")
+    {
+        let mut chars = rest.chars();
+        return chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default();
+    }
+    row.title.clone()
 }
 
 #[cfg(test)]
@@ -1995,12 +2054,65 @@ mod flow_tests {
         }];
         let lines = flow_lines(&s);
         assert!(
-            lines.contains(&"Tokens by project: hutan 41.2k · shop 3.0k".to_owned()),
+            lines.contains(&"Tokens by project (summed per turn as the harness reports them, cache included): hutan 41.2k · shop 3.0k".to_owned()),
             "{lines:?}"
         );
         assert!(
             lines.contains(&"Failed 3× the same way: rate limited: retry in # s".to_owned()),
             "{lines:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod wording_tests {
+    use super::*;
+
+    #[test]
+    fn recent_says_one_file_and_names_task_states_in_words() {
+        let summary = ActivitySummary {
+            files_changed: Some(1),
+            lines_added: Some(4),
+            lines_removed: Some(0),
+            ..ActivitySummary::default()
+        };
+        assert!(
+            recent_summary_lines(&summary).contains(&"Changes: 1 file · +4 −0 lines".to_owned()),
+            "{:?}",
+            recent_summary_lines(&summary)
+        );
+        let task = |state: &str, run| ActivityDetail::Task {
+            state: state.to_owned(),
+            run,
+        };
+        assert_eq!(
+            recent_event_text(&task("awaiting_review", false)),
+            "task work waits for review"
+        );
+        assert_eq!(
+            recent_event_text(&task("none", false)),
+            "task work no longer waits for review"
+        );
+        assert_eq!(
+            recent_event_text(&task("changes_requested", false)),
+            "task work: changes requested"
+        );
+        assert_eq!(recent_event_text(&task("done", true)), "task done");
+        assert_eq!(
+            recent_event_text(&ActivityDetail::Checkpoint {
+                files: 1,
+                added: 2,
+                removed: 0
+            }),
+            "1 file changed · +2 −0"
+        );
+    }
+
+    #[test]
+    fn a_waiting_terminal_agent_is_labelled_by_what_it_says() {
+        assert_eq!(blocked_label("Permission: Bash"), "Approval");
+        assert_eq!(blocked_label("Run the migration?"), "Question");
+        assert_eq!(blocked_label("Question: which branch"), "Question");
+        assert_eq!(blocked_label("Waiting for you"), "Waiting for you");
     }
 }
