@@ -1613,7 +1613,7 @@ impl AssistantPanel {
                 Button::new("assistant-focus", label, theme, tokens)
                     .compact()
                     .ghost()
-                    .max_width(if self.folded { 124.0 } else { 188.0 })
+                    .max_width(if self.folded { 168.0 } else { 200.0 })
                     .tooltip(
                         "Focus narrows what Mawas looks at to one workspace and adds its notes and project line. It changes no permission.",
                     )
