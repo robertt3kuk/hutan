@@ -1971,6 +1971,22 @@ async fn mawas_suggests_an_answer_to_an_approval_and_only_the_user_answers() {
         "{}",
         card.title
     );
+    // The card says what the suggestion is about and what it says — not an id.
+    assert!(
+        card.title.contains(&format!("“{}”", waiting.title))
+            && !card.title.contains(&waiting.id.to_string()),
+        "{}",
+        card.title
+    );
+    let detail = card.detail.clone().unwrap_or_default();
+    assert!(
+        detail.contains("Suggested answer: Allow once")
+            && detail.contains("Reason: Same edit you allowed twice today."),
+        "{detail}"
+    );
+    let about = card.target.clone().expect("the agent the request is of");
+    assert_eq!(about.session_id, api.id);
+    assert_eq!(about.text.as_deref(), Some(detail.as_str()));
     m.answer(card.id, "allow_chat").await;
     let given = first.await.unwrap().unwrap();
     assert!(!given.replaced);
@@ -2095,6 +2111,18 @@ async fn mawas_suggests_values_or_a_decline_for_a_question_and_the_user_answers(
     assert!(
         card.title
             .contains("suggest an answer to the waiting question")
+    );
+    assert!(
+        card.title.contains(&format!("“{}”", question.spec.title))
+            && !card.title.contains(&question.id.to_string()),
+        "{}",
+        card.title
+    );
+    let detail = card.detail.clone().unwrap_or_default();
+    assert!(
+        detail.contains(&format!("{}: SQLite", question.spec.fields[0].label))
+            && detail.contains("Reason: The project uses it."),
+        "{detail}"
     );
     m.answer(card.id, "allow_chat").await;
     let given = first.await.unwrap().unwrap();

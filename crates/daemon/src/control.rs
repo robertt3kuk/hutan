@@ -346,6 +346,7 @@ impl ControlService {
                     options,
                     mawas: None,
                     target: None,
+                    about: None,
                     gone: gone.clone(),
                 };
                 self.ask(client, asked).await
@@ -513,6 +514,7 @@ impl ControlService {
                     title: clip(&session.title, 200),
                     text: message_text(request).map(str::to_owned),
                 }),
+            about: describe.about.clone(),
         };
         let mut gated = self.ask(client, asked).await?;
         let approval = gated
@@ -533,6 +535,7 @@ impl ControlService {
             options,
             mawas,
             target,
+            about,
             gone,
         } = asked;
         let target_id = target.as_ref().map(|target| target.session_id);
@@ -545,7 +548,8 @@ impl ControlService {
             detail: Some(detail),
             options,
             requested_at_ms: registry::now_ms(),
-            target: target.clone(),
+            // What the card is about shows like a target but binds no grant.
+            target: target.clone().or(about),
             suggestion: None,
         };
         let id = info.id;
@@ -1114,7 +1118,103 @@ impl ControlService {
                 None => format!("session {id}"),
             }
         };
-        describe_request(request, &session_name)
+        let mut described = describe_request(request, &session_name);
+        if let Request::AskSuggest(suggest) = request {
+            self.describe_suggestion(suggest, &session_name, &mut described);
+        }
+        described
+    }
+
+    /// A suggestion is judged by what it is about, not by an id: the card names the request that
+    /// waits (a question's title or an approval's) and the agent it is of, and its detail is the
+    /// answer Mawas would give and her reason, whole. An id that is not pending (the request
+    /// ended meanwhile) keeps the id: the request itself will say so.
+    fn describe_suggestion(
+        &self,
+        suggest: &hutan_protocol::suggest::AskSuggest,
+        session: &dyn Fn(SessionId) -> String,
+        described: &mut Described,
+    ) {
+        use hutan_protocol::suggest::SuggestedAnswer;
+        let chats = self.registry.chats();
+        let (about, answer, of) = match suggest.target {
+            AskTarget::Approval { id } => {
+                let Some(approval) = chats
+                    .approval_list(None)
+                    .approvals
+                    .into_iter()
+                    .find(|a| a.id == id)
+                else {
+                    return;
+                };
+                let answer = match &suggest.answer {
+                    SuggestedAnswer::Option { option_id } => approval
+                        .options
+                        .iter()
+                        .find(|o| o.id == *option_id)
+                        .map_or_else(|| option_id.clone(), |o| o.label.clone()),
+                    _ => "an answer this request does not take".to_owned(),
+                };
+                (
+                    format!(
+                        "the waiting approval “{}” of {}",
+                        clip(&approval.title, 120),
+                        session(approval.session_id)
+                    ),
+                    answer,
+                    (approval.session_id, approval.title.clone()),
+                )
+            }
+            AskTarget::Question { id } => {
+                let Some(question) = chats
+                    .question_list(None)
+                    .questions
+                    .into_iter()
+                    .find(|q| q.id == id)
+                else {
+                    return;
+                };
+                let answer = match &suggest.answer {
+                    SuggestedAnswer::Decline => "decline".to_owned(),
+                    SuggestedAnswer::Values { values } => question
+                        .spec
+                        .fields
+                        .iter()
+                        .filter_map(|field| {
+                            let value = values.get(&field.id)?;
+                            let text = match value {
+                                Value::String(text) => text.clone(),
+                                other => other.to_string(),
+                            };
+                            Some(format!("{}: {text}", field.label))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                    SuggestedAnswer::Option { .. } => {
+                        "an answer this request does not take".to_owned()
+                    }
+                };
+                (
+                    format!(
+                        "the waiting question “{}” of {}",
+                        clip(&question.spec.title, 120),
+                        session(question.session_id)
+                    ),
+                    answer,
+                    (question.session_id, question.spec.title.clone()),
+                )
+            }
+        };
+        described.title = format!("suggest an answer to {about} (you decide)");
+        described.detail = format!(
+            "Suggested answer: {answer}\nReason: {}",
+            clip(suggest.reason.trim(), 400)
+        );
+        described.about = Some(ControlTarget {
+            session_id: of.0,
+            title: clip(&of.1, 200),
+            text: Some(described.detail.clone()),
+        });
     }
 }
 
@@ -1148,6 +1248,10 @@ struct Asked {
     /// Set for Mawas's requests that act on another agent: shown on the card, and what an
     /// *Allow for this chat and this agent* grant is bound to.
     target: Option<ControlTarget>,
+    /// Set for a suggestion: the agent whose request it is and the suggestion whole, shown on
+    /// the card like a target is, but binding no grant (a grant of `ask.suggest` covers every
+    /// suggestion).
+    about: Option<ControlTarget>,
     /// Cancelled when the requesting connection is gone: the card is withdrawn.
     gone: CancellationToken,
 }
@@ -1269,12 +1373,15 @@ fn forbidden(message: String, decision: &str) -> ErrorBody {
 pub struct Described {
     pub title: String,
     pub detail: String,
+    /// What the card is about when it is another agent's request: a suggestion's card names
+    /// the agent whose request it is and shows the suggestion whole, like a message's.
+    pub about: Option<ControlTarget>,
 }
 
 const DETAIL_MAX_CHARS: usize = 400;
 
 fn names_session(request: &Request) -> bool {
-    target_session(request).is_some()
+    matches!(request, Request::AskSuggest(_)) || target_session(request).is_some()
 }
 
 /// The session a request acts on, when it names one.
@@ -1610,7 +1717,11 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
         Request::LspStop(r) => format!("stop the language server {}", r.server_id),
         other => format!("make the request `{}`", request_method(other)),
     };
-    Described { title, detail }
+    Described {
+        title,
+        detail,
+        about: None,
+    }
 }
 
 /// The names of some paths for an approval's text: the first few, then how many more.
