@@ -2698,3 +2698,52 @@ fn the_window_tells_the_daemon_when_it_is_not_the_active_one_and_a_digests_open_
         painted(&view, cx, "today-recent-since")
     });
 }
+
+// ---- MAWAS-NET-GUARD: "Let Mawas read the web" -----------------------------------------------------
+
+#[gpui::test]
+fn the_web_switch_is_a_row_of_what_mawas_may_do_off_by_default_and_a_click_writes_it(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    cx.dispatch_action(actions::OpenSettingsFor("assistant".into()));
+    draw(cx);
+    wait_until(cx, "the daemon's settings", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.daemon_settings().entry("assistant.web").is_some()
+        })
+    });
+    let rows = view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx));
+    let place = |key: &str| rows.iter().position(|row| row == key);
+    assert!(
+        place("d:assistant.web") > place("d:assistant.max_actions_per_turn")
+            && place("d:assistant.web") < place("d:assistant.backend"),
+        "in What Mawas may do, before the default backend: {rows:?}"
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb
+            .daemon_settings()
+            .value("assistant.web")
+            .cloned()),
+        Some(json!(false)),
+        "off by default"
+    );
+    assert_eq!(
+        hutan_desktop::workbench::settings_labels::daemon_field_title("assistant.web"),
+        "Let Mawas read the web"
+    );
+    // The switch writes the setting to the daemon.
+    view.update(cx, |wb, cx| wb.daemon_toggle("assistant.web", cx));
+    wait_until(cx, "the daemon to take it", |_| {
+        let settings: DaemonSettings = env.daemon.call(Request::DaemonSettingsGet(Empty {}));
+        settings
+            .entries
+            .iter()
+            .find(|e| e.key == "assistant.web")
+            .unwrap()
+            .value
+            == json!(true)
+    });
+}

@@ -221,7 +221,11 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
             Section {
                 title: words::SEC_ASSISTANT_ACT,
                 help: words::SEC_ASSISTANT_ACT_HELP,
-                keys: &["assistant.mode", "assistant.max_actions_per_turn"],
+                keys: &[
+                    "assistant.mode",
+                    "assistant.max_actions_per_turn",
+                    "assistant.web",
+                ],
             },
             Section {
                 title: words::SEC_ASSISTANT_DEFAULT,

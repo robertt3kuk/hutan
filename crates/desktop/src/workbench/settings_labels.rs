@@ -1563,6 +1563,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "assistant.web",
+        "Let Mawas read the web",
+        "Off by default. Text that other agents or files wrote can try to send Mawas to a web page with something private in its address, so her harness (OMP, Claude Code, Codex) starts without web fetch and web search. Turn it on only if you want her to read pages. Applies the next time her conversation starts. ssh:// paths are not covered by this switch.",
+    ),
+    field(
+        "daemon",
         "notify.digest_hours",
         "Notify me after being away",
         "After this many hours with no Hutan window active, and only if something waits for you (a request that waits for an answer, a failed turn or task, work sent to review), Hutan shows one quiet notification with the same line as Catch up on Mawas Home. At most one per period; no model is asked. 0 switches it off (the default).",
