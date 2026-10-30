@@ -422,7 +422,6 @@ fn picture(item: &Picture<'_>, look: &Look, ids: &mut Ids) -> AnyElement {
             let (url, doc) = (url.to_owned(), doc.clone());
             div()
                 .id(ids.next("img"))
-                .cursor_pointer()
                 .on_click(move |_, window, cx| (doc.open)(&url, window, cx))
                 .child(drawn)
                 .into_any_element()
