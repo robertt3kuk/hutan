@@ -590,6 +590,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             insight,
             updates,
             settings: settings_service,
+            storage: storage.clone(),
         },
         bus.clone(),
         shutdown.clone(),

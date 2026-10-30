@@ -248,6 +248,8 @@ pub(crate) const UPDATE_CAPABILITY: &str = "update";
 pub(crate) const ASSISTANT_FOCUS_CAPABILITY: &str = "assistant.focus";
 /// Capability for `agents.board` (protocol 0.63).
 pub(crate) const AGENTS_BOARD_CAPABILITY: &str = "agents.board";
+/// Capability for `agents.activity` (protocol 0.65).
+pub(crate) const AGENTS_ACTIVITY_CAPABILITY: &str = "agents.activity";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -313,6 +315,7 @@ const CAPABILITIES: &[&str] = &[
     UPDATE_CAPABILITY,
     ASSISTANT_FOCUS_CAPABILITY,
     AGENTS_BOARD_CAPABILITY,
+    AGENTS_ACTIVITY_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -629,6 +632,22 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == AGENTS_BOARD_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `agents.activity` (protocol 0.65).
+    pub fn supports_agents_activity(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENTS_ACTIVITY_CAPABILITY)
+    }
+
+    /// `agents.activity`: what happened across agents in a window, bounded and read-only.
+    pub async fn agents_activity(
+        &self,
+        request: hutan_protocol::activity::AgentsActivityRequest,
+    ) -> Result<hutan_protocol::activity::AgentsActivity, ClientError> {
+        self.call(Request::AgentsActivity(request)).await
     }
 
     /// `agents.board`: every agent across workspaces (or of one), bounded and read-only.

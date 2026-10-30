@@ -877,3 +877,46 @@ async fn the_board_tools_read_and_mark_their_output_as_untrusted_data() {
     assert!(answer["result"].get("_meta").is_none());
     t.stop().await;
 }
+
+/// `agents_activity` (protocol 0.65): read-only, takes a window in minutes, says what is not
+/// recorded, and its result is marked untrusted like the board's.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_activity_reads_a_window_and_is_marked_untrusted() {
+    let t = TestDaemon::start().await;
+    let id = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &id).await;
+
+    let mut mcp = Mcp::start(&t.paths.socket, None).await;
+    mcp.initialize().await;
+    let listed = mcp.call("tools/list", json!({})).await;
+    let tool = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "agents_activity")
+        .expect("the tool");
+    assert_eq!(tool["annotations"]["readOnlyHint"], true);
+
+    let call = mcp
+        .tool_request("agents_activity", json!({"last_minutes": 60}))
+        .await;
+    let answer = mcp.answer(call).await;
+    assert!(!is_error(&answer), "{answer}");
+    assert!(text_of(&answer).starts_with("UNTRUSTED DATA"));
+    assert_eq!(answer["result"]["_meta"]["hutan/untrusted"], true);
+    let activity = &answer["result"]["structuredContent"];
+    assert_eq!(activity["summary"]["sessions_started"], 1);
+    assert!(
+        activity["to_ms"].as_u64().unwrap() - activity["from_ms"].as_u64().unwrap()
+            <= 3_600_000 + 5_000,
+        "{activity}"
+    );
+    assert!(!activity["not_recorded"].as_array().unwrap().is_empty());
+
+    // A window that is not a number of minutes is a bad argument.
+    let call = mcp
+        .tool_request("agents_activity", json!({"last_minutes": "an hour"}))
+        .await;
+    assert!(is_error(&mcp.answer(call).await));
+    t.stop().await;
+}

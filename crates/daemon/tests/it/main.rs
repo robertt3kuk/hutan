@@ -1,4 +1,5 @@
 mod accounts_multi;
+mod activity;
 mod agent;
 mod assistant;
 mod assistant_backend;

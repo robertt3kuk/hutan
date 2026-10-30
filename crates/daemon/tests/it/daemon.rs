@@ -253,7 +253,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "assistant.focus",
             "control.grants.target",
             "agents.board",
-            "ask.suggest"
+            "ask.suggest",
+            "agents.activity"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

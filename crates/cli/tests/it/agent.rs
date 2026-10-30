@@ -481,3 +481,74 @@ exec sleep 600"#,
     assert_ne!(missing.code, 0, "{}", missing.stderr);
     t.stop().await;
 }
+
+/// The catch-up (protocol 0.65): `hutan agents --activity` reads `agents.activity`, counts what
+/// happened in the window, lists the events newest first and says what is not recorded.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_activity_counts_sessions_and_says_what_is_not_recorded() {
+    let t = TestDaemon::start().await;
+    let running = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    let ended = t.new_session(&[], &["sh", "-c", "exit 3"]).await;
+
+    // Waits on state: the ended session shows up once its process is over.
+    let activity = timeout(WAIT, async {
+        loop {
+            let a = t
+                .hutan(&["--json", "agents", "--activity", "--since", "1h"])
+                .await
+                .ok()
+                .json();
+            if a["summary"]["sessions_ended"] == 1 {
+                return a;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the ended session never showed");
+    assert_eq!(activity["summary"]["sessions_started"], 2);
+    let events = activity["events"].as_array().unwrap();
+    assert!(events.iter().any(|e| e["kind"] == "session_ended"
+        && e["session_id"] == ended
+        && e["state"] == "exited 3"));
+    assert!(
+        events
+            .iter()
+            .any(|e| e["kind"] == "session_started" && e["session_id"] == running)
+    );
+    assert!(
+        activity["not_recorded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("terminal agents")),
+        "{activity}"
+    );
+    // Nothing recorded is absent, not zero.
+    assert!(activity["summary"].get("files_changed").is_none());
+
+    let text = t
+        .hutan(&["agents", "--activity", "--since", "1h"])
+        .await
+        .ok()
+        .stdout;
+    for needle in [
+        "2 sessions started",
+        "1 sessions ended",
+        "session ended: exited 3",
+        "not recorded:",
+    ] {
+        assert!(text.contains(needle), "{needle:?} missing from:\n{text}");
+    }
+
+    // A bad window or a stray flag is a usage error, not an empty answer.
+    for args in [
+        &["agents", "--activity", "--since", "soon"][..],
+        &["agents", "--activity", "--since", "5x"][..],
+        &["agents", "--ws", "x"][..],
+    ] {
+        let out = finish(command(Path::new(HUTAN), Some(&t.paths.socket), args)).await;
+        assert_ne!(out.code, 0, "{args:?}: {}", out.stdout);
+    }
+    t.stop().await;
+}

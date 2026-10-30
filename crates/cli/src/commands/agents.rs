@@ -3,6 +3,9 @@
 
 use hutan_client::Client;
 use hutan_core::{AgentNode, AgentObservation, Liveness, NodeOutcome, NodeState, SessionId, Usage};
+use hutan_protocol::activity::{
+    ActivityDetail, ActivityEvent, AgentsActivity, AgentsActivityRequest, RequestKind, TurnOutcome,
+};
 use hutan_protocol::board::{
     AgentsBoard, AgentsBoardRequest, BoardAgent, BoardGroup, BoardKind, BoardSource, BoardState,
     BoardWaitKind,
@@ -20,6 +23,14 @@ impl Ctx {
         let client = self.connect().await?;
         if args.board {
             return self.agents_board(&client, &args).await;
+        }
+        if args.activity {
+            return self.agents_activity(&client, &args).await;
+        }
+        if args.ws.is_some() {
+            return Err(CliError::Usage(
+                "--ws goes with --board or --activity".to_owned(),
+            ));
         }
         if !client.supports_agent_tree() {
             return Err(CliError::Failed(
@@ -54,6 +65,37 @@ impl Ctx {
                 Err(RecvError::Closed) => return Ok(()),
             }
         }
+    }
+
+    /// `--activity`: `agents.activity` (protocol 0.65), as text or `--json`.
+    async fn agents_activity(&self, client: &Client, args: &AgentsArgs) -> Result<(), CliError> {
+        if !client.supports_agents_activity() {
+            return Err(CliError::Failed(
+                "this daemon has no activity feed (it predates protocol 0.65); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let now = now_ms();
+        let since_ms = match &args.since {
+            Some(ago) => Some(now.saturating_sub(parse_ago(ago)?)),
+            None => None,
+        };
+        let workspace_id = match &args.ws {
+            Some(target) => Some(self.resolve_workspace_id(client, target).await?),
+            None => None,
+        };
+        let activity = client
+            .agents_activity(AgentsActivityRequest {
+                since_ms,
+                until_ms: None,
+                workspace_id,
+                session_id: None,
+                limit: args.limit,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&activity, || activity_text(&activity, now))
     }
 
     /// `--board`: `agents.board` (protocol 0.63), as text or `--json`.
@@ -351,6 +393,185 @@ fn agent_lines(agent: &BoardAgent, now_ms: u64) -> Vec<String> {
     lines
 }
 
+/// `30m`, `2h`, `1d`, `90s`: how far back, in ms.
+fn parse_ago(text: &str) -> Result<u64, CliError> {
+    let text = text.trim();
+    let split = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    let (digits, unit) = text.split_at(split);
+    let count: u64 = digits.parse().map_err(|_| {
+        CliError::Usage(format!(
+            "--since `{text}`: a number and a unit, like 30m, 2h or 1d"
+        ))
+    })?;
+    let unit_ms: u64 = match unit {
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        _ => {
+            return Err(CliError::Usage(format!(
+                "--since `{text}`: the unit is s, m, h or d"
+            )));
+        }
+    };
+    Ok(count.saturating_mul(unit_ms))
+}
+
+/// The catch-up as text: the window, what is counted, what is not recorded, then the events
+/// newest first.
+pub(super) fn activity_text(activity: &AgentsActivity, now_ms: u64) -> String {
+    let s = &activity.summary;
+    let mut lines = vec![format!(
+        "since {} ({}) until {}",
+        hutan_client::time::local_time_text(activity.from_ms),
+        hutan_client::time::relative_text(now_ms, activity.from_ms),
+        hutan_client::time::local_time_text(activity.to_ms),
+    )];
+    let mut parts: Vec<String> = Vec::new();
+    let mut count = |n: usize, what: &str| {
+        if n > 0 {
+            parts.push(format!("{n} {what}"));
+        }
+    };
+    count(s.turns_finished, "turns finished");
+    count(s.turns_failed, "turns failed");
+    count(s.turns_cancelled, "turns cancelled");
+    count(s.turns_running, "turns running");
+    count(s.requests_asked, "requests asked");
+    count(s.requests_resolved, "answered");
+    count(s.requests_open, "still waiting");
+    count(s.checkpoints, "checkpoints");
+    count(s.tasks_done, "tasks done");
+    count(s.tasks_failed, "tasks failed");
+    count(s.tasks_review, "sent to review");
+    count(s.sessions_started, "sessions started");
+    count(s.sessions_ended, "sessions ended");
+    if parts.is_empty() {
+        lines.push("nothing recorded in this window".to_owned());
+    } else {
+        lines.push(parts.join(" · "));
+    }
+    if let Some(longest) = s.wait_longest_ms {
+        lines.push(format!(
+            "requests waited {} in all, the longest {}",
+            super::sessions::age_text(s.wait_total_ms.unwrap_or(0) / 1000),
+            super::sessions::age_text(longest / 1000)
+        ));
+    }
+    if let (Some(files), Some(added), Some(removed)) =
+        (s.files_changed, s.lines_added, s.lines_removed)
+    {
+        lines.push(format!("{files} files changed · +{added} −{removed} lines"));
+    }
+    if let Some(from) = activity
+        .coverage_from_ms
+        .filter(|from| *from > activity.from_ms)
+    {
+        lines.push(format!(
+            "records begin {}: nothing earlier is recorded",
+            hutan_client::time::local_time_text(from)
+        ));
+    }
+    for what in &activity.not_recorded {
+        lines.push(format!("not recorded: {what}"));
+    }
+    lines.push(String::new());
+    for event in &activity.events {
+        lines.push(format!(
+            "{}  {}",
+            hutan_client::time::local_time_text(event.at_ms),
+            event_line(event)
+        ));
+    }
+    if activity.omitted > 0 {
+        lines.push(format!(
+            "{} older events not listed (--limit, or a shorter --since)",
+            activity.omitted
+        ));
+    }
+    lines.join("\n")
+}
+
+/// `850 ms`, `3.9 s`, `3m 20s`, `2h 05m`.
+fn took_text(ms: u64) -> String {
+    let seconds = ms / 1_000;
+    match seconds {
+        0 => format!("{ms} ms"),
+        1..=9 => format!("{:.1} s", ms as f64 / 1_000.0),
+        10..=59 => format!("{seconds} s"),
+        60..=3_599 => format!("{}m {:02}s", seconds / 60, seconds % 60),
+        _ => format!("{}h {:02}m", seconds / 3_600, (seconds % 3_600) / 60),
+    }
+}
+
+fn event_line(event: &ActivityEvent) -> String {
+    let whose = format!("{} · {}", event.title, event.project);
+    let what = match &event.detail {
+        ActivityDetail::TurnEnded {
+            outcome,
+            duration_ms,
+            error,
+        } => {
+            let word = match outcome {
+                TurnOutcome::Completed => "turn finished",
+                TurnOutcome::Failed => "turn failed",
+                TurnOutcome::Cancelled => "turn cancelled",
+            };
+            let took = duration_ms
+                .map(|ms| format!(" after {}", took_text(ms)))
+                .unwrap_or_default();
+            let why = error.as_ref().map(|e| format!(": {e}")).unwrap_or_default();
+            format!("{word}{took}{why}")
+        }
+        ActivityDetail::Request {
+            request,
+            text,
+            resolved_ms,
+            wait_ms,
+            outcome,
+            decided_by,
+            ..
+        } => {
+            let noun = match request {
+                RequestKind::Approval => "approval",
+                RequestKind::Question => "question",
+            };
+            match resolved_ms {
+                Some(_) => format!(
+                    "{noun} {} by {} after {}: {text}",
+                    outcome.as_deref().unwrap_or("resolved"),
+                    decided_by.as_deref().unwrap_or("nobody"),
+                    took_text(wait_ms.unwrap_or(0)),
+                ),
+                None => format!("{noun} asked, still waiting: {text}"),
+            }
+        }
+        ActivityDetail::Task { state, run } => {
+            if *run {
+                format!("task {state}")
+            } else {
+                format!("task work {state}")
+            }
+        }
+        ActivityDetail::SessionStarted { chat } => {
+            if *chat {
+                "chat started".to_owned()
+            } else {
+                "terminal started".to_owned()
+            }
+        }
+        ActivityDetail::SessionEnded { state } => format!("session ended: {state}"),
+        ActivityDetail::Checkpoint {
+            files,
+            added,
+            removed,
+        } => format!("{files} files changed · +{added} −{removed}"),
+    };
+    format!("{whose}: {what}")
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -531,5 +752,33 @@ mod tests {
             ..board
         };
         assert_eq!(board_text(&empty, 0), "no agents");
+    }
+
+    #[test]
+    fn a_window_is_a_number_and_a_unit_and_the_text_says_what_is_not_recorded() {
+        assert_eq!(parse_ago("90s").unwrap(), 90_000);
+        assert_eq!(parse_ago("30m").unwrap(), 1_800_000);
+        assert_eq!(parse_ago("2h").unwrap(), 7_200_000);
+        assert_eq!(parse_ago("1d").unwrap(), 86_400_000);
+        for bad in ["", "m", "soon", "5x", "-1h", "1.5h"] {
+            assert!(parse_ago(bad).is_err(), "{bad:?}");
+        }
+
+        let activity = AgentsActivity {
+            from_ms: 1_000_000,
+            to_ms: 5_000_000,
+            coverage_from_ms: Some(2_000_000),
+            summary: Default::default(),
+            events: Vec::new(),
+            omitted: 0,
+            not_recorded: vec!["turns of terminal agents".into()],
+        };
+        let text = activity_text(&activity, 5_000_000);
+        assert!(text.contains("nothing recorded in this window"), "{text}");
+        assert!(text.contains("nothing earlier is recorded"), "{text}");
+        assert!(
+            text.contains("not recorded: turns of terminal agents"),
+            "{text}"
+        );
     }
 }

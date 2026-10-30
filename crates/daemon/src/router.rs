@@ -47,6 +47,7 @@ use crate::usage::UsageService;
 use crate::worktrees::WorktreeService;
 use hutan_protocol::ui::{SessionSendText, SessionTextSent};
 
+mod activity;
 mod board;
 mod fork;
 mod insight;
@@ -71,6 +72,7 @@ pub struct Services {
     pub insight: Arc<InsightHub>,
     pub updates: Arc<UpdateService>,
     pub settings: Arc<SettingsService>,
+    pub storage: hutan_storage::Storage,
 }
 
 #[derive(Debug)]
@@ -98,6 +100,7 @@ pub struct Router {
     insight: Arc<InsightHub>,
     updates: Arc<UpdateService>,
     settings: Arc<SettingsService>,
+    storage: hutan_storage::Storage,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
     forget: AtomicBool,
 }
@@ -135,6 +138,7 @@ impl Router {
             insight: services.insight,
             updates: services.updates,
             settings: services.settings,
+            storage: services.storage,
             forget: AtomicBool::new(false),
         }
     }
@@ -411,6 +415,7 @@ impl Router {
             Request::ChatFork(req) => ok(&self.fork_chat(conn, req).await?),
             Request::AgentInsight(req) => ok(&self.agent_insight(req).await?),
             Request::AgentsBoard(req) => ok(&self.agents_board(req).await?),
+            Request::AgentsActivity(req) => ok(&self.agents_activity(req).await?),
             Request::AgentMeasureContext(req) => ok(&self.measure_context(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
@@ -1147,6 +1152,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentInsight(_) => ("agent.insight", Read),
         // The board of every agent (protocol 0.63): the reducer of the Agents page, read-only.
         Request::AgentsBoard(_) => ("agents.board", Read),
+        // What happened in a window (protocol 0.65): read-only, from what the daemon records.
+        Request::AgentsActivity(_) => ("agents.activity", Read),
         Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.

@@ -319,7 +319,7 @@ fn group_of(group: Group) -> BoardGroup {
 }
 
 /// A name or a label: cut, not redacted (ids and names are not free text of a transcript).
-fn cut(value: &str) -> String {
+pub(crate) fn cut(value: &str) -> String {
     let value = value.trim();
     if value.chars().count() <= BOARD_TEXT_CHARS {
         return value.to_owned();
@@ -328,7 +328,7 @@ fn cut(value: &str) -> String {
 }
 
 /// Free text an agent or a user wrote: one line, redacted, then cut.
-fn text(value: &str) -> String {
+pub(crate) fn text(value: &str) -> String {
     let line = value.split_whitespace().collect::<Vec<_>>().join(" ");
     cut(&redact(&line))
 }

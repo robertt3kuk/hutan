@@ -2368,7 +2368,7 @@ pub struct AgentReleaseArgs {
 }
 
 /// `hutan agents`: the agents (and subagents) of the sessions, as the daemon observes them; with
-/// `--board`, every agent in one board.
+/// `--board`, every agent in one board; with `--activity`, what happened in a window.
 #[derive(Debug, Args)]
 pub struct AgentsArgs {
     /// Only this session: id, unique id prefix, or title
@@ -2379,10 +2379,22 @@ pub struct AgentsArgs {
     pub watch: bool,
     /// The board instead of the trees: every agent across workspaces grouped like the Agents
     /// page (what it does, what it waits for, where its facts come from), from the daemon
-    #[arg(long, conflicts_with_all = ["target", "watch"])]
+    #[arg(long, conflicts_with_all = ["target", "watch", "activity"])]
     pub board: bool,
-    /// With --board: only this workspace or project (name, id or unique prefix)
-    #[arg(long, value_name = "WORKSPACE", requires = "board")]
+    /// What happened instead: the catch-up across agents (turns, requests and how long they
+    /// waited, files changed, tasks, sessions), from what the daemon records; says what it does
+    /// not record
+    #[arg(long, conflicts_with_all = ["target", "watch"])]
+    pub activity: bool,
+    /// With --activity: how far back, as a number and a unit (`90s`, `30m`, `2h`, `1d`);
+    /// default 24h
+    #[arg(long, value_name = "AGO", requires = "activity")]
+    pub since: Option<String>,
+    /// With --activity: the most events to list (1 to 200; default 100)
+    #[arg(long, value_name = "N", requires = "activity")]
+    pub limit: Option<u32>,
+    /// With --board or --activity: only this workspace or project (name, id or unique prefix)
+    #[arg(long, value_name = "WORKSPACE")]
     pub ws: Option<String>,
     /// With --board: list the agents that have finished too
     #[arg(long, requires = "board")]
