@@ -1444,15 +1444,46 @@ impl ChatManager {
         // `allowedTools` (and `disallowedTools` for the web) below.
         let tools = self.mawas_tools(id, spec.assistant).await;
         let web = self.assistant_policy().web;
-        let overlay = (spec.assistant && spec.agent == AGENT_OMP && (!tools.is_empty() || !web))
-            .then(|| {
-                let wiring = self.mcp.get()?;
-                wiring
-                    .write_private("omp-approvals.yml", &omp_overlay(&tools.all(), web))
-                    .map_err(|error| warn!(%error, "could not write the OMP overlay; OMP keeps asking before Hutan's tools and keeps its web access"))
-                    .ok()
-            })
-            .flatten();
+        const OVERLAY_FILE: &str = "omp-approvals.yml";
+        let overlay = if spec.assistant && spec.agent == AGENT_OMP && (!tools.is_empty() || !web) {
+            let content = omp_overlay(&tools.all(), web);
+            match self.mcp.get() {
+                Some(wiring) => match wiring.write_private(OVERLAY_FILE, &content) {
+                    Ok(path) => Some(path),
+                    // Only the approvals are at stake: OMP keeps asking, as it always could.
+                    Err(error) if web => {
+                        warn!(%error, "could not write the OMP overlay; OMP keeps asking before Hutan's tools");
+                        None
+                    }
+                    // The web is off by default and only this file switches it off in OMP: no
+                    // file, no Mawas (never a harness that has the web without being told so).
+                    Err(error) => {
+                        let path = wiring.private_dir.join(OVERLAY_FILE);
+                        warn!(%error, path = %path.display(), "could not write Mawas's launch settings; she is not started");
+                        return Err(ErrorBody::new(
+                            ErrorCode::Internal,
+                            format!(
+                                "Hutan couldn't write Mawas's launch settings ({}: {error}), so she wasn't started: \\
+                                 with web access off, her harness must not start without them. Make that folder \\
+                                 writable and send again, or set [assistant] web = true in daemon.toml to let her read the web.",
+                                path.display()
+                            ),
+                        )
+                        .into());
+                    }
+                },
+                None if web => None,
+                None => {
+                    return Err(ErrorBody::new(
+                        ErrorCode::Internal,
+                        "Hutan couldn't write Mawas's launch settings (it has no private folder for them), so she wasn't started; with web access off her harness must not start without them.",
+                    )
+                    .into());
+                }
+            }
+        } else {
+            None
+        };
         // Mawas's memory: OMP gets it in a private prompt file named on its command line (never
         // in argv itself), Claude Code on its first turn, below.
         let memory = if spec.assistant {

@@ -1683,3 +1683,53 @@ async fn assistant_web_is_a_live_daemon_setting_that_defaults_to_off() {
     assert_eq!(value(&after), Some((serde_json::json!(true), true)));
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_writable_overlay_mawas_is_not_started_when_her_web_is_off_and_is_when_it_is_on()
+{
+    // Web off (the default): the private overlay is what switches OMP's web off, so a folder
+    // that cannot be written means no Mawas, with the reason in the error — never an OMP that
+    // has the web without being told otherwise.
+    let t = B::start(Setup {
+        assistant: OMP_ASSISTANT,
+        reads: Some(READS_CLI),
+        ..Setup::default()
+    })
+    .await;
+    // A regular file where the daemon's private `mcp` folder belongs: it cannot be created.
+    let blocked = t.daemon.paths.base.join("mcp");
+    std::fs::write(&blocked, b"in the way").unwrap();
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    let error = t.client.chat_send(session.id, "hello").await.unwrap_err();
+    let hutan_client::ClientError::Remote(body) = error else {
+        panic!("a remote error, not {error:?}");
+    };
+    assert_eq!(body.code, ErrorCode::Internal, "{body:?}");
+    assert!(
+        body.message
+            .contains("Hutan couldn't write Mawas's launch settings")
+            && body.message.contains("so she wasn't started")
+            && body.message.contains(&blocked.display().to_string())
+            && body.message.contains("omp-approvals.yml"),
+        "{}",
+        body.message
+    );
+    // Nothing was started: no OMP process ran, and the session is as it was.
+    assert!(t.argv("omp").is_empty(), "{:?}", t.argv("omp"));
+    assert_eq!(t.session(session.id).await.state, SessionState::Idle);
+    t.stop().await;
+
+    // Web on: only the approvals are at stake; OMP starts as it did, without an overlay.
+    let t = B::start(Setup {
+        assistant: OMP_ASSISTANT_WEB,
+        reads: Some(READS_CLI),
+        ..Setup::default()
+    })
+    .await;
+    std::fs::write(t.daemon.paths.base.join("mcp"), b"in the way").unwrap();
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let argv = t.argv("omp");
+    assert!(!argv.iter().any(|a| a == "--config"), "{argv:?}");
+    t.stop().await;
+}
