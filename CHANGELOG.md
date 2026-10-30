@@ -22,10 +22,12 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - **Closing a tab closes its session** (terminals, terminal agents, chats, splits): an idle one closes at once with *Undo*; when something runs Hutan asks — *Keep running in background* (default) or *Close*. `tabs.close_session = when_idle | always | never`; *Close Tab, Keep Running* in the tab menu; the old `terminal.tab_close` still works.
 - **Every file gets its own tab** again (`editor.preview_tabs` now off by default).
 - **Files open beside the agent**: with a chat or terminal agent in front, an opened file goes to a split on its right, reused for the next files (`editor.open_beside_agent`); ⌥-click, ⌥↩ in ⌘P and ⌘K *Files: Open to the Side* always open to the side.
-- Mawas's chat column is as wide as you drag it (edges of the column; Esc cancels, double-click resets; ⌘K *Mawas: Wider / Narrower / Reset Chat Width*), remembered in `assistant.chat_width_rem`; the Today rail hides with a header button (a badge counts waiting requests while it's hidden) and stays as you left it.
+- Mawas's chat column is as wide as you drag it (edges of the column; Esc cancels, double-click resets; ⌘K *Mawas: Wider Chat*, *Narrower Chat*, *Reset Chat Width*), remembered in `assistant.chat_width_rem`; the Today rail hides with a header button (a badge counts waiting requests while it's hidden) and stays as you left it.
 
 ### Fixed
 - An approval card can no longer act after the agent that asked stopped waiting: when an agent's tool call is cancelled or times out, its pending card is withdrawn (audited as `caller_gone`) and a late *Allow* does nothing. Before, a late *Allow* could still apply a change the agent had been told might not have happened.
+- Mawas's request to suggest an answer names the agent and the waiting question and shows the suggested answer and reason, instead of an id.
+- A failed terminal agent's own error text reaches the board, the sidebar and Mawas (not just "The main agent failed"); the board shows a chat's current model after *Switch model*; `hutan reopen` no longer makes the window say the daemon restarted; Recent speaks in words ("1 file", "task work waits for review"), and a terminal agent waiting on a question is no longer labelled *Approval*.
 
 ## 0.3.4 — 2026-10-30
 
