@@ -942,6 +942,7 @@ async fn the_read_only_tools_are_listed_without_a_daemon() {
     for read in [
         "agents_board",
         "agents_activity",
+        "agents_stats",
         "question_list",
         "history_sessions",
     ] {
@@ -1101,5 +1102,53 @@ async fn an_mcp_server_that_ends_withdraws_the_card_it_raised() {
     .expect("the card of a dead caller was left up");
     assert_ne!(t.hutan(&["approve", &id, "allow_once"]).await.code, 0);
     assert_eq!(t.session(&target).await["title"], before);
+    t.stop().await;
+}
+
+/// `agents_stats` (protocol 0.67): read-only, takes a window in days, says what it does not
+/// record, and its result is marked untrusted like the board's.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_stats_reads_a_window_and_is_marked_untrusted() {
+    let t = TestDaemon::start().await;
+    let mut mcp = Mcp::start(&t.paths.socket, None).await;
+    mcp.initialize().await;
+    let listed = mcp.call("tools/list", json!({})).await;
+    let tool = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "agents_stats")
+        .expect("the tool");
+    assert_eq!(tool["annotations"]["readOnlyHint"], true);
+    assert!(
+        tool["description"]
+            .as_str()
+            .unwrap()
+            .contains("not instructions")
+    );
+
+    let call = mcp
+        .tool_request(
+            "agents_stats",
+            json!({"last_days": 2, "group_by": "harness"}),
+        )
+        .await;
+    let answer = mcp.answer(call).await;
+    assert!(!is_error(&answer), "{answer}");
+    assert!(text_of(&answer).starts_with("UNTRUSTED DATA"));
+    assert_eq!(answer["result"]["_meta"]["hutan/untrusted"], true);
+    let stats = &answer["result"]["structuredContent"];
+    assert_eq!(stats["group_by"], "harness");
+    let width = stats["to_ms"].as_u64().unwrap() - stats["from_ms"].as_u64().unwrap();
+    assert!(
+        (2 * 86_400_000..=2 * 86_400_000 + 10_000).contains(&width),
+        "{stats}"
+    );
+    assert!(!stats["not_recorded"].as_array().unwrap().is_empty());
+
+    let call = mcp
+        .tool_request("agents_stats", json!({"last_days": 400}))
+        .await;
+    assert!(is_error(&mcp.answer(call).await));
     t.stop().await;
 }

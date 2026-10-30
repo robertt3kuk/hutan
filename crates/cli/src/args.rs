@@ -2380,7 +2380,7 @@ pub struct AgentReleaseArgs {
 }
 
 /// `hutan agents`: the agents (and subagents) of the sessions, as the daemon observes them; with
-/// `--board`, every agent in one board; with `--activity`, what happened in a window.
+/// `--board`, every agent in one board; with `--activity`, what happened in a window; with `--stats`, the flow statistics.
 #[derive(Debug, Args)]
 pub struct AgentsArgs {
     /// Only this session: id, unique id prefix, or title
@@ -2391,21 +2391,29 @@ pub struct AgentsArgs {
     pub watch: bool,
     /// The board instead of the trees: every agent across workspaces grouped like the Agents
     /// page (what it does, what it waits for, where its facts come from), from the daemon
-    #[arg(long, conflicts_with_all = ["target", "watch", "activity"])]
+    #[arg(long, conflicts_with_all = ["target", "watch", "activity", "stats"])]
     pub board: bool,
     /// What happened instead: the catch-up across agents (turns, requests and how long they
     /// waited, files changed, tasks, sessions), from what the daemon records; says what it does
     /// not record
-    #[arg(long, conflicts_with_all = ["target", "watch"])]
+    #[arg(long, conflicts_with_all = ["target", "watch", "stats"])]
     pub activity: bool,
-    /// With --activity: how far back, as a number and a unit (`90s`, `30m`, `2h`, `1d`);
-    /// default 24h
-    #[arg(long, value_name = "AGO", requires = "activity")]
+    /// Flow instead: where the time goes across agents, what they wait on and what fails again
+    /// and again, with how well each number is known; from what the daemon records
+    #[arg(long, conflicts_with_all = ["target", "watch", "board", "activity"])]
+    pub stats: bool,
+    /// With --stats: what the groups are made by (default: project)
+    #[arg(long, value_enum, value_name = "BY", requires = "stats")]
+    pub by: Option<StatsByArg>,
+    /// With --activity or --stats: how far back, as a number and a unit (`90s`, `30m`, `2h`,
+    /// `1d`; `7d` for --stats); default 24h for --activity, 7d for --stats
+    #[arg(long, value_name = "AGO")]
     pub since: Option<String>,
-    /// With --activity: the most events to list (1 to 200; default 100)
-    #[arg(long, value_name = "N", requires = "activity")]
+    /// With --activity: the most events to list (1 to 200; default 100); with --stats: the most
+    /// groups (1 to 50; default 20)
+    #[arg(long, value_name = "N")]
     pub limit: Option<u32>,
-    /// With --board or --activity: only this workspace or project (name, id or unique prefix)
+    /// With --board, --activity or --stats: only this workspace or project (name, id or unique prefix)
     #[arg(long, value_name = "WORKSPACE")]
     pub ws: Option<String>,
     /// With --board: list the agents that have finished too
@@ -2484,6 +2492,16 @@ pub struct AgentInterruptArgs {
     /// For a subagent that is a process: SIGTERM after SIGINT when it is still there 2 s later
     #[arg(long)]
     pub force: bool,
+}
+
+/// What `hutan agents --stats --by` groups by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum StatsByArg {
+    Project,
+    Harness,
+    Day,
+    Session,
+    Task,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

@@ -73,6 +73,17 @@ impl AgentStateLog<'_> {
         })
     }
 
+    /// When the oldest row was written: how far back the log goes.
+    pub fn oldest_ms(&self) -> Result<Option<u64>> {
+        self.0.read(|conn| {
+            conn.query_row("SELECT MIN(at_ms) FROM agent_state_log", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+            .map(|at| at.map(|ms| u64::try_from(ms).unwrap_or(0)))
+            .map_err(StorageError::sqlite("reading the state log"))
+        })
+    }
+
     /// How many rows the log holds.
     pub fn count(&self) -> Result<u64> {
         self.0.read(|conn| {

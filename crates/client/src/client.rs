@@ -250,6 +250,8 @@ pub(crate) const ASSISTANT_FOCUS_CAPABILITY: &str = "assistant.focus";
 pub(crate) const AGENTS_BOARD_CAPABILITY: &str = "agents.board";
 /// Capability for `agents.activity` (protocol 0.65).
 pub(crate) const AGENTS_ACTIVITY_CAPABILITY: &str = "agents.activity";
+/// Capability for `agents.stats` (protocol 0.67).
+pub(crate) const AGENTS_STATS_CAPABILITY: &str = "agents.stats";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -316,6 +318,7 @@ const CAPABILITIES: &[&str] = &[
     ASSISTANT_FOCUS_CAPABILITY,
     AGENTS_BOARD_CAPABILITY,
     AGENTS_ACTIVITY_CAPABILITY,
+    AGENTS_STATS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -640,6 +643,23 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == AGENTS_ACTIVITY_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `agents.stats` (protocol 0.67).
+    pub fn supports_agents_stats(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENTS_STATS_CAPABILITY)
+    }
+
+    /// `agents.stats`: where the time goes across agents, what they wait on and what fails
+    /// again, with the coverage of every number.
+    pub async fn agents_stats(
+        &self,
+        request: hutan_protocol::stats::AgentsStatsRequest,
+    ) -> Result<hutan_protocol::stats::AgentsStats, ClientError> {
+        self.call(Request::AgentsStats(request)).await
     }
 
     /// `agents.activity`: what happened across agents in a window, bounded and read-only.

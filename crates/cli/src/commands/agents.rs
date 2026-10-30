@@ -11,11 +11,14 @@ use hutan_protocol::board::{
     BoardWaitKind,
 };
 use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, Subscribed};
+use hutan_protocol::stats::{
+    AgentsStats, AgentsStatsRequest, FailureSource, FlagKind, StatsBy, StatsGroup, WaitSource,
+};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Ctx;
 use super::sessions::{age_text, now_ms};
-use crate::args::AgentsArgs;
+use crate::args::{AgentsArgs, StatsByArg};
 use crate::error::CliError;
 
 impl Ctx {
@@ -27,9 +30,12 @@ impl Ctx {
         if args.activity {
             return self.agents_activity(&client, &args).await;
         }
-        if args.ws.is_some() {
+        if args.stats {
+            return self.agents_stats(&client, &args).await;
+        }
+        if args.ws.is_some() || args.since.is_some() || args.limit.is_some() {
             return Err(CliError::Usage(
-                "--ws goes with --board or --activity".to_owned(),
+                "--ws, --since and --limit go with --board, --activity or --stats".to_owned(),
             ));
         }
         if !client.supports_agent_tree() {
@@ -65,6 +71,43 @@ impl Ctx {
                 Err(RecvError::Closed) => return Ok(()),
             }
         }
+    }
+
+    /// `--stats`: `agents.stats` (protocol 0.67), as text or `--json`.
+    async fn agents_stats(&self, client: &Client, args: &AgentsArgs) -> Result<(), CliError> {
+        if !client.supports_agents_stats() {
+            return Err(CliError::Failed(
+                "this daemon has no flow statistics (it predates protocol 0.67); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let now = now_ms();
+        let since_ms = match &args.since {
+            Some(ago) => Some(now.saturating_sub(parse_ago(ago)?)),
+            None => None,
+        };
+        let workspace_id = match &args.ws {
+            Some(target) => Some(self.resolve_workspace_id(client, target).await?),
+            None => None,
+        };
+        let stats = client
+            .agents_stats(AgentsStatsRequest {
+                since_ms,
+                until_ms: None,
+                group_by: match args.by.unwrap_or(StatsByArg::Project) {
+                    StatsByArg::Project => StatsBy::Project,
+                    StatsByArg::Harness => StatsBy::Harness,
+                    StatsByArg::Day => StatsBy::Day,
+                    StatsByArg::Session => StatsBy::Session,
+                    StatsByArg::Task => StatsBy::Task,
+                },
+                workspace_id,
+                limit: args.limit,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&stats, || stats_text(&stats, now))
     }
 
     /// `--activity`: `agents.activity` (protocol 0.65), as text or `--json`.
@@ -390,6 +433,174 @@ fn agent_lines(agent: &BoardAgent, now_ms: u64) -> Vec<String> {
         lines.push(format!("{indent}{}", agent.detail));
     }
     lines.push(format!("{indent}session {}", agent.session_id));
+    lines
+}
+
+/// The statistics as text: the window and what it rests on, the total, one block per group, the
+/// failures that came again and what looks stuck — every number with how well it is known.
+pub(super) fn stats_text(stats: &AgentsStats, now_ms: u64) -> String {
+    let when = hutan_client::time::local_time_text;
+    let mut lines = vec![
+        format!(
+            "since {} ({}) until {}, by {}",
+            when(stats.from_ms),
+            hutan_client::time::relative_text(now_ms, stats.from_ms),
+            when(stats.to_ms),
+            match stats.group_by {
+                StatsBy::Project => "project",
+                StatsBy::Harness => "harness",
+                StatsBy::Day => "day (UTC)",
+                StatsBy::Session => "session",
+                StatsBy::Task => "task",
+            }
+        ),
+        format!(
+            "seen through: {} chats (journal: exact) · {} terminal agents (waits only, from the state log: {})",
+            stats.coverage.chats,
+            stats.coverage.terminal_agents,
+            match (stats.coverage.state_log, stats.coverage.state_log_from_ms) {
+                (false, _) => "OFF".to_owned(),
+                (true, Some(from)) => format!("on, since {}", when(from)),
+                (true, None) => "on, nothing recorded yet".to_owned(),
+            }
+        ),
+    ];
+    lines.push(String::new());
+    lines.extend(group_lines(&stats.total, "  "));
+    for group in &stats.groups {
+        lines.push(String::new());
+        lines.extend(group_lines(group, "  "));
+    }
+    if stats.omitted_groups > 0 {
+        lines.push(format!(
+            "\n{} more groups not listed (--limit, or narrow with --ws)",
+            stats.omitted_groups
+        ));
+    }
+    if !stats.failures.is_empty() {
+        lines.push(String::new());
+        lines.push("failures that came again (grouped by how they read: a heuristic; the counts are exact)".to_owned());
+        for failure in &stats.failures {
+            lines.push(format!(
+                "  {}× in {} sessions ({}): {}",
+                failure.count,
+                failure.sessions,
+                match failure.source {
+                    FailureSource::TurnError => "a chat's turn error",
+                    FailureSource::TerminalError => "a terminal agent's error",
+                },
+                failure.pattern
+            ));
+        }
+    }
+    if !stats.flags.is_empty() {
+        lines.push(String::new());
+        lines.push("worth a look".to_owned());
+        for flag in &stats.flags {
+            lines.push(format!(
+                "  {} ({}): {}",
+                flag.title,
+                match flag.kind {
+                    FlagKind::LongTurn => "exact",
+                    FlagKind::UnconfirmedWorking => "unconfirmed",
+                },
+                flag.detail
+            ));
+        }
+    }
+    lines.push(String::new());
+    for what in &stats.not_recorded {
+        lines.push(format!("not recorded: {what}"));
+    }
+    lines.join("\n")
+}
+
+fn group_lines(group: &StatsGroup, indent: &str) -> Vec<String> {
+    let mut lines = vec![format!(
+        "{}{} · {} chats, {} terminal agents",
+        indent, group.label, group.coverage.chats, group.coverage.terminal_agents
+    )];
+    let detail = format!("{indent}  ");
+    if let Some(turns) = &group.turns {
+        lines.push(format!(
+            "{detail}turns: {} ({} failed, {} cancelled) · wall {} in all, {} longest, {} on average (active time is not recorded)",
+            turns.count,
+            turns.failed,
+            turns.cancelled,
+            took_text(turns.wall_ms_total),
+            took_text(turns.wall_ms_longest),
+            took_text(turns.wall_ms_mean)
+        ));
+    }
+    if let Some(tasks) = &group.tasks {
+        lines.push(format!(
+            "{detail}tasks: {} done, {} failed, {} cancelled · {} in all, {} longest",
+            tasks.done,
+            tasks.failed,
+            tasks.cancelled,
+            took_text(tasks.wall_ms_total),
+            took_text(tasks.wall_ms_longest)
+        ));
+    }
+    if let Some(waits) = &group.waits {
+        let sides: Vec<String> = waits
+            .by_source
+            .iter()
+            .map(|side| {
+                format!(
+                    "{} {}{}",
+                    side.count,
+                    match side.source {
+                        WaitSource::Audit => "of chats (exact)",
+                        WaitSource::StateLog => "of terminal agents (state log)",
+                    },
+                    if side.open > 0 {
+                        format!(", {} still going", side.open)
+                    } else {
+                        String::new()
+                    }
+                )
+            })
+            .collect();
+        lines.push(format!(
+            "{detail}waiting for you: {} · {} in all, {} longest ({})",
+            waits.count,
+            took_text(waits.total_ms),
+            took_text(waits.longest_ms),
+            sides.join(", ")
+        ));
+        let kinds: Vec<String> = waits
+            .by_kind
+            .iter()
+            .map(|k| format!("{} {}× {}", k.kind, k.count, took_text(k.total_ms)))
+            .collect();
+        if !kinds.is_empty() {
+            lines.push(format!("{detail}  by kind: {}", kinds.join(" · ")));
+        }
+    }
+    if let Some(retries) = &group.retries {
+        lines.push(format!(
+            "{detail}retries: {} (inferred: a turn soon after a failed one)",
+            retries.count
+        ));
+    }
+    if let Some(tokens) = &group.tokens {
+        lines.push(format!(
+            "{detail}tokens: {} in · {} cached · {} out · {} total over {} turns{}",
+            tokens.input,
+            tokens.cached_input,
+            tokens.output,
+            tokens.total,
+            tokens.turns_reported,
+            match tokens.cost_usd_estimate {
+                Some(cost) => format!(" · cost ≈ ${cost:.2} (the harnesses' estimate)"),
+                None => " · no cost reported".to_owned(),
+            }
+        ));
+    }
+    if lines.len() == 1 {
+        lines.push(format!("{detail}nothing recorded"));
+    }
     lines
 }
 
@@ -780,5 +991,104 @@ mod tests {
             text.contains("not recorded: turns of terminal agents"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_stats_text_says_how_each_number_is_known_and_what_is_not_recorded() {
+        use hutan_protocol::stats::{
+            FailureCluster, GroupCoverage, RetryStats, StatsCoverage, TokenStats, TurnStats,
+            WaitKind, WaitSide, WaitStats,
+        };
+
+        let group = StatsGroup {
+            key: "p".into(),
+            label: "hutan".into(),
+            coverage: GroupCoverage {
+                chats: 1,
+                terminal_agents: 1,
+            },
+            turns: Some(TurnStats {
+                count: 4,
+                failed: 1,
+                cancelled: 0,
+                wall_ms_total: 120_000,
+                wall_ms_longest: 60_000,
+                wall_ms_mean: 30_000,
+                active_ms_total: None,
+            }),
+            tasks: None,
+            waits: Some(WaitStats {
+                count: 2,
+                total_ms: 90_000,
+                longest_ms: 60_000,
+                by_source: vec![WaitSide {
+                    source: WaitSource::StateLog,
+                    count: 2,
+                    total_ms: 90_000,
+                    longest_ms: 60_000,
+                    open: 1,
+                }],
+                by_kind: vec![WaitKind {
+                    kind: "permission".into(),
+                    count: 2,
+                    total_ms: 90_000,
+                }],
+            }),
+            retries: Some(RetryStats {
+                count: 1,
+                inferred: true,
+            }),
+            tokens: Some(TokenStats {
+                turns_reported: 3,
+                input: 10,
+                cached_input: 5,
+                output: 2,
+                total: 12,
+                cost_usd_estimate: None,
+            }),
+        };
+        let stats = AgentsStats {
+            from_ms: 1_000_000,
+            to_ms: 2_000_000,
+            group_by: StatsBy::Harness,
+            coverage: StatsCoverage {
+                state_log: false,
+                state_log_from_ms: None,
+                tokens_from_ms: None,
+                chats: 1,
+                terminal_agents: 1,
+            },
+            total: StatsGroup {
+                key: "all".into(),
+                label: "Everything".into(),
+                ..group.clone()
+            },
+            groups: vec![group],
+            omitted_groups: 0,
+            failures: vec![FailureCluster {
+                pattern: "rate limited: retry in # s".into(),
+                count: 3,
+                sessions: 2,
+                last_ms: 1_500_000,
+                source: FailureSource::TurnError,
+            }],
+            flags: Vec::new(),
+            not_recorded: vec!["active time per turn".into()],
+        };
+        let text = stats_text(&stats, 2_000_000);
+        for needle in [
+            "by harness",
+            "state log: OFF",
+            "turns: 4 (1 failed, 0 cancelled)",
+            "active time is not recorded",
+            "of terminal agents (state log), 1 still going",
+            "retries: 1 (inferred",
+            "no cost reported",
+            "3× in 2 sessions (a chat's turn error): rate limited: retry in # s",
+            "a heuristic; the counts are exact",
+            "not recorded: active time per turn",
+        ] {
+            assert!(text.contains(needle), "{needle:?} missing from:\n{text}");
+        }
     }
 }

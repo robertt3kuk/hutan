@@ -60,6 +60,7 @@ pub mod accounts;
 pub mod agent;
 pub mod agents_activity;
 pub mod agents_board;
+pub mod agents_stats;
 pub mod assistant;
 pub mod assistant_pick;
 pub mod bus;

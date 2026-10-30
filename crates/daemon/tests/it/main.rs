@@ -47,6 +47,7 @@ mod session_names;
 mod sessions;
 mod staging;
 mod start_error;
+mod stats;
 mod task_delivery;
 mod tasks;
 mod term_agent;

@@ -1250,6 +1250,23 @@ impl Connection {
         client.hooks_test(hook).await
     }
 
+    /// True while connected to a daemon that advertised capability `agents.stats`
+    /// ([`Client::supports_agents_stats`]); false when disconnected.
+    pub fn supports_agents_stats(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_agents_stats())
+    }
+
+    /// `agents.stats` ([`Client::agents_stats`]).
+    pub async fn agents_stats(
+        &self,
+        request: hutan_protocol::stats::AgentsStatsRequest,
+    ) -> Result<hutan_protocol::stats::AgentsStats, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agents_stats(request).await
+    }
+
     /// True while connected to a daemon that advertised capability `agents.activity`
     /// ([`Client::supports_agents_activity`]); false when disconnected.
     pub fn supports_agents_activity(&self) -> bool {

@@ -552,3 +552,72 @@ async fn the_activity_counts_sessions_and_says_what_is_not_recorded() {
     }
     t.stop().await;
 }
+
+/// Flow (protocol 0.67): `hutan agents --stats` groups what the daemon recorded and says how well
+/// each number is known; a window or a grouping that is not one is a usage error.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_stats_say_how_well_each_number_is_known() {
+    let t = TestDaemon::start().await;
+    // A terminal agent that blocks (OSC 7501 through `printf` in the session itself).
+    let script = r#"printf '\033]7501;state=blocked:kind=permission:app=omp:msg=%s\033\\' "$(printf 'Run it?' | base64)"
+sleep 1
+printf '\033]7501;state=working:app=omp\033\\'
+exec sleep 600"#;
+    t.new_session(&[], &["sh", "-c", script]).await;
+
+    let stats = timeout(WAIT, async {
+        loop {
+            let s = t
+                .hutan(&["--json", "agents", "--stats", "--since", "1h"])
+                .await
+                .ok()
+                .json();
+            if s["total"]["waits"]["by_source"][0]["source"] == "state_log"
+                && s["total"]["waits"]["by_source"][0]["count"] == 1
+            {
+                return s;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the wait never showed");
+    assert_eq!(stats["coverage"]["state_log"], true);
+    assert_eq!(stats["coverage"]["terminal_agents"], 1);
+    assert_eq!(stats["group_by"], "project");
+    assert!(
+        stats["total"].get("turns").is_none(),
+        "terminal agents have no turns"
+    );
+    assert!(
+        stats["total"].get("tokens").is_none(),
+        "nothing recorded is absent"
+    );
+
+    let text = t
+        .hutan(&["agents", "--stats", "--since", "1h", "--by", "harness"])
+        .await
+        .ok()
+        .stdout;
+    for needle in [
+        "by harness",
+        "state log: on",
+        "waiting for you: 1",
+        "of terminal agents (state log)",
+        "by kind: permission",
+        "not recorded:",
+    ] {
+        assert!(text.contains(needle), "{needle:?} missing from:\n{text}");
+    }
+
+    for args in [
+        &["agents", "--stats", "--since", "soon"][..],
+        &["agents", "--stats", "--by", "colour"][..],
+        &["agents", "--by", "day"][..],
+        &["agents", "--since", "1h"][..],
+    ] {
+        let out = finish(command(Path::new(HUTAN), Some(&t.paths.socket), args)).await;
+        assert_ne!(out.code, 0, "{args:?}: {}", out.stdout);
+    }
+    t.stop().await;
+}

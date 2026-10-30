@@ -1731,6 +1731,7 @@ fn the_state_log_keeps_rows_for_fourteen_days_and_is_emptied_on_request() {
     log.append(state(other, now - day, "omp-extension", "working"))
         .unwrap();
     assert_eq!(log.count().unwrap(), 3, "the 16 day old row went");
+    assert_eq!(log.oldest_ms().unwrap(), Some(now - 3 * day));
 
     // The window, oldest first, with what was recorded.
     let window = log.in_window(now - 3 * day, now).unwrap();
@@ -1748,6 +1749,7 @@ fn the_state_log_keeps_rows_for_fourteen_days_and_is_emptied_on_request() {
     // Emptied, and a new row is written again afterwards.
     log.clear().unwrap();
     assert_eq!(log.count().unwrap(), 0);
+    assert_eq!(log.oldest_ms().unwrap(), None);
     log.append(state(id, now, "osc7501", "idle")).unwrap();
     assert_eq!(log.count().unwrap(), 1);
 

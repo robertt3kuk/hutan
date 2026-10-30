@@ -51,6 +51,7 @@ mod activity;
 mod board;
 mod fork;
 mod insight;
+mod stats;
 
 /// The services a router hands requests to besides the registry and the terminal hub.
 #[derive(Debug)]
@@ -73,6 +74,7 @@ pub struct Services {
     pub updates: Arc<UpdateService>,
     pub settings: Arc<SettingsService>,
     pub storage: hutan_storage::Storage,
+    pub state_log: Arc<crate::state_log::StateLog>,
 }
 
 #[derive(Debug)]
@@ -101,6 +103,7 @@ pub struct Router {
     updates: Arc<UpdateService>,
     settings: Arc<SettingsService>,
     storage: hutan_storage::Storage,
+    state_log: Arc<crate::state_log::StateLog>,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
     forget: AtomicBool,
 }
@@ -139,6 +142,7 @@ impl Router {
             updates: services.updates,
             settings: services.settings,
             storage: services.storage,
+            state_log: services.state_log,
             forget: AtomicBool::new(false),
         }
     }
@@ -416,6 +420,7 @@ impl Router {
             Request::AgentInsight(req) => ok(&self.agent_insight(req).await?),
             Request::AgentsBoard(req) => ok(&self.agents_board(req).await?),
             Request::AgentsActivity(req) => ok(&self.agents_activity(req).await?),
+            Request::AgentsStats(req) => ok(&self.agents_stats(req).await?),
             Request::AgentMeasureContext(req) => ok(&self.measure_context(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
@@ -1154,6 +1159,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentsBoard(_) => ("agents.board", Read),
         // What happened in a window (protocol 0.65): read-only, from what the daemon records.
         Request::AgentsActivity(_) => ("agents.activity", Read),
+        // Flow statistics (protocol 0.67): read-only, from what the daemon records.
+        Request::AgentsStats(_) => ("agents.stats", Read),
         Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.

@@ -104,6 +104,55 @@ impl Usage<'_> {
         })
     }
 
+    /// The turns that ended in `since_ms..=until_ms`, oldest first (as far as the records go
+    /// back: [`USAGE_KEPT_DAYS`] days).
+    pub fn turns_in_window(&self, since_ms: u64, until_ms: u64) -> Result<Vec<UsageTurnRow>> {
+        self.0.read(move |conn| {
+            let context = "reading the turns of a window";
+            let mut stmt = conn
+                .prepare(
+                    "SELECT session_id, turn_id, at_ms, harness, provider, model, input_tokens, \
+                         cached_input_tokens, output_tokens, reasoning_output_tokens, \
+                         total_tokens, cost_usd \
+                     FROM usage_turns WHERE at_ms BETWEEN ?1 AND ?2 ORDER BY at_ms, turn_id",
+                )
+                .map_err(StorageError::sqlite(context))?;
+            let rows = stmt
+                .query_map(params![ms(since_ms), ms(until_ms)], |row| {
+                    let tokens = |at: usize| -> rusqlite::Result<Option<u64>> {
+                        Ok(row.get::<_, Option<i64>>(at)?.map(unms))
+                    };
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        UsageTurnRow {
+                            session_id: SessionId::new(),
+                            turn_id: row.get(1)?,
+                            at_ms: unms(row.get(2)?),
+                            harness: row.get(3)?,
+                            provider: row.get(4)?,
+                            model: row.get(5)?,
+                            input_tokens: tokens(6)?,
+                            cached_input_tokens: tokens(7)?,
+                            output_tokens: tokens(8)?,
+                            reasoning_output_tokens: tokens(9)?,
+                            total_tokens: tokens(10)?,
+                            cost_usd: row.get(11)?,
+                        },
+                    ))
+                })
+                .map_err(StorageError::sqlite(context))?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (session, mut turn) = row.map_err(StorageError::sqlite(context))?;
+                turn.session_id = session
+                    .parse()
+                    .map_err(|e| StorageError::corrupt("usage_turns.session_id", e))?;
+                out.push(turn);
+            }
+            Ok(out)
+        })
+    }
+
     /// The newest `limit` turns of one session (as far as the records go back: they are kept
     /// [`USAGE_KEPT_DAYS`] days), oldest first.
     pub fn turns_of(&self, session: SessionId, limit: u32) -> Result<Vec<UsageTurnRow>> {
@@ -310,6 +359,24 @@ mod tests {
             total_tokens: Some(tokens + 1),
             cost_usd: cost,
         }
+    }
+
+    #[test]
+    fn the_turns_of_a_window_come_with_their_session_oldest_first() {
+        let (_dir, storage) = storage();
+        let usage = storage.usage();
+        let (a, b) = (
+            turn("a", 100, "omp", 5, None),
+            turn("b", 200, "claude", 7, Some(0.1)),
+        );
+        let c = turn("c", 900, "omp", 9, None);
+        for row in [&c, &b, &a] {
+            usage.record_turn(row.clone()).unwrap();
+        }
+        let inside = usage.turns_in_window(150, 500).unwrap();
+        assert_eq!(inside, std::slice::from_ref(&b));
+        let both = usage.turns_in_window(0, 500).unwrap();
+        assert_eq!(both, [a, b]);
     }
 
     #[test]
