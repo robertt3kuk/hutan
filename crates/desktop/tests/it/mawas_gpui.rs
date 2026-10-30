@@ -2747,3 +2747,139 @@ fn the_web_switch_is_a_row_of_what_mawas_may_do_off_by_default_and_a_click_write
             == json!(true)
     });
 }
+
+// ---- RAIL-FOCUS: the rail follows the Global chat's Focus ------------------------------------------
+
+/// A terminal session of `workspace` in which an agent reported itself working.
+fn agent_in(env: &AssistantEnv, workspace: WorkspaceId) -> SessionInfo {
+    let session = env
+        .daemon
+        .create_session(&["sleep", "600"], Some(workspace));
+    let applied: AgentApplied = env.daemon.call(Request::AgentReport(AgentReportRequest {
+        session_id: session.id,
+        source: "test-hooks".into(),
+        agent: "claude".into(),
+        state: Some(AgentState::Working),
+        message: None,
+        seq: 1,
+        agent_session_id: None,
+        resume_argv: None,
+        pid: None,
+        node: None,
+    }));
+    assert!(applied.applied);
+    session
+}
+
+fn working_sessions(panel: &Entity<AssistantPanel>, cx: &VisualTestContext) -> Vec<SessionId> {
+    panel.read_with(cx, |p, cx| {
+        let mut sessions: Vec<SessionId> =
+            p.today(cx).working.iter().map(|row| row.session).collect();
+        sessions.sort();
+        sessions
+    })
+}
+
+#[gpui::test]
+fn a_focus_filters_the_rail_and_the_catch_up_to_its_workspace_and_counts_the_rest(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let (root_a, root_b) = (env.project("alpha"), env.project("beta"));
+    let alpha = env.daemon.create_workspace("alpha", &[&root_a]);
+    let beta = env.daemon.create_workspace("beta", &[&root_b]);
+    let in_alpha = agent_in(&env, alpha.id);
+    let in_beta = agent_in(&env, beta.id);
+    // One more in each that only works: the rows of *Working*.
+    let (works_alpha, works_beta) = (agent_in(&env, alpha.id), agent_in(&env, beta.id));
+    let target = env.daemon.sh("sleep 600");
+    // A request in each workspace: the chip counts them.
+    let _a = env
+        .daemon
+        .call_from_in_background::<SessionResult>(in_alpha.id, rename_request(target.id, "x"));
+    let _b = env
+        .daemon
+        .call_from_in_background::<SessionResult>(in_beta.id, rename_request(target.id, "y"));
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_needs(&panel, cx, 2);
+    let mut both = vec![works_alpha.id, works_beta.id];
+    both.sort();
+    assert_eq!(
+        working_sessions(&panel, cx),
+        both,
+        "All workspaces: nothing changes"
+    );
+    assert_eq!(panel.read_with(cx, |p, cx| p.today(cx).elsewhere), 0);
+    assert_eq!(panel.read_with(cx, |p, cx| p.rail_scope(cx)), None);
+    wait_until(cx, "the chip of every workspace", |cx| {
+        chip_text(&panel, cx).is_some_and(|t| t.starts_with("2 requests"))
+    });
+    assert!(!painted(&view, cx, "today-elsewhere"));
+
+    // A Focus: alpha's agents, the others counted in one line, the chip says where.
+    panel.update(cx, |p, cx| p.set_focus(Some(alpha.id), cx));
+    wait_until(cx, "the rail to follow the Focus", |cx| {
+        panel.read_with(cx, |p, cx| p.rail_scope(cx) == Some(alpha.id))
+    });
+    assert_eq!(working_sessions(&panel, cx), [works_alpha.id]);
+    let today = panel.read_with(cx, |p, cx| p.today(cx));
+    assert_eq!(today.requests.len(), 1, "{today:?}");
+    assert_eq!(today.requests[0].session, in_alpha.id);
+    assert!(today.elsewhere >= 1);
+    wait_until(cx, "the row of the other workspaces", |cx| {
+        painted(&view, cx, "today-elsewhere")
+    });
+    wait_until(cx, "the catch-up of alpha", |cx| {
+        chip_text(&panel, cx).is_some_and(|t| t.as_str() == "in alpha · 1 request waits for you")
+    });
+    // The Recent tab asked the daemon for alpha only.
+    click_region(&view, cx, "today-tab-recent");
+    wait_until(cx, "alpha's activity", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.recent_activity().is_some_and(|a| {
+                !a.events.is_empty() && a.events.iter().all(|e| e.session_id != Some(in_beta.id))
+            })
+        })
+    });
+    assert!(
+        painted(&view, cx, "today-elsewhere"),
+        "the row is in Recent too"
+    );
+
+    // One click shows every workspace, for this page only.
+    click_region(&view, cx, "today-elsewhere");
+    wait_until(cx, "every workspace", |cx| {
+        panel.read_with(cx, |p, cx| p.rail_scope(cx).is_none())
+    });
+    assert_eq!(
+        panel.read_with(cx, |p, cx| p.focus(cx)),
+        Some(alpha.id),
+        "the Focus is kept"
+    );
+    wait_until(cx, "everything in Recent", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.recent_activity()
+                .is_some_and(|a| a.events.iter().any(|e| e.session_id == Some(in_beta.id)))
+        })
+    });
+    wait_until(cx, "the way back", |cx| {
+        painted(&view, cx, "today-focus-only")
+    });
+    click_region(&view, cx, "today-focus-only");
+    wait_until(cx, "alpha again", |cx| {
+        panel.read_with(cx, |p, cx| p.rail_scope(cx) == Some(alpha.id))
+    });
+
+    // Clearing the Focus: every workspace again, and no row.
+    panel.update(cx, |p, cx| p.set_focus(None, cx));
+    wait_until(cx, "no Focus", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.focus(cx).is_none() && p.rail_scope(cx).is_none()
+        })
+    });
+    assert_eq!(working_sessions(&panel, cx), both);
+    assert_eq!(panel.read_with(cx, |p, cx| p.today(cx).elsewhere), 0);
+    wait_until(cx, "the row to go", |cx| {
+        !painted(&view, cx, "today-elsewhere")
+    });
+}

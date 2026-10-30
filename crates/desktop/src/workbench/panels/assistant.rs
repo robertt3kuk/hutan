@@ -370,6 +370,9 @@ pub(super) struct MemoryTab {
 #[derive(Debug, Default)]
 pub(super) struct RecentTab {
     pub(super) activity: Option<hutan_protocol::activity::AgentsActivity>,
+    /// The workspace the answers are for (the rail's scope when they were read); `None`: every
+    /// workspace.
+    pub(super) for_scope: Option<WorkspaceId>,
     /// The flow statistics of the last seven days (`agents.stats`), read with the catch-up; `None`
     /// until read or when the daemon predates protocol 0.66.
     pub(super) flow: Option<hutan_protocol::stats::AgentsStats>,
@@ -402,6 +405,8 @@ pub struct AssistantPanel {
     waiting: Vec<(ScopeKey, ContextChip)>,
     /// Put the keyboard in the composer as soon as it is drawn.
     pub(super) focus_wanted: bool,
+    /// The Focus under which the user chose *every workspace* for the rail (this page only).
+    pub(super) show_all_for: Option<WorkspaceId>,
     /// The backend chooser, while it is open.
     switcher: Option<Switcher>,
     providers: Vec<ProviderInfo>,
@@ -490,6 +495,7 @@ impl AssistantPanel {
             chats: HashMap::new(),
             waiting: Vec::new(),
             focus_wanted: false,
+            show_all_for: None,
             switcher: None,
             providers: Vec::new(),
             was_connected: connected,

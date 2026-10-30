@@ -21,14 +21,14 @@ use gpui::{
     StatefulInteractiveElement, Styled, div, prelude::*, px,
 };
 use hutan_core::agent::PermissionOptionKind;
-use hutan_core::{ApprovalId, QuestionId, SessionId};
+use hutan_core::{ApprovalId, QuestionId, SessionId, WorkspaceId};
 use hutan_protocol::activity::{
     ActivityDetail, ActivityEvent, ActivitySummary, RequestKind, TurnOutcome,
 };
 use hutan_protocol::chat::ControlTarget;
 use hutan_protocol::suggest::{AskTarget, SuggestedAnswer};
 
-use super::assistant::AssistantPanel;
+use super::assistant::{AssistantPanel, ScopeKey};
 use super::common::{agent_lead_glyph, agent_state_word, agent_title_line};
 use crate::icons::{Icon, icon};
 use crate::sessions::{SessionsStore, agents_text};
@@ -141,6 +141,9 @@ pub struct Today {
     pub unconfirmed: usize,
     /// Agent sessions confirmed idle (the Agents page's *Idle* group): waiting for a message.
     pub idle: Vec<WorkingRow>,
+    /// With a Focus: how many agents of other workspaces the rail leaves out (the
+    /// *+ N agents in other workspaces* row); zero without one.
+    pub elsewhere: usize,
 }
 
 /// A section of Today that has something in it.
@@ -202,12 +205,33 @@ impl Today {
 
 /// The rail's content as of now, from the sessions store alone: the Agents page's records.
 pub fn today(store: &SessionsStore) -> Today {
+    today_in(store, None)
+}
+
+/// Whether `record` is an agent of `scope`: the workspace or project the Focus names, or one of
+/// the projects in it. Mawas's own records belong to every scope.
+fn in_scope(record: &AgentRecord, scope: WorkspaceId) -> bool {
+    record.role == Role::Assistant || record.workspace == scope || record.container == Some(scope)
+}
+
+/// [`today`] for the agents of one workspace (the open Global chat's Focus); `None` is every
+/// workspace. What is left out is counted in [`Today::elsewhere`].
+pub fn today_in(store: &SessionsStore, scope: Option<WorkspaceId>) -> Today {
     let presentation = store.agent_presentation();
     let (mut requests, mut failed, mut review): (Vec<TodayRow>, Vec<TodayRow>, Vec<TodayRow>) =
         (Vec::new(), Vec::new(), Vec::new());
+    let wanted = |record: &&AgentRecord| scope.is_none_or(|scope| in_scope(record, scope));
+    let elsewhere = scope.map_or(0, |scope| {
+        presentation
+            .records
+            .iter()
+            .filter(|record| !in_scope(record, scope))
+            .count()
+    });
     for record in presentation
         .records
         .iter()
+        .filter(wanted)
         .filter(|record| record.group.attention().is_some())
     {
         let mawas = record.role == Role::Assistant;
@@ -309,6 +333,7 @@ pub fn today(store: &SessionsStore) -> Today {
         presentation
             .records
             .iter()
+            .filter(wanted)
             .filter(|record| record.role != Role::Assistant)
     };
     let working = agents()
@@ -335,13 +360,49 @@ pub fn today(store: &SessionsStore) -> Today {
         working,
         unconfirmed,
         idle,
+        elsewhere,
     }
 }
 
 impl AssistantPanel {
     /// The rail's content now (see [`today`]).
     pub fn today(&self, cx: &App) -> Today {
-        today(self.env.sessions.read(cx))
+        today_in(self.env.sessions.read(cx), self.rail_scope(cx))
+    }
+
+    /// The workspace the rail shows: the open Global chat's Focus, until the user asks for every
+    /// workspace (*+ N agents in other workspaces*, for this page only, never saved, and only for
+    /// the Focus it was asked under). `None`: every workspace.
+    pub fn rail_scope(&self, cx: &App) -> Option<WorkspaceId> {
+        if self.key(cx) != ScopeKey::Global {
+            return None;
+        }
+        self.focus(cx)
+            .filter(|focus| self.show_all_for != Some(*focus))
+    }
+
+    /// What the rail says about its scope: the Focus's name, `None` for every workspace.
+    pub fn rail_scope_name(&self, cx: &App) -> Option<String> {
+        let scope = self.rail_scope(cx)?;
+        Some(
+            self.env
+                .sessions
+                .read(cx)
+                .workspace(scope)
+                .map_or_else(|| "a workspace that is gone".to_owned(), |w| w.name.clone()),
+        )
+    }
+
+    /// *+ N agents in other workspaces*: the rail shows every workspace until the Focus changes.
+    pub fn show_all_workspaces(&mut self, cx: &mut Context<Self>) {
+        self.show_all_for = self.focus(cx);
+        cx.notify();
+    }
+
+    /// *Only <Focus>*: back to the Focus after showing every workspace.
+    pub fn show_focus_only(&mut self, cx: &mut Context<Self>) {
+        self.show_all_for = None;
+        cx.notify();
     }
 
     /// Answers a permission request from the rail, through the store (the same call the chat's
@@ -817,6 +878,7 @@ impl AssistantPanel {
                     .into_any_element(),
             );
         }
+        sections.extend(self.scope_rows(today.elsewhere, look, cx));
         hutan_ui::scroll_y(
             "assistant-today-scroll",
             div()
@@ -955,6 +1017,67 @@ impl AssistantPanel {
         .into_any_element()
     }
 
+    /// What a prepared ask adds under a Focus: the tools take the workspace, so the numbers are
+    /// the rail's.
+    fn scope_sentence(&self, cx: &App) -> String {
+        match (self.rail_scope(cx), self.rail_scope_name(cx)) {
+            (Some(id), Some(name)) => {
+                format!(" Only look at {name} (workspace_id {id}), the Focus of this chat.")
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// The line under a scoped rail: *+ N agents in other workspaces* (a click shows every
+    /// workspace for this page), or, once every workspace is shown under a Focus, *Only <Focus>*.
+    fn scope_rows(&self, elsewhere: usize, look: &Look, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let (theme, tokens) = (look.theme, look.tokens);
+        let link = |id: &'static str, text: String| {
+            ui::Button::new(id, text, &theme, &tokens)
+                .compact()
+                .ghost()
+                .child(icon(Icon::ActionDisclose, 12.0, theme.muted))
+        };
+        if let Some(name) = self.rail_scope_name(cx)
+            && elsewhere > 0
+        {
+            return vec![
+                link(
+                    "today-elsewhere",
+                    format!(
+                        "+ {elsewhere} agent{} in other workspaces",
+                        if elsewhere == 1 { "" } else { "s" }
+                    ),
+                )
+                .tooltip(format!(
+                    "Showing {name} only: click to show every workspace"
+                ))
+                .on_click(cx.listener(|this, _, _, cx| this.show_all_workspaces(cx)))
+                .child(probe(
+                    &self.env.regions,
+                    Region::Assistant("today-elsewhere"),
+                ))
+                .into_any_element(),
+            ];
+        }
+        if self.key(cx) == ScopeKey::Global
+            && let Some(focus) = self.focus(cx)
+            && self.show_all_for == Some(focus)
+        {
+            let name = self.focus_label(cx);
+            return vec![
+                link("today-focus-only", format!("Only {name}"))
+                    .on_click(cx.listener(|this, _, _, cx| this.show_focus_only(cx)))
+                    .child(probe(
+                        &self.env.regions,
+                        Region::Assistant("today-focus-only"),
+                    ))
+                    .into_any_element(),
+            ];
+        }
+        Vec::new()
+    }
+
     /// The catch-up the Recent tab shows, once the daemon answered.
     pub fn recent_activity(&self) -> Option<&hutan_protocol::activity::AgentsActivity> {
         self.recent.activity.as_ref()
@@ -997,6 +1120,10 @@ impl AssistantPanel {
                     ),
                     _ => "The last 24 hours (nothing marked as seen yet)".to_owned(),
                 };
+                let since = match self.rail_scope_name(cx) {
+                    Some(name) => format!("in {name} · {since}"),
+                    None => since,
+                };
                 sections.push(
                     div()
                         .relative()
@@ -1009,6 +1136,8 @@ impl AssistantPanel {
                         ))
                         .into_any_element(),
                 );
+                let elsewhere = self.today(cx).elsewhere;
+                sections.extend(self.scope_rows(elsewhere, look, cx));
                 let lines = recent_summary_lines(&activity.summary);
                 if lines.is_empty() {
                     sections.push(muted_line("Nothing recorded in this window.", look));
@@ -1216,7 +1345,10 @@ impl AssistantPanel {
                 div()
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.muted)
-                    .child("Flow · the last 7 days"),
+                    .child(SharedString::from(match self.rail_scope_name(cx) {
+                        Some(name) => format!("Flow · the last 7 days · in {name}"),
+                        None => "Flow · the last 7 days".to_owned(),
+                    })),
             )
             .child(
                 div()
@@ -1249,12 +1381,13 @@ impl AssistantPanel {
     /// change and send; nothing is sent. The ask names the read-only tool, so the numbers in her
     /// answer come from the records and carry their coverage.
     pub fn analyse_flow(&mut self, cx: &mut Context<Self>) {
-        let note = "Analyse how my agents worked over the last 7 days (agents_stats with last_days 7, grouped by project and again by day). Tell me where the time went, what they waited for me on and for how long, which failures came again, and what the tokens were spent on. Say how well each number is known and what is not recorded; do not guess what the records do not hold.";
+        let mut note = "Analyse how my agents worked over the last 7 days (agents_stats with last_days 7, grouped by project and again by day). Tell me where the time went, what they waited for me on and for how long, which failures came again, and what the tokens were spent on. Say how well each number is known and what is not recorded; do not guess what the records do not hold.".to_owned();
+        note.push_str(&self.scope_sentence(cx));
         if let Some(model) = self
             .session(cx)
             .and_then(|session| self.chat_model(session))
         {
-            model.update(cx, |model, cx| model.add_note(note, cx));
+            model.update(cx, |model, cx| model.add_note(&note, cx));
         }
         self.focus_wanted = true;
         cx.notify();
@@ -1267,11 +1400,12 @@ impl AssistantPanel {
         let Some(activity) = self.recent.activity.as_ref() else {
             return;
         };
-        let note = format!(
+        let mut note = format!(
             "Summarise what my agents did since {} (agents_activity with since_ms {}, then agents_board for what is happening now). Tell me what finished, what failed and what waits for me, and say what is not recorded.",
             hutan_client::time::local_time_text(activity.from_ms),
             activity.from_ms
         );
+        note.push_str(&self.scope_sentence(cx));
         if let Some(model) = self
             .session(cx)
             .and_then(|session| self.chat_model(session))
@@ -1303,11 +1437,19 @@ impl AssistantPanel {
         let Some(view) = self.session(cx).and_then(|session| self.chat_view(session)) else {
             return;
         };
+        // Only what was read for the scope the rail shows now, and it says which.
+        let scope = self.rail_scope(cx);
+        let name = self.rail_scope_name(cx);
         let line = self
             .recent
             .activity
             .as_ref()
-            .and_then(|activity| activity.summary.line());
+            .filter(|_| self.recent.for_scope == scope)
+            .and_then(|activity| activity.summary.line())
+            .map(|line| match &name {
+                Some(name) => format!("in {name} · {line}"),
+                None => line,
+            });
         let chip = line.map(|line| {
             let panel = cx.entity().downgrade();
             chat::CatchUp {
@@ -1338,12 +1480,18 @@ impl AssistantPanel {
     /// when the agents' state changed. A hidden rail with a conversation under way, and the other
     /// tabs, do no work.
     pub(super) fn ensure_recent(&mut self, cx: &mut Context<Self>) {
+        // Showing every workspace holds for the Focus it was asked under: another Focus (or none)
+        // starts the rail over at its Focus.
+        if self.show_all_for.is_some() && self.show_all_for != self.focus(cx) {
+            self.show_all_for = None;
+        }
         let wanted = (self.rail_open
             && self.env.settings.get::<AssistantSettings>().rail_tab == RailTab::Recent)
             || self.catch_up_wanted(cx);
         if !wanted || self.recent.loading || self.recent.unsupported || !self.connected(cx) {
             return;
         }
+        let scope = self.rail_scope(cx);
         let (seen, revision, connection) = {
             let store = self.env.sessions.read(cx);
             // What the catch-up is made of changing: the agents' state (the revision) and the
@@ -1365,12 +1513,14 @@ impl AssistantPanel {
         }
         let fresh = self.recent.activity.is_some()
             && self.recent.for_seen == Some(seen)
+            && self.recent.for_scope == scope
             && self.recent.revision == revision;
         if fresh {
             return;
         }
         if let Some(last) = self.recent.last_load
             && self.recent.for_seen == Some(seen)
+            && self.recent.for_scope == scope
             && last.elapsed() < RECENT_REFRESH
         {
             // Too soon after the last read: look again when the pause is over.
@@ -1395,6 +1545,7 @@ impl AssistantPanel {
             let answer = connection
                 .agents_activity(hutan_protocol::activity::AgentsActivityRequest {
                     since_ms: seen,
+                    workspace_id: scope,
                     ..Default::default()
                 })
                 .await;
@@ -1403,6 +1554,7 @@ impl AssistantPanel {
                 connection
                     .agents_stats(hutan_protocol::stats::AgentsStatsRequest {
                         since_ms: Some(hutan_client::time::now_ms().saturating_sub(FLOW_WINDOW_MS)),
+                        workspace_id: scope,
                         ..Default::default()
                     })
                     .await
@@ -1415,6 +1567,7 @@ impl AssistantPanel {
                 this.recent.loading = false;
                 this.recent.flow = flow;
                 this.recent.for_seen = Some(seen);
+                this.recent.for_scope = scope;
                 this.recent.revision = revision;
                 match answer {
                     Ok(activity) => {
