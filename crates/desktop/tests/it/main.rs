@@ -96,6 +96,7 @@ mod staging_gpui;
 mod start_failure_gpui;
 mod statusbar_gpui;
 mod style_tokens_gpui;
+mod tabs_files_gpui;
 mod tasks_gpui;
 mod term_find_gpui;
 mod term_image_paste_gpui;

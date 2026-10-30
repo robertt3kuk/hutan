@@ -255,7 +255,9 @@ impl Workbench {
         true
     }
 
-    /// Closes the split of `session` (see [`close_focused_split`](Self::close_focused_split)).
+    /// Closes the split of `session` as `tabs.close_session` says for a tab: the session goes
+    /// with it (asking when something runs, unless it is `always`), or, with `never`, the
+    /// split alone goes and the session keeps running in the sidebar.
     pub(crate) fn close_split_of(
         &mut self,
         session: &str,
@@ -265,38 +267,30 @@ impl Workbench {
         let Ok(id) = session.parse::<SessionId>() else {
             return;
         };
-        if self.can_close_sessions(cx) {
-            self.close_session(id, window, cx);
+        let mode = self.close_session_mode();
+        if mode != crate::settings::CloseSessionMode::Never && self.can_close_sessions(cx) {
+            self.close_tab_sessions(
+                vec![id],
+                mode == crate::settings::CloseSessionMode::Always,
+                window,
+                cx,
+            );
         } else {
             self.close_session_tabs(id, cx);
             self.focus_root(window, cx);
         }
     }
 
-    /// ⌘⇧W in a terminal: with splits, closes the whole tab (what the × does: detach, or close
-    /// every session when `terminal.tab_close` says so); a single terminal is stopped, as ⌘⇧W
-    /// always did.
+    /// ⌘⇧W in a terminal: with splits, closes the whole tab (what the × does, by
+    /// `tabs.close_session`); a single terminal is stopped, as ⌘⇧W always did.
     pub(crate) fn close_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((pane, index, split)) = self.state.active_term_split() else {
+        let Some((pane, index, _)) = self.state.active_term_split() else {
             if let Some(session) = self.focused_session() {
                 self.stop_session(session, window, cx);
             }
             return;
         };
-        let sessions: Vec<SessionId> = split
-            .sessions()
-            .into_iter()
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        if self.terminal_settings.tab_close == crate::settings::TabClose::CloseSession
-            && self.can_close_sessions(cx)
-        {
-            for session in sessions {
-                self.close_session(session, window, cx);
-            }
-        } else {
-            self.close_tab_with_fade(pane, index, window, cx);
-        }
+        self.close_tab(pane, index, window, cx);
     }
 
     /// *Move Split to New Tab*: the split of `session` becomes a tab of its own.

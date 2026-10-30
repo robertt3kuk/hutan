@@ -601,6 +601,8 @@ pub enum Region {
     /// which never does.
     TabName(PaneId, usize),
     TabMark(PaneId, usize),
+    /// The × of the tab at `index` of a pane.
+    TabClose(PaneId, usize),
     /// The chevron of a pane's tab strip that lists every tab (shown while some are out of sight).
     TabOverflow(PaneId),
     /// The fade at the left (`false`) or right (`true`) edge of a pane's tab strip, drawn while
@@ -2602,7 +2604,7 @@ impl Workbench {
             entries.extend(self.file_tab_entries(pane, &path));
         }
         entries.push(Self::entry("Close", move |this, window, cx| {
-            this.close_item_checked(pane, index, window, cx);
+            this.close_tab(pane, index, window, cx);
         }));
         entries
     }

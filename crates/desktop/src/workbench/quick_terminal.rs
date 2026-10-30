@@ -921,9 +921,10 @@ impl Workbench {
         }
     }
 
-    /// ⌘W: the tab goes. `terminal.tab_close` decides what happens to its session, as for a tab
-    /// of the main window: kept running (and listed in the sidebar), or closed when nothing
-    /// runs in it. The panel hides when it was the last tab.
+    /// ⌘W: the tab goes. `tabs.close_session` decides what happens to its session, as for a tab
+    /// of the main window: closed with it (`always` stops what runs in it; `when_idle` keeps a
+    /// session that runs something, with a notice), or kept running and listed in the sidebar
+    /// (`never`). The panel hides when it was the last tab.
     pub fn close_quick_tab(&mut self, session: SessionId, cx: &mut Context<Self>) {
         let removed = self
             .quick
@@ -932,22 +933,23 @@ impl Workbench {
         if !removed {
             return;
         }
-        if self.settings.get::<TerminalSettings>().tab_close
-            == crate::settings::TabClose::CloseSession
-        {
+        let mode = self.close_session_mode();
+        if mode != crate::settings::CloseSessionMode::Never {
+            let stop = mode == crate::settings::CloseSessionMode::Always;
             let task = self
                 .sessions
-                .update(cx, |store, cx| store.close(session, false, cx));
+                .update(cx, |store, cx| store.close(session, stop, cx));
             cx.spawn(async move |this, cx| {
-                if let Err(error) = task.await {
-                    this.update(cx, |this, cx| {
-                        this.set_notice(
-                            format!("The session was kept: it could not be closed ({error:?})"),
-                            cx,
-                        );
-                    })
-                    .ok();
-                }
+                let notice = match task.await {
+                    Ok(()) => return,
+                    Err(crate::sessions::CloseFailure::Busy(busy)) => {
+                        format!("The session was kept: {}", super::closing::busy_text(&busy))
+                    }
+                    Err(crate::sessions::CloseFailure::Failed(error)) => {
+                        format!("The session was kept: it could not be closed ({error})")
+                    }
+                };
+                this.update(cx, |this, cx| this.set_notice(notice, cx)).ok();
             })
             .detach();
         }

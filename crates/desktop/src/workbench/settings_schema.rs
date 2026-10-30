@@ -419,7 +419,7 @@ pub const PAGES: &[NavPage] = &[
     NavPage {
         id: "appearance",
         group: NavGroup::General,
-        sections: &["appearance", "layout", "status"],
+        sections: &["appearance", "layout", "tabs", "status"],
     },
     NavPage {
         id: "app",
@@ -525,6 +525,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<EditorSettings>(),
         CatalogEntry::of::<ChatSettings>(),
         CatalogEntry::of::<LayoutSettings>(),
+        CatalogEntry::of::<crate::settings::TabsSettings>(),
         CatalogEntry::of::<SessionsPanelSettings>(),
         CatalogEntry::of::<SidebarSettings>().in_section(SessionsPanelSettings::NAMESPACE),
         CatalogEntry::of::<InspectorPanelSettings>(),

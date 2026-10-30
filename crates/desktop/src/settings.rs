@@ -62,7 +62,9 @@ pub enum OptionAsMetaSetting {
     Both,
 }
 
-/// What the × of a terminal tab does (`terminal.tab_close`).
+/// What the × of a terminal tab does (`terminal.tab_close`): the older name of
+/// [`CloseSessionMode`] (`tabs.close_session`), which wins where both are set. `detach` reads
+/// as `never`, `close_session` as `when_idle`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TabClose {
@@ -72,6 +74,57 @@ pub enum TabClose {
     /// Closes the session (the sidebar's × does the same): asks first when something runs in
     /// it, and Reopen in History brings it back.
     CloseSession,
+}
+
+/// What closing the tab of a session does to the session (`tabs.close_session`): terminals,
+/// terminal agents and chats alike, every split of a tab of splits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseSessionMode {
+    /// The session is always closed with its tab, and what runs in it is stopped without a
+    /// question. The *Closed … · Undo* toast reopens it.
+    Always,
+    /// The session is closed with its tab when nothing runs in it; when something does, a
+    /// question offers *Keep running in background* or *Close*.
+    #[default]
+    WhenIdle,
+    /// Only the tab closes: the session keeps running and stays in the sidebar.
+    Never,
+}
+
+/// The `tabs` namespace: what closing a tab does to its session.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TabsSettings {
+    /// What closing the tab of a session (terminal, terminal agent, chat) does to the session:
+    /// `always` closes it and stops what runs; `when_idle` (the default) closes it when nothing
+    /// runs in it and asks otherwise; `never` leaves it running in the sidebar. A workspace may
+    /// choose its own. `terminal.tab_close` is the older name and still counts while this key
+    /// is not set.
+    pub close_session: CloseSessionMode,
+}
+
+impl Setting for TabsSettings {
+    const NAMESPACE: &'static str = "tabs";
+    const WORKSPACE_OVERRIDABLE: bool = true;
+}
+
+impl CloseSessionMode {
+    /// What the settings say now: `tabs.close_session` where any layer sets it, else the older
+    /// `terminal.tab_close` where any layer sets that (`detach` is `never`, `close_session` is
+    /// `when_idle`), else the default.
+    pub fn resolve(store: &SettingsStore) -> Self {
+        if store.source_of("tabs.close_session").is_some() {
+            return store.get::<TabsSettings>().close_session;
+        }
+        if store.source_of("terminal.tab_close").is_some() {
+            return match store.get::<TerminalSettings>().tab_close {
+                TabClose::Detach => Self::Never,
+                TabClose::CloseSession => Self::WhenIdle,
+            };
+        }
+        Self::default()
+    }
 }
 
 /// What ⌘-click on a file path in terminal output opens it with (`terminal.open_files_with`).
@@ -2227,6 +2280,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<IntegrationsSettings>();
     store.register::<LauncherSettings>();
     store.register::<TerminalSettings>();
+    store.register::<TabsSettings>();
     store.register::<LayoutSettings>();
     store.register::<SessionsPanelSettings>();
     store.register::<ChangesPanelSettings>();
@@ -2551,6 +2605,42 @@ mod tests {
         assert_eq!(
             send_key("[chat]\nsend_on_enter = true\nsend_key = \"cmd-enter\"\n"),
             SendKey::CmdEnter,
+            "the new key wins"
+        );
+    }
+
+    #[test]
+    fn closing_a_tab_reads_tabs_close_session_and_the_older_terminal_tab_close() {
+        let mode = |text: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = hutan_settings::SettingsPaths::in_dir(dir.path());
+            std::fs::write(&paths.user, text).unwrap();
+            let store = SettingsStore::new(paths);
+            register_all(&store);
+            assert!(store.errors().is_empty(), "{text}: {:?}", store.errors());
+            CloseSessionMode::resolve(&store)
+        };
+        assert_eq!(mode(""), CloseSessionMode::WhenIdle, "the default");
+        assert_eq!(
+            mode("[tabs]\nclose_session = \"always\"\n"),
+            CloseSessionMode::Always
+        );
+        assert_eq!(
+            mode("[tabs]\nclose_session = \"never\"\n"),
+            CloseSessionMode::Never
+        );
+        // The older key still counts where the new one is not set.
+        assert_eq!(
+            mode("[terminal]\ntab_close = \"detach\"\n"),
+            CloseSessionMode::Never
+        );
+        assert_eq!(
+            mode("[terminal]\ntab_close = \"close_session\"\n"),
+            CloseSessionMode::WhenIdle
+        );
+        assert_eq!(
+            mode("[terminal]\ntab_close = \"detach\"\n[tabs]\nclose_session = \"always\"\n"),
+            CloseSessionMode::Always,
             "the new key wins"
         );
     }

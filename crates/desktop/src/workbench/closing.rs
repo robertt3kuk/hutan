@@ -2,6 +2,7 @@
 //! the sidebar and the Agent Dashboard, "Close session…" in the menus, the confirmation when
 //! something runs, the "Closed … · Undo" toast, and History's Reopen.
 
+use std::rc::Rc;
 use std::time::Duration;
 
 use crate::theme::DensityExt as _;
@@ -12,12 +13,14 @@ use gpui::{
 use hutan_core::SessionId;
 use hutan_protocol::messages::SessionBusy;
 
+use super::modal::{Modal, ModalChoice};
 use super::model::{ItemRef, TermSplit};
 use super::render::probe;
 use super::ui::motion;
 use super::ui::{Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::sessions::CloseFailure;
+use crate::settings::CloseSessionMode;
 
 /// How long the Undo toast stays.
 pub const TOAST_TIME: Duration = Duration::from_secs(5);
@@ -34,6 +37,16 @@ pub struct CloseToast {
     /// into it, in its place, instead of opening a tab of its own.
     split: Option<TermSplit>,
     rev: u64,
+}
+
+/// What the layout looked like when a session was closed, for what follows it.
+struct ClosedFrom {
+    /// The tab of terminal splits the session was in, as it stood.
+    split: Option<TermSplit>,
+    /// The session had the keyboard.
+    was_focused: bool,
+    /// The session the sidebar selects when it goes.
+    neighbour: Option<SessionId>,
 }
 
 /// What the confirmation says runs in the session.
@@ -179,7 +192,7 @@ impl Workbench {
             return;
         };
         let title = info.title.clone();
-        let neighbour = self.neighbour_of(session, cx);
+        let neighbour = self.neighbour_of(session, &[], cx);
         let split_before = self.split_of_session(session);
         let was_focused = self.focused_session() == Some(session);
         let task = self
@@ -188,16 +201,17 @@ impl Workbench {
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             this.update_in(cx, |this, window, cx| match result {
-                Ok(()) => {
-                    this.on_session_closed(session, window, cx);
-                    this.show_close_toast(session, title, split_before, cx);
-                    if was_focused
-                        && this.focused_session().is_none()
-                        && let Some(next) = neighbour
-                    {
-                        this.open_session(next, window, cx);
-                    }
-                }
+                Ok(()) => this.session_closed_here(
+                    session,
+                    title,
+                    ClosedFrom {
+                        split: split_before,
+                        was_focused,
+                        neighbour,
+                    },
+                    window,
+                    cx,
+                ),
                 Err(CloseFailure::Busy(busy)) => {
                     let what = busy_text(&busy);
                     this.open_destructive(
@@ -218,6 +232,175 @@ impl Workbench {
         .detach();
     }
 
+    /// What `tabs.close_session` says now (the older `terminal.tab_close` where that is the
+    /// only one set).
+    pub(crate) fn close_session_mode(&self) -> CloseSessionMode {
+        CloseSessionMode::resolve(&self.settings)
+    }
+
+    /// Closes the tab at `index` of `pane` (the ×, ⌘W, a middle click, *Close* in its menu): a
+    /// tab of a session closes the session with it as `tabs.close_session` says, any other tab
+    /// (a file with unsaved changes asks first) just goes. A tab of splits closes the session
+    /// of every split.
+    pub(crate) fn close_tab(
+        &mut self,
+        pane: super::model::PaneId,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mode = self.close_session_mode();
+        let sessions: Vec<SessionId> = self
+            .state
+            .pane(pane)
+            .and_then(|p| p.items.get(index))
+            .map(|item| {
+                item.sessions()
+                    .into_iter()
+                    .filter_map(|s| s.parse().ok())
+                    .filter(|s| self.sessions.read(cx).session(*s).is_some())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if sessions.is_empty() || mode == CloseSessionMode::Never || !self.can_close_sessions(cx) {
+            self.close_tab_with_fade(pane, index, window, cx);
+            return;
+        }
+        self.close_tab_sessions(sessions, mode == CloseSessionMode::Always, window, cx);
+    }
+
+    /// Closes the sessions of a tab (or one split). With `stop_running` what runs in them is
+    /// stopped; without, the sessions where something runs are asked about together, in one
+    /// question: *Keep running in background* closes their tabs only, *Close* stops them.
+    pub(crate) fn close_tab_sessions(
+        &mut self,
+        sessions: Vec<SessionId>,
+        stop_running: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let together = sessions.clone();
+        let started: Vec<(SessionId, SharedString, ClosedFrom, _)> = sessions
+            .into_iter()
+            .filter_map(|session| {
+                let title = self.sessions.read(cx).session(session)?.title.clone();
+                let from = ClosedFrom {
+                    split: self.split_of_session(session),
+                    was_focused: self.focused_session() == Some(session),
+                    neighbour: self.neighbour_of(session, &together, cx),
+                };
+                let task = self
+                    .sessions
+                    .update(cx, |store, cx| store.close(session, stop_running, cx));
+                Some((session, SharedString::from(title), from, task))
+            })
+            .collect();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut busy: Vec<(SessionId, SharedString, String)> = Vec::new();
+            for (session, title, from, task) in started {
+                let result = task.await;
+                let asked = this
+                    .update_in(cx, |this, window, cx| match result {
+                        Ok(()) => {
+                            this.session_closed_here(session, title.to_string(), from, window, cx);
+                            None
+                        }
+                        Err(CloseFailure::Busy(what)) => Some((session, title, busy_text(&what))),
+                        Err(CloseFailure::Failed(error)) => {
+                            this.set_notice(format!("Cannot close the session: {error}"), cx);
+                            None
+                        }
+                    })
+                    .ok()
+                    .flatten();
+                busy.extend(asked);
+            }
+            if !busy.is_empty() {
+                this.update_in(cx, |this, window, cx| {
+                    this.ask_keep_or_close(busy, window, cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// "Close X? … Closing stops it.": the tab was closed while something runs in its session.
+    /// *Keep running in background* (the default) closes the tab only; *Close* stops and closes
+    /// the session; Escape leaves everything as it was.
+    fn ask_keep_or_close(
+        &mut self,
+        busy: Vec<(SessionId, SharedString, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ids: Vec<SessionId> = busy.iter().map(|(id, ..)| *id).collect();
+        let (title, message) = match busy.as_slice() {
+            [(_, title, what)] => (
+                format!("Close {title}?"),
+                format!("{what}. Closing stops it."),
+            ),
+            many => (
+                format!("Close {} sessions?", many.len()),
+                format!(
+                    "{}. Closing stops them.",
+                    many.iter()
+                        .map(|(_, title, what)| format!("{title}: {what}"))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
+            ),
+        };
+        let keep = ids.clone();
+        self.open_modal(
+            Modal {
+                title: title.into(),
+                message: message.into(),
+                rows: Vec::new(),
+                confirm_label: "Keep running in background".into(),
+                input: None,
+                secure_input: false,
+                destructive: false,
+                choice: Some(ModalChoice {
+                    label: "Close".into(),
+                    destructive: true,
+                    run: Rc::new(move |this, _, window, cx| {
+                        this.close_tab_sessions(ids.clone(), true, window, cx);
+                    }),
+                }),
+                checkbox: None,
+                on_confirm: Rc::new(move |this, _, _, cx| {
+                    for session in &keep {
+                        this.close_session_tabs(*session, cx);
+                    }
+                    cx.notify();
+                }),
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// A session this window closed: its tabs go, the Undo toast shows, and the keyboard moves
+    /// to the session next to it when this was the one in focus.
+    fn session_closed_here(
+        &mut self,
+        session: SessionId,
+        title: String,
+        from: ClosedFrom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_session_closed(session, window, cx);
+        self.show_close_toast(session, title, from.split, cx);
+        if from.was_focused
+            && self.focused_session().is_none()
+            && let Some(next) = from.neighbour
+        {
+            self.open_session(next, window, cx);
+        }
+    }
+
     /// The tab of terminal splits `session` is one of, as it stands now.
     fn split_of_session(&self, session: SessionId) -> Option<TermSplit> {
         let (pane, index) = self.state.find_session_tab(&session.to_string())?;
@@ -228,8 +411,13 @@ impl Workbench {
     }
 
     /// The session the sidebar selects when `session` goes: the next one of its project, else
-    /// the one before it.
-    fn neighbour_of(&self, session: SessionId, cx: &gpui::App) -> Option<SessionId> {
+    /// the one before it. A session that closes together with it (`closing`) never is it.
+    fn neighbour_of(
+        &self,
+        session: SessionId,
+        closing: &[SessionId],
+        cx: &gpui::App,
+    ) -> Option<SessionId> {
         let store = self.sessions.read(cx);
         let workspace = store.session(session)?.workspace_id;
         let same: Vec<SessionId> = store
@@ -237,6 +425,7 @@ impl Workbench {
             .iter()
             .filter(|s| s.workspace_id == workspace)
             .map(|s| s.id)
+            .filter(|id| *id == session || !closing.contains(id))
             .collect();
         let at = same.iter().position(|id| *id == session)?;
         same.get(at + 1)

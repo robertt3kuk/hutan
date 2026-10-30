@@ -422,6 +422,13 @@ fn a_composer_draft_survives_closing_the_tab_and_reopening_the_window(cx: &mut T
     let scripts = tempfile::tempdir().unwrap();
     let daemon = daemon(scripts.path(), &recorded("plain-turn"));
     let id = create_chat(&daemon, &scripts.path().canonicalize().unwrap());
+    // Closing the tab of a chat closes its session by default, and the draft of a session that
+    // is gone is dropped (below); this one keeps the session, as `never` does.
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[tabs]\nclose_session = \"never\"\n",
+    )
+    .unwrap();
     let state_path = daemon.home().join("desktop-state.json");
     {
         let (view, cx) = open_saving(cx, &daemon, &state_path);

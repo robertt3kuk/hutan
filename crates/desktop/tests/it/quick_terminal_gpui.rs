@@ -397,7 +397,10 @@ fn the_first_session_starts_in_home_or_the_active_project(cx: &mut TestAppContex
 #[gpui::test]
 fn a_tab_added_with_the_new_terminal_key_sits_in_the_panel(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
-    write_settings(&daemon, SHELL);
+    write_settings(
+        &daemon,
+        "[terminal]\nshell = \"/bin/sh\"\n[tabs]\nclose_session = \"never\"\n",
+    );
     let fakes = Fakes::new();
     let (view, cx) = open(cx, &daemon, &fakes);
     wait_synced(&view, cx, 0);
@@ -433,7 +436,7 @@ fn a_tab_added_with_the_new_terminal_key_sits_in_the_panel(cx: &mut TestAppConte
         Some(second)
     );
 
-    // ⌘W closes the active tab: the session is kept (terminal.tab_close = detach), the panel
+    // ⌘W closes the active tab: the session is kept (tabs.close_session = never), the panel
     // stays for the other tab; closing the last one hides the panel.
     press(&model, cx, "cmd-w");
     assert_eq!(sessions(&model, cx), [first]);
@@ -644,7 +647,26 @@ fn without_a_daemon_the_panel_says_why_it_has_no_terminal(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-fn closing_a_tab_ends_its_session_when_tabs_are_set_to_close_the_session(cx: &mut TestAppContext) {
+fn closing_a_tab_ends_its_session_by_default(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    write_settings(&daemon, SHELL);
+    let fakes = Fakes::new();
+    let (view, cx) = open(cx, &daemon, &fakes);
+    wait_synced(&view, cx, 0);
+    let model = model(&view, cx);
+    let session = show_with_session(&view, &model, cx);
+    press(&model, cx, "cmd-w");
+    assert!(sessions(&model, cx).is_empty());
+    assert!(!visible(&model, cx));
+    wait_until(cx, "the session to be closed", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).session(session).is_none()
+        })
+    });
+}
+
+#[gpui::test]
+fn the_older_terminal_tab_close_still_ends_the_session_of_a_closed_tab(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     write_settings(
         &daemon,

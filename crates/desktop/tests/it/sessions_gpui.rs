@@ -1168,8 +1168,15 @@ fn the_variable_editor_feeds_the_next_terminal(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn closing_a_tab_detaches_and_the_layout_reattaches_after_a_restart(cx: &mut TestAppContext) {
+fn with_tabs_set_to_never_closing_a_tab_detaches_and_the_layout_reattaches_after_a_restart(
+    cx: &mut TestAppContext,
+) {
     let daemon = TestDaemon::start();
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[tabs]\nclose_session = \"never\"\n",
+    )
+    .unwrap();
     let a = daemon.sh("echo session-a; sleep 600");
     let b = daemon.sh("echo session-b; sleep 600");
     let state_path = daemon.home().join("desktop-state.json");

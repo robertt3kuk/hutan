@@ -56,6 +56,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("keymap", "Keyboard"),
     ("terminal", "Terminal"),
     ("layout", "Layout"),
+    ("tabs", "Tabs"),
     ("panels.sessions", "Projects Sidebar"),
     ("sidebar", "Sidebar organization"),
     ("panels.inspector", "Requests"),
@@ -189,6 +190,7 @@ const NAMESPACE_DESCRIPTIONS: &[(&str, &str)] = &[
         "Shell, fonts, scrollback and how terminals behave.",
     ),
     ("layout", "Docks, panels and saved layouts."),
+    ("tabs", "What closing a tab does to the session it shows."),
     (
         "panels.sessions",
         "How projects and sessions are listed in the sidebar.",
@@ -487,8 +489,8 @@ const FIELDS: &[FieldText] = &[
     choice(
         "terminal",
         "tab_close",
-        "Closing a terminal tab",
-        "What the × of a terminal tab does. Detach closes the tab only: the session keeps running and stays in the sidebar. Close session also ends the session and removes it from the sidebar (it asks first when something runs in it; History can reopen it). The tab's context menu and the sidebar's × always offer Close session….",
+        "Closing a terminal tab (older setting)",
+        "The older name of Tabs → Close the session with its tab, still read while that one is not set: Detach is Never, Close session is When idle.",
         &[
             ("detach", "Detach (keep the session)"),
             ("close_session", "Close the session"),
@@ -621,6 +623,18 @@ const FIELDS: &[FieldText] = &[
         "presets",
         "Your layout presets",
         "Layouts you saved, by name: save the one on screen, rename a preset or delete one. A preset named like a built-in one replaces it.",
+    ),
+    // ---- tabs ----
+    choice(
+        "tabs",
+        "close_session",
+        "Close the session with its tab",
+        "What closing the tab of a terminal, a terminal agent or a chat does to its session (the × of the sidebar always closes it). Always closes the session and stops what runs in it, without asking. When idle closes it when nothing runs, and asks when something does: Keep running in background closes the tab only, Close stops it. Never closes the tab only; the session keeps running in the sidebar. Closed sessions show an Undo, and History can reopen them.",
+        &[
+            ("always", "Always"),
+            ("when_idle", "When nothing runs"),
+            ("never", "Never (keep it in the sidebar)"),
+        ],
     ),
     // ---- projects sidebar ----
     choice(

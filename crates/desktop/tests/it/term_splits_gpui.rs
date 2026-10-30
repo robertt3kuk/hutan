@@ -325,10 +325,17 @@ fn keys_focus_resize_zoom_and_close_the_splits(cx: &mut TestAppContext) {
             .iter()
             .all(|s| s.id != b)
     });
-    // The last terminal is the tab: ⌘W closes it like any tab (it detaches).
+    // The last terminal is the tab: ⌘W closes it like any tab, and its session with it
+    // (`tabs.close_session`, `when_idle` by default).
     cx.simulate_keystrokes("cmd-w");
-    settle(cx);
-    assert!(tabs(&view, cx).is_empty());
+    wait_until(cx, "the last tab to close", |cx| tabs(&view, cx).is_empty());
+    wait_until(cx, "the session to be closed", |_| {
+        daemon
+            .call::<hutan_protocol::messages::SessionList>(Request::SessionList(Default::default()))
+            .sessions
+            .iter()
+            .all(|s| s.id != a)
+    });
 }
 
 #[gpui::test]
@@ -340,14 +347,28 @@ fn cmd_shift_w_closes_the_whole_tab_of_splits(cx: &mut TestAppContext) {
     show(&view, cx, a);
     cx.simulate_keystrokes("cmd-d");
     wait_splits(&view, cx, 2);
+    let both: Vec<SessionId> = splits(&view, cx)
+        .unwrap()
+        .sessions()
+        .iter()
+        .map(|s| s.parse().unwrap())
+        .collect();
+    assert_eq!(both.len(), 2);
     cx.simulate_keystrokes("cmd-shift-w");
-    settle(cx);
-    assert!(
-        tabs(&view, cx).is_empty(),
-        "the tab and its splits are gone"
-    );
-    // Detach: the sessions keep running in the daemon.
-    assert!(daemon.session(a).state.is_live());
+    wait_until(cx, "the tab and its splits to go (or a question)", |cx| {
+        tabs(&view, cx).is_empty() || view.read_with(cx, |wb, _| wb.modal_open())
+    });
+    let asked = view.read_with(cx, |wb, _| {
+        wb.modal().map(|m| format!("{}: {}", m.title, m.message))
+    });
+    assert_eq!(asked, None, "nothing runs in the splits");
+    // `tabs.close_session` (`when_idle` by default): both sessions end with the tab.
+    wait_until(cx, "both sessions to be closed", |_| {
+        let listed = daemon.call::<hutan_protocol::messages::SessionList>(Request::SessionList(
+            Default::default(),
+        ));
+        listed.sessions.iter().all(|s| !both.contains(&s.id))
+    });
 }
 
 #[gpui::test]

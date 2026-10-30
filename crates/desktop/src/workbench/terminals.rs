@@ -1985,9 +1985,16 @@ impl Workbench {
                         this.copy_session_id(session, cx);
                     }),
                 ];
-                // "Close" (detach) stays last.
+                // "Close" (by `tabs.close_session`) stays last; where it also closes the
+                // session, the tab can still be closed alone.
                 let close = entries.pop();
                 entries.append(&mut extra);
+                if self.close_session_mode() != crate::settings::CloseSessionMode::Never {
+                    entries.push(Self::entry(
+                        "Close Tab, Keep Running",
+                        move |this, window, cx| this.close_tab_with_fade(pane, index, window, cx),
+                    ));
+                }
                 entries.extend(close);
                 Self::tidy_session_menu(&mut entries);
                 entries

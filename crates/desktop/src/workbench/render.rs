@@ -2895,7 +2895,7 @@ impl Workbench {
             }))
             .on_aux_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 if event.is_middle_click() {
-                    this.close_item_checked(pane_id, index, window, cx);
+                    this.close_tab(pane_id, index, window, cx);
                 }
             }))
             .on_mouse_down(
@@ -3009,6 +3009,7 @@ impl Workbench {
             .child(
                 div()
                     .id(id(format!("tab-close-{pane_id}-{index}")))
+                    .relative()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -3020,33 +3021,13 @@ impl Workbench {
                     .hover(move |s| s.bg(hover).text_color(theme.fg))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        // `terminal.tab_close = close_session`: the × closes the session too
-                        // (every split's, in a tab of splits).
-                        let sessions: Vec<hutan_core::SessionId> = this
-                            .state
-                            .pane(pane_id)
-                            .and_then(|p| p.items.get(index))
-                            .map(|item| {
-                                item.sessions()
-                                    .into_iter()
-                                    .filter_map(|s| s.parse().ok())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        if !sessions.is_empty()
-                            && this.terminal_settings.tab_close
-                                == crate::settings::TabClose::CloseSession
-                            && this.can_close_sessions(cx)
-                        {
-                            for session in sessions {
-                                this.close_session(session, window, cx);
-                            }
-                        } else {
-                            this.close_tab_with_fade(pane_id, index, window, cx);
-                        }
+                        // `tabs.close_session`: the × closes the session with its tab (every
+                        // split's, in a tab of splits) unless it is set to `never`.
+                        this.close_tab(pane_id, index, window, cx);
                         cx.stop_propagation();
                     }))
-                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
+                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
+                    .child(probe(&self.regions, Region::TabClose(pane_id, index))),
             )
             .child(probe(&self.regions, Region::Tab(pane_id, index)))
             .into_any_element()

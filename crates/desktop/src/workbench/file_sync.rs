@@ -644,8 +644,7 @@ impl Workbench {
         self.try_mutate(cx, |s| s.close_item(pane, index));
     }
 
-    /// ⌘W: as [`close_item_checked`](Self::close_item_checked) for the focused tab; a panel
-    /// closes as before.
+    /// ⌘W: as [`close_tab`](Self::close_tab) for the focused tab; a panel closes as before.
     pub(crate) fn close_active_checked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.state.focus, super::model::FocusTarget::Pane(_)) {
             let pane = self.state.active_pane_id();
@@ -655,7 +654,7 @@ impl Workbench {
                 .filter(|p| p.active < p.items.len())
                 .map(|p| p.active);
             if let Some(index) = active {
-                self.close_item_checked(pane, index, window, cx);
+                self.close_tab(pane, index, window, cx);
                 return;
             }
         }
