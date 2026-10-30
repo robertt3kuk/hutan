@@ -187,6 +187,28 @@ impl Checkpoints<'_> {
         self.0.read(move |conn| list(conn, &filter))
     }
 
+    /// The checkpoints created in `since_ms..=until_ms`, oldest first.
+    pub fn in_window(&self, since_ms: u64, until_ms: u64) -> Result<Vec<CheckpointRow>> {
+        self.0.read(move |conn| {
+            let context = "reading checkpoints";
+            let mut stmt = conn
+                .prepare(&format!(
+                    "{SELECT} WHERE created_ms BETWEEN ?1 AND ?2 ORDER BY created_ms, id"
+                ))
+                .map_err(StorageError::sqlite(context))?;
+            let since = i64::try_from(since_ms).unwrap_or(i64::MAX);
+            let until = i64::try_from(until_ms).unwrap_or(i64::MAX);
+            let rows = stmt
+                .query_map(params![since, until], |row| Ok(from_row(row)))
+                .map_err(StorageError::sqlite(context))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(StorageError::sqlite(context))??);
+            }
+            Ok(out)
+        })
+    }
+
     /// The repositories that have checkpoints.
     pub fn repositories(&self) -> Result<Vec<PathBuf>> {
         self.0.read(|conn| {

@@ -587,6 +587,12 @@ impl Chat<'_> {
         self.0.read(move |conn| sql::chat_turns(conn, session))
     }
 
+    /// The turns of every session that started or ended in `since_ms..=until_ms`, oldest first.
+    pub fn turns_in_window(&self, since_ms: u64, until_ms: u64) -> Result<Vec<ChatTurnRow>> {
+        self.0
+            .read(move |conn| sql::chat_turns_in_window(conn, since_ms, until_ms))
+    }
+
     /// Replaces the session's queue with `items`, in their order (an empty list clears it). The
     /// session's row must have been written before.
     pub fn set_queue(&self, session: SessionId, items: Vec<QueuedRow>) -> Result<()> {
@@ -622,6 +628,12 @@ impl Approvals<'_> {
     pub fn resolved_since(&self, since_ms: u64) -> Result<Vec<ApprovalRow>> {
         self.0
             .read(move |conn| sql::approvals_resolved_since(conn, since_ms))
+    }
+
+    /// Requests asked or resolved in `since_ms..=until_ms`, oldest first.
+    pub fn in_window(&self, since_ms: u64, until_ms: u64) -> Result<Vec<ApprovalRow>> {
+        self.0
+            .read(move |conn| sql::approvals_in_window(conn, since_ms, until_ms))
     }
 
     /// Requests never resolved (what a crashed daemon left behind).
@@ -710,6 +722,12 @@ impl Questions<'_> {
     pub fn resolved_since(&self, since_ms: u64) -> Result<Vec<QuestionRow>> {
         self.0
             .read(move |conn| sql::questions_resolved_since(conn, since_ms))
+    }
+
+    /// Questions asked or resolved in `since_ms..=until_ms`, oldest first.
+    pub fn in_window(&self, since_ms: u64, until_ms: u64) -> Result<Vec<QuestionRow>> {
+        self.0
+            .read(move |conn| sql::questions_in_window(conn, since_ms, until_ms))
     }
 
     /// Questions never resolved (what a crashed daemon left behind).

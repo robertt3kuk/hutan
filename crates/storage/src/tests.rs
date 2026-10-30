@@ -1637,6 +1637,68 @@ fn approvals_record_the_request_and_the_decision() {
 }
 
 #[test]
+fn what_happened_in_a_window_is_read_by_when_it_was_asked_or_decided() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let id = chat_session(&storage);
+    let approval = |requested: u64, resolved: Option<u64>| ApprovalRow {
+        id: ApprovalId::new(),
+        session_id: id,
+        turn_id: None,
+        kind: "command".to_owned(),
+        title: "run it".to_owned(),
+        options_json: "[]".to_owned(),
+        requested_at_ms: requested,
+        resolved_at_ms: resolved,
+        outcome: resolved.map(|_| ApprovalOutcome::Selected),
+        option_id: None,
+        decided_by: None,
+    };
+    // Before the window; asked before and answered inside; asked inside and still open; after.
+    let rows = [
+        approval(10, Some(20)),
+        approval(50, Some(150)),
+        approval(120, None),
+        approval(300, None),
+    ];
+    for row in &rows {
+        storage.approvals().upsert(row.clone()).unwrap();
+    }
+    let inside = storage.approvals().in_window(100, 200).unwrap();
+    assert_eq!(
+        inside.iter().map(|r| r.requested_at_ms).collect::<Vec<_>>(),
+        [50, 120]
+    );
+
+    let turn = |n: u64, started: u64, ended: Option<u64>| ChatTurnRow {
+        session_id: id,
+        turn_id: format!("t{n}"),
+        provider_turn_id: None,
+        status: ChatTurnStatus::Completed,
+        started_at_ms: started,
+        ended_at_ms: ended,
+        error: None,
+    };
+    for row in [
+        turn(1, 10, Some(20)),
+        turn(2, 90, Some(110)),
+        turn(3, 150, Some(160)),
+        turn(4, 190, Some(260)),
+        turn(5, 400, None),
+    ] {
+        storage.chat().upsert_turn(row).unwrap();
+    }
+    let turns = storage.chat().turns_in_window(100, 200).unwrap();
+    assert_eq!(
+        turns.iter().map(|t| t.turn_id.as_str()).collect::<Vec<_>>(),
+        ["t2", "t3", "t4"],
+        "started or ended inside, oldest first"
+    );
+    assert!(turns.iter().all(|t| t.session_id == id));
+    storage.close();
+}
+
+#[test]
 fn a_snapshot_event_is_replaced_in_place_and_deleted() {
     let dir = tempfile::tempdir().unwrap();
     let storage = Storage::open(db(&dir)).unwrap();

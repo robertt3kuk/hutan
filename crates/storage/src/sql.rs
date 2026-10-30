@@ -1168,6 +1168,52 @@ pub fn chat_turns(conn: &Connection, session: SessionId) -> Result<Vec<ChatTurnR
     Ok(turns)
 }
 
+/// The turns of every session that started or ended in `since_ms..=until_ms`, oldest first.
+pub fn chat_turns_in_window(
+    conn: &Connection,
+    since_ms: u64,
+    until_ms: u64,
+) -> Result<Vec<ChatTurnRow>> {
+    let context = "reading chat turns";
+    let mut stmt = conn
+        .prepare(
+            "SELECT session_id, turn_id, provider_turn_id, status, started_at_ms, ended_at_ms, \
+                 error FROM chat_turns \
+             WHERE (started_at_ms BETWEEN ?1 AND ?2) OR (ended_at_ms BETWEEN ?1 AND ?2) \
+             ORDER BY started_at_ms, turn_id",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map(params![ms(since_ms), ms(until_ms)], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                ChatTurnRow {
+                    session_id: SessionId::new(),
+                    turn_id: row.get(1)?,
+                    provider_turn_id: row.get(2)?,
+                    status: ChatTurnStatus::Running,
+                    started_at_ms: unms(row.get(4)?),
+                    ended_at_ms: row.get::<_, Option<i64>>(5)?.map(unms),
+                    error: row.get(6)?,
+                },
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(StorageError::sqlite(context))?;
+    let mut turns = Vec::new();
+    for row in rows {
+        let (session, mut turn, status) = row.map_err(StorageError::sqlite(context))?;
+        turn.session_id = session
+            .parse()
+            .map_err(|e| StorageError::corrupt("chat_turns.session_id", e))?;
+        turn.status = from_text::<ChatTurnStatus>(&status).map_err(|e| {
+            StorageError::corrupt(format!("chat_turns.status of {}", turn.turn_id), e)
+        })?;
+        turns.push(turn);
+    }
+    Ok(turns)
+}
+
 fn upsert_approval(conn: &Connection, row: &ApprovalRow) -> Result<()> {
     let outcome = row
         .outcome
@@ -1345,6 +1391,30 @@ pub fn approvals_resolved_since(conn: &Connection, since_ms: u64) -> Result<Vec<
     collect(rows, context)
 }
 
+/// Requests asked or resolved in `since_ms..=until_ms`, oldest first (what `agents.activity`
+/// reads).
+pub fn approvals_in_window(
+    conn: &Connection,
+    since_ms: u64,
+    until_ms: u64,
+) -> Result<Vec<ApprovalRow>> {
+    let context = "reading approvals";
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, turn_id, kind, title, options_json, requested_at_ms, \
+                 resolved_at_ms, outcome, option_id, decided_by FROM approvals \
+             WHERE (requested_at_ms BETWEEN ?1 AND ?2) OR (resolved_at_ms BETWEEN ?1 AND ?2) \
+             ORDER BY requested_at_ms, id",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map(params![ms(since_ms), ms(until_ms)], |row| {
+            Ok(approval_from(row))
+        })
+        .map_err(StorageError::sqlite(context))?;
+    collect(rows, context)
+}
+
 fn approval_from(row: &Row<'_>) -> Result<ApprovalRow> {
     let id: String = row.get(0).map_err(read_err)?;
     let session: String = row.get(1).map_err(read_err)?;
@@ -1419,6 +1489,29 @@ pub fn questions(
         .map_err(StorageError::sqlite(context))?;
     let rows = stmt
         .query_map(params![session.map(|s| s.to_string()), only_open], |row| {
+            Ok(question_from(row))
+        })
+        .map_err(StorageError::sqlite(context))?;
+    collect(rows, context)
+}
+
+/// Questions asked or resolved in `since_ms..=until_ms`, oldest first.
+pub fn questions_in_window(
+    conn: &Connection,
+    since_ms: u64,
+    until_ms: u64,
+) -> Result<Vec<QuestionRow>> {
+    let context = "reading questions";
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, turn_id, title, requested_at_ms, resolved_at_ms, outcome, \
+                 decided_by FROM questions \
+             WHERE (requested_at_ms BETWEEN ?1 AND ?2) OR (resolved_at_ms BETWEEN ?1 AND ?2) \
+             ORDER BY requested_at_ms, id",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map(params![ms(since_ms), ms(until_ms)], |row| {
             Ok(question_from(row))
         })
         .map_err(StorageError::sqlite(context))?;
