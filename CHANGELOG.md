@@ -4,8 +4,16 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+## 0.3.4 — 2026-10-30
+
 ### Changed
 - Right after a release is published GitHub may not serve its download for a minute: Hutan offers a release only once its archive can be downloaded, a manual *Check for Updates…* says "Hutan x.y.z was just published; it can be installed in a minute", and a download that isn't there yet says so instead of reporting a checksum mismatch.
+
+### Upgrading
+- **Test release** (a GitHub pre-release), the first you can install from inside the app: on 0.3.3, open the Hutan menu → *Check for Updates…*, then *Update now* → *Quit and Install*. With Homebrew: `brew update && brew upgrade --cask hutan` (or *Update now*, which runs it in a terminal you can watch). 0.3.2 and older still need one manual install.
+- Protocol stays at **0.60**: no wire change since 0.3.3.
+- No database schema change since 0.3.3: your sessions, history and settings open as they were.
+- **Experimental — at your own risk:** remote hosts over SSH stay switched off until you turn them on in Settings ▸ Experimental (`experimental.remote_hosts`); they may change or break between releases. See `docs/remote.md`.
 
 ## 0.3.3 — 2026-10-29
 
