@@ -36,6 +36,7 @@ mod files_ops_gpui;
 mod files_roots_gpui;
 mod files_sections_gpui;
 mod first_run_gpui;
+mod font_families_gpui;
 mod font_picker_gpui;
 mod fork_gpui;
 mod fx1_gpui;

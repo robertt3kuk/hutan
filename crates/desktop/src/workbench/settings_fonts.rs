@@ -36,10 +36,14 @@ use crate::theme::DensityExt as _;
 pub enum FontField {
     /// `terminal.font_family`
     TerminalFamily,
+    /// `editor.font_family`: code in file tabs, diffs and chat code.
+    EditorFamily,
+    /// `appearance.ui_font_family`: the interface (and prose with it).
+    UiFamily,
 }
 
 impl FontField {
-    pub const ALL: [FontField; 1] = [Self::TerminalFamily];
+    pub const ALL: [FontField; 3] = [Self::TerminalFamily, Self::EditorFamily, Self::UiFamily];
 
     /// Position in [`Self::ALL`]: the number that tells the controls of different rows apart.
     pub fn index(self) -> usize {
@@ -56,12 +60,15 @@ impl FontField {
     pub const fn namespace(self) -> &'static str {
         match self {
             Self::TerminalFamily => "terminal",
+            Self::EditorFamily => "editor",
+            Self::UiFamily => "appearance",
         }
     }
 
     pub const fn key(self) -> &'static str {
         match self {
-            Self::TerminalFamily => "font_family",
+            Self::TerminalFamily | Self::EditorFamily => "font_family",
+            Self::UiFamily => "ui_font_family",
         }
     }
 
@@ -73,14 +80,17 @@ impl FontField {
     /// The picker lists only monospaced families until *Show all* is on.
     pub const fn monospaced_by_default(self) -> bool {
         match self {
-            Self::TerminalFamily => true,
+            Self::TerminalFamily | Self::EditorFamily => true,
+            Self::UiFamily => false,
         }
     }
 
-    /// The size of the preview text: the setting's, in points.
-    fn preview_size(self, settings: &hutan_settings::SettingsStore) -> f32 {
+    /// What is drawn while the family is not installed.
+    const fn fallback(self) -> &'static str {
         match self {
-            Self::TerminalFamily => settings.get::<TerminalSettings>().font_size as f32,
+            Self::TerminalFamily => "the interface font is drawn",
+            Self::EditorFamily => "the color theme's monospace font is drawn",
+            Self::UiFamily => "the color theme's font is drawn",
         }
     }
 }
@@ -109,6 +119,16 @@ pub struct FontRow {
     pub value: String,
     pub label: String,
     pub kind: FontRowKind,
+}
+
+/// *System default*, with the family it stands for unless that is a hidden system one
+/// (`.SystemUIFont`).
+fn system_default_label(family: &str) -> String {
+    if family.starts_with('.') {
+        "System default".to_owned()
+    } else {
+        format!("System default ({family})")
+    }
 }
 
 fn same_name(a: &str, b: &str) -> bool {
@@ -262,6 +282,8 @@ impl Workbench {
                 this.fonts.loading = false;
                 this.fonts.families = Some(Arc::new(list));
                 this.fonts.generation += 1;
+                // A family the settings name may have just become installed (or gone).
+                this.sync_fonts(cx);
                 if std::mem::take(&mut this.fonts.stale) {
                     this.load_fonts(cx);
                 }
@@ -284,6 +306,13 @@ impl Workbench {
     /// How many times the list was read (and replaced).
     pub fn fonts_generation(&self) -> u64 {
         self.fonts.generation
+    }
+
+    /// Whether the list says `name` is an installed family (`false` while it is not known).
+    pub(crate) fn font_listed(&self, name: &str) -> bool {
+        self.font_families()
+            .iter()
+            .any(|f| same_name(&f.name, name))
     }
 
     /// Whether `name` is an installed family. `true` while nothing is known (no list yet, or a
@@ -327,11 +356,33 @@ impl Workbench {
         self.settings.source_of(&field.key_path())?;
         self.sheet_value(field.key())
             .and_then(|v| v.as_str().map(str::to_owned))
+            .filter(|name| !name.is_empty())
     }
 
-    /// The family drawn while the setting is not set: the color pack's monospace font.
-    pub fn font_default_family(&self, cx: &gpui::App) -> String {
-        super::terminals::mono_family(cx, &self.resolved_theme)
+    /// The family drawn while the setting is not set: the color pack's monospace font, or for
+    /// the interface its UI font.
+    pub fn font_default_family(&self, field: FontField, cx: &gpui::App) -> String {
+        match field {
+            FontField::TerminalFamily | FontField::EditorFamily => {
+                super::terminals::mono_family(cx, &self.resolved_theme)
+            }
+            FontField::UiFamily => {
+                super::ui::pick_family(cx, &self.resolved_theme.fonts().ui).to_string()
+            }
+        }
+    }
+
+    /// The size of the preview text: the setting's, in points.
+    fn font_preview_size(&self, field: FontField) -> f32 {
+        match field {
+            FontField::TerminalFamily => self.settings.get::<TerminalSettings>().font_size as f32,
+            FontField::EditorFamily => {
+                self.settings
+                    .get::<crate::settings::EditorSettings>()
+                    .font_size as f32
+            }
+            FontField::UiFamily => self.density.ui().font_size,
+        }
     }
 
     /// The lines of `field`'s picker for the search `filter`.
@@ -369,7 +420,8 @@ impl Workbench {
         let name = self.font_explicit(field)?;
         (!self.font_installed(&name)).then(|| {
             format!(
-                "“{name}” is not installed on this Mac: the interface font is drawn until it is"
+                "“{name}” is not installed on this Mac: {} until it is",
+                field.fallback()
             )
         })
     }
@@ -582,7 +634,7 @@ impl Workbench {
         let open = self.dropdown_drawn(font.key(), cx);
         let head_label = match self.font_explicit(font) {
             Some(name) => name,
-            None => format!("System default ({})", self.font_default_family(cx)),
+            None => system_default_label(&self.font_default_family(font, cx)),
         };
         let under: Vec<AnyElement> = self
             .font_warning(font)
@@ -650,7 +702,7 @@ impl Workbench {
         let end = (start + SHOWN).min(rows.len());
         let cursor = self.font_cursor().map(str::to_owned);
         let current = self.font_explicit(font).unwrap_or_default();
-        let default_family = self.font_default_family(cx);
+        let default_family = self.font_default_family(font, cx);
         let loading = !self.fonts_loaded();
 
         let search = div()
@@ -743,7 +795,7 @@ impl Workbench {
             FontRowKind::SystemDefault => default_family.clone(),
             _ => r.value.clone(),
         });
-        let size = font.preview_size(&self.settings);
+        let size = self.font_preview_size(font);
         let preview = div()
             .id("font-preview")
             .flex()
@@ -818,7 +870,7 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let label = match row.kind {
-            FontRowKind::SystemDefault => format!("System default ({default_family})"),
+            FontRowKind::SystemDefault => system_default_label(default_family),
             _ => row.label.clone(),
         };
         // Each family in its own face; the lines that are not families in the interface's.
@@ -978,12 +1030,21 @@ mod tests {
     }
 
     #[test]
-    fn the_picker_belongs_to_the_terminal_font_only() {
+    fn the_pickers_belong_to_the_three_family_settings() {
         assert_eq!(
             FontField::of("terminal", "font_family"),
             Some(FontField::TerminalFamily)
         );
+        assert_eq!(
+            FontField::of("editor", "font_family"),
+            Some(FontField::EditorFamily)
+        );
+        assert_eq!(
+            FontField::of("appearance", "ui_font_family"),
+            Some(FontField::UiFamily)
+        );
         assert_eq!(FontField::of("terminal", "font_size"), None);
         assert_eq!(FontField::of("editor", "font_size"), None);
+        assert_eq!(FontField::of("appearance", "font_family"), None);
     }
 }

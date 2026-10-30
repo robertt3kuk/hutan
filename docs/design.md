@@ -442,6 +442,7 @@ appearance = "system"          # system | light | dark (pre-v2 files call this k
 light_theme = "hutan-light"    # color pack of light windows (docs/themes.md)
 dark_theme = "hutan-dark"      # color pack of dark windows
 icon_theme = "phosphor"        # independent monochrome icon pack (docs/themes.md § Icon packs)
+# ui_font_family = "Avenir"    # the interface's font; unset = the color pack's `[fonts] ui` (docs/themes.md § Fonts: setting over pack)
 reduce_motion = "system"       # system | on | off: system follows macOS Reduce Motion live (§ Motion)
 scrollbars = "system"          # system | always | scrolling: system follows macOS "Show scroll bars" live (§ Scrolling)
 
@@ -526,7 +527,8 @@ vim_mode = false               # Vim's Normal / Insert / Visual in text inputs (
 vim_use_system_clipboard = true  # yanks and deletes also go to the system clipboard; p pastes from it
 vim_timeout_ms = 1000            # how long a held key waits for the rest of a mapping (Vim's timeoutlen)
 # vim_mappings.insert = { jk = "<Esc>" }   # also .normal and .visual; keys as in Vim, non-recursive (see Vim mode)
-font_size = 13.0              # code in file tabs (the pack's monospace family)
+# font_family = "JetBrains Mono" # code in file tabs, diffs and chat; unset = the color pack's `[fonts] mono`
+font_size = 13.0              # code in file tabs, in points
 line_height = 1.45            # code line height, a multiple of the font size
 large_file_bytes = 16777216   # above this a file asks first, then opens read-only without syntax (see File tabs)
 soft_wrap = "auto"            # auto (Markdown and plain text wrap at the window's edge, code scrolls sideways) | off | viewport | column; View → Toggle Soft Wrap (⌥Z) flips one tab
@@ -619,10 +621,18 @@ The Appearance page's *Light theme*, *Dark theme* and *Icon theme* and the Termi
 
 ### Font picker (FONT-PICKER)
 
-`terminal.font_family` is chosen from the families installed on this Mac, not typed (`workbench/settings_fonts.rs`; the system side is `macos/fonts.rs`). It is the only font setting a user writes: the interface and prose fonts belong to the color pack (`[fonts]`, `docs/themes.md`) and the code font of file tabs follows the pack's monospace family; a new font key gets a picker by adding a `FontField`.
+Three settings are chosen from the families installed on this Mac, not typed (`workbench/settings_fonts.rs`; the system side is `macos/fonts.rs`), each over the color pack's font (**a setting wins over the pack**, `docs/themes.md` § Fonts):
+
+| Setting | Settings page › section | Lists | Unset (System default) | Drawn in it |
+|---|---|---|---|---|
+| `terminal.font_family` | Terminal | monospaced families (*Show all* for the rest) | the pack's `[fonts] mono` | terminals |
+| `editor.font_family` (size: `editor.font_size`) | Editing & keys › Editor, the row before *Code font size* | monospaced families | the pack's `[fonts] mono` | code in file tabs and Markdown previews' code blocks, diffs, code in chat; the terminal's own font keeps the terminals, and chat and diffs follow the terminal's font while this is unset |
+| `appearance.ui_font_family` | Appearance | every family | the pack's `[fonts] ui` | the whole interface; chat prose and empty-state copy follow it unless the pack names a prose family of its own |
+
+The interface font has no size setting: sizes come from the density tokens (`appearance.density`) and are used by every view, so one size would be a second density. A family that is not installed is ignored (the pack's font is drawn, the row warns) until it is installed; the list follows the system, so installing it applies it at once. Everything is live: no restart, every open view is redrawn (`Workbench::sync_fonts`). A new font key gets a picker by adding a `FontField`.
 
 - **The list.** CoreText's `CTFontManagerCopyAvailableFontFamilyNames`, read on the background executor the first time Settings opens, kept for the session, and read again when the system posts `kCTFontManagerRegisteredFontsChangedNotification` (Font Book, a font file opened in the Finder, *Install font…*; both the distributed and the local notification center are observed). Hidden families (`.SF NS …`) and duplicates are left out; the names are sorted without regard to case. A family is *monospaced* when its regular face has `kCTFontMonoSpaceTrait`. Tests use a fake source (`FakeFonts`); only `app::run` builds the real one (`MacServices::system`).
-- **A row** is the usual one (title, help, chip, ↺) with a head button naming the family, or *System default (Menlo)* while the key is not set: the pack's monospace font applies, and *System default* in the list removes the key. The row warns (*“x” is not installed on this Mac: the interface font is drawn until it is*) when the value is no installed family; nothing is warned while the list is unknown or empty, and for the system's own hidden families.
+- **A row** is the usual one (title, help, chip, ↺) with a head button naming the family, or *System default (Menlo)* while the key is not set (the pack's font applies; no name for a hidden system family), and *System default* in the list removes the key. The row warns (*“x” is not installed on this Mac: the interface font is drawn until it is*) when the value is no installed family; nothing is warned while the list is unknown or empty, and for the system's own hidden families.
 - **The open picker** is a popover (520 pt wide) under the head: the search box with **Show all** and **Install font…** at its right; eight lines of the list (the wheel and ↑ ↓ scroll it; *n more above/below*), each family **drawn in its own face**, a faint *mono* tag on the monospaced ones; a preview line under the list (the family under the cursor, at the terminal's font size: pangram, digits, brackets and operators); the keys. The list shows the current value first (✓), then *System default*, then the monospaced families alphabetically; **Show all** adds the proportional ones (not remembered between sessions of the sheet).
 - **A name that is not in the list** still works: what is typed in the box, when no family fits it, is offered as the line *Use “name”* (tagged *not installed* when the system does not list it), Return or a click writes it, and the row warns until the font is installed (the list follows the system's notification, so installing it clears the warning). Typing a family that exists but is proportional while only the monospaced ones show offers it the same way.
 - **Keys and pointer.** Return on the row (or a click on the head) opens the picker, typing searches (Backspace edits), ↑ ↓ move the cursor (the first line that fits is under it after every keystroke), Return writes, Escape closes the picker, then Settings. Pointing at a line moves the cursor (and the preview); a click writes; a click outside cancels. Nothing is written before a pick, and a pick of what is already set writes nothing. There is no text box for the font any more; `hutan ui set terminal.font_family=…` and `settings.toml` accept any name.

@@ -340,6 +340,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "appearance",
+        "ui_font_family",
+        "Interface font",
+        "The font of the interface and of chat text, picked from the fonts installed on this Mac. Unset, the color theme's font is used; a theme that names its own prose font keeps it.",
+    ),
+    field(
+        "appearance",
         "theme_overrides",
         "Theme color overrides",
         "Colors you change on top of a theme, by theme id. Edit the settings file to change these; the themes guide lists every color.",
@@ -1044,9 +1050,15 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "editor",
+        "font_family",
+        "Code font",
+        "The font of code in file tabs, diffs and chat, picked from the fonts installed on this Mac (monospaced ones unless you show all). Unset, the color theme's monospace font is used.",
+    ),
+    field(
+        "editor",
         "font_size",
         "Code font size",
-        "Font size of code in file tabs, in points. The font is the color pack's monospace family.",
+        "Font size of code in file tabs, in points.",
     ),
     field(
         "editor",

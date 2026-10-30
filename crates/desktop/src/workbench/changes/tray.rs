@@ -36,7 +36,6 @@ use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, VimConfig};
 
 /// The UI font, for the cards drawn inside the diff's monospace block.
-const UI_FONT: &str = ".SystemUIFont";
 
 /// Lines of one hunk of the shown file's diff, as indices into its lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1591,7 +1590,7 @@ impl ChangesView {
         };
         let empty = draft.input.text().trim().is_empty();
         div()
-            .font_family(SharedString::from(UI_FONT))
+            .font_family(super::super::ui::ui_family())
             .flex()
             .flex_col()
             .gap(px(tokens.spacing * 1.5))
@@ -1705,7 +1704,7 @@ impl ChangesView {
                 .card(theme, tokens)
                 .overflow_hidden()
                 .whitespace_normal()
-                .font_family(SharedString::from(UI_FONT))
+                .font_family(super::super::ui::ui_family())
                 .text_size(px(tokens.font_size))
                 .when(focused, |s| s.bg(theme.accent_soft))
                 .child(
@@ -1799,7 +1798,7 @@ impl ChangesView {
                     .text_color(theme.muted)
                     .child(
                         div()
-                            .font_family(SharedString::from(UI_FONT))
+                            .font_family(super::super::ui::ui_family())
                             .text_size(px(tokens.secondary_font_size))
                             .child("The lines changed; this is what the comment was about:"),
                     )

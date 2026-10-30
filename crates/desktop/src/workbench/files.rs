@@ -830,16 +830,24 @@ impl Workbench {
         self.sync_explorer_open(cx);
     }
 
-    /// How code looks now: the editor colors of the chrome's pack, its monospace family, and
-    /// the `editor` font settings.
+    /// How code looks now: the editor colors of the chrome's pack, `editor.font_family` or else
+    /// the pack's monospace family, and the `editor` font size and line height.
     pub(crate) fn code_style(&self, cx: &gpui::App) -> CodeStyle {
         let editor = self.settings.get::<EditorSettings>();
         CodeStyle::new(
             self.resolved_theme.editor(),
-            super::terminals::mono_family(cx, &self.resolved_theme),
+            super::ui::code_family().map_or_else(
+                || super::terminals::mono_family(cx, &self.resolved_theme),
+                |own| own.to_string(),
+            ),
             editor.font_size as f32,
             editor.line_height as f32,
         )
+    }
+
+    /// The family code is drawn in now: `editor.font_family`, else the pack's monospace font.
+    pub fn code_font_family(&self, cx: &gpui::App) -> String {
+        self.code_style(cx).font_family.to_string()
     }
 
     /// Restyles every file tab (a theme, appearance or `editor` font change); nothing is parsed

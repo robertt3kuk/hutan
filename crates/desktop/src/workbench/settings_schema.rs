@@ -1009,8 +1009,8 @@ mod tests {
             names("panels."),
             ["agents", "panels.sessions", "panels.files"]
         );
-        // Code and terminal fonts: two sections on two pages.
-        assert_eq!(names("font"), ["terminal", "editor"]);
+        // The interface, terminal and code fonts: three sections on three pages.
+        assert_eq!(names("font"), ["appearance", "terminal", "editor"]);
         assert_eq!(names("density"), ["appearance"]);
         assert_eq!(names("on_last_window_close"), ["app"]);
         // What the sheet shows is what it finds: titles, help and choice labels.

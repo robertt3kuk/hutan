@@ -1177,7 +1177,17 @@ impl Workbench {
             settings.set_notes("themes", frame.diagnostics.clone());
         }
         crate::theme::install(&frame.resolved);
-        super::ui::apply_fonts(cx, frame.resolved.fonts());
+        super::ui::apply_fonts(
+            cx,
+            frame.resolved.fonts(),
+            super::ui::FontOverrides::checked(
+                &appearance_settings.ui_font_family,
+                &settings
+                    .get::<crate::settings::EditorSettings>()
+                    .font_family,
+                |name| super::ui::is_installed(cx, name),
+            ),
+        );
         let theme = Theme::from_resolved(&frame.resolved);
         let terminal_explicit = crate::settings::TerminalExplicit::of(&settings);
         super::ui::motion::set_setting(cx, appearance_settings.reduce_motion);

@@ -1806,17 +1806,35 @@ impl Workbench {
         }
         if *frame.resolved != *self.resolved_theme {
             crate::theme::install(&frame.resolved);
-            ui::apply_fonts(cx, frame.resolved.fonts());
             self.resolved_theme = frame.resolved.clone();
             self.theme = Theme::from_resolved(&frame.resolved);
             self.publish_style(cx);
         }
+        // The pack's fonts, under the user's own (`appearance.ui_font_family`,
+        // `editor.font_family`): after the theme, which they are laid over.
+        self.sync_fonts(cx);
         self.terminal_theme_name = frame.terminal.name.clone();
         self.apply_terminal_style(&frame.terminal, terminal, cx);
         // An open picker's preview reads the catalog and the user's overrides: keep it current.
         self.sync_pack_preview();
         // File tabs take the new pack's editor colors (no reparse).
         self.refresh_code_style(cx);
+    }
+
+    /// Resolves the pack's font families under the user's own and publishes them; every view
+    /// that draws text is redrawn when something changed (live: no restart).
+    pub(crate) fn sync_fonts(&mut self, cx: &mut Context<Self>) {
+        let appearance = self.settings.get::<AppearanceSettings>();
+        let editor = self.settings.get::<crate::settings::EditorSettings>();
+        let own =
+            ui::FontOverrides::checked(&appearance.ui_font_family, &editor.font_family, |name| {
+                name.is_empty() || ui::is_installed(cx, name) || self.font_listed(name)
+            });
+        if ui::apply_fonts(cx, self.resolved_theme.fonts(), own) {
+            self.invalidate_cached_views(cx);
+            self.refresh_code_style(cx);
+            cx.notify();
+        }
     }
 
     /// Same as [`refresh_theme`](Self::refresh_theme): the terminal's colors and fonts come
@@ -1898,6 +1916,7 @@ impl Workbench {
             }
         }
         if changes.contains("editor") {
+            self.sync_fonts(cx);
             self.refresh_code_style(cx);
             // `editor.vim_mode` is live in file tabs too (safe in the middle of a command).
             for view in self.file_views.values() {

@@ -21,12 +21,12 @@ use hutan_settings::SettingsStore;
 
 const FIELD: FontField = FontField::TerminalFamily;
 
-fn fam(name: &str, mono: bool) -> FontFamily {
+pub(crate) fn fam(name: &str, mono: bool) -> FontFamily {
     FontFamily::new(name, mono)
 }
 
 /// What a Mac has: a few of each, out of order, with a hidden system family and a duplicate.
-fn installed() -> Vec<FontFamily> {
+pub(crate) fn installed() -> Vec<FontFamily> {
     vec![
         fam("Menlo", true),
         fam("Helvetica", false),
@@ -39,14 +39,14 @@ fn installed() -> Vec<FontFamily> {
     ]
 }
 
-struct Fixture {
-    home: PathBuf,
-    settings: SettingsStore,
-    fonts: FakeFonts,
+pub(crate) struct Fixture {
+    pub(crate) home: PathBuf,
+    pub(crate) settings: SettingsStore,
+    pub(crate) fonts: FakeFonts,
 }
 
 impl Fixture {
-    fn settings_file(&self) -> String {
+    pub(crate) fn settings_file(&self) -> String {
         std::fs::read_to_string(self.home.join("settings.toml")).unwrap_or_default()
     }
 
@@ -55,7 +55,7 @@ impl Fixture {
     }
 }
 
-fn open<'a>(
+pub(crate) fn open<'a>(
     cx: &'a mut TestAppContext,
     settings_toml: &str,
     families: Vec<FontFamily>,
@@ -89,20 +89,24 @@ fn open<'a>(
 }
 
 fn open_terminal_page(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
-    cx.dispatch_action(actions::OpenSettingsFor("terminal".into()));
+    open_page(view, cx, "terminal");
+}
+
+pub(crate) fn open_page(view: &Entity<Workbench>, cx: &mut VisualTestContext, page: &str) {
+    cx.dispatch_action(actions::OpenSettingsFor(page.into()));
     draw(cx);
     assert_eq!(
         view.read_with(cx, |wb, _| wb
             .settings_sheet()
             .map(|s| s.namespace().to_owned())),
-        Some("terminal".to_owned())
+        Some(page.to_owned())
     );
     wait_until(cx, "the installed fonts to be read", |cx| {
         view.read_with(cx, |wb, _| wb.fonts_loaded())
     });
 }
 
-fn click_region(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
+pub(crate) fn click_region(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
     wait_until(cx, &format!("{region:?} to be drawn"), |cx| {
         view.read_with(cx, |wb, _| wb.region_bounds(region).is_some())
     });

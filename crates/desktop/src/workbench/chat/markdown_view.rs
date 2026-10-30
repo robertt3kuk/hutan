@@ -62,7 +62,8 @@ impl Look {
         Self {
             theme: style.theme,
             tokens: style.density.ui(),
-            mono: TerminalStyle::get(cx).font_family.into(),
+            mono: super::super::ui::code_family()
+                .unwrap_or_else(|| TerminalStyle::get(cx).font_family.into()),
             serif: true,
             doc: None,
         }
@@ -103,7 +104,7 @@ impl Look {
         if self.serif {
             prose_font()
         } else {
-            Font::default()
+            gpui::font(super::super::ui::ui_family())
         }
     }
 }

@@ -1462,7 +1462,11 @@ pub struct EditorSettings {
     /// How long a mapping that has begun waits for its next key (ms, Vim's `timeoutlen`):
     /// after that the keys typed so far count as themselves.
     pub vim_timeout_ms: u64,
-    /// Font size of code in file tabs, in points (the family is the color pack's monospace).
+    /// Font family of code in file tabs, diffs and chat code. Empty (default): the color pack's
+    /// monospace font. A family that is not installed is ignored (the pack's font is drawn)
+    /// with a note in Settings.
+    pub font_family: String,
+    /// Font size of code in file tabs, in points.
     pub font_size: f64,
     /// Line height of code in file tabs, as a multiple of the font size.
     pub line_height: f64,
@@ -1539,6 +1543,7 @@ impl Default for EditorSettings {
             vim_use_system_clipboard: true,
             vim_mappings: VimMappings::default(),
             vim_timeout_ms: 1000,
+            font_family: String::new(),
             font_size: 13.0,
             line_height: 1.45,
             large_file_bytes: DEFAULT_LARGE_FILE_BYTES,

@@ -50,12 +50,39 @@ const NEW_YORK_FILES: [&str; 2] = [
 /// The system UI family: always available, and what GPUI falls back to for an unknown name.
 const SYSTEM_UI: &str = ".SystemUIFont";
 
-/// The families the committed pack's `[fonts]` resolved to on this machine.
-#[derive(Clone)]
+/// The families the committed pack's `[fonts]` resolved to on this machine, and the user's own
+/// choices over them.
+#[derive(Clone, PartialEq, Eq)]
 struct Families {
     ui: SharedString,
     prose: SharedString,
     mono: SharedString,
+    /// `editor.font_family` when it is set and installed: code on the chrome (diffs, chat code)
+    /// takes it before the terminal's font.
+    code: Option<SharedString>,
+}
+
+/// What the user sets over the pack's fonts (a setting wins over the pack). An empty name is
+/// not set; the caller passes `""` for a name that is not installed ([`FontOverrides::checked`]),
+/// so the pack's font is drawn until it is.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FontOverrides<'a> {
+    /// `appearance.ui_font_family`: the chrome's font, and prose with it unless the pack names
+    /// a prose family of its own.
+    pub ui: &'a str,
+    /// `editor.font_family`: code in file tabs, diffs and chat.
+    pub code: &'a str,
+}
+
+impl<'a> FontOverrides<'a> {
+    /// The two names, each kept only when `installed` says the family is there.
+    pub fn checked(ui: &'a str, code: &'a str, installed: impl Fn(&str) -> bool) -> Self {
+        let keep = |name: &'a str| if installed(name) { name } else { "" };
+        Self {
+            ui: keep(ui),
+            code: keep(code),
+        }
+    }
 }
 
 thread_local! {
@@ -65,6 +92,7 @@ thread_local! {
         ui: SYSTEM_UI.into(),
         prose: SYSTEM_UI.into(),
         mono: "Menlo".into(),
+        code: None,
     });
 }
 
@@ -82,7 +110,7 @@ pub fn init_prose_font(cx: &App) {
         tracing::warn!("cannot load New York: {error}");
     }
     let builtin = hutan_settings::themes::builtin_theme(hutan_settings::themes::Builtin::HutanDark);
-    apply_fonts(cx, builtin.fonts());
+    apply_fonts(cx, builtin.fonts(), FontOverrides::default());
 }
 
 /// The first of `candidates` that is installed (the system UI font always is); the last one when
@@ -101,18 +129,39 @@ pub fn pick_family(cx: &App, candidates: &[String]) -> SharedString {
         .map_or_else(|| SYSTEM_UI.into(), |name| SharedString::from(name.clone()))
 }
 
-/// Resolves the pack's UI and prose family lists against the installed fonts and makes them the
-/// ones [`ui_family`] and [`prose_family`] return.
-pub fn apply_fonts(cx: &App, fonts: &Fonts) {
+/// Whether `name` is a family the text system has (the system UI font always is).
+pub fn is_installed(cx: &App, name: &str) -> bool {
+    let text_system = cx.text_system();
+    name == SYSTEM_UI
+        || text_system.resolve_font(&gpui::font(name.to_owned()))
+            != text_system.resolve_font(&gpui::font(SYSTEM_UI))
+}
+
+/// Resolves the pack's UI, prose and mono family lists against the installed fonts, then lays
+/// the user's choices over them, and makes the result the ones [`ui_family`], [`prose_family`],
+/// [`mono_family`] and [`code_family`] return. Returns whether anything changed.
+pub fn apply_fonts(cx: &App, fonts: &Fonts, own: FontOverrides<'_>) -> bool {
+    let own_ui = (!own.ui.is_empty()).then(|| SharedString::from(own.ui.to_owned()));
+    let own_code = (!own.code.is_empty()).then(|| SharedString::from(own.code.to_owned()));
+    let pack_ui = pick_family(cx, &fonts.ui);
     let families = Families {
-        ui: pick_family(cx, &fonts.ui),
-        prose: pick_family(cx, &fonts.prose),
+        // Prose follows the interface font unless the pack names a prose family of its own.
+        prose: match &own_ui {
+            Some(ui) if fonts.prose == fonts.ui => ui.clone(),
+            _ => pick_family(cx, &fonts.prose),
+        },
+        ui: own_ui.unwrap_or(pack_ui),
         mono: pick_family(cx, &fonts.mono),
+        code: own_code,
     };
     if families.prose.as_ref() != SYSTEM_UI && families.prose.as_ref() != ".New York" {
         tracing::info!("prose font: {}", families.prose);
     }
-    FAMILIES.with(|f| *f.borrow_mut() = families);
+    FAMILIES.with(|f| {
+        let changed = *f.borrow() != families;
+        *f.borrow_mut() = families;
+        changed
+    })
 }
 
 /// The chrome's text family.
@@ -128,6 +177,11 @@ pub fn prose_family() -> SharedString {
 /// The monospace family of the pack's `[fonts] mono` ([`apply_fonts`]): chips, shortcut hints.
 pub fn mono_family() -> SharedString {
     FAMILIES.with(|f| f.borrow().mono.clone())
+}
+
+/// The user's code font (`editor.font_family`) while it is set and installed.
+pub fn code_family() -> Option<SharedString> {
+    FAMILIES.with(|f| f.borrow().code.clone())
 }
 
 /// A GPUI `Font` for prose text.
@@ -927,6 +981,66 @@ pub fn step_dots(current: usize, total: usize, theme: &Theme) -> gpui::Div {
 mod tests {
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+
+    use hutan_settings::themes::Fonts;
+
+    use super::{FontOverrides, apply_fonts, code_family, mono_family, prose_family, ui_family};
+
+    fn fonts(ui: &str, prose: &str) -> Fonts {
+        Fonts {
+            ui: vec![ui.to_owned()],
+            prose: vec![prose.to_owned()],
+            mono: vec!["Menlo".to_owned()],
+        }
+    }
+
+    #[gpui::test]
+    fn the_users_fonts_win_over_the_pack_and_prose_follows_the_interface_unless_the_pack_says_otherwise(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            // The pack's prose is its UI font: the user's interface font takes both.
+            let pack = fonts(".SystemUIFont", ".SystemUIFont");
+            assert!(
+                !apply_fonts(cx, &pack, FontOverrides::default()),
+                "the built-in pack's fonts are what is there at first"
+            );
+            let own = FontOverrides {
+                ui: "Avenir",
+                code: "Fira Code",
+            };
+            assert!(apply_fonts(cx, &pack, own));
+            assert_eq!(ui_family().as_ref(), "Avenir");
+            assert_eq!(prose_family().as_ref(), "Avenir");
+            assert_eq!(code_family().as_deref(), Some("Fira Code"));
+            assert_eq!(
+                mono_family().as_ref(),
+                "Menlo",
+                "the pack's mono stays for chips"
+            );
+
+            // The pack names a prose family of its own: it keeps it.
+            let serif = fonts(".SystemUIFont", "Charter");
+            assert!(apply_fonts(cx, &serif, own));
+            assert_eq!(ui_family().as_ref(), "Avenir");
+            assert_eq!(prose_family().as_ref(), "Charter");
+
+            // Nothing set: the pack's own.
+            assert!(apply_fonts(cx, &serif, FontOverrides::default()));
+            assert_eq!(ui_family().as_ref(), ".SystemUIFont");
+            assert_eq!(prose_family().as_ref(), "Charter");
+            assert_eq!(code_family(), None);
+        });
+    }
+
+    #[test]
+    fn a_name_that_is_not_installed_is_dropped_before_it_is_applied() {
+        let installed = |name: &str| name == "Avenir";
+        let own = FontOverrides::checked("Avenir", "Nope Mono", installed);
+        assert_eq!((own.ui, own.code), ("Avenir", ""));
+        let own = FontOverrides::checked("", "", installed);
+        assert_eq!((own.ui, own.code), ("", ""));
+    }
 
     #[test]
     fn the_focus_ring_shows_only_for_keyboard_focus() {

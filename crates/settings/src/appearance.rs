@@ -79,6 +79,11 @@ pub struct AppearanceSettings {
     pub dark_theme: String,
     /// Independent monochrome icon pack from `<data dir>/icon-themes`.
     pub icon_theme: String,
+    /// Font family of the interface (chrome, chat, empty states). Empty (default): the color
+    /// pack's `[fonts] ui`. Chat and prose follow it unless the pack names a prose family of its
+    /// own. A family that is not installed is ignored (the pack's font is drawn) with a note in
+    /// Settings.
+    pub ui_font_family: String,
     /// `system` (follow macOS Reduce Motion live, default), `on` or `off`. Reduced, nothing
     /// slides or changes height and fades are at most 150 ms; see `docs/design.md` § Motion.
     pub reduce_motion: ReduceMotionSetting,
@@ -99,6 +104,7 @@ impl Default for AppearanceSettings {
             light_theme: LIGHT.to_owned(),
             dark_theme: DARK.to_owned(),
             icon_theme: "phosphor".to_owned(),
+            ui_font_family: String::new(),
             reduce_motion: ReduceMotionSetting::default(),
             scrollbars: ScrollbarsSetting::default(),
             theme_overrides: BTreeMap::new(),
