@@ -5,7 +5,7 @@
 //! `chat.agent = "assistant"`. Its scope follows from its workspace: the Home workspace has the
 //! `global` assistant, every other workspace has `workspace` ones.
 
-use hutan_core::{AgentEvent, TerminalId, WorkspaceId};
+use hutan_core::{AgentEvent, SessionId, TerminalId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 use crate::messages::SessionInfo;
@@ -167,6 +167,27 @@ pub struct AssistantOpen {
     /// Create one more assistant in the scope instead of returning the default.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub new: bool,
+}
+
+/// `assistant.focus` (protocol 0.61, capability `assistant.focus`, ADR 0025): sets or clears the
+/// **Focus** of a Global Mawas chat. A Focus is a workspace (or project) the chat looks at: a
+/// filter, and the source of that workspace's memory notes and project instructions, which the
+/// daemon delivers to the conversation at the next turn boundary (a delta; nothing restarts).
+/// It changes **no permission**, is not a working directory, and widens nothing Mawas may do.
+/// Answered with `SessionResult`: the session as it is now (`ChatInfo.focus`).
+///
+/// **User-only**: Mawas learns her Focus from her prompt and can never change it; an
+/// agent-originated connection gets `forbidden`.
+///
+/// Errors: `not_found` for a session or workspace that does not exist; `bad_request` for a
+/// session that is not a Global assistant (a workspace chat's workspace is fixed by its scope),
+/// and for the Home workspace as `workspace_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantFocus {
+    pub session_id: SessionId,
+    /// The workspace or project to focus on; absent clears the Focus (*All workspaces*).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<WorkspaceId>,
 }
 
 /// `assistant.list`: the assistant sessions, oldest first, optionally of one scope and/or one

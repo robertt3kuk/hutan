@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`assistant`] also carries `assistant.focus` and `ChatInfo.focus` — the workspace a Global
+//!   Mawas chat looks at, a filter and a source of notes and project instructions that changes
+//!   no permission (protocol 0.61, capability `assistant.focus`, ADR 0025).
 //! - [`update`]: `update.status`, `update.check`, `update.install` and the events
 //!   `update.available` and `update.install` — the daemon's check for a newer release and the
 //!   Homebrew update it runs for the user (protocol 0.60, capability `update`, ADR 0024).
@@ -150,7 +153,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 60,
+    minor: 61,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -276,6 +276,7 @@ fn chat_info() -> ChatInfo {
     ChatInfo {
         fork: None,
         dirs: Vec::new(),
+        focus: None,
         agent: "codex".into(),
         model: "gpt-6.1-sol".into(),
         approval_policy: ApprovalPolicy::Untrusted,
@@ -302,6 +303,7 @@ fn harness_chat_session_info() -> SessionInfo {
         chat: Some(ChatInfo {
             fork: None,
             dirs: Vec::new(),
+            focus: None,
             agent: "omp".into(),
             model: "anthropic/claude-sonnet-4-5".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -330,6 +332,7 @@ fn harness_assistant_session_info() -> SessionInfo {
         chat: Some(ChatInfo {
             fork: None,
             dirs: Vec::new(),
+            focus: None,
             agent: "omp".into(),
             model: "anthropic/claude-sonnet-4-5".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -358,6 +361,7 @@ fn direct_chat_session_info() -> SessionInfo {
         chat: Some(ChatInfo {
             fork: None,
             dirs: Vec::new(),
+            focus: None,
             agent: "direct".into(),
             model: "meta-llama/llama-3.3-70b-instruct".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -448,6 +452,7 @@ fn assistant_session_info() -> SessionInfo {
         chat: Some(ChatInfo {
             fork: None,
             dirs: Vec::new(),
+            focus: None,
             agent: AGENT_ASSISTANT.into(),
             model: "llama3.3:70b".into(),
             approval_policy: ApprovalPolicy::OnRequest,
@@ -3970,6 +3975,20 @@ fn requests() -> Vec<(&'static str, Request)> {
                 after_pid: Some(48_213),
             }),
         ),
+        (
+            "assistant_focus_set",
+            Request::AssistantFocus(AssistantFocus {
+                session_id: sid(),
+                workspace_id: Some(ws()),
+            }),
+        ),
+        (
+            "assistant_focus_clear",
+            Request::AssistantFocus(AssistantFocus {
+                session_id: sid(),
+                workspace_id: None,
+            }),
+        ),
     ]
 }
 
@@ -5407,6 +5426,18 @@ fn events() -> Vec<(&'static str, Event)> {
                     ),
                     ..bundle_install_fixture(InstallStage::Verifying)
                 }),
+            },
+        ),
+        (
+            "session_updated_assistant_focus",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    chat: harness_assistant_session_info().chat.map(|chat| ChatInfo {
+                        focus: Some(ws()),
+                        ..chat
+                    }),
+                    ..harness_assistant_session_info()
+                },
             },
         ),
     ]
@@ -9223,6 +9254,23 @@ fn sessions_and_chat_requests_of_an_older_peer_have_no_folders() {
     // And nothing of the new fields is written when there are no folders.
     let json = serde_json::to_string(&chat).unwrap();
     assert!(!json.contains("extra_dirs"), "{json}");
+}
+
+#[test]
+fn chats_of_an_older_daemon_have_no_focus_and_none_is_written() {
+    let chat = harness_assistant_session_info().chat.unwrap();
+    assert_eq!(chat.focus, None);
+    let json = serde_json::to_value(&chat).unwrap();
+    assert!(json.get("focus").is_none(), "{json}");
+    let decoded: ChatInfo = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.focus, None);
+    // A clear request carries no workspace.
+    let clear = serde_json::to_value(AssistantFocus {
+        session_id: sid(),
+        workspace_id: None,
+    })
+    .unwrap();
+    assert!(clear.get("workspace_id").is_none(), "{clear}");
 }
 
 #[test]

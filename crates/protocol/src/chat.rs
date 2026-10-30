@@ -714,6 +714,12 @@ pub struct ChatInfo {
     /// assistants.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirs: Vec<ChatDir>,
+    /// Protocol 0.61 (capability `assistant.focus`, ADR 0025): the workspace a Global Mawas chat
+    /// is focused on (`assistant.focus`). Absent for a chat with no focus (*All workspaces*)
+    /// and for every chat that is not a Global assistant: a workspace chat's workspace is its
+    /// scope, not a focus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<WorkspaceId>,
 }
 
 /// What a chat's safety preset amounts to, **as the harness reported it** (protocol 0.51,

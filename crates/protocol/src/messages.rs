@@ -15,7 +15,9 @@ use serde_json::{Map, Value};
 
 use crate::ProtocolVersion;
 use crate::account::{AccountAdd, AccountDefaultSet, AccountLogin, AccountLogout, AccountRemove};
-use crate::assistant::{AssistantConfigure, AssistantListRequest, AssistantOpen, AssistantReset};
+use crate::assistant::{
+    AssistantConfigure, AssistantFocus, AssistantListRequest, AssistantOpen, AssistantReset,
+};
 use crate::blocks::{Block, TerminalBlockText, TerminalBlocks};
 use crate::chat::{
     ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatAddDir, ChatCreate, ChatDir, ChatFork,
@@ -336,6 +338,11 @@ pub enum Request {
     /// agent-originated connection.
     #[serde(rename = "assistant.reset")]
     AssistantReset(AssistantReset),
+    /// Capability `assistant.focus` (protocol 0.61): set or clear the Focus of a Global Mawas
+    /// chat; answered with `SessionResult`. User-only: an agent-originated connection gets
+    /// `forbidden`.
+    #[serde(rename = "assistant.focus")]
+    AssistantFocus(AssistantFocus),
     /// Capability `daemon.settings` (protocol 0.28): `daemon.toml` as a list of settings;
     /// answered with `DaemonSettings`.
     #[serde(rename = "daemon.settings.get")]
