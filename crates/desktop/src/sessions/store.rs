@@ -611,6 +611,12 @@ pub struct SessionsStore {
     /// when nothing was reported on the current connection.
     /// With the [`Connection::generation`] it was acknowledged on.
     focus_sent: Option<(u64, Option<SessionId>)>,
+    /// Whether this window is the active one (the OS's key window), as the workbench last said;
+    /// `None` before it did. Sent with `client.focus` to a daemon that has the digest
+    /// (protocol 0.68): the user being away from every window is what it waits for.
+    window_active: Option<bool>,
+    /// The activation the daemon last acknowledged on the connection it was acknowledged on.
+    active_sent: Option<(u64, bool)>,
     /// The `client.focus` request in flight; at most one, so reports cannot overtake each other.
     /// With the generation it was started on: a request that outlives its connection is
     /// cancelled, not waited for.
@@ -789,6 +795,8 @@ impl SessionsStore {
             blocked_seen: None,
             blocked_epoch: None,
             focus_sent: None,
+            window_active: None,
+            active_sent: None,
             focus_task: None,
             assistant_focused: None,
             context_followed: None,
@@ -2692,6 +2700,16 @@ impl SessionsStore {
         self.focused.or(self.last_focused)
     }
 
+    /// Whether the daemon acknowledged, on the current connection, that this window is the
+    /// active one (`Some(true)`) or is not (`Some(false)`); `None` before it did, with a daemon
+    /// that has no digest, and after the connection was lost.
+    pub fn window_active_reported(&self) -> Option<bool> {
+        let generation = self.connection.generation();
+        self.active_sent
+            .filter(|(sent_on, _)| *sent_on == generation)
+            .map(|(_, active)| active)
+    }
+
     /// The focus the daemon acknowledged for the current connection (`client.focus`): `None`
     /// before the first acknowledgement and after the connection was lost, `Some(None)` once
     /// "nothing is looked at" was acknowledged.
@@ -2737,6 +2755,15 @@ impl SessionsStore {
         }
     }
 
+    /// This window became (or stopped being) the active one. Told to a daemon with the digest
+    /// (protocol 0.68) along with the focus: it sends the digest only while no window is.
+    pub fn set_window_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        if self.window_active != Some(active) {
+            self.window_active = Some(active);
+            self.report_focus(cx);
+        }
+    }
+
     // ---- attention -------------------------------------------------------------------------
 
     /// The session shown in the focused item changed (`None`: no session has focus).
@@ -2769,6 +2796,10 @@ impl SessionsStore {
         }
         let generation = self.connection.generation();
         let focused = self.looked_at();
+        // Only a daemon that has the digest is told; an older one reads the session alone.
+        let active = self
+            .window_active
+            .filter(|_| self.connection.supports_notify_digest());
         match &self.focus_task {
             // One request at a time: this one's answer decides whether another follows.
             Some((started_on, _)) if *started_on == generation => return,
@@ -2777,17 +2808,23 @@ impl SessionsStore {
             Some(_) => self.focus_task = None,
             None => {}
         }
-        if self.focus_sent == Some((generation, focused)) {
+        if self.focus_sent == Some((generation, focused))
+            && active.is_none_or(|active| self.active_sent == Some((generation, active)))
+        {
             return;
         }
         let connection = self.connection.clone();
         let task = cx.spawn(async move |this, cx| {
-            let sent = connection.client_focus(focused).await;
+            let sent = match active {
+                Some(active) => connection.client_focus_in_window(focused, active).await,
+                None => connection.client_focus(focused).await,
+            };
             this.update(cx, |this, cx| {
                 this.focus_task = None;
                 match sent {
                     Ok(sent_on) => {
                         this.focus_sent = Some((sent_on, focused));
+                        this.active_sent = active.map(|active| (sent_on, active));
                         // The Context panel reads the insight once the daemon knows the focus.
                         if this.context_followed.is_some() {
                             cx.notify();

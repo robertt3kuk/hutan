@@ -262,6 +262,11 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                     "assistant.memory_files_in_project",
                 ],
             },
+            Section {
+                title: words::SEC_ASSISTANT_CATCH_UP,
+                help: words::SEC_ASSISTANT_CATCH_UP_HELP,
+                keys: &["notify.digest_hours"],
+            },
         ],
         _ => &[],
     }
@@ -271,6 +276,7 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
 fn daemon_rule_hint(key: &str) -> Option<&'static str> {
     match key {
         "assistant.idle_stop_secs" => Some(words::IDLE_STOP_HINT),
+        "notify.digest_hours" => Some(words::DIGEST_HOURS_HINT),
         _ => None,
     }
 }

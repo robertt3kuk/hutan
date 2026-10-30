@@ -17,6 +17,7 @@ mod contain;
 mod control;
 mod daemon;
 mod daemon_settings;
+mod digest;
 mod direct;
 mod files;
 mod finish;

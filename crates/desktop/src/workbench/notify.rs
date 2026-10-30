@@ -65,6 +65,10 @@ impl Workbench {
             });
         self.sessions
             .update(cx, |store, cx| store.set_assistant_focused(session, cx));
+        // The daemon's digest waits for the user to be away from every window.
+        let active = window.is_window_active();
+        self.sessions
+            .update(cx, |store, cx| store.set_window_active(active, cx));
         // Home's own changes (its scope) reach `sync_mawas_focus` from here on: never from
         // inside a frame, where GPUI drops the notification the store would send.
         if let Some(panel) = self.panel::<AssistantPanel>("assistant")

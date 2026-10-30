@@ -2529,3 +2529,143 @@ fn marking_as_seen_takes_the_chip_away_and_an_empty_home_has_none(cx: &mut TestA
     });
     assert!(!chip_drawn(&view, cx));
 }
+
+// ---- the digest (MAWAS-DIGEST-A) ---------------------------------------------------------------
+
+/// A daemon whose digest counts a 150 ms "hour" and looks every 20 ms; `[notify] digest_hours`
+/// as `hours` says.
+fn digest_env(hours: u64) -> AssistantEnv {
+    let tables = Box::leak(format!("[notify]\ndigest_hours = {hours}\n").into_boxed_str());
+    AssistantEnv::start(Options {
+        configured: true,
+        tables,
+        tweak: Some(|config| {
+            config.digest = hutan_daemon::digest::DigestTuning {
+                tick: Duration::from_millis(20),
+                hour_ms: 150,
+            };
+        }),
+        ..Options::default()
+    })
+}
+
+#[gpui::test]
+fn the_digest_setting_is_a_row_of_the_mawas_page_and_off_by_default(cx: &mut TestAppContext) {
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    cx.dispatch_action(actions::OpenSettingsFor("assistant".into()));
+    draw(cx);
+    wait_until(cx, "the daemon's settings", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.daemon_settings().entry("notify.digest_hours").is_some()
+        })
+    });
+    // A row of the Mawas page, after Memory, with the rule in words; off by default.
+    let rows = view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx));
+    assert!(
+        rows.iter().any(|row| row == "d:notify.digest_hours"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().position(|row| row == "d:notify.digest_hours")
+            > rows.iter().position(|row| row == "d:assistant.memory")
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb
+            .daemon_settings()
+            .value("notify.digest_hours")
+            .cloned()),
+        Some(json!(0))
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.daemon_number_hint("notify.digest_hours")),
+        Some("Hours away; 0 is off (at most 720)".to_owned())
+    );
+    // It is not also a row of the Notifications section of General.
+    cx.dispatch_action(actions::OpenSettingsFor("notifications".into()));
+    draw(cx);
+    let general = view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx));
+    assert!(!general.iter().any(|row| row == "d:notify.digest_hours"));
+
+    // Writing it reaches the daemon live.
+    view.update(cx, |wb, cx| {
+        wb.daemon_setting_set("notify.digest_hours", Some(json!(4)), cx);
+    });
+    wait_until(cx, "the daemon to take it", |_| {
+        let settings: DaemonSettings = env.daemon.call(Request::DaemonSettingsGet(Empty {}));
+        settings
+            .entries
+            .iter()
+            .find(|e| e.key == "notify.digest_hours")
+            .unwrap()
+            .value
+            == json!(4)
+    });
+}
+
+#[gpui::test]
+fn the_window_tells_the_daemon_when_it_is_not_the_active_one_and_a_digests_open_shows_recent(
+    cx: &mut TestAppContext,
+) {
+    let env = digest_env(1);
+    let target = env.daemon.sh("sleep 600");
+    let other = reported_agent(&env);
+    let (view, cx, panel) = open_wide(cx, &env);
+    let reported = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).window_active_reported())
+    };
+    wait_until(cx, "the window reported as active", |cx| {
+        reported(cx) == Some(true)
+    });
+
+    // The user leaves: the daemon is told, and starts counting the period.
+    cx.deactivate_window();
+    wait_until(cx, "the deactivation to be reported", |cx| {
+        reported(cx) == Some(false)
+    });
+    // Something needs them while they are away.
+    let _asked = env
+        .daemon
+        .call_from_in_background::<SessionResult>(other.id, rename_request(target.id, "x"));
+    wait_needs(&panel, cx, 1);
+
+    // One digest, with the line the Catch up chip shows.
+    let mut digest = None;
+    wait_until(cx, "the digest", |cx| {
+        cx.executor().advance_clock(Duration::from_millis(100));
+        let list: hutan_protocol::notify::NotifyList =
+            env.daemon.call(Request::NotifyList(Empty {}));
+        digest = list
+            .intents
+            .into_iter()
+            .find(|i| i.kind == hutan_protocol::notify::IntentKind::Digest);
+        digest.is_some()
+    });
+    let digest = digest.unwrap();
+    assert!(
+        digest.body.contains("1 request waits for you"),
+        "{}",
+        digest.body
+    );
+
+    // Its *Open* (a click on the notification) shows Mawas Home on the Recent tab, whatever
+    // tab the rail was on and even if it was hidden.
+    panel.update(cx, |p, cx| p.set_rail_open(false, cx));
+    wait_until(cx, "the rail hidden", |cx| {
+        !panel.read_with(cx, |p, _| p.rail_open())
+    });
+    let _: hutan_protocol::notify::NotifyActed =
+        env.daemon
+            .call(Request::NotifyAct(hutan_protocol::notify::NotifyAct {
+                id: digest.id.clone(),
+                action_id: hutan_protocol::notify::ACTION_OPEN.into(),
+            }));
+    wait_until(cx, "the rail open on Recent", |cx| {
+        panel.read_with(cx, |p, _| p.rail_open())
+            && written_tab(&view, cx).as_deref() == Some("recent")
+    });
+    wait_until(cx, "the Recent tab", |cx| {
+        painted(&view, cx, "today-recent-since")
+    });
+}

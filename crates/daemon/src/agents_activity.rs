@@ -447,6 +447,72 @@ impl<'a> Scope<'a> {
     }
 }
 
+/// The catch-up of `req`, read from the daemon's records: the tables are read once each for the
+/// window, on a blocking thread (they are SQLite reads), and the answer is built from those rows
+/// alone. What `agents.activity` answers, and what the digest looks at (`crate::digest`).
+pub async fn read_activity(
+    storage: &hutan_storage::Storage,
+    tasks: &crate::tasks::TaskService,
+    req: &AgentsActivityRequest,
+) -> Result<AgentsActivity, ErrorBody> {
+    let now = crate::registry::now_ms();
+    let (since, until) = window(req, now);
+    let storage = storage.clone();
+    let rows = tokio::task::spawn_blocking(move || -> Result<_, ErrorBody> {
+        let failed = |error: hutan_storage::StorageError| {
+            ErrorBody::new(ErrorCode::Internal, error.to_string())
+        };
+        let mut sessions = storage.sessions().list().map_err(failed)?;
+        sessions.extend(
+            storage
+                .sessions()
+                .list_closed()
+                .map_err(failed)?
+                .into_iter()
+                .map(|closed| closed.session),
+        );
+        Ok((
+            storage.workspaces().list().map_err(failed)?,
+            sessions,
+            storage
+                .approvals()
+                .in_window(since, until)
+                .map_err(failed)?,
+            storage
+                .questions()
+                .in_window(since, until)
+                .map_err(failed)?,
+            storage
+                .chat()
+                .turns_in_window(since, until)
+                .map_err(failed)?,
+            storage
+                .checkpoints()
+                .in_window(since, until)
+                .map_err(failed)?,
+        ))
+    })
+    .await
+    .map_err(|error| ErrorBody::new(ErrorCode::Internal, error.to_string()))??;
+    let (workspaces, sessions, approvals, questions, turns, checkpoints) = rows;
+    let tasks = tasks
+        .list(hutan_protocol::task::TaskListRequest::default())
+        .tasks;
+    build_activity(
+        &ActivityInputs {
+            now_ms: now,
+            workspaces: &workspaces,
+            sessions: &sessions,
+            approvals: &approvals,
+            questions: &questions,
+            turns: &turns,
+            checkpoints: &checkpoints,
+            tasks: &tasks,
+        },
+        req,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

@@ -41,6 +41,8 @@ pub struct Options<'a> {
     /// The `codex app-server` of the daemon (a replay of a recorded transcript): a Codex chat
     /// next to the assistants.
     pub codex: Option<hutan_agents::CodexConfig>,
+    /// A change of the daemon's configuration (its timings, a fake poster).
+    pub tweak: Option<fn(&mut hutan_daemon::DaemonConfig)>,
 }
 
 pub struct AssistantEnv {
@@ -82,7 +84,11 @@ impl AssistantEnv {
                 discovery: Some(Vec::new()),
             },
             None,
-            |_| {},
+            |config| {
+                if let Some(tweak) = options.tweak {
+                    tweak(config);
+                }
+            },
         );
         let mock = daemon.http_mock();
         let _: ProviderResult = daemon.call(Request::ProviderAdd(ProviderAdd {

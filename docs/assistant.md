@@ -253,6 +253,25 @@ Mawas watches the requests of your other agents (a permission to run a command, 
 - **One at a time.** A request carries at most one suggestion; the latest replaces the previous. It goes when the request is answered, expires or the daemon restarts.
 - **Her gate.** `ask.suggest` is a change like the others (`docs/control.md` § Mawas): *Advisor* refuses it, *Ask before acting* asks you ("suggest an answer to the waiting approval 7 (you decide)") unless you allowed it for the chat; it never covers a request of a Mawas session, hers included. Tool `ask_suggest` of `hutan mcp`.
 
+## Catching up (MAWAS-DIGEST-A, protocol 0.68, capability `notify.digest`; ADR 0025 decision 2)
+
+Two ways to learn what happened while you were away, both **without a model** (no turn, no token, no tool call): the daemon's records are summed into one line, and that line is all either of them says. The same line comes from one function (`ActivitySummary::line`, `crates/protocol/src/activity.rs`), so the chip and the notification cannot disagree.
+
+- **The line.** What needs you first, then what finished: `2 requests wait for you · 1 turn failed · 1 task sent to review · 3 turns finished · 2 tasks done · 4 files changed`. Requests that wait, failed turns, failed tasks and tasks sent to review need you; finished turns, done tasks and changed files do not. Sessions that began or ended are not news (a shell starting is not something to catch up on), and there is no line at all when nothing else happened.
+- **The Catch up chip.** In Mawas Home's empty conversation (a new chat, before the first message) a compact **Catch up · 2 requests wait for you · …** button shows the line for the events since you last caught up — the same window and the same *last seen* marker as the rail's Recent tab (`desktop-state.json`, *Mark as seen*), read once from `agents.activity`, refreshed when the agents change, and costing nothing. One click opens the rail on its **Recent** tab, opening the rail first when it is hidden, and remembers the tab. When nothing happened — or you marked it all as seen — there is no chip. A conversation that already has messages shows none.
+- **The digest notification.** When no Hutan window has been the active one for a while and something needs you, the daemon posts **one** quiet native notification — *While you were away*, with the line — so you do not have to open anything to know there is something to do. It is a banner without a sound and nothing is asked of any model. A click (or *Open*) brings Hutan forward on Mawas Home with the Recent tab showing.
+
+**When it is sent** (`crates/daemon/src/digest.rs`, `decide`). Setting `notify.digest_hours` (Settings → Mawas → *Catching up* → *Notify me after being away*; `[notify] digest_hours` in `daemon.toml`; live, no restart): **`0` is off, and off is the default** — nobody gets a notification they did not ask for. With *N* hours, the daemon looks every five minutes and sends a digest only when **all** of these hold:
+
+1. no window is the active one: the desktop tells the daemon with every `client.focus` whether its window is the OS's active one (`window_active`), so a window that is open behind another app counts as away, and so does no desktop connected at all; the start of the daemon counts as the last moment you were here, so a restart does not make a digest due;
+2. the last window left at least *N* hours ago;
+3. the last digest went out at least *N* hours ago — **at most one per period, never one per agent** (the time of the last one survives a restart);
+4. the activity since the later of your leaving and the last digest **needs you** (a request that waits, a failed turn or task, work sent to review). Finished work alone is not worth a ping: you get nothing, and the chip is still there when you come back. A request that was already waiting when you left is not news; the digest says what came after.
+
+It is raised through the daemon's notification pipeline as a `digest` intent for Global Mawas's chat (`notify.enabled = false` silences it; it is not one of `notify.kinds`, its own switch is the setting) and is posted natively only from `Hutan.app` like every notification (`docs/packaging.md` § Native notifications). It needs a Mawas Home conversation to open: the desktop creates one the first time Home is shown, and without one the daemon sends nothing. Hutan has no quiet hours of its own, so there is nothing for the digest to respect there beyond the system's own Focus modes, which silence the banner as they do any other.
+
+Tests: `crates/protocol/src/activity.rs` (the line), `crates/daemon/src/digest.rs` (`decide`: off, the period, an active window, no desktop, one per period, the state file), `crates/daemon/tests/it/digest.rs` (a real daemon with a shortened hour: once, silence with nothing to say, off by default and live, a closed window), `crates/desktop/tests/it/mawas_gpui.rs` (the chip and its click, the setting row, the window's activation reaching the daemon, a digest's *Open* showing Recent).
+
 ## Permissions
 
 ```toml

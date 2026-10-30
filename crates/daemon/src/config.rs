@@ -75,6 +75,7 @@
 //! native = true                  # also post intents to the system's notification centre (only from Hutan.app)
 //! sound = "default"              # "default": requests and failures play the system's sound; "none": no sound
 //! finished = true                # finished work (a turn, a task) raises an intent too, quietly and at most once per 90 s per session
+//! digest_hours = 0               # 0 = off. Else: away from every Hutan window this many hours with something that needs you, one quiet notification (docs/assistant.md § Catching up)
 //!
 //! [tasks]                        # tasks with dependencies (protocol 0.16, docs/orchestration.md)
 //! max_parallel = 3               # tasks with `auto_start` start by themselves up to this many at once
@@ -602,6 +603,12 @@ pub struct NotifySettings {
     /// `task_done`: *Ready for review*); requests and failures are unaffected. A session's
     /// finished turns raise at most one intent per 90 s.
     pub finished: bool,
+    /// The digest (protocol 0.68, `docs/assistant.md` § Catching up): when no Hutan window has
+    /// been the active one for this many hours and something needs the user (a request that
+    /// waits, a failed turn or task, work sent to review) since the last digest, **one** quiet
+    /// notification says so. At most one per this many hours, never one per agent; no model is
+    /// asked. `0` (the default) is off.
+    pub digest_hours: u64,
 }
 
 /// `notify.sound`: what a posted notification sounds like.
@@ -630,11 +637,16 @@ impl Default for NotifySettings {
         Self {
             enabled: true,
             min_turn_secs: DEFAULT_MIN_TURN_SECS,
-            kinds: IntentKind::ALL.to_vec(),
+            // The digest is not an event's intent: it has its own setting (`digest_hours`).
+            kinds: IntentKind::ALL
+                .into_iter()
+                .filter(|kind| *kind != IntentKind::Digest)
+                .collect(),
             expire_secs: DEFAULT_EXPIRE_SECS,
             native: true,
             sound: NotifySound::Default,
             finished: true,
+            digest_hours: 0,
         }
     }
 }
@@ -1787,7 +1799,14 @@ mod tests {
         let notify = DaemonSettings::parse("", None).unwrap().notify;
         assert!(notify.enabled);
         assert_eq!(notify.min_turn_secs, 20);
-        assert_eq!(notify.kinds, IntentKind::ALL.to_vec());
+        assert_eq!(
+            notify.kinds,
+            IntentKind::ALL
+                .into_iter()
+                .filter(|kind| *kind != IntentKind::Digest)
+                .collect::<Vec<_>>(),
+            "every kind an event raises; the digest has its own setting"
+        );
         assert_eq!(notify.expire_secs, 3600);
         assert!(notify.native, "native posting is on unless switched off");
     }

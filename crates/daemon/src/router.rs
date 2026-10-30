@@ -60,6 +60,7 @@ pub struct Services {
     pub history: Arc<HistoryService>,
     pub assistant: Arc<AssistantService>,
     pub notify: Arc<NotifyService>,
+    pub digest: Arc<crate::digest::DigestService>,
     pub worktrees: Arc<WorktreeService>,
     pub tasks: Arc<TaskService>,
     pub accounts: Arc<AccountService>,
@@ -86,6 +87,7 @@ pub struct Router {
     history: Arc<HistoryService>,
     assistant: Arc<AssistantService>,
     notify: Arc<NotifyService>,
+    digest: Arc<crate::digest::DigestService>,
     worktrees: Arc<WorktreeService>,
     tasks: Arc<TaskService>,
     accounts: Arc<AccountService>,
@@ -126,6 +128,7 @@ impl Router {
             history: services.history,
             assistant: services.assistant,
             notify: services.notify,
+            digest: services.digest,
             worktrees: services.worktrees,
             tasks: services.tasks,
             accounts: services.accounts,
@@ -591,6 +594,8 @@ impl Router {
             Request::NotifyAct(req) => ok(&self.notify.act(conn.client_kind(), req).await?),
             Request::ClientFocus(req) => {
                 self.notify.set_focus(conn.id(), req.session_id);
+                self.digest
+                    .report(conn.id(), req.session_id, req.window_active);
                 self.insight.focus(conn, req.session_id);
                 ok(&Empty {})
             }
@@ -1040,6 +1045,7 @@ impl Router {
     pub fn connection_closed(&self, conn: ConnId) {
         self.hub.connection_closed(conn);
         self.notify.connection_closed(conn);
+        self.digest.connection_closed(conn);
         self.insight.connection_closed(conn);
         self.resources.unsubscribe(conn);
         self.ui.connection_closed(conn);

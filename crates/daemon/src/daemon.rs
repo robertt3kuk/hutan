@@ -30,6 +30,7 @@ use crate::config::DaemonSettings;
 use crate::conn::{self, ConnContext};
 use crate::control::ControlService;
 use crate::daemon_settings::{SettingsService, Targets};
+use crate::digest::{DigestInputs, DigestService, DigestTuning, STATE_FILE as DIGEST_STATE_FILE};
 use crate::error::{DaemonError, MAX_SOCKET_PATH_BYTES};
 use crate::files::FileService;
 use crate::harness::Harnesses;
@@ -137,6 +138,9 @@ pub struct DaemonConfig {
     /// source (it never checks and no test contacts GitHub); `hutand` sets GitHub
     /// ([`UpdateTuning::github`]), a test a mock server.
     pub updates: UpdateTuning,
+    /// How the digest is timed: how often the daemon looks, and how long an "hour" of
+    /// `notify.digest_hours` is (tests shorten both).
+    pub digest: DigestTuning,
 }
 
 impl DaemonConfig {
@@ -162,6 +166,7 @@ impl DaemonConfig {
             lsp: LspTuning::default(),
             usage_probes: false,
             updates: UpdateTuning::default(),
+            digest: DigestTuning::default(),
         }
     }
 }
@@ -560,6 +565,16 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         registry: registry.clone(),
     });
     updates.start(shutdown.clone());
+    let digest = DigestService::new(DigestInputs {
+        notify: notify.clone(),
+        assistant: assistant.clone(),
+        storage: storage.clone(),
+        tasks: tasks.clone(),
+        state_file: paths.base.join(DIGEST_STATE_FILE),
+        tuning: config.digest.clone(),
+    });
+    // Looks until shutdown; nothing needs its handle.
+    drop(digest.start(shutdown.clone()));
     let settings_service = SettingsService::new(
         paths.config_file.clone(),
         paths.user_home.clone(),
@@ -584,6 +599,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             history,
             assistant,
             notify,
+            digest,
             worktrees,
             tasks,
             accounts,

@@ -530,6 +530,54 @@ impl Core {
 
     // Pending intents -------------------------------------------------------------------------
 
+    /// The digest (protocol 0.68): one quiet intent for the Global Mawas chat, which replaces a
+    /// digest still pending. Only `notify.enabled` gates it: the digest has its own setting
+    /// (`notify.digest_hours`) and says what *needs* the user, so neither `kinds`, the finished
+    /// switch, a focused session nor the burst limit apply.
+    fn raise_digest(
+        &mut self,
+        session: SessionId,
+        workspace_id: Option<WorkspaceId>,
+        title: &str,
+        body: &str,
+        now_ms: u64,
+    ) -> Option<Entry> {
+        if !self.settings.enabled {
+            return None;
+        }
+        self.expire(now_ms);
+        self.withdraw_where(|e| e.intent.kind == IntentKind::Digest);
+        let entry = Entry {
+            intent: NotificationIntent {
+                id: Ulid::generate().to_string(),
+                kind: IntentKind::Digest,
+                session_id: session,
+                workspace_id,
+                title: clean(title, TITLE_MAX_CHARS),
+                body: clean(body, BODY_MAX_CHARS),
+                actions: vec![IntentAction {
+                    id: ACTION_OPEN.to_owned(),
+                    label: "Open".to_owned(),
+                }],
+                created_at_ms: now_ms,
+                expires_at_ms: Some(
+                    now_ms.saturating_add(self.settings.expire_secs.saturating_mul(1000)),
+                ),
+            },
+            node: "digest".to_owned(),
+            approval: None,
+            question: None,
+            destructive: Vec::new(),
+        };
+        self.pending.push_back(entry.clone());
+        while self.pending.len() > MAX_PENDING {
+            if let Some(dropped) = self.pending.pop_front() {
+                self.withdrawn.push(dropped.intent.id);
+            }
+        }
+        Some(entry)
+    }
+
     /// Takes every entry `gone` selects out of `pending`, noting it in `withdrawn`.
     fn withdraw_where(&mut self, mut gone: impl FnMut(&Entry) -> bool) {
         let withdrawn = &mut self.withdrawn;
@@ -881,6 +929,35 @@ impl NotifyService {
                 SessionMeta::default()
             }
         }
+    }
+
+    /// Raises the digest: one quiet native notification and a `notify.intent` for `session`
+    /// (the Global Mawas chat). `false` when notifications are off.
+    pub fn raise_digest(
+        &self,
+        session: SessionId,
+        workspace: Option<WorkspaceId>,
+        title: &str,
+        body: &str,
+    ) -> bool {
+        let raised = self.with_core(|core| {
+            let entry = core.raise_digest(session, workspace, title, body, now_ms())?;
+            // Quiet by its kind (`Urgency::Finished`): a banner, no sound.
+            let silent = !core.plays_sound(IntentKind::Digest);
+            self.native_send(NativeOp::Post(
+                NativeNotification::from_intent(&entry.intent, &entry.destructive).silent(silent),
+            ));
+            Some(entry)
+        });
+        let Some(entry) = raised else {
+            return false;
+        };
+        if let Err(error) = self.bus.publish(&Event::NotifyIntent {
+            intent: entry.intent,
+        }) {
+            warn!(%error, "could not publish the digest");
+        }
+        true
     }
 
     /// `notify.list`.

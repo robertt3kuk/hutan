@@ -454,6 +454,16 @@ fn build_specs() -> Vec<Spec> {
         live("notify.finished", Kind::Bool, Group::Notify, |c| {
             json!(c.notify.finished)
         }),
+        live(
+            "notify.digest_hours",
+            Kind::Int {
+                min: Some(0),
+                max: Some(24 * 30),
+                only: &[],
+            },
+            Group::Notify,
+            |c| int_value(c.notify.digest_hours),
+        ),
         restart("notify.native", Kind::Bool, |c| json!(c.notify.native)),
         restart(
             "terminal.env_inherit",
@@ -1607,7 +1617,12 @@ mod tests {
 
     #[test]
     fn the_intent_kind_choices_are_the_real_ones() {
-        let names: Vec<&str> = IntentKind::ALL.iter().map(|k| k.as_str()).collect();
+        // Every kind an event raises; the digest is `notify.digest_hours`, not a choice here.
+        let names: Vec<&str> = IntentKind::ALL
+            .iter()
+            .filter(|k| **k != IntentKind::Digest)
+            .map(|k| k.as_str())
+            .collect();
         assert_eq!(names, INTENT_KINDS);
     }
 
@@ -1764,6 +1779,7 @@ mod tests {
             native: _,
             sound: _,
             finished: _,
+            digest_hours: _,
         } = notify;
         let config::TerminalSettings { env_inherit: _ } = terminal;
         let config::TasksSettings { max_parallel: _ } = tasks;
@@ -1844,6 +1860,7 @@ mod tests {
             "notify.native",
             "notify.sound",
             "notify.finished",
+            "notify.digest_hours",
             "terminal.env_inherit",
             "tasks.max_parallel",
             "projects.auto",

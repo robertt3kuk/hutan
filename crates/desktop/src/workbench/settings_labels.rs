@@ -1563,6 +1563,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "notify.digest_hours",
+        "Notify me after being away",
+        "After this many hours with no Hutan window active, and only if something needs you (a request that waits, a failed turn or task, work sent to review), Hutan shows one quiet notification with the same line as Catch up on Mawas Home. At most one per period; no model is asked. 0 switches it off (the default).",
+    ),
+    field(
+        "daemon",
         "assistant.context.shell",
         "Projects: terminal output",
         "Lets the assistant of a project read the commands and output of terminals you attach to a message.",
@@ -2314,6 +2320,8 @@ pub mod words {
         SEC_ASSISTANT_LIMITS = "Attachments";
         SEC_ASSISTANT_MEMORY = "Memory";
         SEC_ASSISTANT_MEMORY_HELP = "What Mawas remembers because you approved it: see and edit it on the Memory page (Mawas: Memory). A model's proposals are never saved until you approve them. Archived entries are no longer given to new conversations; text already sent to a provider or kept in a transcript cannot be taken back.";
+        SEC_ASSISTANT_CATCH_UP = "Catching up";
+        SEC_ASSISTANT_CATCH_UP_HELP = "Mawas Home's Catch up chip and the Recent tab are always there. This is the one notification for when you were away; it uses no model.";
         SCOPE_GLOBAL = "Global (Home)";
         INHERIT = "Inherit";
         ALLOW = "Allow";
@@ -2367,6 +2375,7 @@ pub mod words {
         // ---- R4-A ----
         ENV_WARNING_DAEMON = "Do not put secrets here: the values stay in daemon.toml as plain text.";
         IDLE_STOP_HINT = "0 (never) or at least 60";
+        DIGEST_HOURS_HINT = "Hours away; 0 is off (at most 720)";
         PROBLEMS_COUNT = "Problems";
         APPLIES_RESTART_SHORT = "after restart";
         PENDING_RESTART_SHORT = "restart to apply";
