@@ -1,10 +1,12 @@
-//! The markdown subset of chat messages: paragraphs, headings, emphasis, inline code, fenced
-//! code, lists (nested), quotes, rules and links. Raw HTML is plain text, images show their
-//! alt text, tables stay as preformatted text. Text that is still streaming parses too: an
-//! unclosed fence is a code block so far, an unclosed `**` is literal.
+//! The markdown of chat messages and of Markdown files (the editor's preview): paragraphs,
+//! headings, emphasis, inline code, fenced code, lists (nested, with task markers), quotes,
+//! rules, tables, links and images. Raw HTML is plain text (an HTML comment is dropped).
+//! Text that is still streaming parses too: an unclosed fence is a code block so far, an
+//! unclosed `**` is literal.
 //!
-//! [`parse`] gives blocks; [`flatten`] turns a run of inlines into one string with styled spans
-//! for the renderer, which draws each text run as one element.
+//! [`parse`] gives blocks; [`parse_located`] the blocks of a document with the line each starts
+//! at (a preview follows its source by them); [`flatten`] turns a run of inlines into one string
+//! with styled spans for the renderer, which draws each text run as one element.
 
 use std::ops::Range;
 
@@ -18,10 +20,17 @@ pub enum Block {
         level: u8,
         content: Vec<Inline>,
     },
-    /// A fenced block (or a table, kept as preformatted text).
+    /// A fenced block.
     Code {
         lang: Option<String>,
         text: String,
+    },
+    /// A table (GitHub's pipe syntax): the header cells, one alignment per column and the rows
+    /// (each as long as the header).
+    Table {
+        align: Vec<Align>,
+        header: Vec<Vec<Inline>>,
+        rows: Vec<Vec<Vec<Inline>>>,
     },
     List {
         ordered: bool,
@@ -32,13 +41,33 @@ pub enum Block {
     Rule,
 }
 
+/// How a table column's cells are aligned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Align {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inline {
     Text(String),
     Code(String),
     Emphasis(Vec<Inline>),
     Strong(Vec<Inline>),
-    Link { content: Vec<Inline>, url: String },
+    Link {
+        content: Vec<Inline>,
+        url: String,
+    },
+    /// `![alt](url)`. Flattened, it is its alt text.
+    Image {
+        alt: String,
+        url: String,
+    },
+    /// The box of a task list item (`- [x] done`): the first inline of the item's first
+    /// paragraph. Flattened, it is `☑` or `☐` and a space.
+    Task(bool),
     LineBreak,
 }
 
@@ -68,6 +97,56 @@ pub fn parse(text: &str) -> Vec<Block> {
 pub fn parse_breaks(text: &str) -> Vec<Block> {
     let lines: Vec<&str> = text.lines().collect();
     parse_lines(&lines, 0, Newlines::Hard)
+}
+
+/// A top-level block of a document and the line it starts at (0-based).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Located {
+    pub line: usize,
+    pub block: Block,
+}
+
+/// The blocks of a Markdown file, CommonMark's way (a single newline is a space), each with the
+/// line it starts at: what a preview scrolls by. A YAML front matter (`---` … `---` on the first
+/// lines) is a `yaml` code block.
+pub fn parse_located(text: &str) -> Vec<Located> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = Vec::new();
+    let mut from = 0;
+    if let Some(end) = front_matter_end(&lines) {
+        out.push(Located {
+            line: 0,
+            block: Block::Code {
+                lang: Some("yaml".to_owned()),
+                text: lines[1..end].join("\n"),
+            },
+        });
+        from = end + 1;
+    }
+    out.extend(
+        parse_spanned(&lines[from..], 0, Newlines::Soft)
+            .into_iter()
+            .map(|(line, block)| Located {
+                line: line + from,
+                block,
+            }),
+    );
+    out
+}
+
+/// The line of the `---` that closes a front matter opened on the first line (within the first
+/// 200 lines).
+fn front_matter_end(lines: &[&str]) -> Option<usize> {
+    if lines.first().map(|l| l.trim_end()) != Some("---") {
+        return None;
+    }
+    lines
+        .iter()
+        .enumerate()
+        .take(200)
+        .skip(1)
+        .find(|(_, line)| matches!(line.trim_end(), "---" | "..."))
+        .map(|(at, _)| at)
 }
 
 // ---- blocks ---------------------------------------------------------------------------------
@@ -186,14 +265,62 @@ fn is_quote(line: &str) -> bool {
     indent_of(line) <= 3 && line.trim_start().starts_with('>')
 }
 
-/// A table delimiter row: `|---|:--:|`.
-fn is_table_delimiter(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.contains('-')
-        && trimmed.contains('|')
-        && trimmed
-            .chars()
-            .all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
+/// The cells of a table row: split at the `|`s that are not escaped, the outer ones optional.
+fn split_row(line: &str) -> Vec<String> {
+    let line = line.trim();
+    let ends_with_pipe = line.ends_with('|') && !line.ends_with("\\|");
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'|') => {
+                cell.push('|');
+                chars.next();
+            }
+            '|' => cells.push(std::mem::take(&mut cell)),
+            c => cell.push(c),
+        }
+    }
+    if !(cell.trim().is_empty() && ends_with_pipe) {
+        cells.push(cell);
+    }
+    cells
+}
+
+/// The alignments of a table delimiter row (`|---|:--:|--:|`), `None` when it is not one.
+fn table_delimiter(line: &str) -> Option<Vec<Align>> {
+    if !line.contains('-') {
+        return None;
+    }
+    split_row(line)
+        .iter()
+        .map(|cell| {
+            let cell = cell.trim();
+            let (left, right) = (cell.starts_with(':'), cell.ends_with(':'));
+            let dashes = cell.trim_matches(':');
+            (!dashes.is_empty() && dashes.chars().all(|c| c == '-')).then_some(
+                match (left, right) {
+                    (true, true) => Align::Center,
+                    (false, true) => Align::Right,
+                    _ => Align::Left,
+                },
+            )
+        })
+        .collect()
+}
+
+/// The header cells and alignments of the table that starts at line `at`, if one does: a row
+/// with a `|`, then a delimiter row of as many cells.
+fn table_head(lines: &[&str], at: usize) -> Option<(Vec<String>, Vec<Align>)> {
+    let line = lines.get(at)?;
+    if !line.contains('|') || indent_of(line) > 3 {
+        return None;
+    }
+    let align = table_delimiter(lines.get(at + 1)?)?;
+    let header = split_row(line);
+    (header.len() == align.len()).then_some((header, align))
 }
 
 struct Marker<'a> {
@@ -257,6 +384,14 @@ fn interrupts_paragraph(line: &str) -> bool {
 }
 
 fn parse_lines(lines: &[&str], depth: usize, newlines: Newlines) -> Vec<Block> {
+    parse_spanned(lines, depth, newlines)
+        .into_iter()
+        .map(|(_, block)| block)
+        .collect()
+}
+
+/// The blocks of `lines`, each with the index of the line it starts at.
+fn parse_spanned(lines: &[&str], depth: usize, newlines: Newlines) -> Vec<(usize, Block)> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -265,11 +400,13 @@ fn parse_lines(lines: &[&str], depth: usize, newlines: Newlines) -> Vec<Block> {
             i += 1;
             continue;
         }
+        let start = i;
         if depth >= MAX_DEPTH {
             let (paragraph, next) = paragraph(lines, i, newlines);
-            out.push(Block::Paragraph(vec![Inline::Text(
-                paragraph.replace(HARD_NEWLINE, "\n"),
-            )]));
+            out.push((
+                start,
+                Block::Paragraph(vec![Inline::Text(paragraph.replace(HARD_NEWLINE, "\n"))]),
+            ));
             i = next;
             continue;
         }
@@ -284,22 +421,36 @@ fn parse_lines(lines: &[&str], depth: usize, newlines: Newlines) -> Vec<Block> {
                 body.push(strip_indent(lines[i], fence.indent));
                 i += 1;
             }
-            out.push(Block::Code {
-                lang: fence.lang,
-                text: body.join("\n"),
-            });
+            out.push((
+                start,
+                Block::Code {
+                    lang: fence.lang,
+                    text: body.join("\n"),
+                },
+            ));
+            continue;
+        }
+        if line.trim_start().starts_with("<!--") {
+            // An HTML comment is nobody's text: it runs to the line that holds its end.
+            while i < lines.len() && !lines[i].contains("-->") {
+                i += 1;
+            }
+            i += 1;
             continue;
         }
         if let Some((level, text)) = heading(line) {
-            out.push(Block::Heading {
-                level,
-                content: parse_inline(text),
-            });
+            out.push((
+                start,
+                Block::Heading {
+                    level,
+                    content: parse_inline(text),
+                },
+            ));
             i += 1;
             continue;
         }
         if is_rule(line) {
-            out.push(Block::Rule);
+            out.push((start, Block::Rule));
             i += 1;
             continue;
         }
@@ -310,33 +461,45 @@ fn parse_lines(lines: &[&str], depth: usize, newlines: Newlines) -> Vec<Block> {
                 inner.push(rest.strip_prefix(' ').unwrap_or(rest));
                 i += 1;
             }
-            out.push(Block::Quote(parse_lines(&inner, depth + 1, newlines)));
+            out.push((
+                start,
+                Block::Quote(parse_lines(&inner, depth + 1, newlines)),
+            ));
             continue;
         }
         if let Some(first) = list_marker(line) {
             let (block, next) = list(lines, i, first.ordered, first.number, depth, newlines);
-            out.push(block);
+            out.push((start, block));
             i = next;
             continue;
         }
-        if line.contains('|')
-            && lines
-                .get(i + 1)
-                .is_some_and(|next| is_table_delimiter(next))
-        {
+        if let Some((header, align)) = table_head(lines, i) {
+            i += 2;
+            let columns = align.len();
             let mut rows = Vec::new();
-            while i < lines.len() && lines[i].contains('|') && !lines[i].trim().is_empty() {
-                rows.push(lines[i].trim_end());
+            while i < lines.len()
+                && !lines[i].trim().is_empty()
+                && fence_open(lines[i]).is_none()
+                && heading(lines[i]).is_none()
+                && !is_quote(lines[i])
+            {
+                let mut cells = split_row(lines[i]);
+                cells.resize(columns, String::new());
+                rows.push(cells.iter().map(|c| parse_inline(c.trim())).collect());
                 i += 1;
             }
-            out.push(Block::Code {
-                lang: None,
-                text: rows.join("\n"),
-            });
+            out.push((
+                start,
+                Block::Table {
+                    align,
+                    header: header.iter().map(|c| parse_inline(c.trim())).collect(),
+                    rows,
+                },
+            ));
             continue;
         }
         let (text, next) = paragraph(lines, i, newlines);
-        out.push(Block::Paragraph(parse_inline(&text)));
+        out.push((start, Block::Paragraph(parse_inline(&text))));
         i = next;
     }
     out
@@ -412,7 +575,9 @@ fn list(
             }
             i += 1;
         }
-        items.push(parse_lines(&content, depth + 1, newlines));
+        let mut blocks = parse_lines(&content, depth + 1, newlines);
+        mark_task(&mut blocks);
+        items.push(blocks);
         // The next item follows directly or after blank lines.
         let next = (i..lines.len()).find(|j| !lines[*j].trim().is_empty());
         match next {
@@ -544,9 +709,12 @@ fn inline(s: &str, depth: usize) -> Vec<Inline> {
                 continue;
             }
             '!' if s[i + 1..].starts_with('[') => {
-                if let Some((label, _, end)) = bracket_link(s, i + 1) {
-                    // No images: the alt text stays.
-                    plain.push_str(&label_text(label, depth));
+                if let Some((label, url, end)) = bracket_link(s, i + 1) {
+                    flush(&mut plain, &mut out);
+                    out.push(Inline::Image {
+                        alt: label_text(label, depth),
+                        url: url.to_owned(),
+                    });
                     i = end;
                     continue;
                 }
@@ -624,9 +792,58 @@ fn collect_text(inlines: &[Inline], into: &mut String) {
             Inline::Text(t) | Inline::Code(t) => into.push_str(t),
             Inline::Emphasis(inner) | Inline::Strong(inner) => collect_text(inner, into),
             Inline::Link { content, .. } => collect_text(content, into),
+            Inline::Image { alt, .. } => into.push_str(alt),
+            Inline::Task(_) => {}
             Inline::LineBreak => into.push('\n'),
         }
     }
+}
+
+/// The text of `inlines` without any marks (what a heading's anchor is made of).
+pub fn plain_text(inlines: &[Inline]) -> String {
+    let mut text = String::new();
+    collect_text(inlines, &mut text);
+    text
+}
+
+/// The anchor GitHub gives a heading: lower case, letters, digits, `-` and `_` kept, spaces
+/// become `-`, other punctuation goes. The same heading twice is the caller's to number.
+pub fn slug(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' | '\t' => Some('-'),
+            '-' | '_' => Some(c),
+            c if c.is_alphanumeric() => Some(c),
+            _ => None,
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Turns `[ ]` / `[x]` at the start of a list item into [`Inline::Task`].
+fn mark_task(blocks: &mut [Block]) {
+    let Some(Block::Paragraph(inlines)) = blocks.first_mut() else {
+        return;
+    };
+    let Some(Inline::Text(first)) = inlines.first() else {
+        return;
+    };
+    let (done, rest) = match first.get(..3) {
+        Some("[ ]") => (false, &first[3..]),
+        Some("[x]" | "[X]") => (true, &first[3..]),
+        _ => return,
+    };
+    if !(rest.is_empty() || rest.starts_with(' ')) {
+        return;
+    }
+    let rest = rest.trim_start().to_owned();
+    if rest.is_empty() {
+        inlines.remove(0);
+    } else {
+        inlines[0] = Inline::Text(rest);
+    }
+    inlines.insert(0, Inline::Task(done));
 }
 
 /// Schemes a click may open.
@@ -825,9 +1042,24 @@ pub struct Styled {
     pub spans: Vec<Span>,
 }
 
+/// Which links of a text are clickable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Links {
+    /// Web and mail links only (`http`, `https`, `mailto`): a message's text may be anyone's.
+    Web,
+    /// Every link with a target: the owner of a document decides what each one opens.
+    Any,
+}
+
+/// [`flatten_links`] for a message: only web and mail links are clickable.
 pub fn flatten(inlines: &[Inline]) -> Styled {
+    flatten_links(inlines, Links::Web)
+}
+
+/// Inlines as one string with their styles; the links `links` allows carry their target.
+pub fn flatten_links(inlines: &[Inline], links: Links) -> Styled {
     let mut styled = Styled::default();
-    push_inlines(inlines, &SpanStyle::default(), &mut styled);
+    push_inlines(inlines, &SpanStyle::default(), links, &mut styled);
     styled
 }
 
@@ -843,7 +1075,7 @@ fn push_span(styled: &mut Styled, text: &str, style: &SpanStyle) {
     });
 }
 
-fn push_inlines(inlines: &[Inline], style: &SpanStyle, out: &mut Styled) {
+fn push_inlines(inlines: &[Inline], style: &SpanStyle, links: Links, out: &mut Styled) {
     for node in inlines {
         match node {
             Inline::Text(text) => push_span(out, text, style),
@@ -861,6 +1093,7 @@ fn push_inlines(inlines: &[Inline], style: &SpanStyle, out: &mut Styled) {
                     italic: true,
                     ..style.clone()
                 },
+                links,
                 out,
             ),
             Inline::Strong(inner) => push_inlines(
@@ -869,16 +1102,24 @@ fn push_inlines(inlines: &[Inline], style: &SpanStyle, out: &mut Styled) {
                     bold: true,
                     ..style.clone()
                 },
+                links,
                 out,
             ),
             Inline::Link { content, url } => push_inlines(
                 content,
                 &SpanStyle {
-                    link: is_openable(url).then(|| url.clone()),
+                    link: match links {
+                        Links::Web => is_openable(url).then(|| url.clone()),
+                        Links::Any => Some(url.clone()),
+                    },
                     ..style.clone()
                 },
+                links,
                 out,
             ),
+            // The alt text: a renderer that can draw the image does so before it gets here.
+            Inline::Image { alt, .. } => push_span(out, alt, style),
+            Inline::Task(done) => push_span(out, if *done { "☑ " } else { "☐ " }, style),
             Inline::LineBreak => push_span(out, "\n", style),
         }
     }
@@ -1083,9 +1324,28 @@ mod tests {
                 url: "https://example.com".into()
             }]
         );
+        // An image is its own node; flattened it is its alt text (a chat does not load images).
         assert_eq!(
             parse_inline("![a cat](https://x/y.png)"),
-            vec![text("a cat")]
+            vec![Inline::Image {
+                alt: "a cat".into(),
+                url: "https://x/y.png".into()
+            }]
+        );
+        assert_eq!(
+            flatten(&parse_inline("see ![a cat](https://x/y.png)!")).text,
+            "see a cat!"
+        );
+        // A linked image (a badge).
+        assert_eq!(
+            parse_inline("[![ci](b.svg)](https://x.y/ci)"),
+            vec![Inline::Link {
+                content: vec![Inline::Image {
+                    alt: "ci".into(),
+                    url: "b.svg".into()
+                }],
+                url: "https://x.y/ci".into()
+            }]
         );
         assert_eq!(parse_inline("[open"), vec![text("[open")]);
     }
@@ -1225,14 +1485,129 @@ mod tests {
     }
 
     #[test]
-    fn tables_stay_preformatted() {
-        let blocks = parse("| a | b |\n|---|---|\n| 1 | 2 |\n\nafter");
+    fn tables_are_tables_with_alignment_and_escaped_pipes() {
+        let blocks =
+            parse("| a | b | c |\n|:--|:-:|--:|\n| 1 | `x \\| y` | **3** |\n| 4 |\n\nafter");
+        let Block::Table {
+            align,
+            header,
+            rows,
+        } = &blocks[0]
+        else {
+            panic!("{blocks:?}");
+        };
+        assert_eq!(align, &[Align::Left, Align::Center, Align::Right]);
+        assert_eq!(header, &[vec![text("a")], vec![text("b")], vec![text("c")]]);
+        assert_eq!(rows.len(), 2);
         assert_eq!(
-            blocks[0],
-            Block::Code {
-                lang: None,
-                text: "| a | b |\n|---|---|\n| 1 | 2 |".into()
+            rows[0],
+            [
+                vec![text("1")],
+                vec![Inline::Code("x | y".into())],
+                vec![Inline::Strong(vec![text("3")])]
+            ]
+        );
+        assert_eq!(
+            rows[1],
+            [vec![text("4")], vec![], vec![]],
+            "short rows are padded"
+        );
+        assert_eq!(blocks[1], Block::Paragraph(vec![text("after")]));
+        // A delimiter of another width, or a first row without a pipe, is no table.
+        assert!(matches!(
+            parse("| a | b |\n|---|\n| 1 | 2 |")[0],
+            Block::Paragraph(_)
+        ));
+        assert!(matches!(parse("a\n|---|")[0], Block::Paragraph(_)));
+    }
+
+    #[test]
+    fn task_list_items_have_their_box() {
+        let blocks = parse("- [ ] todo\n- [x] done *well*\n- [X] big\n- [x]\n- [y] no\n- [x]no");
+        let Block::List { items, .. } = &blocks[0] else {
+            panic!("{blocks:?}");
+        };
+        assert_eq!(
+            items[0],
+            [Block::Paragraph(vec![Inline::Task(false), text("todo")])]
+        );
+        assert_eq!(
+            items[1],
+            [Block::Paragraph(vec![
+                Inline::Task(true),
+                text("done "),
+                Inline::Emphasis(vec![text("well")])
+            ])]
+        );
+        assert_eq!(
+            items[2],
+            [Block::Paragraph(vec![Inline::Task(true), text("big")])]
+        );
+        assert_eq!(items[3], [Block::Paragraph(vec![Inline::Task(true)])]);
+        assert_eq!(items[4], [Block::Paragraph(vec![text("[y] no")])]);
+        assert_eq!(items[5], [Block::Paragraph(vec![text("[x]no")])]);
+        assert_eq!(
+            flatten(&[Inline::Task(true), text("a")]).text,
+            "☑ a",
+            "a message shows the box as a glyph too"
+        );
+    }
+
+    #[test]
+    fn a_document_knows_the_line_of_each_block() {
+        let located = parse_located(
+            "# Title\n\npara one\nstill one\n\n```rust\nfn x() {}\n```\n- a\n- b\n\n| a |\n|---|\n| 1 |\n> q",
+        );
+        let lines: Vec<usize> = located.iter().map(|l| l.line).collect();
+        assert_eq!(lines, [0, 2, 5, 8, 11, 14]);
+        assert!(matches!(located[4].block, Block::Table { .. }));
+    }
+
+    #[test]
+    fn front_matter_is_yaml_and_html_comments_are_gone() {
+        let located = parse_located("---\ntitle: x\n---\n# H\n<!-- hidden\nmore -->\ntext");
+        assert_eq!(
+            located[0],
+            Located {
+                line: 0,
+                block: Block::Code {
+                    lang: Some("yaml".into()),
+                    text: "title: x".into()
+                }
             }
+        );
+        assert_eq!(located[1].line, 3, "lines count the front matter");
+        assert_eq!(located[2].line, 6);
+        assert_eq!(located.len(), 3, "the comment is dropped: {located:?}");
+        // Not a front matter: no closing line, or a rule on the first line of chat text.
+        assert_eq!(parse_located("---\nno end\n")[0].block, Block::Rule);
+    }
+
+    #[test]
+    fn headings_have_github_anchors() {
+        assert_eq!(slug("Getting Started"), "getting-started");
+        assert_eq!(slug("What's new? (0.3.4)"), "whats-new-034");
+        assert_eq!(slug("snake_case and-dash"), "snake_case-and-dash");
+        let Block::Heading { content, .. } = &parse("## The `code` and *more*")[0] else {
+            panic!("a heading")
+        };
+        assert_eq!(plain_text(content), "The code and more");
+    }
+
+    #[test]
+    fn document_links_are_all_clickable_a_messages_only_the_web_ones() {
+        let inlines = parse_inline("[a](docs/x.md) [b](#top) [c](https://x.y)");
+        let links = |styled: Styled| -> Vec<String> {
+            styled
+                .spans
+                .iter()
+                .filter_map(|s| s.style.link.clone())
+                .collect()
+        };
+        assert_eq!(links(flatten(&inlines)), ["https://x.y"]);
+        assert_eq!(
+            links(flatten_links(&inlines, Links::Any)),
+            ["docs/x.md", "#top", "https://x.y"]
         );
     }
 
