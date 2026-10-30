@@ -56,6 +56,8 @@ pub enum Inline {
     Code(String),
     Emphasis(Vec<Inline>),
     Strong(Vec<Inline>),
+    /// `~~text~~` (GitHub's strikethrough).
+    Strike(Vec<Inline>),
     Link {
         content: Vec<Inline>,
         url: String,
@@ -138,17 +140,29 @@ pub fn parse_located(text: &str) -> Vec<Located> {
 }
 
 thread_local! {
+    /// Whether the text being parsed on this thread is a document (a Markdown file): the HTML a
+    /// README carries is read ([`html_tag`]) there, and stays text in a message.
+    static DOCUMENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn in_document() -> bool {
+    DOCUMENT.with(std::cell::Cell::get)
+}
+
+thread_local! {
     /// The reference definitions of the document being parsed on this thread.
     static DEFINITIONS: std::cell::RefCell<std::collections::HashMap<String, String>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-/// Makes `defined` the definitions of the thread's parse until dropped.
+/// Makes `defined` the definitions of the thread's parse, and the parse a document's, until
+/// dropped.
 struct DefinitionScope;
 
 impl DefinitionScope {
     fn set(defined: std::collections::HashMap<String, String>) -> Self {
         DEFINITIONS.with(|slot| *slot.borrow_mut() = defined);
+        DOCUMENT.with(|slot| slot.set(true));
         Self
     }
 }
@@ -156,6 +170,7 @@ impl DefinitionScope {
 impl Drop for DefinitionScope {
     fn drop(&mut self) {
         DEFINITIONS.with(|slot| slot.borrow_mut().clear());
+        DOCUMENT.with(|slot| slot.set(false));
     }
 }
 
@@ -592,10 +607,40 @@ fn parse_spanned(lines: &[&str], depth: usize, newlines: Newlines) -> Vec<(usize
             continue;
         }
         let (text, next) = paragraph(lines, i, newlines);
-        out.push((start, Block::Paragraph(parse_inline(&text))));
+        let inlines = trim_breaks(parse_inline(&text));
+        // A paragraph of nothing but tags that were dropped (`</details>`) is no block.
+        if !inlines.is_empty() {
+            out.push((start, Block::Paragraph(inlines)));
+        }
         i = next;
     }
     out
+}
+
+/// `inlines` without the line breaks and white space the dropped tags of a document's HTML left
+/// at its ends (`<details>` then `<summary>…</summary>` on the next line).
+fn trim_breaks(mut inlines: Vec<Inline>) -> Vec<Inline> {
+    if !in_document() {
+        return inlines;
+    }
+    let blank = |node: &Inline| match node {
+        Inline::LineBreak => true,
+        Inline::Text(text) => text.trim().is_empty(),
+        _ => false,
+    };
+    while inlines.first().is_some_and(blank) {
+        inlines.remove(0);
+    }
+    while inlines.last().is_some_and(blank) {
+        inlines.pop();
+    }
+    if let Some(Inline::Text(text)) = inlines.first_mut() {
+        *text = text.trim_start().to_owned();
+    }
+    if let Some(Inline::Text(text)) = inlines.last_mut() {
+        *text = text.trim_end().to_owned();
+    }
+    inlines
 }
 
 /// The paragraph starting at `start`: its lines joined by `\n` (by [`HARD_NEWLINE`] when every
@@ -823,7 +868,51 @@ fn inline(s: &str, depth: usize) -> Vec<Inline> {
                     continue;
                 }
             }
+            '~' if depth < MAX_DEPTH => {
+                if let Some((node, end)) = strike(s, i, depth) {
+                    flush(&mut plain, &mut out);
+                    out.push(node);
+                    i = end;
+                    continue;
+                }
+            }
             '<' => {
+                // A document's HTML: the tags of the elements READMEs carry are dropped to
+                // their text (`<br>` is a line break, `<summary>` a bold line, `<img>` an image).
+                if in_document()
+                    && let Some((end, tag)) = html_tag(&s[i..])
+                {
+                    match tag {
+                        Html::Open { name: "br", .. } => {
+                            flush(&mut plain, &mut out);
+                            out.push(Inline::LineBreak);
+                        }
+                        Html::Open { name: "img", attrs } => {
+                            if let Some(src) = html_attr(attrs, "src") {
+                                flush(&mut plain, &mut out);
+                                out.push(Inline::Image {
+                                    alt: html_attr(attrs, "alt").unwrap_or_default(),
+                                    url: src,
+                                });
+                            }
+                        }
+                        Html::Open {
+                            name: "summary", ..
+                        } if depth < MAX_DEPTH => {
+                            let rest = &s[i + end..];
+                            if let Some(close) = rest.to_ascii_lowercase().find("</summary>") {
+                                flush(&mut plain, &mut out);
+                                out.push(Inline::Strong(inline(&rest[..close], depth + 1)));
+                                out.push(Inline::LineBreak);
+                                i += end + close + "</summary>".len();
+                                continue;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += end;
+                    continue;
+                }
                 if let Some(end) = s[i..].find('>') {
                     let inner = &s[i + 1..i + end];
                     if is_openable(inner) && !inner.contains(char::is_whitespace) {
@@ -873,6 +962,182 @@ fn inline(s: &str, depth: usize) -> Vec<Inline> {
     out
 }
 
+/// The elements a document's HTML is read for: their tags go, their text stays.
+const HTML_ELEMENTS: &[&str] = &[
+    "a",
+    "abbr",
+    "article",
+    "aside",
+    "b",
+    "blockquote",
+    "br",
+    "center",
+    "cite",
+    "code",
+    "dd",
+    "del",
+    "details",
+    "dfn",
+    "div",
+    "dl",
+    "dt",
+    "em",
+    "figcaption",
+    "figure",
+    "footer",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hr",
+    "i",
+    "img",
+    "ins",
+    "kbd",
+    "li",
+    "mark",
+    "nav",
+    "ol",
+    "p",
+    "picture",
+    "q",
+    "s",
+    "samp",
+    "section",
+    "small",
+    "source",
+    "span",
+    "strike",
+    "strong",
+    "sub",
+    "summary",
+    "sup",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "u",
+    "ul",
+    "var",
+];
+
+/// What an HTML tag at the start of a text is.
+enum Html<'a> {
+    /// `<!-- … -->`.
+    Comment,
+    /// `<name attrs>` (or `<name attrs/>`).
+    Open { name: &'a str, attrs: &'a str },
+    /// `</name>`.
+    Close,
+}
+
+/// The tag, comment or closing tag of one of [`HTML_ELEMENTS`] that `s` starts with and the byte
+/// length it takes. Anything else (`<T>`, `<script>`, a stray `<`) is not read: it stays text.
+fn html_tag(s: &str) -> Option<(usize, Html<'_>)> {
+    if let Some(rest) = s.strip_prefix("<!--") {
+        let close = rest.find("-->")?;
+        return Some((4 + close + 3, Html::Comment));
+    }
+    let rest = s.strip_prefix('<')?;
+    let closing = rest.starts_with('/');
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    let name_len = rest
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(rest.len());
+    let name = &rest[..name_len];
+    if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let lower = name.to_ascii_lowercase();
+    let known = HTML_ELEMENTS.iter().find(|e| **e == lower)?;
+    let after = &rest[name_len..];
+    let close = after.find('>')?;
+    // A tag is short and stays on its paragraph; a `<` far from any `>` is a less-than sign.
+    if close > 600 || !after.starts_with([' ', '\t', '\n', '>', '/']) {
+        return None;
+    }
+    let consumed = (s.len() - rest.len()) + name_len + close + 1;
+    if closing {
+        return Some((consumed, Html::Close));
+    }
+    let attrs = after[..close].trim_end_matches('/');
+    Some((consumed, Html::Open { name: known, attrs }))
+}
+
+/// The value of attribute `name` in the attributes of a tag (`src="a.png" alt='b'`).
+fn html_attr(attrs: &str, name: &str) -> Option<String> {
+    let lower = attrs.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find(name) {
+        let at = from + found;
+        from = at + name.len();
+        let before_ok = at == 0 || lower[..at].ends_with(char::is_whitespace);
+        let rest = attrs[from..].trim_start();
+        let Some(value) = rest.strip_prefix('=') else {
+            continue;
+        };
+        if !before_ok {
+            continue;
+        }
+        let value = value.trim_start();
+        return match value.chars().next()? {
+            quote @ ('"' | '\'') => {
+                let inner = &value[1..];
+                Some(inner[..inner.find(quote)?].to_owned())
+            }
+            _ => Some(
+                value
+                    .split(char::is_whitespace)
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+        };
+    }
+    None
+}
+
+/// `~~text~~` at `at`: GitHub's strikethrough. The text is not empty and does not start or end
+/// with white space; a longer run of tildes is not one.
+fn strike(s: &str, at: usize, depth: usize) -> Option<(Inline, usize)> {
+    let after = s[at..].strip_prefix("~~")?;
+    if prev_char(s, at) == Some('~')
+        || after.starts_with('~')
+        || after.starts_with(char::is_whitespace)
+    {
+        return None;
+    }
+    let mut i = 0;
+    while i < after.len() {
+        match after.as_bytes()[i] {
+            b'\\' => i += 2,
+            b'`' => {
+                let ticks = after[i..].chars().take_while(|c| *c == '`').count();
+                i = match code_span_end(after, i, ticks) {
+                    Some(end) => end + ticks,
+                    None => i + ticks,
+                };
+            }
+            b'~' if after[i..].starts_with("~~")
+                && !after[i + 2..].starts_with('~')
+                && i > 0
+                && !after[..i].ends_with(char::is_whitespace) =>
+            {
+                let content = inline(&after[..i], depth + 1);
+                return Some((Inline::Strike(content), at + 2 + i + 2));
+            }
+            _ => i += after[i..].chars().next().map_or(1, char::len_utf8),
+        }
+    }
+    None
+}
+
 fn label_text(label: &str, depth: usize) -> String {
     let mut text = String::new();
     collect_text(&inline(label, depth + 1), &mut text);
@@ -883,7 +1148,9 @@ fn collect_text(inlines: &[Inline], into: &mut String) {
     for node in inlines {
         match node {
             Inline::Text(t) | Inline::Code(t) => into.push_str(t),
-            Inline::Emphasis(inner) | Inline::Strong(inner) => collect_text(inner, into),
+            Inline::Emphasis(inner) | Inline::Strong(inner) | Inline::Strike(inner) => {
+                collect_text(inner, into);
+            }
             Inline::Link { content, .. } => collect_text(content, into),
             Inline::Image { alt, .. } => into.push_str(alt),
             Inline::Task(_) => {}
@@ -1150,6 +1417,8 @@ fn find_close(s: &str, from: usize, marker: char, len: usize) -> Option<usize> {
 pub struct SpanStyle {
     pub bold: bool,
     pub italic: bool,
+    /// `~~struck~~`.
+    pub strike: bool,
     pub code: bool,
     /// The url of a link that may be opened.
     pub link: Option<String>,
@@ -1227,6 +1496,15 @@ fn push_inlines(inlines: &[Inline], style: &SpanStyle, links: Links, out: &mut S
                 inner,
                 &SpanStyle {
                     bold: true,
+                    ..style.clone()
+                },
+                links,
+                out,
+            ),
+            Inline::Strike(inner) => push_inlines(
+                inner,
+                &SpanStyle {
+                    strike: true,
                     ..style.clone()
                 },
                 links,
@@ -1832,6 +2110,107 @@ mod tests {
                 text(" ✓ "),
                 Inline::Code("ç".into()),
             ]
+        );
+    }
+
+    // ---- FX-WAVE-C: strikethrough and a document's HTML ------------------------------------
+
+    #[test]
+    fn double_tildes_strike_through_and_a_lone_or_open_one_is_text() {
+        assert_eq!(
+            parse_inline("a ~~gone~~ b"),
+            vec![text("a "), Inline::Strike(vec![text("gone")]), text(" b")]
+        );
+        assert_eq!(
+            parse_inline("~~a **b** `c~~d`~~"),
+            vec![Inline::Strike(vec![
+                text("a "),
+                Inline::Strong(vec![text("b")]),
+                text(" "),
+                Inline::Code("c~~d".into()),
+            ])]
+        );
+        for plain in ["~~open", "~~ spaced ~~", "~~~three~~~", "a ~ b ~ c", "~~~~"] {
+            assert!(
+                !parse_inline(plain)
+                    .iter()
+                    .any(|n| matches!(n, Inline::Strike(_))),
+                "{plain}"
+            );
+        }
+        let styled = flatten(&parse_inline("x ~~y~~"));
+        assert_eq!(styled.text, "x y");
+        assert!(
+            styled
+                .spans
+                .iter()
+                .any(|s| s.style.strike && s.range == (2..3))
+        );
+        assert_eq!(plain_text(&parse_inline("~~y~~")), "y");
+    }
+
+    fn blocks_of(text: &str) -> Vec<Block> {
+        parse_located(text).into_iter().map(|l| l.block).collect()
+    }
+
+    #[test]
+    fn a_documents_details_open_with_the_summary_as_a_bold_line() {
+        let blocks = blocks_of(
+            "<details>\n<summary>More <b>info</b></summary>\n\nThe body, with `code`.\n\n</details>\n",
+        );
+        assert_eq!(
+            blocks,
+            vec![
+                Block::Paragraph(vec![Inline::Strong(vec![text("More info")])]),
+                Block::Paragraph(vec![
+                    text("The body, with "),
+                    Inline::Code("code".into()),
+                    text(".")
+                ]),
+            ]
+        );
+    }
+
+    #[test]
+    fn other_tags_drop_to_their_text_and_the_unknown_stay_text() {
+        let blocks = blocks_of(
+            "<div align=\"center\">Hello<br>there <kbd>Ctrl</kbd> <!-- note --> and <T> or <script>x</script></div>",
+        );
+        assert_eq!(
+            blocks,
+            vec![Block::Paragraph(vec![
+                text("Hello"),
+                Inline::LineBreak,
+                text("there Ctrl  and <T> or <script>x</script>"),
+            ])]
+        );
+        // An image of the document's HTML is an image.
+        let blocks = blocks_of(
+            "<p align=\"center\"><img src=\"img/logo.svg\" alt=\"Logo\" width=\"120\"></p>",
+        );
+        assert_eq!(
+            blocks,
+            vec![Block::Paragraph(vec![Inline::Image {
+                alt: "Logo".into(),
+                url: "img/logo.svg".into()
+            }])]
+        );
+        // A paragraph of nothing but tags is no block.
+        assert!(blocks_of("</details>\n\n<p></p>").is_empty());
+    }
+
+    #[test]
+    fn a_messages_html_is_still_text_and_a_documents_scope_ends() {
+        let _ = parse_located("<b>x</b>");
+        assert_eq!(
+            parse_inline("<b>bold</b> ~~s~~"),
+            vec![text("<b>bold</b> "), Inline::Strike(vec![text("s")])]
+        );
+        assert_eq!(
+            parse("<details>\n<summary>S</summary>"),
+            vec![Block::Paragraph(vec![text(
+                "<details> <summary>S</summary>"
+            )])]
         );
     }
 }

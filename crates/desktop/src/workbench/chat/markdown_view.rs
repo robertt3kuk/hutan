@@ -10,8 +10,8 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, ClipboardItem, ElementId, Font, FontStyle, FontWeight, InteractiveElement,
     InteractiveText, IntoElement, ObjectFit, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, StyledImage as _, StyledText, TextRun, UnderlineStyle,
-    Window, div, font, img, px,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage as _, StyledText, TextRun,
+    UnderlineStyle, Window, div, font, img, px,
 };
 use hutan_chat_view::markdown::{Align, Block, Inline, Links, Span, flatten_links};
 
@@ -203,6 +203,12 @@ fn runs(spans: &[Span], look: &Look, heading: Option<FontWeight>) -> Vec<TextRun
             );
             if style.code {
                 text_run.background_color = Some(theme.code_bg);
+            }
+            if style.strike {
+                text_run.strikethrough = Some(StrikethroughStyle {
+                    thickness: px(1.0),
+                    color: Some(text_run.color),
+                });
             }
             if style.link.is_some() {
                 text_run.underline = Some(UnderlineStyle {
