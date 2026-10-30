@@ -28,7 +28,7 @@ flowchart LR
 
 ## Crates
 
-Crates are created when their first milestone starts (no empty placeholders); package names are `hutan-<dir>`. Present now: `core`, `protocol`, `daemon` (`hutand` + lib), `client`, `terminal`, `agents` (Codex chat, `docs/agents.md`), `gateway` (direct model chat, `docs/gateway.md`), `buffer` (the editor's text model, ADR 0012), `syntax` (the editor's tree-sitter layer), `vim` (the editor's Vim layer), `lsp_client` (the LSP client the daemon's language servers will run on, ADR 0012).
+Crates are created when their first milestone starts (no empty placeholders); package names are `hutan-<dir>`. Present now: `core`, `protocol`, `daemon` (`hutand` + lib), `client`, `terminal`, `agents` (Codex chat, `docs/agents.md`), `gateway` (direct model chat, `docs/gateway.md`), `agents_view` (the GPUI-free agent reducer shared by the desktop and, next, the daemon), `buffer` (the editor's text model, ADR 0012), `syntax` (the editor's tree-sitter layer), `vim` (the editor's Vim layer), `lsp_client` (the LSP client the daemon's language servers will run on, ADR 0012).
 
 ```text
 crates/
@@ -56,6 +56,7 @@ crates/
   code_view/      GPUI code view (E-5, ADR 0012, UI crate): `FileBuffer` (one file's text, load state, a `syntax` tree only while shown), `CodeView` and its element (shapes only the lines in view, `syntax.*` colors of the pack, mouse selection), find in file; read-only until E-6 (`docs/editor.md`)
   ui/             UI pieces the GPUI crates share (UI crate, SCROLLBARS): the scrollbar — `Scrollbar` over a `Scroller` (a `ScrollHandle`, a `list`'s state, the editor's pixel offset, the terminal's scrollback in lines), the overlay/always policy and its fade, `scroll_y` for a scrolled element built in a render helper, ticks on the track (`docs/design.md` § Scrolling)
   desktop/        Hutan GPUI app: workbench (docks, pane tree, panels, presets), wiring (UI crate)
+  agents_view/    the agent reducer, GPUI-free (AGENTS-BOARD-A, ADR 0025): `presentation::build(&Facts) → AgentPresentation` (one `AgentRecord` per agent session: state, group *Requests / Failed / Ready for review / Working / Unconfirmed / Idle / Snoozed / Finished*, reasons, requests, children, checkout), `attention` (unread marks, what a session says of itself, the tracker), `agents` (the observation tree's rows, durations, usage labels, badge), `models` (harness model names), `titles`; `core` + `protocol` only, no I/O, no GPUI, no `client`
 xtask/            bundle, sign, schema export, corpus recording
 ```
 
@@ -81,12 +82,16 @@ flowchart BT
   vim --> desktop
   index --> daemon
   runtime --> agents
+  core & protocol --> agents_view --> desktop
+  agents_view -.-> daemon
   core --> gateway
   terminal & agents & gateway & storage & security & notifications & orchestration --> daemon
   protocol --> daemon
 ```
 
-Arrows point from dependency to dependent. Forbidden: anything depending on `daemon`; UI crates or `cli` depending on service crates; GPUI in any non-UI crate (UI crates: `desktop`, `terminal_view`, `code_view`, `ui`, later `chat_view`). The desktop's buffer store (`workbench/files.rs`) reads files only through the daemon (`fs.stat`, `fs.read`).
+Arrows point from dependency to dependent; a dashed arrow is a link that is planned and not wired yet. Forbidden: anything depending on `daemon`; UI crates or `cli` depending on service crates; GPUI in any non-UI crate (UI crates: `desktop`, `terminal_view`, `code_view`, `ui`, later `chat_view`). The desktop's buffer store (`workbench/files.rs`) reads files only through the daemon (`fs.stat`, `fs.read`).
+
+`agents_view` sits beside `client`, not under it: it depends on `core` and `protocol` only (checked: `cargo tree -p hutan-agents-view | grep gpui` is empty), so the daemon can link the reducer that today feeds the desktop's Agents page, sidebar and Today rail without depending on `client`. Its input, `Facts`, holds slices of protocol types (workspaces, sessions, approvals, questions, observation trees) and a `Link`; the window adds what only it knows (unread marks, snoozes, answers not yet confirmed), a caller with no window leaves those empty. The desktop keeps the artwork (which icon says a state, `sessions/agents.rs`) and turns its store into `Facts` (`link_of`, `SessionsStore::agent_presentation`).
 
 ## Contain: Hutan's Seatbelt boundary (SANDBOX-2, ADR 0021 decisions 3 and 8)
 
