@@ -1872,14 +1872,25 @@ mod tests {
             );
         }
         let board = find("agents_board").unwrap().description;
-        for needle in ["200 agents", "24 KiB", "`journal`", "`hook`", "`recognised`"] {
+        for needle in [
+            "200 agents",
+            "24 KiB",
+            "`journal`",
+            "`hook`",
+            "`recognised`",
+        ] {
             assert!(board.contains(needle), "agents_board: {needle}");
         }
         assert!(
             board.contains("never call it idle"),
             "an unconfirmed agent is never idle: {board}"
         );
-        assert!(find("history_sessions").unwrap().description.contains("100"));
+        assert!(
+            find("history_sessions")
+                .unwrap()
+                .description
+                .contains("100")
+        );
         let add = find("chat_queue_add").unwrap();
         assert!(!add.read_only);
         assert!(add.description.contains("2 KiB"), "{}", add.description);

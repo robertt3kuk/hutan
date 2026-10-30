@@ -83,8 +83,14 @@ mod tests {
             ("estimates are labelled (R10)", "Label an estimate"),
             ("not recorded instead of zero (R10)", "\"not recorded\""),
             ("tests passed only from an exit code (R10)", "exit code 0"),
-            ("the queue is the way to message an agent", "`chat_queue_add`"),
-            ("the user answers requests", "never answer an agent's approval"),
+            (
+                "the queue is the way to message an agent",
+                "`chat_queue_add`",
+            ),
+            (
+                "the user answers requests",
+                "never answer an agent's approval",
+            ),
         ] {
             assert!(PLAYBOOK.contains(needle), "{rule}: {needle}");
         }
