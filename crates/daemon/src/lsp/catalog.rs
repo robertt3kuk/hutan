@@ -154,6 +154,12 @@ const BUILTIN: &[Builtin] = &[
     },
 ];
 
+/// Built-in servers that are known but not offered until `daemon.toml` has a `[lsp.servers.<id>]`
+/// table for them: a language server for Markdown (a link checker, not what a reader of a README
+/// needs) must not ask for trust in every folder, and the editor has its own preview
+/// (MD-PREVIEW). `docs/lsp.md` says how to turn it on.
+const OPT_IN: &[&str] = &["marksman"];
+
 fn owned(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| (*s).to_owned()).collect()
 }
@@ -204,7 +210,8 @@ fn merged(
 }
 
 /// The servers a daemon knows, in the order they are tried: the user's own first (in the order
-/// of their ids), then the built-in ones, minus the disabled.
+/// of their ids), then the built-in ones, minus the disabled and minus the [`OPT_IN`] ones the
+/// user has not configured.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Catalog {
     specs: Vec<ServerSpec>,
@@ -220,11 +227,11 @@ impl Catalog {
             specs.push(merged(name, None, over)?);
         }
         for builtin in BUILTIN {
-            let over = settings
-                .servers
-                .get(builtin.name)
-                .cloned()
-                .unwrap_or_default();
+            let configured = settings.servers.get(builtin.name);
+            if configured.is_none() && OPT_IN.contains(&builtin.name) {
+                continue;
+            }
+            let over = configured.cloned().unwrap_or_default();
             if over.enabled == Some(false) {
                 continue;
             }
@@ -316,6 +323,48 @@ mod tests {
         );
         assert_eq!(ra.command_setting(), "lsp.servers.rust-analyzer.command");
         assert!(catalog.for_language("brainfuck").next().is_none());
+    }
+
+    #[test]
+    fn marksman_is_offered_only_when_daemon_toml_has_a_table_for_it() {
+        let none = Catalog::new(&LspSettings::default()).unwrap();
+        assert!(none.get("marksman").is_none());
+        assert!(
+            none.for_language("markdown").next().is_none(),
+            "a Markdown file has no server by default"
+        );
+        // The other built-in servers are unchanged.
+        assert!(none.get("taplo").is_some() && none.get("rust-analyzer").is_some());
+
+        let on = |toml: &str| {
+            Catalog::new(
+                &crate::config::DaemonSettings::parse(toml, None)
+                    .unwrap()
+                    .lsp,
+            )
+            .unwrap()
+        };
+        let enabled = on("[lsp.servers.marksman]\n");
+        let marksman = enabled.for_language("markdown").next().unwrap();
+        assert_eq!(marksman.name, "marksman");
+        assert_eq!(marksman.command, "marksman");
+        assert_eq!(marksman.args, ["server"]);
+        assert_eq!(marksman.install.as_deref(), Some("brew install marksman"));
+        // The user's own words about it still apply, and `enabled = false` turns it off again.
+        let moved = on("[lsp.servers.marksman]\ncommand = \"/opt/marksman\"\nargs = []\n");
+        assert_eq!(moved.get("marksman").unwrap().command, "/opt/marksman");
+        assert!(
+            on("[lsp.servers.marksman]\nenabled = false\n")
+                .get("marksman")
+                .is_none()
+        );
+        // A server of the user's own for Markdown is not affected by any of this.
+        let own = on("[lsp.servers.mine]\ncommand = \"mine\"\nlanguages = [\"markdown\"]\n");
+        let names: Vec<&str> = own
+            .for_language("markdown")
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, ["mine"]);
     }
 
     #[test]

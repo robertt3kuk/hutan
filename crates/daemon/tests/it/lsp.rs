@@ -864,6 +864,52 @@ async fn a_missing_server_in_an_undecided_folder_is_not_installed_and_asks_nothi
     env.stop().await;
 }
 
+/// A Markdown file has no language server unless `daemon.toml` has a table for marksman
+/// (MD-PREVIEW): nothing starts, nothing is installed or trusted for a README; with the table the
+/// server is found, or reported missing with its install command like any other.
+#[tokio::test]
+async fn marksman_serves_markdown_only_when_the_user_enabled_it() {
+    let doc = |path: PathBuf| DocOpen {
+        path,
+        language: None,
+        version: 1,
+        text: "# notes\n".to_owned(),
+    };
+
+    let env = Env::with(json!({}), "", fast()).await;
+    let opened = env
+        .client
+        .doc_open(doc(env.file("README.md")))
+        .await
+        .unwrap();
+    assert_eq!(opened.language.as_deref(), Some("markdown"));
+    assert!(opened.servers.is_empty(), "{:?}", opened.servers);
+    let listed = status(&env.client).await;
+    assert!(
+        listed.servers.iter().all(|s| s.name != "marksman"),
+        "no server is listed for it"
+    );
+    env.stop().await;
+
+    let extra = "[lsp.servers.marksman]\ncommand = \"/nonexistent/marksman\"\n";
+    let env = Env::with(json!({}), extra, fast()).await;
+    let opened = env
+        .client
+        .doc_open(doc(env.file("README.md")))
+        .await
+        .unwrap();
+    assert_eq!(opened.servers.len(), 1);
+    let server = &opened.servers[0];
+    assert_eq!(server.name, "marksman");
+    assert_eq!(server.state, LspServerState::NotInstalled);
+    assert_eq!(server.install.as_deref(), Some("brew install marksman"));
+    assert_eq!(
+        server.setting.as_deref(),
+        Some("lsp.servers.marksman.command")
+    );
+    env.stop().await;
+}
+
 /// The `rust-analyzer` on the user's login `PATH` is rustup's proxy and the toolchain lacks the
 /// component (the second e2e pass, finding 2): the server is `not_installed` with rustup's
 /// command, and the proxy never runs as a server (no crash loop).
