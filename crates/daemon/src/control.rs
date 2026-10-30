@@ -32,10 +32,16 @@ use std::time::{Duration, Instant};
 use futures::future::BoxFuture;
 use hutan_core::agent::{DecidedBy, PermissionKind, PermissionOption, PermissionOptionKind};
 use hutan_core::{ApprovalId, SessionId, SessionKind, TurnId, WorkspaceId};
-use hutan_protocol::chat::{ApprovalInfo, ForkWhere};
+use hutan_protocol::chat::{
+    ApprovalInfo, ControlTarget, ForkWhere, MessageOrigin, MessageOriginKind,
+};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
-use hutan_protocol::grants::{ControlGrant, OPTION_ALLOW_CHAT, OPTION_ALLOW_WORKSPACE};
-use hutan_protocol::messages::{ClientKind, Event, Request, SessionInfo, SessionListFilter};
+use hutan_protocol::grants::{
+    ControlGrant, MAWAS_MESSAGE_MAX_BYTES, OPTION_ALLOW_CHAT, OPTION_ALLOW_WORKSPACE,
+};
+use hutan_protocol::messages::{
+    AgentState, ClientKind, Event, Request, SessionInfo, SessionListFilter, TerminalAgentState,
+};
 use hutan_storage::{ApprovalOutcome, ApprovalRow, GrantRow, Storage};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -46,6 +52,7 @@ use crate::bus::EventBus;
 use crate::chat::ApprovalSource;
 use crate::config::{AgentPolicy, AssistantMode, ControlSettings};
 use crate::registry::{self, RegistryHandle};
+use crate::tasks::TaskService;
 
 /// The option that runs the request this once.
 pub const ALLOW_ONCE: &str = "allow_once";
@@ -74,6 +81,10 @@ pub enum Access {
 pub struct Gated {
     /// The request waited for the user, who chose this option.
     pub approved: Option<ApprovalNote>,
+    /// Set when Mawas acts on another agent with the user's approval (`chat.send`,
+    /// `chat.send_now`, `chat.queue.add`, `task.review`): the message is then delivered as
+    /// Mawas's, with the way the user approved it. Never set for anyone else.
+    pub sender: Option<MessageOrigin>,
 }
 
 /// How a request was allowed: an approval it waited for, or (Mawas) a grant or a policy that
@@ -141,6 +152,8 @@ pub struct ControlService {
     bus: Arc<EventBus>,
     storage: Storage,
     registry: RegistryHandle,
+    /// Which agent a `task.review` speaks to ([`TaskService::review_target`]).
+    tasks: Arc<TaskService>,
     shutdown: CancellationToken,
     state: Mutex<State>,
 }
@@ -165,6 +178,7 @@ impl ControlService {
         bus: Arc<EventBus>,
         storage: Storage,
         registry: RegistryHandle,
+        tasks: Arc<TaskService>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let mut state = State::default();
@@ -183,6 +197,7 @@ impl ControlService {
             bus,
             storage,
             registry: registry.clone(),
+            tasks,
             shutdown,
             state: Mutex::new(state),
         });
@@ -242,7 +257,10 @@ impl ControlService {
         request: &Request,
     ) -> Result<Gated, ErrorBody> {
         let access = crate::router::classify(request);
-        let free = Gated { approved: None };
+        let free = Gated {
+            approved: None,
+            sender: None,
+        };
         if access == Access::Read {
             return Ok(free);
         }
@@ -252,7 +270,7 @@ impl ControlService {
         if access == Access::UserOnly {
             self.audit_auto(origin, &describe, "deny_user_only");
             if let Some(mawas) = &mawas {
-                self.audit_line(mawas, method, "deny_user_only", "policy", None);
+                self.audit_line(mawas, method, "deny_user_only", "policy", None, None);
             }
             return Err(forbidden(
                 format!("`{method}` is only available to the user, not to agents"),
@@ -314,6 +332,7 @@ impl ControlService {
                     detail,
                     options,
                     mawas: None,
+                    target: None,
                 };
                 self.ask(client, asked).await
             }
@@ -344,7 +363,7 @@ impl ControlService {
         let origin = mawas.chat;
         if policy.mode == AssistantMode::Advisor {
             self.audit_auto(origin, &describe, "deny_advisor");
-            self.audit_line(&mawas, method, "deny_advisor", "policy", None);
+            self.audit_line(&mawas, method, "deny_advisor", "policy", None, None);
             return Err(forbidden(
                 format!(
                     "Mawas is in Advisor mode: it can read and advise, not change anything, so \
@@ -355,7 +374,7 @@ impl ControlService {
         }
         if self.settings().agents == AgentPolicy::ReadOnly {
             self.audit_auto(origin, &describe, "deny_policy");
-            self.audit_line(&mawas, method, "deny_policy", "policy", None);
+            self.audit_line(&mawas, method, "deny_policy", "policy", None, None);
             return Err(forbidden(
                 format!(
                     "agents are read-only here: `{method}` was refused \
@@ -365,21 +384,48 @@ impl ControlService {
             ));
         }
         let tool = grant_key(request);
+        // Acting on another agent (ADR 0025): who it is, and what is said to it.
+        let bound = acts_on_agent(request);
+        let target = self.resolve_target(request, bound).await;
+        let target_id = target.as_ref().map(|session| session.id);
+        if let Some(refusal) =
+            self.refuse_toward(&mawas, request, method, &describe, bound, target.as_ref())
+        {
+            return Err(refusal);
+        }
         let made = self.actions_this_turn(&mawas, chats.current_turn(origin));
         let over_limit = made >= policy.max_actions;
         let destructive = always_ask(request);
-        if !destructive && !over_limit {
-            let covering = self.covering_grant(&tool, &mawas);
+        // A grant of a request that acts on another agent is bound to that agent: with no agent
+        // to bind it to (a task that never ran), only *Allow once* is offered.
+        let grantable = !destructive && !over_limit && (!bound || target.is_some());
+        let sender = |approval: &str| {
+            bound.then(|| MessageOrigin {
+                kind: MessageOriginKind::Mawas,
+                session_id: origin,
+                approval: approval.to_owned(),
+            })
+        };
+        if grantable {
+            let covering = self.covering_grant(&tool, &mawas, target_id.filter(|_| bound));
             if let Some(grant) = covering {
                 self.count_action(&mawas, chats.current_turn(origin));
                 self.audit_auto_by(origin, &describe, "allow_grant", &format!("grant:{grant}"));
-                self.audit_line(&mawas, method, "allow_grant", "grant", Some(grant));
+                self.audit_line(
+                    &mawas,
+                    method,
+                    "allow_grant",
+                    "grant",
+                    Some(grant),
+                    target_id,
+                );
                 return Ok(Gated {
                     approved: Some(ApprovalNote {
                         option_id: "allow_grant".to_owned(),
                         waited_ms: 0,
                         grant_id: Some(grant),
                     }),
+                    sender: sender("allow_grant"),
                 });
             }
         }
@@ -388,7 +434,14 @@ impl ControlService {
             "Allow once",
             PermissionOptionKind::AllowOnce,
         )];
-        if !destructive && !over_limit {
+        if grantable && bound {
+            // Never a workspace-wide option for what acts on another agent.
+            options.push(option(
+                ALLOW_CHAT,
+                "Allow for this chat and this agent",
+                PermissionOptionKind::AllowAlways,
+            ));
+        } else if grantable {
             options.push(option(
                 ALLOW_CHAT,
                 "Allow for this chat",
@@ -402,14 +455,30 @@ impl ControlService {
         }
         options.push(option(DENY, "Deny", PermissionOptionKind::RejectOnce));
         let mut title = format!("Mawas asks Hutan to {}", describe.title);
+        if let (Request::TaskReview(_), Some(target)) = (request, target.as_ref()) {
+            title.push_str(&format!(
+                " (the agent of that task: session “{}” ({}))",
+                target.title, target.id
+            ));
+        }
         if over_limit {
             title = format!(
                 "Mawas has made {made} change{} this turn. {title}",
                 if made == 1 { "" } else { "s" }
             );
         }
-        let mut detail = describe.detail;
-        if destructive {
+        // The card shows all of what would be said (the request's parameters, cut at 400
+        // characters, are the detail of any other request).
+        let mut detail = message_text(request).map_or(describe.detail, str::to_owned);
+        if let Request::ChatSend(send) = request
+            && !send.attachments.is_empty()
+        {
+            detail.push_str(&format!(
+                "\n+ {} attachment(s) the daemon reads for the message",
+                send.attachments.len()
+            ));
+        }
+        if destructive || (bound && target.is_none()) {
             detail.push_str("\nThis kind of change always asks: no grant covers it.");
         }
         let asked = Asked {
@@ -420,8 +489,22 @@ impl ControlService {
             detail,
             options,
             mawas: Some(mawas),
+            target: target
+                .as_ref()
+                .filter(|_| bound)
+                .map(|session| ControlTarget {
+                    session_id: session.id,
+                    title: clip(&session.title, 200),
+                    text: message_text(request).map(str::to_owned),
+                }),
         };
-        self.ask(client, asked).await
+        let mut gated = self.ask(client, asked).await?;
+        let approval = gated
+            .approved
+            .as_ref()
+            .map_or(ALLOW_ONCE, |note| note.option_id.as_str());
+        gated.sender = sender(approval);
+        Ok(gated)
     }
 
     async fn ask(&self, _client: Option<ClientKind>, asked: Asked) -> Result<Gated, ErrorBody> {
@@ -433,7 +516,9 @@ impl ControlService {
             detail,
             options,
             mawas,
+            target,
         } = asked;
+        let target_id = target.as_ref().map(|target| target.session_id);
         let info = ApprovalInfo {
             id: ApprovalId::new(),
             session_id: origin,
@@ -443,7 +528,7 @@ impl ControlService {
             detail: Some(detail),
             options,
             requested_at_ms: registry::now_ms(),
-            target: None,
+            target: target.clone(),
         };
         let id = info.id;
         let (answer, answered) = oneshot::channel();
@@ -479,7 +564,7 @@ impl ControlService {
                 decided_by: None,
             });
             if let Some(mawas) = &mawas {
-                self.audit_line(mawas, method, "expired", "nobody", None);
+                self.audit_line(mawas, method, "expired", "nobody", None, target_id);
             }
             return Err(forbidden(
                 format!(
@@ -507,7 +592,7 @@ impl ControlService {
             }),
         });
         if let Some(mawas) = &mawas {
-            self.audit_line(mawas, method, &option_id, decided_by, None);
+            self.audit_line(mawas, method, &option_id, decided_by, None, target_id);
         }
         let note = |option_id: String, grant_id: Option<u64>| {
             Ok(Gated {
@@ -516,6 +601,7 @@ impl ControlService {
                     waited_ms,
                     grant_id,
                 }),
+                sender: None,
             })
         };
         match option_id.as_str() {
@@ -535,7 +621,11 @@ impl ControlService {
                     return note(option_id, None);
                 };
                 let scope = if option_id == ALLOW_CHAT {
-                    GrantScope::Chat(mawas.chat)
+                    match target.as_ref() {
+                        // A request that acts on another agent: bound to that agent.
+                        Some(target) => GrantScope::ChatTarget(mawas.chat, target.session_id),
+                        None => GrantScope::Chat(mawas.chat),
+                    }
                 } else {
                     GrantScope::Workspace(mawas.workspace)
                 };
@@ -582,15 +672,116 @@ impl ControlService {
             })
     }
 
-    /// The stored grant that covers `tool` for this chat or its workspace, if any.
-    fn covering_grant(&self, tool: &str, mawas: &MawasOrigin) -> Option<u64> {
+    /// The session a request of Mawas acts on, when it acts on another agent (`bound`) or types
+    /// into a terminal (`session.send_text`): the one it names, or for `task.review` the agent
+    /// of the task.
+    async fn resolve_target(&self, request: &Request, bound: bool) -> Option<SessionInfo> {
+        let session = match request {
+            Request::TaskReview(review) => self.tasks.review_target(review.id).await,
+            Request::SessionSendText(send) => Some(send.session_id),
+            _ if bound => target_session(request),
+            _ => None,
+        }?;
+        self.origin_session(session).await
+    }
+
+    /// The refusals that come before any question to the user (ADR 0025 R5, R6, R8): Mawas
+    /// never acts on a Mawas session (herself included), never types into an agent that is
+    /// blocked on a prompt (it would answer the prompt for the user), and never sends more text
+    /// than the card can show. Each is audited.
+    fn refuse_toward(
+        &self,
+        mawas: &MawasOrigin,
+        request: &Request,
+        method: &'static str,
+        describe: &Described,
+        bound: bool,
+        target: Option<&SessionInfo>,
+    ) -> Option<ErrorBody> {
+        let refuse = |decision: &str, error: ErrorBody| {
+            self.audit_auto(mawas.chat, describe, decision);
+            self.audit_line(
+                mawas,
+                method,
+                decision,
+                "policy",
+                None,
+                target.map(|session| session.id),
+            );
+            Some(error)
+        };
+        if let Some(target) = target {
+            if target.chat.as_ref().is_some_and(|chat| chat.is_assistant()) {
+                return refuse(
+                    "deny_mawas_target",
+                    forbidden(
+                        format!(
+                            "Mawas cannot act on a Mawas session: `{method}` toward “{}” was \
+                             refused (assistants do not message or control each other)",
+                            target.title
+                        ),
+                        "mawas_target",
+                    ),
+                );
+            }
+            if matches!(request, Request::SessionSendText(_)) && is_blocked(target) {
+                return refuse(
+                    "deny_blocked_agent",
+                    forbidden(
+                        format!(
+                            "the agent in session “{}” is blocked on a prompt: typing into it \
+                             would answer the prompt for the user, so `{method}` was refused \
+                             (tell the user it waits for them)",
+                            target.title
+                        ),
+                        "blocked_agent",
+                    ),
+                );
+            }
+        }
+        if bound
+            && let Some(text) = message_text(request)
+            && text.len() > MAWAS_MESSAGE_MAX_BYTES
+        {
+            let mut error = ErrorBody::new(
+                ErrorCode::BadRequest,
+                format!(
+                    "a message from Mawas to another agent has at most {MAWAS_MESSAGE_MAX_BYTES} \
+                     bytes (the approval shows all of it), not {}: say it shorter",
+                    text.len()
+                ),
+            );
+            error.data = Some(json!({"control": {"decision": "too_long"}}));
+            return refuse("deny_too_long", error);
+        }
+        None
+    }
+
+    /// The stored grant that covers `tool`, if any. For what acts on another agent (`target`
+    /// set) only a grant of this very chat **and** this agent covers it; for anything else a
+    /// grant of this chat or of its workspace does, and a grant bound to an agent never does.
+    fn covering_grant(
+        &self,
+        tool: &str,
+        mawas: &MawasOrigin,
+        target: Option<SessionId>,
+    ) -> Option<u64> {
         lock(&self.state)
             .stored
             .iter()
             .find(|grant| {
                 grant.tool == tool
-                    && (grant.chat_session_id == Some(mawas.chat)
-                        || grant.workspace_id == Some(mawas.workspace))
+                    && match target {
+                        Some(target) => {
+                            grant.chat_session_id == Some(mawas.chat)
+                                && grant.target_session_id == Some(target)
+                        }
+                        None => {
+                            grant.target_session_id.is_none()
+                                && (grant.chat_session_id == Some(mawas.chat)
+                                    || grant.workspace_id == Some(mawas.workspace))
+                        }
+                    }
             })
             .map(|grant| grant.id)
     }
@@ -598,15 +789,17 @@ impl ControlService {
     /// Stores a grant (an identical one that exists is reused); `None` when the database
     /// refused it (the answer still allows this one request, but nothing is remembered).
     fn add_grant(&self, tool: String, scope: GrantScope, by: &str) -> Option<u64> {
-        let (workspace_id, chat_session_id) = match scope {
-            GrantScope::Workspace(workspace) => (Some(workspace), None),
-            GrantScope::Chat(chat) => (None, Some(chat)),
+        let (workspace_id, chat_session_id, target_session_id) = match scope {
+            GrantScope::Workspace(workspace) => (Some(workspace), None, None),
+            GrantScope::Chat(chat) => (None, Some(chat), None),
+            GrantScope::ChatTarget(chat, target) => (None, Some(chat), Some(target)),
         };
         let mut state = lock(&self.state);
         if let Some(existing) = state.stored.iter().find(|grant| {
             grant.tool == tool
                 && grant.workspace_id == workspace_id
                 && grant.chat_session_id == chat_session_id
+                && grant.target_session_id == target_session_id
         }) {
             return Some(existing.id);
         }
@@ -615,7 +808,7 @@ impl ControlService {
             tool,
             workspace_id,
             chat_session_id,
-            target_session_id: None,
+            target_session_id,
             created_ms: registry::now_ms(),
         };
         let row = GrantRow {
@@ -623,7 +816,7 @@ impl ControlService {
             tool: grant.tool.clone(),
             workspace_id,
             chat_session_id,
-            target_session_id: None,
+            target_session_id,
             created_ms: grant.created_ms,
             created_by: by.to_owned(),
         };
@@ -707,7 +900,8 @@ impl ControlService {
     }
 
     /// One line of the audit trail for a decision about one of Mawas's changes: what, how it
-    /// was decided (an option, a policy, a grant) and by whom.
+    /// was decided (an option, a policy, a grant) and by whom, and — for what acts on another
+    /// agent — which one.
     fn audit_line(
         &self,
         mawas: &MawasOrigin,
@@ -715,11 +909,13 @@ impl ControlService {
         decision: &str,
         by: &str,
         grant: Option<u64>,
+        target: Option<SessionId>,
     ) {
         info!(
             target: "hutan::audit",
             actor = "mawas", session = %mawas.chat, workspace = %mawas.workspace,
             action = method, decision, by, grant_id = grant,
+            toward = target.map(|session| session.to_string()),
             "mawas {method}: {decision} ({by})"
         );
     }
@@ -888,12 +1084,17 @@ struct Asked {
     options: Vec<PermissionOption>,
     /// Set for Mawas: audited, counted, and offered grants.
     mawas: Option<MawasOrigin>,
+    /// Set for Mawas's requests that act on another agent: shown on the card, and what an
+    /// *Allow for this chat and this agent* grant is bound to.
+    target: Option<ControlTarget>,
 }
 
 /// Where a stored grant applies.
 #[derive(Debug, Clone, Copy)]
 enum GrantScope {
     Chat(SessionId),
+    /// One chat, toward one agent (protocol 0.62): the Mawas chat and the target session.
+    ChatTarget(SessionId, SessionId),
     Workspace(WorkspaceId),
 }
 
@@ -943,6 +1144,46 @@ pub fn always_ask(request: &Request) -> bool {
 /// (`fs.trash`, protocol 0.54): a grant given for one cleanup must not cover the next.
 pub fn asks_every_time(request: &Request) -> bool {
     matches!(request, Request::FsTrash(_))
+}
+
+/// Requests that act on **another agent** (ADR 0025 decision 3): a message to it (`chat.send`,
+/// `chat.send_now`, `chat.queue.add`), stopping what it does (`chat.interrupt`,
+/// `agent.interrupt`) and a review of its work that talks to it (`task.review`). A grant for
+/// one of them is bound to the target session, and none is ever workspace-wide.
+pub fn acts_on_agent(request: &Request) -> bool {
+    matches!(
+        request,
+        Request::ChatSend(_)
+            | Request::ChatSendNow(_)
+            | Request::ChatQueueAdd(_)
+            | Request::ChatInterrupt(_)
+            | Request::AgentInterrupt(_)
+            | Request::TaskReview(_)
+    )
+}
+
+/// The words a request of Mawas puts to another agent, which the approval shows whole.
+fn message_text(request: &Request) -> Option<&str> {
+    match request {
+        Request::ChatSend(r) => Some(&r.text),
+        Request::ChatQueueAdd(r) => Some(&r.text),
+        Request::ChatSendNow(r) => r.text.as_deref(),
+        Request::TaskReview(r) => r.note.as_deref(),
+        _ => None,
+    }
+}
+
+/// Whether the agent of `session` waits for the user (a permission prompt, a question): its
+/// report or the recognised terminal agent says `blocked`.
+fn is_blocked(session: &SessionInfo) -> bool {
+    session
+        .agent
+        .as_ref()
+        .is_some_and(|report| report.state == AgentState::Blocked)
+        || session
+            .terminal_agent
+            .as_ref()
+            .is_some_and(|agent| agent.state == TerminalAgentState::Blocked)
 }
 
 fn option(id: &str, label: &str, kind: PermissionOptionKind) -> PermissionOption {

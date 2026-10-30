@@ -21,8 +21,9 @@ use hutan_gateway::{CredentialStore, HttpConfig, MemoryStore};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::assistant::{AssistantOpen, AssistantScope};
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatHistory,
-    ChatHistoryRequest,
+    ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistory,
+    ChatHistoryRequest, ControlTarget, MessageOrigin, MessageOriginKind, QueuedMessage,
+    message_origin,
 };
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::messages::{
@@ -161,9 +162,15 @@ impl M {
     /// default assistant backend OMP (the fake agent replaying `names`, one transcript per
     /// start of it) and Mawas in its default mode.
     async fn start(extra: &str, names: &[&str]) -> Self {
+        Self::start_with(extra, |work| script(work, names)).await
+    }
+
+    /// [`start`](Self::start) with the transcripts `scripted` writes (the directory it returns,
+    /// used one transcript per start of the agent).
+    async fn start_with(extra: &str, scripted: impl FnOnce(&Path) -> PathBuf) -> Self {
         capture_audit_log();
         let work = tempfile::tempdir().unwrap();
-        let scripted = script(work.path(), names);
+        let scripted = scripted(work.path());
         let toml = format!(
             "[terminal]\nenv_inherit = \"daemon\"\n\n\
              [control]\nagents = \"allow\"\napproval_timeout_secs = 20\n\n\
@@ -1036,4 +1043,785 @@ async fn wait_turn_end(events: &mut broadcast::Receiver<(Seq, Event)>) {
         _ => None,
     })
     .await;
+}
+
+// ---- acting on another agent: target-bound grants (MAWAS-GATE, protocol 0.62, ADR 0025) --------
+
+use hutan_core::agent::MessageRole;
+use hutan_protocol::messages::{AgentReportRequest, AgentState};
+use hutan_protocol::ui::SessionSendText;
+use serde_json::{Value, json};
+
+/// The words of the message Mawas sends in these tests.
+const NUDGE: &str = "Please run the formatter before you commit";
+
+/// The entries of a committed OMP transcript.
+fn entries(name: &str) -> Vec<Value> {
+    std::fs::read_to_string(fixtures().join(format!("{name}.jsonl")))
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+/// One more turn of OMP: a prompt, a reply, its end.
+fn acp_turn(reply: &str) -> [Value; 3] {
+    [
+        json!({"dir": "out", "msg": {"jsonrpc": "2.0", "method": "session/prompt", "id": 1}}),
+        json!({"dir": "in", "msg": {"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": "sess_fixture_1",
+            "update": {"sessionUpdate": "agent_message_chunk", "messageId": format!("msg-{reply}"),
+                "content": {"type": "text", "text": reply}}}}}),
+        json!({"dir": "in", "msg": {"jsonrpc": "2.0", "id": 0, "result": {"stopReason": "end_turn"}}}),
+    ]
+}
+
+/// OMP's `two-turns` with its first turn held after the first text until the file `release` of
+/// `work` exists, then one turn for each of `more`.
+fn held_turns(work: &Path, more: &[&str]) -> Vec<Value> {
+    let mut script = entries("two-turns");
+    // initialize, its answer, session/new, its answer, the prompt, "one" | the end of turn 1.
+    script.insert(6, json!({"dir": "hold", "file": work.join("release")}));
+    for reply in more {
+        script.extend(acp_turn(reply));
+    }
+    script
+}
+
+/// Writes `transcripts` as the scripted starts of the fake agent, in this order.
+fn write_script(work: &Path, transcripts: Vec<Vec<Value>>) -> PathBuf {
+    let dir = work.join("script");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (index, entries) in transcripts.iter().enumerate() {
+        let lines: Vec<String> = entries.iter().map(Value::to_string).collect();
+        std::fs::write(
+            dir.join(format!("{:02}-custom.jsonl", index + 1)),
+            lines.join("\n") + "\n",
+        )
+        .unwrap();
+    }
+    dir
+}
+
+fn mawas_origin(chat: SessionId, approval: &str) -> MessageOrigin {
+    MessageOrigin {
+        kind: MessageOriginKind::Mawas,
+        session_id: chat,
+        approval: approval.to_owned(),
+    }
+}
+
+/// The error of a refusal, with the decision the daemon names.
+fn decision(error: ClientError) -> (ErrorCode, String) {
+    match error {
+        ClientError::Remote(body) => (
+            body.code,
+            body.data
+                .as_ref()
+                .and_then(|data| data["control"]["decision"].as_str())
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+        other => panic!("expected a remote error, got {other:?}"),
+    }
+}
+
+impl M {
+    /// A chat with the fake OMP (the next scripted start), as the user opened it.
+    async fn target(&self, title: &str) -> SessionInfo {
+        self.user
+            .chat_create(ChatCreate {
+                extra_dirs: Vec::new(),
+                contain: None,
+                workspace_id: None,
+                cwd: self.work.path().to_owned(),
+                agent: "omp".to_owned(),
+                model: None,
+                approval_policy: None,
+                sandbox: None,
+                title: Some(title.to_owned()),
+                mode: None,
+                provider_id: None,
+                system_prompt: None,
+                account: None,
+                safety: None,
+            })
+            .await
+            .unwrap()
+    }
+
+    /// Lets a held turn go on.
+    fn release(&self) {
+        std::fs::write(self.work.path().join("release"), "").unwrap();
+    }
+
+    /// The prompts the fake OMP received, in order.
+    fn prompts(&self) -> Vec<Value> {
+        self.received_of("session/prompt")
+    }
+
+    async fn history_of(&self, id: SessionId) -> ChatHistory {
+        self.user
+            .call(Request::ChatHistory(ChatHistoryRequest {
+                session_id: id,
+                before_seq: None,
+                limit: 500,
+            }))
+            .await
+            .unwrap()
+    }
+
+    /// Waits for the next event of a chat that `pick` accepts.
+    async fn chat_event(
+        &mut self,
+        what: &str,
+        pick: impl Fn(&hutan_core::AgentEvent) -> bool,
+    ) -> hutan_core::AgentEvent {
+        wait_event(&mut self.events, what, |event| match event {
+            Event::ChatEvent { event, .. } if pick(event) => Some((**event).clone()),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Waits until `count` more turns have ended.
+    async fn turn_ends(&mut self, count: usize) {
+        for _ in 0..count {
+            self.chat_event("a turn to end", |e| e.kind.ends_turn())
+                .await;
+        }
+    }
+
+    /// Runs `call` (a request of Mawas) in the background and waits for the approval it raises.
+    async fn asked<T: Send + 'static>(
+        &self,
+        call: impl std::future::Future<Output = Result<T, ClientError>> + Send + 'static,
+    ) -> (
+        ApprovalInfo,
+        tokio::task::JoinHandle<Result<T, ClientError>>,
+    ) {
+        let handle = tokio::spawn(call);
+        (self.next_approval().await, handle)
+    }
+
+    /// The user messages of a chat, with who sent each.
+    async fn user_messages(&self, id: SessionId) -> Vec<(String, Option<MessageOrigin>)> {
+        self.history_of(id)
+            .await
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                AgentEventKind::MessageEnd {
+                    role: MessageRole::User,
+                    text,
+                    ..
+                } => Some((text.clone(), message_origin(event))),
+                _ => None,
+            })
+            .collect()
+    }
+
+    async fn notices_of(&self, id: SessionId) -> Vec<String> {
+        self.history_of(id)
+            .await
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                AgentEventKind::Notice { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_to_another_agent_asks_per_target_waits_in_the_queue_and_says_who_sent_it() {
+    let mut m = M::start_with("", |work| {
+        write_script(
+            work,
+            vec![
+                held_turns(work, &["three", "four", "five"]),
+                entries("plain-turn"),
+            ],
+        )
+    })
+    .await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let agent = m.from(mawas.id).await;
+    let api = m.target("api").await;
+    m.user.chat_send(api.id, "first").await.unwrap();
+    m.chat_event("the first text", |e| {
+        matches!(e.kind, AgentEventKind::MessageDelta { .. })
+    })
+    .await;
+
+    // R3, R4: the card names the agent, shows every word and offers no workspace-wide option.
+    let (card, queuing) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.chat_queue_add(id, NUDGE).await }
+        })
+        .await;
+    assert_eq!(card.session_id, mawas.id);
+    assert!(
+        card.title
+            .starts_with("Mawas asks Hutan to queue a message")
+            && card.title.contains("“api”"),
+        "{}",
+        card.title
+    );
+    assert_eq!(card.detail.as_deref(), Some(NUDGE), "the whole text");
+    assert_eq!(
+        card.target,
+        Some(ControlTarget {
+            session_id: api.id,
+            title: "api".into(),
+            text: Some(NUDGE.into()),
+        })
+    );
+    assert_eq!(options_of(&card), ["allow_once", "allow_chat", "deny"]);
+    assert_eq!(card.options[1].label, "Allow for this chat and this agent");
+    m.answer(card.id, "allow_once").await;
+    let queued = queuing.await.unwrap().unwrap();
+    assert_eq!(queued.origin, Some(mawas_origin(mawas.id, "allow_once")));
+    assert!(m.grants().await.is_empty(), "allowing once stores nothing");
+
+    // R4: it is in the queue, not in a draft, and goes when the turn ends.
+    let queue = m.user.chat_queue(api.id).await.unwrap();
+    assert_eq!(queue.items, vec![queued.clone()]);
+    assert_eq!(
+        m.prompts().len(),
+        1,
+        "nothing was sent into the running turn"
+    );
+    m.release();
+    m.turn_ends(2).await;
+    let prompts = m.prompts();
+    assert_eq!(prompts[1]["params"]["prompt"][0]["text"], NUDGE);
+    assert!(
+        prompts[1].to_string().contains("not written by the user"),
+        "the agent is told who sent it: {}",
+        prompts[1]
+    );
+    // … and so is the journal: the message carries its origin, and a notice says it.
+    let sent = m.user_messages(api.id).await;
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        sent[0],
+        ("first".to_owned(), None),
+        "the user's own message"
+    );
+    assert_eq!(
+        sent[1],
+        (NUDGE.to_owned(), Some(mawas_origin(mawas.id, "allow_once")))
+    );
+    assert!(
+        m.notices_of(api.id)
+            .await
+            .iter()
+            .any(|n| n.contains("from Mawas") && n.contains("approved")),
+        "{:?}",
+        m.notices_of(api.id).await
+    );
+
+    // *Allow for this chat and this agent* stores a grant bound to both.
+    let (card, queuing) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.chat_queue_add(id, "second").await }
+        })
+        .await;
+    m.answer(card.id, "allow_chat").await;
+    let second = queuing.await.unwrap().unwrap();
+    assert_eq!(second.origin, Some(mawas_origin(mawas.id, "allow_chat")));
+    let grants = m.grants().await;
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].tool, "chat.queue.add");
+    assert_eq!(grants[0].chat_session_id, Some(mawas.id));
+    assert_eq!(grants[0].target_session_id, Some(api.id));
+    assert_eq!(grants[0].workspace_id, None, "never workspace-wide");
+    m.turn_ends(1).await;
+    // The same agent, the same chat: covered, and the message says it was under the grant.
+    let third = agent.chat_queue_add(api.id, "third").await.unwrap();
+    assert_eq!(third.origin, Some(mawas_origin(mawas.id, "allow_grant")));
+    assert!(m.pending().await.is_empty());
+    m.turn_ends(1).await;
+
+    // Another agent asks again: a grant is per target …
+    let docs = m.target("docs").await;
+    let (card, denied) = m
+        .asked({
+            let (agent, id) = (agent.clone(), docs.id);
+            async move { agent.chat_queue_add(id, NUDGE).await }
+        })
+        .await;
+    assert_eq!(card.target.as_ref().map(|t| t.session_id), Some(docs.id));
+    m.answer(card.id, "deny").await;
+    forbidden(denied.await.unwrap().unwrap_err());
+    // … and per Mawas chat.
+    let other = m.mawas(ws, true).await;
+    let other_agent = m.from(other.id).await;
+    let (card, denied) = m
+        .asked({
+            let id = api.id;
+            async move { other_agent.chat_queue_add(id, NUDGE).await }
+        })
+        .await;
+    assert_eq!(card.session_id, other.id);
+    m.answer(card.id, "deny").await;
+    forbidden(denied.await.unwrap().unwrap_err());
+    // Another tool toward the same agent asks too: the grant is for `chat.queue.add` only.
+    let (card, denied) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.chat_send_now(id, Some("now".into()), None).await }
+        })
+        .await;
+    assert!(
+        card.title.contains("send a message to the chat"),
+        "{}",
+        card.title
+    );
+    m.answer(card.id, "deny").await;
+    forbidden(denied.await.unwrap().unwrap_err());
+    m.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_send_and_a_send_now_to_an_idle_agent_start_a_turn_that_says_who_sent_it() {
+    let mut m = M::start_with("", |work| write_script(work, vec![entries("two-turns")])).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let agent = m.from(mawas.id).await;
+    let api = m.target("api").await;
+
+    let (card, sending) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.chat_send(id, NUDGE).await }
+        })
+        .await;
+    assert!(
+        card.title.starts_with("Mawas asks Hutan to send a message")
+            && card.title.contains("“api”"),
+        "{}",
+        card.title
+    );
+    assert_eq!(card.detail.as_deref(), Some(NUDGE));
+    assert_eq!(options_of(&card), ["allow_once", "allow_chat", "deny"]);
+    m.answer(card.id, "allow_once").await;
+    sending.await.unwrap().unwrap();
+    m.turn_ends(1).await;
+
+    let (card, sending) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move {
+                agent
+                    .chat_send_now(id, Some("and now this".into()), None)
+                    .await
+            }
+        })
+        .await;
+    assert_eq!(options_of(&card), ["allow_once", "allow_chat", "deny"]);
+    m.answer(card.id, "allow_once").await;
+    sending.await.unwrap().unwrap();
+    m.turn_ends(1).await;
+
+    let sent = m.user_messages(api.id).await;
+    assert_eq!(
+        sent,
+        [
+            (NUDGE.to_owned(), Some(mawas_origin(mawas.id, "allow_once"))),
+            (
+                "and now this".to_owned(),
+                Some(mawas_origin(mawas.id, "allow_once"))
+            ),
+        ]
+    );
+    // The user's queue was never touched.
+    assert!(m.user.chat_queue(api.id).await.unwrap().items.is_empty());
+    m.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mawas_never_acts_on_a_mawas_session_and_never_sends_more_than_the_card_shows() {
+    let m = M::start_with("", |work| write_script(work, vec![entries("plain-turn")])).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let other = m.mawas(ws, true).await;
+    let agent = m.from(mawas.id).await;
+
+    // R6: no chains — toward another Mawas chat, or toward herself, whatever the request; no card.
+    for victim in [other.id, mawas.id] {
+        let refused = [
+            agent.chat_queue_add(victim, "hi").await.map(|_| ()),
+            agent.chat_send(victim, "hi").await.map(|_| ()),
+            agent
+                .chat_send_now(victim, Some("hi".into()), None)
+                .await
+                .map(|_| ()),
+            agent.agent_interrupt(victim, None, false).await.map(|_| ()),
+            agent.chat_interrupt(victim).await,
+        ];
+        for result in refused {
+            assert_eq!(
+                decision(result.unwrap_err()),
+                (ErrorCode::Forbidden, "mawas_target".to_owned())
+            );
+        }
+    }
+    assert!(m.pending().await.is_empty(), "a refusal raises no card");
+
+    // R8: the card shows every word, so a longer message is refused before anything is asked.
+    let api = m.target("api").await;
+    let too_long = "x".repeat(2049);
+    for result in [
+        agent
+            .chat_queue_add(api.id, too_long.clone())
+            .await
+            .map(|_| ()),
+        agent.chat_send(api.id, too_long.clone()).await.map(|_| ()),
+        agent
+            .chat_send_now(api.id, Some(too_long.clone()), None)
+            .await
+            .map(|_| ()),
+    ] {
+        assert_eq!(
+            decision(result.unwrap_err()),
+            (ErrorCode::BadRequest, "too_long".to_owned())
+        );
+    }
+    assert!(m.pending().await.is_empty());
+    // Exactly 2 KiB is fine: it asks, and shows all of it.
+    let at_the_limit = "y".repeat(2048);
+    let (card, denied) = m
+        .asked({
+            let (agent, id, text) = (agent.clone(), api.id, at_the_limit.clone());
+            async move { agent.chat_queue_add(id, text).await }
+        })
+        .await;
+    assert_eq!(card.detail.as_deref(), Some(at_the_limit.as_str()));
+    m.answer(card.id, "deny").await;
+    forbidden(denied.await.unwrap().unwrap_err());
+    let lines = audit_lines().join("\n");
+    assert!(
+        lines.contains("deny_mawas_target") && lines.contains("deny_too_long"),
+        "{lines}"
+    );
+    m.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mawas_never_types_into_an_agent_that_is_blocked_on_a_prompt() {
+    let m = M::start("", &["plain-turn"]).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let agent = m.from(mawas.id).await;
+    let shell = m.shell().await;
+    let report = |state, seq| AgentReportRequest {
+        pid: None,
+        session_id: shell.id,
+        source: "fake-hooks".into(),
+        agent: "fake".into(),
+        state: Some(state),
+        message: Some("Allow this command?".into()),
+        seq,
+        agent_session_id: None,
+        resume_argv: None,
+        node: None,
+    };
+    let reported = |request| {
+        let user = m.user.clone();
+        async move {
+            user.call::<hutan_protocol::messages::AgentApplied>(Request::AgentReport(request))
+                .await
+                .unwrap();
+        }
+    };
+    let shell_id = shell.id;
+    let type_hi = move || SessionSendText {
+        session_id: shell_id,
+        text: "y".into(),
+        enter: true,
+    };
+
+    // R5: the agent waits for the user; typing would answer its prompt for them.
+    reported(report(AgentState::Blocked, 1)).await;
+    let refused = agent.session_send_text(type_hi()).await.unwrap_err();
+    assert_eq!(
+        decision(refused),
+        (ErrorCode::Forbidden, "blocked_agent".to_owned())
+    );
+    assert!(m.pending().await.is_empty(), "no card for it either");
+    assert!(
+        audit_lines()
+            .iter()
+            .any(|l| l.contains("deny_blocked_agent")),
+        "audited"
+    );
+
+    // Not blocked: it asks as before (and always: no grant is offered).
+    reported(report(AgentState::Working, 2)).await;
+    let (card, typing) = m
+        .asked({
+            let agent = agent.clone();
+            async move { agent.session_send_text(type_hi()).await }
+        })
+        .await;
+    assert_eq!(options_of(&card), ["allow_once", "deny"]);
+    m.answer(card.id, "deny").await;
+    forbidden(typing.await.unwrap().unwrap_err());
+    m.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_turn_limit_counts_messages_and_interrupts_and_a_grant_cannot_lift_it() {
+    let mut m = M::start_with("max_actions_per_turn = 2", |work| {
+        // OMP's `cancel`: one turn that runs until it is cancelled.
+        write_script(work, vec![entries("cancel")])
+    })
+    .await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let agent = m.from(mawas.id).await;
+    let api = m.target("api").await;
+    m.user.chat_send(api.id, "long task").await.unwrap();
+    m.chat_event("the first text", |e| {
+        matches!(e.kind, AgentEventKind::MessageDelta { .. })
+    })
+    .await;
+
+    // Change 1: a message, change 2: an interrupt — each allowed (and the second for this chat
+    // and this agent, so a grant exists).
+    let (card, queuing) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.chat_queue_add(id, "one").await }
+        })
+        .await;
+    m.answer(card.id, "allow_once").await;
+    queuing.await.unwrap().unwrap();
+    let (card, stopping) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.agent_interrupt(id, None, false).await }
+        })
+        .await;
+    assert!(
+        card.title.contains("interrupt the main agent"),
+        "{}",
+        card.title
+    );
+    assert_eq!(options_of(&card), ["allow_once", "allow_chat", "deny"]);
+    assert_eq!(card.target.as_ref().map(|t| t.session_id), Some(api.id));
+    assert_eq!(card.target.as_ref().and_then(|t| t.text.as_deref()), None);
+    m.answer(card.id, "allow_chat").await;
+    stopping.await.unwrap().unwrap();
+    let grants = m.grants().await;
+    assert_eq!(
+        (grants[0].tool.as_str(), grants[0].target_session_id),
+        ("agent.interrupt", Some(api.id))
+    );
+
+    // Two changes made: the next message asks, offering no grant, as would a granted tool.
+    let (card, queuing) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.chat_queue_add(id, "two").await }
+        })
+        .await;
+    assert!(
+        card.title
+            .starts_with("Mawas has made 2 changes this turn."),
+        "{}",
+        card.title
+    );
+    assert_eq!(options_of(&card), ["allow_once", "deny"]);
+    m.answer(card.id, "deny").await;
+    forbidden(queuing.await.unwrap().unwrap_err());
+    let (card, stopping) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.agent_interrupt(id, None, false).await }
+        })
+        .await;
+    assert!(
+        card.title
+            .starts_with("Mawas has made 2 changes this turn."),
+        "the grant for agent.interrupt does not lift the limit: {}",
+        card.title
+    );
+    assert_eq!(options_of(&card), ["allow_once", "deny"]);
+    m.answer(card.id, "deny").await;
+    forbidden(stopping.await.unwrap().unwrap_err());
+    m.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn grants_stored_before_the_target_binding_never_cover_a_message_to_an_agent() {
+    let m = M::start_with("", |work| write_script(work, vec![entries("plain-turn")])).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    // What an earlier version could have left: a workspace grant and a chat grant, no target.
+    let legacy = |id, tool: &str, workspace: bool| GrantRow {
+        id,
+        tool: tool.into(),
+        workspace_id: workspace.then_some(ws),
+        chat_session_id: (!workspace).then_some(mawas.id),
+        target_session_id: None,
+        created_ms: 1,
+        created_by: "test".into(),
+    };
+    let m = m
+        .restarted_with_grants(vec![
+            legacy(201, "chat.queue.add", true),
+            legacy(202, "chat.queue.add", false),
+            legacy(203, "chat.send", true),
+            legacy(204, "agent.interrupt", false),
+        ])
+        .await;
+    assert_eq!(m.grants().await.len(), 4, "they stay listed until revoked");
+    let agent = m.from(mawas.id).await;
+    let api = m.target("api").await;
+    let (card, queuing) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move { agent.chat_queue_add(id, NUDGE).await }
+        })
+        .await;
+    assert_eq!(options_of(&card), ["allow_once", "allow_chat", "deny"]);
+    m.answer(card.id, "deny").await;
+    forbidden(queuing.await.unwrap().unwrap_err());
+    for tool in ["send", "interrupt"] {
+        let (agent, id) = (agent.clone(), api.id);
+        let (card, call) = if tool == "send" {
+            m.asked(async move { agent.chat_send(id, NUDGE).await.map(|_| ()) })
+                .await
+        } else {
+            m.asked(async move { agent.agent_interrupt(id, None, false).await.map(|_| ()) })
+                .await
+        };
+        m.answer(card.id, "deny").await;
+        forbidden(call.await.unwrap().unwrap_err());
+    }
+
+    // A grant bound to an agent survives a restart, and still covers only that agent.
+    let (card, queuing) = m
+        .asked({
+            let (agent, id) = (agent.clone(), api.id);
+            async move {
+                agent
+                    .chat_queue_add(id, "x")
+                    .await
+                    .map(|item: QueuedMessage| item.id)
+            }
+        })
+        .await;
+    m.answer(card.id, "allow_chat").await;
+    queuing.await.unwrap().unwrap();
+    let bound: Vec<ControlGrant> = m
+        .grants()
+        .await
+        .into_iter()
+        .filter(|grant| grant.target_session_id.is_some())
+        .collect();
+    assert_eq!(bound.len(), 1);
+    let m = m.restarted().await;
+    let after: Vec<ControlGrant> = m
+        .grants()
+        .await
+        .into_iter()
+        .filter(|grant| grant.target_session_id.is_some())
+        .collect();
+    assert_eq!(after, bound, "stored, not remembered");
+    m.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_task_review_is_bound_to_the_agent_of_the_task() {
+    use hutan_core::{ReviewDecision, TaskState};
+    use hutan_protocol::task::{TaskCreate, TaskUpdate};
+
+    let m = M::start("", &["plain-turn"]).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let agent = m.from(mawas.id).await;
+    // A task that is done: it ran in a session (a shell here), which is the agent it speaks to.
+    let task = m
+        .user
+        .task_create(TaskCreate {
+            workspace_id: ws,
+            title: "Write the docs".into(),
+            prompt: None,
+            depends_on: Vec::new(),
+            placement: None,
+            run: None,
+            auto_start: false,
+            after_policy: Default::default(),
+        })
+        .await
+        .unwrap();
+    let started = m.user.task_start(task.id).await.unwrap();
+    m.user
+        .task_update(TaskUpdate {
+            id: task.id,
+            title: None,
+            prompt: None,
+            depends_on: None,
+            placement: None,
+            run: None,
+            auto_start: None,
+            after_policy: None,
+            state: Some(TaskState::Done),
+        })
+        .await
+        .unwrap();
+    let ran = *started
+        .task
+        .sessions
+        .last()
+        .expect("the task ran in a session");
+
+    let (card, reviewing) = m
+        .asked({
+            let (agent, id) = (agent.clone(), task.id);
+            async move {
+                agent
+                    .task_review(id, ReviewDecision::Accept, Some("looks fine".into()))
+                    .await
+                    .map(|_| ())
+            }
+        })
+        .await;
+    assert!(card.title.contains("accept the work"), "{}", card.title);
+    assert!(
+        card.title.contains(&ran.to_string()),
+        "names the agent: {}",
+        card.title
+    );
+    assert_eq!(card.detail.as_deref(), Some("looks fine"));
+    assert_eq!(card.target.as_ref().map(|t| t.session_id), Some(ran));
+    assert_eq!(options_of(&card), ["allow_once", "allow_chat", "deny"]);
+    m.answer(card.id, "allow_chat").await;
+    reviewing.await.unwrap().unwrap();
+    let grants = m.grants().await;
+    assert_eq!(grants.len(), 1);
+    assert_eq!(
+        (
+            grants[0].tool.as_str(),
+            grants[0].target_session_id,
+            grants[0].workspace_id
+        ),
+        ("task.review", Some(ran), None)
+    );
+    // The same task again: covered.
+    agent
+        .task_review(task.id, ReviewDecision::RequestChanges, None)
+        .await
+        .unwrap();
+    assert!(m.pending().await.is_empty());
+    m.daemon.stop().await;
 }

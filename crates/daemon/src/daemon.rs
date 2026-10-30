@@ -502,6 +502,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         bus.clone(),
         storage.clone(),
         registry.clone(),
+        tasks.clone(),
         shutdown.clone(),
     );
     let memory = MemoryService::new(

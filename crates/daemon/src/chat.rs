@@ -39,8 +39,8 @@ use hutan_core::{
 use hutan_protocol::assistant::{ATTACHMENTS_META_KEY, AttachmentMeta};
 use hutan_protocol::chat::{
     ApprovalInfo, ApprovalList, ChatDirApplied, ChatHistory, ChatHistoryRequest, ChatModels,
-    ChatQueue, ChatSentNow, HISTORY_MAX_LIMIT, QuestionInfo, QuestionList, QueueHold,
-    QueuedMessage, SEND_MAX_BYTES,
+    ChatQueue, ChatSentNow, HISTORY_MAX_LIMIT, MESSAGE_ORIGIN_KEY, MessageOrigin, QuestionInfo,
+    QuestionList, QueueHold, QueuedMessage, SEND_MAX_BYTES,
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{ClientKind, Event};
@@ -264,10 +264,32 @@ enum Acquire {
     Failed(ErrorBody),
 }
 
+/// How the user approved a message of Mawas, in words.
+fn approval_words(origin: &MessageOrigin) -> &'static str {
+    match origin.approval.as_str() {
+        "allow_grant" => "under the user's standing permission for this chat and this agent",
+        _ => "after asking the user, who approved it",
+    }
+}
+
+/// What the agent is told besides a message from Mawas: Hutan's words, not the user's.
+fn framing_text(origin: &MessageOrigin) -> String {
+    format!(
+        "[Hutan: this message was not written by the user. Mawas, the user's assistant in \
+         Hutan, sent it {}. The user can read it in this conversation.]",
+        approval_words(origin)
+    )
+}
+
+/// `text` followed by [`framing_text`]: for a message an agent takes as one text.
+fn framed(text: &str, origin: &MessageOrigin) -> String {
+    format!("{text}\n\n{}", framing_text(origin))
+}
+
 /// What `chat.send_now` sends.
 #[derive(Debug)]
 enum Now {
-    Text(String),
+    Text(String, Option<MessageOrigin>),
     /// A queued message.
     Item(u64),
 }
@@ -438,6 +460,9 @@ struct Delivery {
     /// and is dropped, not journaled again. Cleared by that echo's `message_end` and when the
     /// turn ends.
     retry: bool,
+    /// Who sent the message of this turn when the user did not; taken by the first user
+    /// `message_end` of the turn, which carries it as its `origin`.
+    origin: Option<MessageOrigin>,
 }
 
 /// What Hutan adds to one turn of a Mawas conversation (`crate::memory`): context blocks that
@@ -456,16 +481,36 @@ struct TurnMemory {
     first_turn: Option<String>,
     /// A summary fork's digest taken from the session, put back when the send fails.
     seed: Option<String>,
+    /// Who sent the message when the user did not (Mawas, with the user's approval): told to
+    /// the agent as Hutan's own words, apart from the message. ACP agents take it as a resource
+    /// the journal does not show as the user's words; Codex and direct chats get it after the
+    /// text ([`Self::appended_to`]). The journal says it with a notice and the user message's
+    /// `origin`.
+    framing: Option<ContextBlock>,
 }
 
 impl TurnMemory {
-    /// `text` followed by each block, for backends that take one text (Codex, direct chats).
+    /// `text` followed by each block, then who sent the message (when the user did not), for
+    /// backends that take one text (Codex, direct chats).
     fn appended_to(&self, mut text: String) -> String {
-        for block in &self.blocks {
+        for block in self.blocks.iter().chain(&self.framing) {
             text.push_str("\n\n");
             text.push_str(&block.text);
         }
         text
+    }
+
+    /// The message of this turn is not the user's: `origin` sent it with the user's approval.
+    /// The agent is told so (apart from the message), and the journal gets a notice.
+    fn stamp(&mut self, origin: &MessageOrigin) {
+        self.framing = Some(ContextBlock {
+            label: "Message from Mawas".to_owned(),
+            text: framing_text(origin),
+        });
+        self.notices.push(format!(
+            "This message is from Mawas, not typed by you. Mawas sent it {}.",
+            approval_words(origin)
+        ));
     }
 
     /// The send failed: nothing was delivered.
@@ -1665,6 +1710,7 @@ impl ChatManager {
                 hutan_core::insight::MEASURE_COMMAND.to_owned(),
                 None,
                 false,
+                None,
             )
             .await
         {
@@ -1763,9 +1809,23 @@ impl ChatManager {
         text: String,
         attached: Option<Attached>,
     ) -> Result<TurnId, ErrorBody> {
-        let turn = self.start_turn(id, text, attached, false).await?;
+        let turn = self.start_turn(id, text, attached, false, None).await?;
         self.release_queue(id);
         Ok(turn)
+    }
+
+    /// [`send`](Self::send) for a message the user did not write: Mawas's, sent with the user's
+    /// approval (`origin`). The turn, its journal entry and the agent's input say who sent it,
+    /// and a queue that holds stays held: the user did not go on with the conversation.
+    pub async fn send_from(
+        &self,
+        id: SessionId,
+        text: String,
+        attached: Option<Attached>,
+        origin: &MessageOrigin,
+    ) -> Result<TurnId, ErrorBody> {
+        self.start_turn(id, text, attached, false, Some(origin))
+            .await
     }
 
     /// `chat.retry`: the conversation's last user message again, as a new turn that does not
@@ -1798,19 +1858,20 @@ impl ChatManager {
                     "there is nothing to retry: the chat has no message of the user yet",
                 )
             })?;
-        let turn = self.start_turn(id, text, None, true).await?;
+        let turn = self.start_turn(id, text, None, true, None).await?;
         self.release_queue(id);
         Ok(turn)
     }
 
     /// A turn with `text`; `retry`: the message is the journal's last user message, which the
-    /// turn does not journal again.
+    /// turn does not journal again; `origin`: who sent it when the user did not.
     async fn start_turn(
         &self,
         id: SessionId,
         text: String,
         attached: Option<Attached>,
         retry: bool,
+        origin: Option<&MessageOrigin>,
     ) -> Result<TurnId, ErrorBody> {
         check_message(&text, attached.is_some())?;
         let live = match self.acquire(id).await {
@@ -1818,7 +1879,7 @@ impl ChatManager {
             Err(Acquire::Busy(_)) => return Err(turn_in_progress()),
             Err(Acquire::Failed(error)) => return Err(error),
         };
-        self.run_turn(&live, text, attached, retry).await
+        self.run_turn(&live, text, attached, retry, origin).await
     }
 
     /// The session's backend, awake, with `busy` taken for a turn that is about to start.
@@ -1843,6 +1904,7 @@ impl ChatManager {
         text: String,
         attached: Option<Attached>,
         retry: bool,
+        origin: Option<&MessageOrigin>,
     ) -> Result<TurnId, ErrorBody> {
         let id = live.id;
         // The checkout as it is before the agent hears of this turn (ADR 0019): the prompt
@@ -1850,7 +1912,11 @@ impl ChatManager {
         let checkpoint = self.checkpoints.begin(id).await;
         // Mawas's memory: the first turn of a Claude Code conversation carries it, and any turn
         // carries what changed since the conversation last heard of it.
-        let memory = self.turn_memory(live).await;
+        let mut memory = self.turn_memory(live).await;
+        if let Some(origin) = origin {
+            memory.stamp(origin);
+        }
+        lock(&live.delivery).origin = origin.cloned();
         let started = match &live.backend {
             Backend::Agent(adapter) => {
                 // ACP harnesses take each text attachment as an embedded resource and each
@@ -1886,6 +1952,7 @@ impl ChatManager {
                 } else {
                     extras.context.splice(0..0, memory.blocks.iter().cloned());
                     extras.unjournaled.clone_from(&memory.hidden);
+                    extras.unjournaled.extend(memory.framing.clone());
                     text
                 };
                 let prepared = if codex {
@@ -1937,6 +2004,7 @@ impl ChatManager {
         }
         if started.is_err() {
             live.busy.store(false, Ordering::Release);
+            lock(&live.delivery).origin = None;
             memory.undo(live);
         } else {
             self.memory_delivered(live, memory).await;
@@ -2078,10 +2146,11 @@ impl ChatManager {
         self: &Arc<Self>,
         id: SessionId,
         text: String,
+        origin: Option<MessageOrigin>,
     ) -> Result<QueuedMessage, ErrorBody> {
         check_message(&text, false)?;
         self.queues.load(id).await?;
-        let (item, changed) = self.queues.add(id, text, false, None)?;
+        let (item, changed) = self.queues.add(id, text, false, origin)?;
         self.emit_queue(Some(changed));
         self.deliver_soon(id);
         Ok(item)
@@ -2129,11 +2198,12 @@ impl ChatManager {
         id: SessionId,
         text: Option<String>,
         item: Option<u64>,
+        sender: Option<MessageOrigin>,
     ) -> Result<ChatSentNow, ErrorBody> {
         let what = match (text, item) {
             (Some(text), None) => {
                 check_message(&text, false)?;
-                Now::Text(text)
+                Now::Text(text, sender.clone())
             }
             (None, Some(item)) => Now::Item(item),
             _ => {
@@ -2156,7 +2226,7 @@ impl ChatManager {
         };
         // No turn runs: this is the next turn.
         let (text, taken) = match what {
-            Now::Text(text) => (text, None),
+            Now::Text(text, _) => (text, None),
             Now::Item(item) => match self.queues.take(id, item) {
                 Ok((taken, _)) => (taken.text.clone(), Some(taken)),
                 Err(error) => {
@@ -2165,7 +2235,12 @@ impl ChatManager {
                 }
             },
         };
-        match self.run_turn(&live, text, None, false).await {
+        // The label of a message is the one it was queued with, or the one it is sent with.
+        let origin = taken.as_ref().map_or(sender, |taken| taken.origin.clone());
+        match self
+            .run_turn(&live, text, None, false, origin.as_ref())
+            .await
+        {
             Ok(turn_id) => {
                 if let Some(taken) = taken {
                     self.emit_queue(Some((
@@ -2176,7 +2251,10 @@ impl ChatManager {
                         },
                     )));
                 }
-                self.release_queue(id);
+                // A message the user did not write does not release what the user stopped.
+                if origin.is_none() {
+                    self.release_queue(id);
+                }
                 Ok(ChatSentNow::Started { turn_id })
             }
             Err(error) => {
@@ -2199,14 +2277,20 @@ impl ChatManager {
         if let Backend::Agent(adapter) = &live.backend
             && adapter.can_steer()
         {
-            let (text, taken) = match what {
-                Now::Text(text) => (text, None),
+            let (text, taken, origin) = match what {
+                Now::Text(text, origin) => (text, None, origin),
                 Now::Item(item) => {
                     let (taken, _) = self.queues.take(id, item)?;
-                    (taken.text.clone(), Some(taken))
+                    let origin = taken.origin.clone();
+                    (taken.text.clone(), Some(taken), origin)
                 }
             };
-            return match adapter.steer(text.clone()).await {
+            // The agent reads a message it was sent by Mawas as that, not as the user's words.
+            let steered = origin
+                .as_ref()
+                .map_or_else(|| text.clone(), |origin| framed(&text, origin));
+            lock(&live.delivery).origin = origin.clone();
+            return match adapter.steer(steered).await {
                 Ok(turn_id) => {
                     if let Some(taken) = taken {
                         self.emit_queue(Some((
@@ -2220,14 +2304,20 @@ impl ChatManager {
                     self.notice(
                         live,
                         NoticeLevel::Info,
-                        "Sent now: the agent reads your message at its next step, without \
-                         stopping the turn.",
+                        if origin.is_some() {
+                            "Sent now: the agent reads the message from Mawas at its next step, \
+                             without stopping the turn."
+                        } else {
+                            "Sent now: the agent reads your message at its next step, without \
+                             stopping the turn."
+                        },
                     )
                     .await;
                     Ok(ChatSentNow::Steered { turn_id })
                 }
                 // The turn ended meanwhile: the message goes first, as the next turn.
                 Err(AgentError::NoTurn) => {
+                    lock(&live.delivery).origin = None;
                     let item = match taken {
                         Some(taken) => {
                             let changed = self.queues.put_back(id, taken, QueueHold::SendFailed);
@@ -2237,7 +2327,7 @@ impl ChatManager {
                         None => Some(text),
                     };
                     if let Some(text) = item {
-                        let (_, changed) = self.queues.add(id, text, true, None)?;
+                        let (_, changed) = self.queues.add(id, text, true, origin)?;
                         self.emit_queue(Some(changed));
                     }
                     self.release_queue(id);
@@ -2245,6 +2335,7 @@ impl ChatManager {
                     Ok(ChatSentNow::Interrupting)
                 }
                 Err(error) => {
+                    lock(&live.delivery).origin = None;
                     if let Some(taken) = taken {
                         let changed = self.queues.put_back(id, taken, QueueHold::SendFailed);
                         self.emit_queue(Some(changed));
@@ -2255,8 +2346,8 @@ impl ChatManager {
         }
         // The agent takes nothing while it works: the message goes first, the turn is stopped,
         // and its end sends it. The journal says the turn was interrupted for it.
-        if let Now::Text(text) = what {
-            let (_, changed) = self.queues.add(id, text, true, None)?;
+        if let Now::Text(text, origin) = what {
+            let (_, changed) = self.queues.add(id, text, true, origin)?;
             self.emit_queue(Some(changed));
         }
         self.release_queue(id);
@@ -2310,7 +2401,10 @@ impl ChatManager {
             live.busy.store(false, Ordering::Release);
             return;
         };
-        match self.run_turn(&live, item.text.clone(), None, false).await {
+        match self
+            .run_turn(&live, item.text.clone(), None, false, item.origin.as_ref())
+            .await
+        {
             Ok(turn_id) => self.emit_queue(Some((
                 self.queues.list(id),
                 hutan_protocol::chat::QueueChange::Delivered {
@@ -2953,6 +3047,25 @@ impl ChatManager {
             && let Some(meta) = lock(&live.delivery).meta.take()
         {
             draft.payload = Some(serde_json::json!({ ATTACHMENTS_META_KEY: meta }));
+        }
+        // A message the user did not write says who did (`message_origin`): the first user
+        // `message_end` after Hutan handed it to the agent carries it.
+        if matches!(
+            draft.kind,
+            AgentEventKind::MessageEnd {
+                role: hutan_core::agent::MessageRole::User,
+                ..
+            }
+        ) && let Some(origin) = lock(&live.delivery).origin.take()
+            && let Ok(value) = serde_json::to_value(&origin)
+        {
+            match &mut draft.payload {
+                Some(serde_json::Value::Object(map)) => {
+                    map.insert(MESSAGE_ORIGIN_KEY.to_owned(), value);
+                }
+                None => draft.payload = Some(serde_json::json!({ MESSAGE_ORIGIN_KEY: value })),
+                Some(_) => {}
+            }
         }
         if ends_turn {
             self.drop_temp_images(live);

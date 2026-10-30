@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use hutan_core::{DeliveryActor, TerminalId};
-use hutan_protocol::chat::{ChatQueued, ChatSent};
+use hutan_protocol::chat::{ChatQueued, ChatSent, MessageOrigin};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::grants::ControlGrants;
 use hutan_protocol::messages::{
@@ -144,23 +144,28 @@ impl Router {
         // reported itself in) is an agent's: the policy of `[control]` decides before anything
         // runs. A plain shell session is the user.
         let Some(origin) = self.agent_origin(conn).await else {
-            return self.run(conn, request).await;
+            return self.run(conn, request, None).await;
         };
         // The chunks and the commit of an upload go on with what the begin was allowed to
         // start: one approval covers the write, not one per chunk.
         if self.files.continues_upload(conn.id(), &request) {
-            return self.run(conn, request).await;
+            return self.run(conn, request, None).await;
         }
         let gated = self
             .control
             .gate(origin, conn.client_kind(), &request)
             .await?;
-        let result = self.run(conn, request).await?;
+        let result = self.run(conn, request, gated.sender.as_ref()).await?;
         Ok(gated.annotate(result))
     }
 
     /// Runs one request, whoever asked.
-    async fn run(&self, conn: &ConnHandle, request: Request) -> Result<Value, ErrorBody> {
+    async fn run(
+        &self,
+        conn: &ConnHandle,
+        request: Request,
+        sender: Option<&MessageOrigin>,
+    ) -> Result<Value, ErrorBody> {
         match request {
             Request::Hello(_) => Err(ErrorBody::new(
                 ErrorCode::BadRequest,
@@ -375,11 +380,17 @@ impl Router {
                     .await?;
                 // The turn this starts re-opens the work of a done task in the sender's name.
                 self.tasks.note_sender(req.session_id, by);
-                let turn_id = self
-                    .registry
-                    .chats()
-                    .send(req.session_id, req.text, attached)
-                    .await?;
+                let chats = self.registry.chats();
+                // A message Mawas sends (with the user's approval) is not the user's going on
+                // with the conversation: it says who sent it and releases nothing.
+                let turn_id = match sender {
+                    Some(sender) => {
+                        chats
+                            .send_from(req.session_id, req.text, attached, sender)
+                            .await?
+                    }
+                    None => chats.send(req.session_id, req.text, attached).await?,
+                };
                 // The user went on with the conversation: what a restart did to it is old news.
                 if by != DeliveryActor::Agent {
                     self.registry.note_user_action(req.session_id);
@@ -414,7 +425,7 @@ impl Router {
                 let item = self
                     .registry
                     .chats()
-                    .queue_add(req.session_id, req.text)
+                    .queue_add(req.session_id, req.text, sender.cloned())
                     .await?;
                 ok(&ChatQueued { item })
             }
@@ -451,7 +462,7 @@ impl Router {
                 let sent = self
                     .registry
                     .chats()
-                    .send_now(req.session_id, req.text, req.item_id)
+                    .send_now(req.session_id, req.text, req.item_id, sender.cloned())
                     .await?;
                 if by != DeliveryActor::Agent {
                     self.registry.note_user_action(req.session_id);
@@ -634,7 +645,7 @@ impl Router {
             Request::TaskStart(req) => ok(&self.tasks.start(req.id).await?),
             Request::TaskReview(req) => {
                 let by = self.actor(conn).await;
-                ok(&self.tasks.review(req, by).await?)
+                ok(&self.tasks.review(req, by, sender).await?)
             }
             Request::AccountList(_) => ok(&self.accounts.list().await),
             Request::UsageSummary(req) => ok(&self.usage.summary(req.refresh).await?),

@@ -36,7 +36,7 @@ use hutan_core::{
     TaskId, TaskPlacement, TaskPlacementKind, TaskRun, TaskState, TurnId, WorkspaceId,
     task as model,
 };
-use hutan_protocol::chat::ChatCreate;
+use hutan_protocol::chat::{ChatCreate, MessageOrigin};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{
     AgentState, Event, SessionCreate, SessionInfo, SessionListFilter, SessionSpec, TerminalSpec,
@@ -552,6 +552,28 @@ impl TaskService {
                 .filter(|task| req.state.is_none_or(|state| task.state == state))
                 .collect(),
         }
+    }
+
+    /// The session a review of task `id` speaks to — the agent the control gate binds Mawas's
+    /// `task.review` grants to: the task's newest session that is a live chat (where a change
+    /// request's note goes), else its newest session; `None` for an unknown task and one that
+    /// never ran.
+    pub async fn review_target(&self, id: TaskId) -> Option<SessionId> {
+        let ran = self.state.lock().tasks.get(&id)?.task.sessions.clone();
+        let live = self
+            .registry
+            .list_sessions(SessionListFilter::default())
+            .await
+            .map(|list| list.sessions)
+            .unwrap_or_default();
+        ran.iter()
+            .rev()
+            .copied()
+            .find(|session| {
+                live.iter()
+                    .any(|s| s.id == *session && s.state.is_live() && s.chat.is_some())
+            })
+            .or_else(|| ran.last().copied())
     }
 
     pub async fn update(self: &Arc<Self>, req: TaskUpdate) -> Result<Task, ErrorBody> {
@@ -1347,11 +1369,13 @@ impl TaskService {
 
     /// `task.review`: a person's verdict on a `done` task. A change request with a note goes
     /// to the task's chat as a user message when that session still lives, and the task runs
-    /// again; otherwise the note stays on the task.
+    /// again; otherwise the note stays on the task. `origin` is set when Mawas reviews with
+    /// the user's approval: the note then reaches the agent as Mawas's, not as the user's.
     pub async fn review(
         self: &Arc<Self>,
         req: TaskReview,
         by: DeliveryActor,
+        origin: Option<&MessageOrigin>,
     ) -> Result<TaskReviewed, ErrorBody> {
         let note = req
             .note
@@ -1431,7 +1455,16 @@ impl TaskService {
         };
         if let (Some(session), Some(note)) = (resumed, &note) {
             let text = format!("Changes requested on the work of this task:\n\n{note}");
-            if let Err(error) = self.registry.chats().send(session, text, None).await {
+            let sent = match origin {
+                Some(origin) => {
+                    self.registry
+                        .chats()
+                        .send_from(session, text, None, origin)
+                        .await
+                }
+                None => self.registry.chats().send(session, text, None).await,
+            };
+            if let Err(error) = sent {
                 // The decision is not recorded when its note could not be delivered.
                 let mut st = self.state.lock();
                 st.by_session.remove(&session);
