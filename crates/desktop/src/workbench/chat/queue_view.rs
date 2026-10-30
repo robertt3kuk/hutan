@@ -42,6 +42,8 @@ fn one_line(text: &str) -> String {
 pub(super) struct GoneChip {
     id: u64,
     text: String,
+    /// It was written by Mawas.
+    mawas: bool,
     /// Where it was in the queue.
     index: usize,
     at: std::time::Instant,
@@ -50,7 +52,7 @@ pub(super) struct GoneChip {
 /// The queue as the last frame drew it, and the chips that left it since.
 #[derive(Debug, Default)]
 pub(super) struct QueueSeen {
-    items: Vec<(u64, String)>,
+    items: Vec<(u64, String, bool)>,
     leaving: Vec<GoneChip>,
 }
 
@@ -74,28 +76,32 @@ impl ChatView {
         let reduced = cx.reduce_motion();
         let exit = motion::Kind::Chip.exit_duration(reduced);
         let mut started = false;
-        let gone: Vec<(usize, u64, String)> = {
+        let gone: Vec<(usize, u64, String, bool)> = {
             let mut guard = self.queue_seen.borrow_mut();
             let seen = &mut *guard;
-            for (index, (id, text)) in seen.items.iter().enumerate() {
+            for (index, (id, text, mawas)) in seen.items.iter().enumerate() {
                 if !items.iter().any(|item| item.id == *id)
                     && !seen.leaving.iter().any(|gone| gone.id == *id)
                 {
                     seen.leaving.push(GoneChip {
                         id: *id,
                         text: text.clone(),
+                        mawas: *mawas,
                         index,
                         at: now,
                     });
                     started = true;
                 }
             }
-            seen.items = items.iter().map(|i| (i.id, i.text.clone())).collect();
+            seen.items = items
+                .iter()
+                .map(|i| (i.id, i.text.clone(), i.origin.is_some()))
+                .collect();
             seen.leaving
                 .retain(|gone| now.saturating_duration_since(gone.at) < exit);
             seen.leaving
                 .iter()
-                .map(|gone| (gone.index, gone.id, gone.text.clone()))
+                .map(|gone| (gone.index, gone.id, gone.text.clone(), gone.mawas))
                 .collect()
         };
         if started && !exit.is_zero() {
@@ -146,7 +152,7 @@ impl ChatView {
         // fold, open, so that leaving can fold it: its height runs to nothing while it fades and
         // the chips under it rise with it, and the list does not jump at the end. The gap above
         // a chip is part of the fold for the same reason.
-        let chip = |index: usize, id: u64, text: &str, open: bool, live: bool| {
+        let chip = |index: usize, id: u64, text: &str, open: bool, live: bool, mawas: bool| {
             let wrap = SharedString::from(format!("chat-queue-wrap-{id}"));
             // Under Reduce Motion nothing folds: the chip that left only fades.
             let fading = !live && reduced;
@@ -180,6 +186,21 @@ impl ChatView {
                 .when(open, |s| s.border_1().border_color(theme.border))
                 .when(!open, |s| s.bg(theme.surface_hover))
                 .text_size(px(tokens.secondary_font_size))
+                // Who wrote it when the user did not: Mawas, with the user's approval.
+                .children(mawas.then(|| {
+                    div()
+                        .relative()
+                        .flex_none()
+                        .px(px(tokens.spacing))
+                        .rounded(px(crate::theme::pill_radius()))
+                        .border_1()
+                        .border_color(theme.border)
+                        .text_color(theme.muted)
+                        .child(SharedString::from("from Mawas"))
+                        .when(live, |s| {
+                            s.child(probe(&self.regions, Region::ChatQueue("origin", index)))
+                        })
+                }))
                 .child(
                     div()
                         .flex_1()
@@ -241,10 +262,22 @@ impl ChatView {
         let mut rows: Vec<AnyElement> = items
             .iter()
             .enumerate()
-            .map(|(index, item)| chip(index, item.id, &item.text, editing == Some(item.id), true))
+            .map(|(index, item)| {
+                chip(
+                    index,
+                    item.id,
+                    &item.text,
+                    editing == Some(item.id),
+                    true,
+                    item.origin.is_some(),
+                )
+            })
             .collect();
-        for (index, id, text) in gone {
-            rows.insert(index.min(rows.len()), chip(index, id, &text, false, false));
+        for (index, id, text, mawas) in gone {
+            rows.insert(
+                index.min(rows.len()),
+                chip(index, id, &text, false, false, mawas),
+            );
         }
         Some(
             div()

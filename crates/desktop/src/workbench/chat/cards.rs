@@ -32,6 +32,8 @@ use hutan_core::agent::{FileChangeKind, NoticeLevel, PlanStepStatus, ToolKind, T
 pub(super) const PART_BODY: u32 = 0;
 /// A file's diff in a file change card: `PART_DIFF + index`.
 pub(super) const PART_DIFF: u32 = 100;
+/// The *from Mawas* label of a user message the user did not write (protocol 0.62).
+pub(super) const PART_ORIGIN: u32 = 200;
 /// The approvals this window saw waiting and when each was answered: an answered card keeps its
 /// buttons folding away for the length of a collapse (`approval_card`), and no card that was
 /// not seen waiting does (a transcript loaded with its approvals answered).
@@ -255,6 +257,9 @@ impl ChatView {
             .item
             .map(|item| self.model.read(cx).attachments_of(item).to_vec())
             .unwrap_or_default();
+        let origin = message
+            .item
+            .and_then(|item| self.model.read(cx).origin_of(item).cloned());
         let open = self.open(entry.id, PART_BODY, false);
         let id = entry.id;
         let hover = theme.surface_hover;
@@ -294,6 +299,19 @@ impl ChatView {
             .py(px(tokens.spacing * 2.5))
             .card(theme, tokens)
             .text_color(theme.fg)
+            // A message the user did not write says who did, above its words.
+            .children(origin.map(|_| {
+                div()
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .gap(px(tokens.spacing * 1.5))
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .child(pill("from Mawas", look))
+                    .child("sent with your approval")
+                    .child(probe(&self.regions, Region::ChatPart(index, PART_ORIGIN)))
+            }))
             .child(blocks(&parsed, &look.sans(), ids))
             .child(bar)
             .when(!meta.is_empty(), |s| s.child(chips))

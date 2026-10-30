@@ -18,6 +18,7 @@ use gpui::{
 };
 use hutan_core::agent::PermissionOptionKind;
 use hutan_core::{ApprovalId, QuestionId, SessionId};
+use hutan_protocol::chat::ControlTarget;
 
 use super::assistant::AssistantPanel;
 use super::common::{agent_lead_glyph, agent_state_word, agent_title_line};
@@ -55,6 +56,9 @@ pub enum TodayKind {
     /// tool) or another agent's.
     Approval {
         approval: ApprovalId,
+        /// Protocol 0.62: the agent a request of Mawas acts on, and the whole text it would
+        /// send; absent for every other approval.
+        target: Option<ControlTarget>,
         options: Vec<RailOption>,
         /// The request is Mawas's.
         mawas: bool,
@@ -176,6 +180,11 @@ pub fn today(store: &SessionsStore) -> Today {
                 title: request.title.clone(),
                 detail: record.title.clone(),
                 kind: TodayKind::Approval {
+                    target: store
+                        .approvals()
+                        .iter()
+                        .find(|approval| approval.id == request.id)
+                        .and_then(|approval| approval.target.clone()),
                     approval: request.id,
                     options: request
                         .options
@@ -614,8 +623,47 @@ impl AssistantPanel {
                 approval,
                 options,
                 memory,
+                target,
                 ..
             } => {
+                // What Mawas asks to do to another agent: who it is, and every word it would
+                // say, so that nothing is approved unseen.
+                if let Some(target) = target {
+                    card = card.child(
+                        div()
+                            .relative()
+                            .flex()
+                            .gap(px(tokens.spacing))
+                            .text_size(px(tokens.secondary_font_size))
+                            .child(div().flex_none().text_color(theme.muted).child("To"))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_color(theme.fg)
+                                    .child(SharedString::from(target.title.clone())),
+                            )
+                            .child(probe(
+                                &self.env.regions,
+                                Region::AssistantItem("today-target", row_index),
+                            )),
+                    );
+                    if let Some(text) = &target.text {
+                        card = card.child(
+                            div()
+                                .relative()
+                                .p(px(tokens.spacing * 1.5))
+                                .rounded(px(tokens.radius - 2.0))
+                                .bg(theme.bg)
+                                .text_size(px(tokens.secondary_font_size))
+                                .text_color(theme.fg)
+                                .child(SharedString::from(text.clone()))
+                                .child(probe(
+                                    &self.env.regions,
+                                    Region::AssistantItem("today-text", row_index),
+                                )),
+                        );
+                    }
+                }
                 let (approval, memory) = (*approval, *memory);
                 let buttons: Vec<AnyElement> = options
                     .iter()

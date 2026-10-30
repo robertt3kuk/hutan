@@ -15,7 +15,10 @@ use hutan_client::{ChatUpdate, ClientError, Connection};
 use hutan_core::{AgentEvent, ApprovalId, Epoch, ItemId, SessionId};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::assistant::{AttachmentKind, AttachmentMeta, attachments_meta};
-use hutan_protocol::chat::{ChatQueue, HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT, QueuedMessage};
+use hutan_protocol::chat::{
+    ChatQueue, HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT, MessageOrigin, QueuedMessage,
+    message_origin,
+};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::chip::{Chip, compose};
@@ -73,6 +76,8 @@ pub struct ChatModel {
     context: Vec<ContextChip>,
     /// What the daemon says about the attachments of each user message of the transcript.
     attachments: HashMap<ItemId, Vec<AttachmentMeta>>,
+    /// Who wrote each user message that the user did not (protocol 0.62).
+    origins: HashMap<ItemId, MessageOrigin>,
     sending: bool,
     /// The last thing that went wrong with a command (send, interrupt, answer).
     error: Option<SharedString>,
@@ -216,6 +221,7 @@ impl ChatModel {
             chips: Vec::new(),
             context: Vec::new(),
             attachments: HashMap::new(),
+            origins: HashMap::new(),
             sending: false,
             error: None,
             unsent: None,
@@ -376,6 +382,12 @@ impl ChatModel {
         self.attachments.get(&item).map_or(&[], Vec::as_slice)
     }
 
+    /// Who wrote the user message `item` when the user did not (Mawas, with the user's approval;
+    /// protocol 0.62); `None` for the user's own words.
+    pub fn origin_of(&self, item: ItemId) -> Option<&MessageOrigin> {
+        self.origins.get(&item)
+    }
+
     fn note_attachments(&mut self, event: &AgentEvent) {
         let Some(item) = event.item_id else {
             return;
@@ -383,6 +395,9 @@ impl ChatModel {
         let meta = attachments_meta(event);
         if !meta.is_empty() {
             self.attachments.insert(item, meta);
+        }
+        if let Some(origin) = message_origin(event) {
+            self.origins.insert(item, origin);
         }
     }
 

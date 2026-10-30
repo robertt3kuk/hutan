@@ -1250,3 +1250,203 @@ fn the_palette_steps_resets_and_lists_the_layout_commands(cx: &mut TestAppContex
         (column_width(&view, cx) - 736.0).abs() < 1.0
     });
 }
+
+// ---- acting on another agent (MAWAS-GATE, protocol 0.62) -----------------------------------------
+
+/// What Mawas says to another agent in these tests.
+const NUDGE: &str = "Please run the formatter before you commit.";
+
+/// Waits until `region` is drawn and returns where.
+fn drawn(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    region: Region,
+) -> gpui::Bounds<gpui::Pixels> {
+    pump_until(cx, &format!("{region:?} to be drawn"), |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(region))
+            .is_some()
+    });
+    view.read_with(cx, |wb, _| wb.region_bounds(region))
+        .unwrap()
+}
+
+#[gpui::test]
+fn the_card_for_a_message_shows_the_agent_and_every_word_and_the_message_arrives_from_mawas(
+    cx: &mut TestAppContext,
+) {
+    use hutan_chat_view::Body;
+    use hutan_desktop::workbench::chat::LoadStatus;
+    use hutan_protocol::chat::{ChatCreate, ChatInterrupt, ChatQueued, ChatSendNow, ControlTarget};
+
+    let env = started();
+    // The target's first turn is held; every later one answers at once.
+    env.mock.route(
+        "POST",
+        PATH,
+        Reply::sse([format!(
+            "data: {}\n\n",
+            json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"on it"}}]})
+        )])
+        .then_hold(),
+    );
+    env.mock
+        .route("POST", PATH, common::assistant::reply("noted"));
+    let (view, cx) = open(cx, &env.daemon);
+    let panel = open_assistant(&view, cx);
+    let (mawas, _, _) = shown(&panel, cx);
+    let api = env
+        .daemon
+        .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            extra_dirs: Vec::new(),
+            contain: None,
+            workspace_id: None,
+            cwd: env.base.clone(),
+            agent: "direct".into(),
+            model: None,
+            approval_policy: None,
+            sandbox: None,
+            title: Some("api".into()),
+            mode: None,
+            provider_id: Some("mock".into()),
+            system_prompt: None,
+            account: None,
+            safety: None,
+        }))
+        .session;
+    env.daemon
+        .call::<hutan_protocol::chat::ChatSent>(Request::ChatSend(
+            hutan_protocol::chat::ChatSend {
+                session_id: api.id,
+                text: "first".into(),
+                attachments: Vec::new(),
+            },
+        ));
+    pump_until(cx, "its turn to run", |_| {
+        env.daemon
+            .session(api.id)
+            .chat
+            .as_ref()
+            .is_some_and(|chat| chat.turn_active)
+    });
+
+    // Mawas asks to queue a message for it: the rail's card names the agent and shows all of it,
+    // and offers *Allow once*, *Allow for this chat and this agent* and *Deny* — nothing wider.
+    let asking = env.daemon.call_from_in_background::<ChatQueued>(
+        mawas,
+        Request::ChatQueueAdd(hutan_protocol::chat::ChatQueueAdd {
+            session_id: api.id,
+            text: NUDGE.into(),
+        }),
+    );
+    wait_needs(&panel, cx, 1);
+    let today = panel.read_with(cx, |p, cx| p.today(cx));
+    match &today.requests[0].kind {
+        TodayKind::Approval {
+            mawas: true,
+            target,
+            options,
+            ..
+        } => {
+            assert_eq!(
+                target.as_ref(),
+                Some(&ControlTarget {
+                    session_id: api.id,
+                    title: "api".into(),
+                    text: Some(NUDGE.into()),
+                })
+            );
+            let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+            assert_eq!(
+                labels,
+                ["Allow once", "Allow for this chat and this agent", "Deny"]
+            );
+        }
+        other => panic!("Mawas's approval expected: {other:?}"),
+    }
+    drawn(&view, cx, Region::AssistantItem("today-target", 0));
+    drawn(&view, cx, Region::AssistantItem("today-text", 0));
+    drawn(&view, cx, Region::AssistantItem("today-option", 2));
+    // Allow once, from the card.
+    let allow = drawn(&view, cx, Region::AssistantItem("today-option", 0));
+    common::click_at(cx, allow.center());
+    wait_until(cx, "the message to be queued", |cx| {
+        let _ = cx;
+        asking.try_take().is_some()
+    });
+    // Open the target to see the queue (Home stays behind it: the rail is not drawn then).
+    view.update_in(cx, |wb, window, cx| wb.open_session(api.id, window, cx));
+    wait_until(cx, "the target chat to load", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(api.id)
+                .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+        })
+    });
+    let model = view
+        .read_with(cx, |wb, _| wb.chat_model_of(api.id))
+        .unwrap();
+
+    // In the target chat the queued message says whose it is, and nothing was sent into the turn.
+    pump_until(cx, "the queue to show it", |cx| {
+        model.read_with(cx, |m, _| {
+            m.queued().len() == 1 && m.queued()[0].origin.is_some()
+        })
+    });
+    drawn(&view, cx, Region::ChatQueue("origin", 0));
+    // Stop keeping the queue, then Send now: it goes, as Mawas's, and the turn that answers it
+    // is the one the transcript labels.
+    let _: hutan_protocol::messages::Empty =
+        env.daemon.call(Request::ChatInterrupt(ChatInterrupt {
+            session_id: api.id,
+            keep_queue: true,
+        }));
+    pump_until(cx, "the turn to stop", |cx| {
+        model.read_with(cx, |m, _| !m.transcript().turn_active())
+    });
+    let item = model.read_with(cx, |m, _| m.queued()[0].id);
+    let _: hutan_protocol::chat::ChatSentNow = env.daemon.call(Request::ChatSendNow(ChatSendNow {
+        session_id: api.id,
+        text: None,
+        item_id: Some(item),
+    }));
+    let (index, user) = {
+        let mut found = None;
+        pump_until(cx, "the message to be in the transcript", |cx| {
+            found = model.read_with(cx, |m, _| {
+                m.transcript()
+                    .entries()
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, entry)| match &entry.body {
+                        Body::User(message) if message.text.starts_with(NUDGE) => {
+                            Some((index, message.item))
+                        }
+                        _ => None,
+                    })
+            });
+            found.is_some()
+        });
+        found.unwrap()
+    };
+    let origin = model
+        .read_with(cx, |m, _| user.and_then(|item| m.origin_of(item).cloned()))
+        .expect("the delivered message carries its origin");
+    assert_eq!(origin.session_id, mawas);
+    assert_eq!(origin.approval, "allow_once");
+    // The label sits on the message (`ChatPart(index, 200)` is the *from Mawas* label).
+    drawn(&view, cx, Region::ChatPart(index, 200));
+    // The user's own message has none.
+    let own = model.read_with(cx, |m, _| {
+        m.transcript()
+            .entries()
+            .iter()
+            .find_map(|entry| match &entry.body {
+                Body::User(message) if message.text == "first" => message.item,
+                _ => None,
+            })
+    });
+    assert!(
+        own.is_some_and(|item| model.read_with(cx, |m, _| m.origin_of(item).is_none())),
+        "the user's own message is not labelled"
+    );
+}
