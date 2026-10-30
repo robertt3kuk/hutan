@@ -58,6 +58,7 @@
 pub mod account_registry;
 pub mod accounts;
 pub mod agent;
+pub mod agents_board;
 pub mod assistant;
 pub mod assistant_pick;
 pub mod bus;

@@ -2367,15 +2367,26 @@ pub struct AgentReleaseArgs {
     pub outcome: Option<OutcomeArg>,
 }
 
-/// `hutan agents`: the agents (and subagents) of the sessions, as the daemon observes them.
+/// `hutan agents`: the agents (and subagents) of the sessions, as the daemon observes them; with
+/// `--board`, every agent in one board.
 #[derive(Debug, Args)]
 pub struct AgentsArgs {
     /// Only this session: id, unique id prefix, or title
     #[arg(value_name = "SESSION")]
     pub target: Option<String>,
     /// Keep running and print the trees again whenever one changes
-    #[arg(long)]
+    #[arg(long, conflicts_with = "board")]
     pub watch: bool,
+    /// The board instead of the trees: every agent across workspaces grouped like the Agents
+    /// page (what it does, what it waits for, where its facts come from), from the daemon
+    #[arg(long, conflicts_with_all = ["target", "watch"])]
+    pub board: bool,
+    /// With --board: only this workspace or project (name, id or unique prefix)
+    #[arg(long, value_name = "WORKSPACE", requires = "board")]
+    pub ws: Option<String>,
+    /// With --board: list the agents that have finished too
+    #[arg(long, requires = "board")]
+    pub finished: bool,
 }
 
 /// `hutan ps`: the processes of the live sessions.

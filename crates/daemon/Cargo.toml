@@ -22,6 +22,7 @@ base64.workspace = true
 bytes.workspace = true
 futures.workspace = true
 hutan-agents.workspace = true
+hutan-agents-view.workspace = true
 hutan-core.workspace = true
 hutan-buffer.workspace = true
 hutan-gateway.workspace = true

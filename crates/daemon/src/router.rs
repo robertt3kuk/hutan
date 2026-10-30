@@ -47,6 +47,7 @@ use crate::usage::UsageService;
 use crate::worktrees::WorktreeService;
 use hutan_protocol::ui::{SessionSendText, SessionTextSent};
 
+mod board;
 mod fork;
 mod insight;
 
@@ -409,6 +410,7 @@ impl Router {
             }
             Request::ChatFork(req) => ok(&self.fork_chat(conn, req).await?),
             Request::AgentInsight(req) => ok(&self.agent_insight(req).await?),
+            Request::AgentsBoard(req) => ok(&self.agents_board(req).await?),
             Request::AgentMeasureContext(req) => ok(&self.measure_context(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
@@ -1108,6 +1110,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // What the agent's context holds: read-only. `/context` is a turn sent to the agent, so
         // asking for it is what `chat.send` would be.
         Request::AgentInsight(_) => ("agent.insight", Read),
+        // The board of every agent (protocol 0.63): the reducer of the Agents page, read-only.
+        Request::AgentsBoard(_) => ("agents.board", Read),
         Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.

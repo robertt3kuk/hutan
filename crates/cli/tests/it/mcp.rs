@@ -818,3 +818,62 @@ async fn an_agent_reads_a_chats_insight_and_no_tool_measures_its_context() {
     );
     t.stop().await;
 }
+
+/// The board tools (protocol 0.63): read-only, and what they return is text others wrote, so the
+/// result opens with a notice saying it is data and `_meta` says it is untrusted (R7). The
+/// tools that answer nothing about the user's own words do not carry it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_board_tools_read_and_mark_their_output_as_untrusted_data() {
+    let t = TestDaemon::start().await;
+    let id = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &id).await;
+
+    let mut mcp = Mcp::start(&t.paths.socket, None).await;
+    mcp.initialize().await;
+
+    let listed = mcp.call("tools/list", json!({})).await;
+    for name in ["agents_board", "question_list", "history_sessions"] {
+        let tool = listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} missing"));
+        assert_eq!(tool["annotations"]["readOnlyHint"], true, "{name}");
+    }
+
+    let call = mcp.tool_request("agents_board", json!({})).await;
+    let answer = mcp.answer(call).await;
+    assert!(!is_error(&answer), "{answer}");
+    let text = text_of(&answer);
+    assert!(text.starts_with("UNTRUSTED DATA"), "{text}");
+    assert_eq!(answer["result"]["_meta"]["hutan/untrusted"], true);
+    let board = &answer["result"]["structuredContent"];
+    assert_eq!(board["agents"][0]["session_id"], id);
+    assert_eq!(board["agents"][0]["source"], "hook");
+    assert_eq!(board["coverage"]["terminal_reported"], 1);
+
+    let call = mcp.tool_request("question_list", json!({})).await;
+    let answer = mcp.answer(call).await;
+    assert!(!is_error(&answer), "{answer}");
+    assert!(text_of(&answer).starts_with("UNTRUSTED DATA"));
+    assert_eq!(
+        answer["result"]["structuredContent"]["questions"],
+        json!([])
+    );
+
+    // The history index is off in a fresh home: the tool says so, as an error, not as data.
+    let call = mcp
+        .tool_request("history_sessions", json!({"limit": 500}))
+        .await;
+    let answer = mcp.answer(call).await;
+    assert!(is_error(&answer), "{answer}");
+    assert!(!text_of(&answer).contains("UNTRUSTED DATA"), "{answer}");
+
+    // Other tools are unchanged.
+    let call = mcp.tool_request("approval_list", json!({})).await;
+    let answer = mcp.answer(call).await;
+    assert!(!is_error(&answer), "{answer}");
+    assert!(answer["result"].get("_meta").is_none());
+    t.stop().await;
+}

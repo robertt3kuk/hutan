@@ -2668,6 +2668,7 @@ dependencies = [
  "futures",
  "globset",
  "hutan-agents",
+ "hutan-agents-view",
  "hutan-buffer",
  "hutan-client",
  "hutan-core",

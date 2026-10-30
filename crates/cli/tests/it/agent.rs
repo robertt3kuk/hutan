@@ -370,3 +370,114 @@ async fn codex_hook_events_report_and_ignore_a_nested_codex() {
     assert_eq!(agent["agent_session_id"], "thread-9");
     t.stop().await;
 }
+
+/// The agents board (protocol 0.63): `hutan agents --board` reads `agents.board`, the reducer
+/// of the Agents page over the daemon's state, and says where each row's facts come from.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_board_lists_agents_and_says_where_their_facts_come_from() {
+    let t = TestDaemon::start().await;
+    let asking = t
+        .new_session(
+            &[],
+            &[
+                "sh",
+                "-c",
+                r#"[ "$HUTAN_ENV" = 1 ] || exit 3
+"$HUTAN_BIN" agent report --source self --agent fake --state blocked --message "Run the migration?"
+exec sleep 600"#,
+            ],
+        )
+        .await;
+    wait_agent_state(&t, &asking, "blocked").await;
+    // A plain shell is no agent; an agent whose session ended is finished.
+    t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    let finished = t
+        .new_session(
+            &[],
+            &[
+                "sh",
+                "-c",
+                r#""$HUTAN_BIN" agent report --source done --agent fake --state idle; exit 0"#,
+            ],
+        )
+        .await;
+
+    // Waits on state: the finished session is counted once its process has ended.
+    let board = timeout(WAIT, async {
+        loop {
+            let board = t.hutan(&["--json", "agents", "--board"]).await.ok().json();
+            if board["counts"]["finished"] == 1 {
+                return board;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the ended agent never counted as finished");
+
+    let agents = board["agents"].as_array().unwrap();
+    assert_eq!(
+        agents.len(),
+        1,
+        "the shell is no agent and the finished one is hidden: {board}"
+    );
+    let row = &agents[0];
+    assert_eq!(row["session_id"], asking);
+    assert_eq!(
+        (row["state"].as_str(), row["group"].as_str()),
+        (Some("blocked"), Some("requests"))
+    );
+    assert_eq!(row["source"], "hook");
+    assert_eq!(row["kind"], "terminal");
+    assert_eq!(row["waiting"][0]["kind"], "terminal_prompt");
+    assert!(
+        row["waiting"][0]["title"]
+            .as_str()
+            .unwrap()
+            .contains("Run the migration?")
+    );
+    assert_eq!(board["counts"]["agents"], 2);
+    assert_eq!(board["counts"]["requests"], 1);
+    assert_eq!(board["hidden_finished"], 1);
+    assert_eq!(board["coverage"]["terminal_reported"], 2);
+    assert_eq!(board["coverage"]["chats"], 0);
+
+    // The text says the same, in the words of the Agents page.
+    let text = t.hutan(&["agents", "--board"]).await.ok().stdout;
+    for needle in [
+        "Needs you",
+        "Run the migration?",
+        "terminal (state only)",
+        "1 finished not listed",
+    ] {
+        assert!(text.contains(needle), "{needle:?} missing from:\n{text}");
+    }
+
+    // `--finished` lists the finished one too, as completed.
+    let all = t
+        .hutan(&["--json", "agents", "--board", "--finished"])
+        .await
+        .ok()
+        .json();
+    let done = all["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["session_id"] == finished)
+        .expect("listed with --finished");
+    assert_eq!(
+        (done["state"].as_str(), done["group"].as_str()),
+        (Some("completed"), Some("finished"))
+    );
+    assert_eq!(all["hidden_finished"], serde_json::Value::Null);
+
+    // An unknown workspace is an error, not an empty board.
+    let missing = finish(command(
+        Path::new(HUTAN),
+        Some(&t.paths.socket),
+        &["agents", "--board", "--ws", "no-such-workspace"],
+    ))
+    .await;
+    assert_ne!(missing.code, 0, "{}", missing.stderr);
+    t.stop().await;
+}

@@ -4,6 +4,7 @@ mod assistant;
 mod assistant_backend;
 mod assistant_sleep;
 mod blocks;
+mod board;
 mod chat;
 mod chat_fork_worktree;
 mod checkpoint_restore;

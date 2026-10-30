@@ -276,9 +276,23 @@ async fn call_tool(server: &Server, params: Value) -> Value {
         return tool_result("the arguments must be a JSON object".to_owned(), None, true);
     }
     match run_tool(server, tool, arguments).await {
+        Ok((text, structured)) if table::is_untrusted(tool.name) => {
+            untrusted_result(text, structured)
+        }
         Ok((text, structured)) => tool_result(text, structured, false),
         Err(text) => tool_result(text, None, true),
     }
+}
+
+/// The result of a tool whose text others wrote (R7): the notice comes first in the text the
+/// model reads, and `_meta` says so for a client that looks.
+fn untrusted_result(text: String, structured: Option<Value>) -> Value {
+    let text = format!("{}\n\n{text}", table::UNTRUSTED_NOTICE);
+    let mut result = tool_result(text, structured, false);
+    if let Value::Object(map) = &mut result {
+        map.insert("_meta".to_owned(), json!({"hutan/untrusted": true}));
+    }
+    result
 }
 
 fn protocol_error_result(message: &str) -> Value {

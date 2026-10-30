@@ -3,6 +3,10 @@
 
 use hutan_client::Client;
 use hutan_core::{AgentNode, AgentObservation, Liveness, NodeOutcome, NodeState, SessionId, Usage};
+use hutan_protocol::board::{
+    AgentsBoard, AgentsBoardRequest, BoardAgent, BoardGroup, BoardKind, BoardSource, BoardState,
+    BoardWaitKind,
+};
 use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, Subscribed};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -14,6 +18,9 @@ use crate::error::CliError;
 impl Ctx {
     pub(super) async fn agents(&self, args: AgentsArgs) -> Result<(), CliError> {
         let client = self.connect().await?;
+        if args.board {
+            return self.agents_board(&client, &args).await;
+        }
         if !client.supports_agent_tree() {
             return Err(CliError::Failed(
                 "this daemon does not observe agent trees (protocol 0.10); restart it with a newer hutand"
@@ -47,6 +54,29 @@ impl Ctx {
                 Err(RecvError::Closed) => return Ok(()),
             }
         }
+    }
+
+    /// `--board`: `agents.board` (protocol 0.63), as text or `--json`.
+    async fn agents_board(&self, client: &Client, args: &AgentsArgs) -> Result<(), CliError> {
+        if !client.supports_agents_board() {
+            return Err(CliError::Failed(
+                "this daemon has no agents board (it predates protocol 0.63); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let workspace_id = match &args.ws {
+            Some(target) => Some(self.resolve_workspace_id(client, target).await?),
+            None => None,
+        };
+        let board = client
+            .agents_board(AgentsBoardRequest {
+                workspace_id,
+                include_finished: args.finished,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&board, || board_text(&board, now_ms()))
     }
 
     async fn print_trees(
@@ -169,6 +199,153 @@ fn compact(n: u64) -> String {
     }
 }
 
+/// The board as text: the groups of the Agents page in its order, one agent per two lines (who
+/// and what, then what it waits for), and the coverage that says what the numbers are worth.
+pub(super) fn board_text(board: &AgentsBoard, now_ms: u64) -> String {
+    let counts = &board.counts;
+    if counts.agents == 0 {
+        return "no agents".to_owned();
+    }
+    let mut lines = vec![format!(
+        "{} agents: {} need you · {} failed · {} ready for review · {} working · {} unconfirmed · {} idle · {} finished",
+        counts.agents,
+        counts.requests,
+        counts.failed,
+        counts.review,
+        counts.working,
+        counts.unconfirmed,
+        counts.idle,
+        counts.finished
+    )];
+    let coverage = &board.coverage;
+    lines.push(format!(
+        "seen through: {} chats (journal) · {} terminal agents with hooks (state only) · {} recognised only (state and title)",
+        coverage.chats, coverage.terminal_reported, coverage.terminal_recognised
+    ));
+    let mut group: Option<BoardGroup> = None;
+    for agent in &board.agents {
+        if group != Some(agent.group) {
+            group = Some(agent.group);
+            lines.push(String::new());
+            lines.push(group_title(agent.group).to_owned());
+        }
+        lines.extend(agent_lines(agent, now_ms));
+    }
+    if board.hidden_finished > 0 {
+        lines.push(String::new());
+        lines.push(format!(
+            "{} finished not listed (--finished lists them)",
+            board.hidden_finished
+        ));
+    }
+    if board.omitted > 0 {
+        lines.push(format!(
+            "{} more not listed: the board lists at most 200 agents in 24 KiB; narrow it with --ws",
+            board.omitted
+        ));
+    }
+    lines.join("\n")
+}
+
+fn group_title(group: BoardGroup) -> &'static str {
+    match group {
+        BoardGroup::Requests => "Needs you",
+        BoardGroup::Failed => "Failed",
+        BoardGroup::Review => "Ready for review",
+        BoardGroup::Working => "Working",
+        BoardGroup::Unconfirmed => "State unavailable",
+        BoardGroup::Idle => "Idle",
+        BoardGroup::Snoozed => "Snoozed",
+        BoardGroup::Finished => "Finished",
+    }
+}
+
+fn state_word(state: BoardState) -> &'static str {
+    match state {
+        BoardState::Working => "working",
+        BoardState::Blocked => "blocked",
+        BoardState::Idle => "idle",
+        BoardState::Unconfirmed => "state unavailable",
+        BoardState::Completed => "completed",
+        BoardState::Failed => "failed",
+        BoardState::Stopped => "stopped",
+        BoardState::Interrupted => "interrupted",
+        BoardState::Disconnected => "disconnected",
+    }
+}
+
+fn source_word(source: BoardSource) -> &'static str {
+    match source {
+        BoardSource::Journal => "exact",
+        BoardSource::Hook => "state only",
+        BoardSource::Recognised => "recognised",
+    }
+}
+
+fn wait_word(kind: BoardWaitKind) -> &'static str {
+    match kind {
+        BoardWaitKind::Approval => "approval",
+        BoardWaitKind::Question => "question",
+        BoardWaitKind::Plan => "plan",
+        BoardWaitKind::TerminalPrompt => "prompt",
+    }
+}
+
+fn agent_lines(agent: &BoardAgent, now_ms: u64) -> Vec<String> {
+    let place = match &agent.workspace {
+        Some(workspace) if workspace.name != agent.project.name => {
+            format!("{} / {}", agent.project.name, workspace.name)
+        }
+        _ => agent.project.name.clone(),
+    };
+    let mut head = vec![
+        format!("  {}", agent.title),
+        state_word(agent.state).to_owned(),
+        agent.harness.clone(),
+    ];
+    if let Some(model) = &agent.model {
+        head.push(model.clone());
+    }
+    head.push(place);
+    if let Some(branch) = agent.checkout.as_ref().and_then(|c| c.branch.as_ref()) {
+        head.push(branch.clone());
+    }
+    head.push(format!(
+        "{} ({})",
+        match agent.kind {
+            BoardKind::Chat => "chat",
+            BoardKind::Terminal => "terminal",
+        },
+        source_word(agent.source)
+    ));
+    let mut lines = vec![head.join(" · ")];
+    let indent = "    ";
+    for wait in &agent.waiting {
+        let age = wait
+            .since_ms
+            .map(|since| {
+                format!(
+                    " · waiting {}",
+                    age_text(now_ms.saturating_sub(since) / 1000)
+                )
+            })
+            .unwrap_or_default();
+        lines.push(format!(
+            "{indent}{}: {}{age}",
+            wait_word(wait.kind),
+            wait.title
+        ));
+    }
+    if let Some(activity) = &agent.activity {
+        lines.push(format!("{indent}{activity}"));
+    }
+    if !agent.detail.is_empty() {
+        lines.push(format!("{indent}{}", agent.detail));
+    }
+    lines.push(format!("{indent}session {}", agent.session_id));
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -251,5 +428,103 @@ mod tests {
             ..Usage::default()
         });
         assert!(!node_line(&n, 2_000).contains("tok"));
+    }
+
+    #[test]
+    fn the_board_text_groups_like_the_page_and_says_what_each_row_is_worth() {
+        use hutan_core::WorkspaceId;
+        use hutan_protocol::board::{
+            AgentsBoard, BoardAgent, BoardCounts, BoardCoverage, BoardRef, BoardRole,
+            BoardSubagents, BoardWaiting,
+        };
+
+        let project = BoardRef {
+            id: WorkspaceId::new(),
+            name: "hutan".into(),
+        };
+        let agent = |title: &str, state, group, source, kind| BoardAgent {
+            session_id: SessionId::new(),
+            title: title.into(),
+            role: BoardRole::Agent,
+            kind,
+            harness: "OMP".into(),
+            model: None,
+            project: project.clone(),
+            workspace: None,
+            checkout: None,
+            state,
+            group,
+            detail: String::new(),
+            waiting: Vec::new(),
+            activity: None,
+            turn_active: false,
+            started_ms: None,
+            last_event_ms: None,
+            reported_ms: None,
+            subagents: BoardSubagents::default(),
+            source,
+        };
+        let mut asking = agent(
+            "Release checklist",
+            BoardState::Blocked,
+            BoardGroup::Requests,
+            BoardSource::Hook,
+            BoardKind::Terminal,
+        );
+        asking.waiting.push(BoardWaiting {
+            kind: BoardWaitKind::TerminalPrompt,
+            title: "Run the full suite?".into(),
+            since_ms: Some(1_000),
+            ref_id: None,
+        });
+        let board = AgentsBoard {
+            generated_at_ms: 100_000,
+            counts: BoardCounts {
+                agents: 3,
+                requests: 1,
+                unconfirmed: 1,
+                finished: 1,
+                ..BoardCounts::default()
+            },
+            coverage: BoardCoverage {
+                chats: 0,
+                terminal_reported: 1,
+                terminal_recognised: 2,
+            },
+            agents: vec![
+                asking,
+                agent(
+                    "Docs pass",
+                    BoardState::Unconfirmed,
+                    BoardGroup::Unconfirmed,
+                    BoardSource::Recognised,
+                    BoardKind::Terminal,
+                ),
+            ],
+            hidden_finished: 1,
+            omitted: 0,
+        };
+        let text = board_text(&board, 100_000);
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("{needle:?}: {text}"))
+        };
+        assert!(at("Needs you") < at("Release checklist"));
+        assert!(at("Release checklist") < at("State unavailable"));
+        assert!(
+            text.contains("prompt: Run the full suite? · waiting 1m"),
+            "{text}"
+        );
+        assert!(text.contains("terminal (state only)"));
+        assert!(text.contains("terminal (recognised)"));
+        assert!(text.contains("1 finished not listed"));
+        assert!(text.contains("2 recognised only"));
+        let empty = AgentsBoard {
+            counts: BoardCounts::default(),
+            agents: Vec::new(),
+            hidden_finished: 0,
+            ..board
+        };
+        assert_eq!(board_text(&empty, 0), "no agents");
     }
 }
