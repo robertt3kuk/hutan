@@ -450,7 +450,7 @@ fn fill_from_turn(review: &mut TurnReview, inputs: &ReviewInputs<'_>, turn: &Tur
     // What a language server or the harness cannot say per turn.
     review.not_recorded.push(NotRecorded::new(
         "the agent's active time in the turn",
-        "no harness reports it per turn; `time` is wall time and the tools' own durations",
+        "no harness reports it per turn; the turn's time is wall time, and the tools' own durations",
     ));
 
     review.signals = signals(
