@@ -563,3 +563,105 @@ fn markdown_open_preview_starts_markdown_files_as_pages_and_nothing_else(cx: &mu
         "only Markdown files"
     );
 }
+
+// ---- FX-WAVE-C: the code font, strikethrough, HTML, SVG and broken images ------------------------
+
+const CODE_DOC: &str =
+    "# Fonts\n\nInline `code` here.\n\n```\nplain block\n```\n\n```rust\nfn main() {}\n```\n";
+
+/// A workbench whose installed fonts are a fake that has `Courier New` and `Fira Code`.
+fn open_with_fonts<'a>(
+    cx: &'a mut TestAppContext,
+    daemon: &TestDaemon,
+    settings_toml: &str,
+) -> (Entity<Workbench>, SettingsStore, &'a mut VisualTestContext) {
+    use hutan_desktop::macos::{FakeFonts, FontFamily, MacServices};
+    use hutan_desktop::workbench::WorkbenchOptions;
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        format!("[app]\nsetup_done = true\n{settings_toml}"),
+    )
+    .unwrap();
+    let settings = SettingsStore::new(SettingsPaths::in_dir(daemon.home()));
+    let fonts = FakeFonts::new(vec![
+        FontFamily::new("Menlo", true),
+        FontFamily::new("Courier New", true),
+        FontFamily::new("Fira Code", true),
+    ]);
+    let mac = MacServices {
+        fonts: std::sync::Arc::new(fonts),
+        ..MacServices::inert()
+    };
+    let options =
+        WorkbenchOptions::builtin(settings.clone(), daemon.connection(), None).with_mac(mac);
+    let (view, cx) = common::open_options(cx, options);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).synced())
+    });
+    (view, settings, cx)
+}
+
+#[gpui::test]
+fn a_pages_code_follows_the_code_font_live_and_in_a_page_opened_later(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, settings, cx) = open_with_fonts(cx, &daemon, "");
+    // The installed fonts are read once a page of Settings asks; a code font is only taken
+    // from a family the list has.
+    crate::font_picker_gpui::open_page(&view, cx, "editor");
+    view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
+    let (_keep, root) = repo();
+    let tab = open_text(&view, cx, &root, "fonts.md", CODE_DOC);
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_markdown_preview_side(window, cx)
+    });
+    let page = side_page(&view, cx, &tab.path);
+    let families = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let page = page.read(cx);
+            (
+                page.code_families("plain block", None, cx),
+                page.code_families("fn main() {}", Some("rust"), cx),
+            )
+        })
+    };
+    let ((plain, _), (_, coloured)) = families(cx);
+    assert_eq!(plain.as_ref(), "Menlo", "the pack's monospace font");
+    assert!(
+        coloured.iter().all(|f| f.as_ref() == "Menlo"),
+        "{coloured:?}"
+    );
+    assert!(!coloured.is_empty(), "rust has a grammar");
+
+    // The user picks a code font: the page's code is drawn in it at once.
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[app]\nsetup_done = true\n[editor]\nfont_family = \"Courier New\"\n",
+    )
+    .unwrap();
+    settings.reload();
+    wait_until(cx, "the page's code in the new font", |cx| {
+        let ((plain, _), (_, coloured)) = families(cx);
+        plain.as_ref() == "Courier New"
+            && !coloured.is_empty()
+            && coloured.iter().all(|f| f.as_ref() == "Courier New")
+    });
+
+    // A page opened later is drawn in it too.
+    let tab = open_text(&view, cx, &root, "later.md", CODE_DOC);
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_markdown_preview_side(window, cx)
+    });
+    let later = side_page(&view, cx, &tab.path);
+    let ((plain, _), (_, coloured)) = cx.update(|_, cx| {
+        let page = later.read(cx);
+        (
+            page.code_families("plain block", None, cx),
+            page.code_families("fn main() {}", Some("rust"), cx),
+        )
+    });
+    assert_eq!(plain.as_ref(), "Courier New");
+    assert!(
+        coloured.iter().all(|f| f.as_ref() == "Courier New"),
+        "{coloured:?}"
+    );
+}

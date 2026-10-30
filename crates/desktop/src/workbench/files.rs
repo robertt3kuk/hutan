@@ -850,12 +850,16 @@ impl Workbench {
         self.code_style(cx).font_family.to_string()
     }
 
-    /// Restyles every file tab (a theme, appearance or `editor` font change); nothing is parsed
-    /// again.
+    /// Restyles every file tab and every preview page beside one (a theme, appearance or
+    /// `editor` font change); nothing is parsed again.
     pub(crate) fn refresh_code_style(&mut self, cx: &mut Context<Self>) {
         let style = self.code_style(cx);
         for view in self.file_views.values() {
             view.update(cx, |view, cx| view.set_style(style.clone(), cx));
+        }
+        // A page of its own tab keeps the colours of its code in the style it was made with.
+        for page in self.md_previews.values() {
+            page.update(cx, |page, cx| page.set_style(style.clone(), cx));
         }
         self.restyle_revisions(&style, cx);
     }

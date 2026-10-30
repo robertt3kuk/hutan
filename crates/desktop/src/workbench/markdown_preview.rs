@@ -439,6 +439,25 @@ impl MarkdownPreview {
         &self.parsed
     }
 
+    /// The families a fenced block of `text` in `lang` is drawn in: the one of a plain block
+    /// (the look's code font) and those of the coloured runs of a language Hutan has a grammar
+    /// for (empty when it has none). A page's code follows `editor.font_family` in both.
+    pub fn code_families(
+        &self,
+        text: &str,
+        lang: Option<&str>,
+        cx: &App,
+    ) -> (SharedString, Vec<SharedString>) {
+        let plain = Look::of(cx).mono;
+        let mut runs: Vec<SharedString> = (self.doc.code)(text, lang)
+            .into_iter()
+            .flatten()
+            .map(|run| run.font.family)
+            .collect();
+        runs.dedup();
+        (plain, runs)
+    }
+
     /// The buffer's version the page shows.
     pub fn shown_version(&self) -> u64 {
         self.parsed.version
