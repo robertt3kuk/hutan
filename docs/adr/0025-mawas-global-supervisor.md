@@ -1,6 +1,6 @@
 # 0025. Mawas as the global supervisor of all agents
 
-- Status: **proposed** (2026-10-30; waits for the user's answers to D1–D4 of `docs/spikes/2026-10-30-mawas-supervisor.md`)
+- Status: accepted (2026-10-30; the user asked for Mawas as a global agent over agents; D1–D4 of `docs/spikes/2026-10-30-mawas-supervisor.md` taken as recommended)
 - Date: 2026-10-30
 - Relates to: ADR 0001 (the daemon owns state), ADR 0003 (dependency direction), ADR 0008 (no secrets in context), ADR 0016 (agent control surface), ADR 0017 (Mawas, decisions 2–4 and slices MW-5, MW-9, MW-10), `docs/control.md` § Mawas, `docs/assistant.md`
 - Evidence: `docs/spikes/2026-10-30-mawas-supervisor.md` (Hutan facts with file and line, competitor pages read 2026-10-30)
