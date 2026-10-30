@@ -1,1 +1,1 @@
-{"id":98,"method":"task.update","params":{"after_policy":"merged","auto_start":false,"depends_on":[],"id":"01K7F3B5N2Q9W8E4R6T1Y0V3TA","placement":{"kind":"main"},"prompt":"","run":{"argv":["sh","-c","make"],"kind":"terminal"},"title":"Fix the logout bug"}}
+{"id":99,"method":"task.update","params":{"after_policy":"merged","auto_start":false,"depends_on":[],"id":"01K7F3B5N2Q9W8E4R6T1Y0V3TA","placement":{"kind":"main"},"prompt":"","run":{"argv":["sh","-c","make"],"kind":"terminal"},"title":"Fix the logout bug"}}

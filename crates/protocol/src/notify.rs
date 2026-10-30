@@ -195,3 +195,57 @@ pub struct NotifyMute {
     pub session_id: SessionId,
     pub muted: bool,
 }
+
+/// `digest.status` (protocol 0.69, capability `digest.model`, MAWAS-DIGEST-B): where the
+/// scheduled model digest stands, for Settings → Mawas → Catching up. Read-only; the schedule
+/// itself is the daemon setting `notify.digest_model`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DigestStatus {
+    /// `notify.digest_model` as the daemon reads it: `off`, `daily 08:30` or `every 6h`.
+    pub schedule: String,
+    /// The harness the digest would run on: the one of Global Mawas (`omp`, `claude`, `codex`,
+    /// `provider`), absent when none is set up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    /// Whether a run could start now; `false` comes with `reason`.
+    pub runnable: bool,
+    /// Why not, in words for the user (a harness that is not proven offline, OMP missing, an
+    /// OMP version the recipe was not verified on), or what the last check said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The OMP version the recipe was verified on.
+    pub verified_omp: String,
+    /// The OMP version installed, when the daemon could ask.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omp_version: Option<String>,
+    /// When the next run is due (ms since the epoch); absent while the schedule is `off`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_run_ms: Option<u64>,
+    /// The newest run, whatever became of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<DigestRunInfo>,
+    /// How many runs the daemon remembers (the newest 50).
+    pub runs: u32,
+    /// The average tokens of the runs that answered and reported usage: what the next one will
+    /// cost, about. Absent before the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_tokens: Option<u64>,
+}
+
+/// One run of the scheduled model digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DigestRunInfo {
+    pub started_ms: u64,
+    pub ended_ms: u64,
+    /// `done`, `skipped` (the check refused the launch), `failed` or `timeout`.
+    pub outcome: String,
+    /// What a run that was not `done` says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The digest chat the answer (or the reason) is in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    /// Tokens of the turn, when the harness reported them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
+}

@@ -1,1 +1,1 @@
-{"id":118,"method":"chat.create","params":{"agent":"omp","contain":{"extra_write":["/work/cache"],"network":false},"cwd":"/work/repo","safety":"contained"}}
+{"id":119,"method":"chat.create","params":{"agent":"omp","contain":{"extra_write":["/work/cache"],"network":false},"cwd":"/work/repo","safety":"contained"}}

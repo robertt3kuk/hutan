@@ -1,1 +1,1 @@
-{"id":192,"method":"fs.write.begin","params":{"create":true,"path":"/repo/src/new.rs"}}
+{"id":193,"method":"fs.write.begin","params":{"create":true,"path":"/repo/src/new.rs"}}

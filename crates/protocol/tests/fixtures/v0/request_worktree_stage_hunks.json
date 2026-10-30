@@ -1,1 +1,1 @@
-{"id":279,"method":"worktree.stage","params":{"checkout":"/work/repo-wt/feature-login","hunks":[{"hunk_id":"5f0c3a9d1e7b2a46","path":"src/login.rs"},{"hunk_id":"0a1b2c3d4e5f6071","lines":[2,3],"path":"src/login.rs"}]}}
+{"id":280,"method":"worktree.stage","params":{"checkout":"/work/repo-wt/feature-login","hunks":[{"hunk_id":"5f0c3a9d1e7b2a46","path":"src/login.rs"},{"hunk_id":"0a1b2c3d4e5f6071","lines":[2,3],"path":"src/login.rs"}]}}

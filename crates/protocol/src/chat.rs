@@ -791,6 +791,11 @@ pub struct ChatInfo {
     /// scope, not a focus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<WorkspaceId>,
+    /// Protocol 0.69 (capability `digest.model`, MAWAS-DIGEST-B): this Global Mawas chat is the
+    /// one the scheduled model digest runs in — a separate conversation, not the user's Mawas.
+    /// Chats menus label it *Digest*.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub digest: bool,
 }
 
 /// What a chat's safety preset amounts to, **as the harness reported it** (protocol 0.51,

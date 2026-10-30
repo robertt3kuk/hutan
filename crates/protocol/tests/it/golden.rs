@@ -50,8 +50,8 @@ use hutan_protocol::lsp::*;
 use hutan_protocol::memory::*;
 use hutan_protocol::messages::*;
 use hutan_protocol::notify::{
-    ActRoute, ClientFocus, IntentAction, IntentKind, NotificationIntent, NotifyAck, NotifyAct,
-    NotifyActed, NotifyList, NotifyMute,
+    ActRoute, ClientFocus, DigestRunInfo, DigestStatus, IntentAction, IntentKind,
+    NotificationIntent, NotifyAck, NotifyAct, NotifyActed, NotifyList, NotifyMute,
 };
 use hutan_protocol::project::*;
 use hutan_protocol::provider::*;
@@ -297,6 +297,7 @@ fn chat_info() -> ChatInfo {
         checkpoints: None,
         account: None,
         safety: None,
+        digest: false,
     }
 }
 
@@ -324,6 +325,7 @@ fn harness_chat_session_info() -> SessionInfo {
             checkpoints: None,
             account: None,
             safety: None,
+            digest: false,
         }),
         ..chat_session_info()
     }
@@ -353,6 +355,7 @@ fn harness_assistant_session_info() -> SessionInfo {
             checkpoints: None,
             account: None,
             safety: None,
+            digest: false,
         }),
         ..chat_session_info()
     }
@@ -382,6 +385,7 @@ fn direct_chat_session_info() -> SessionInfo {
             checkpoints: None,
             account: None,
             safety: None,
+            digest: false,
         }),
         ..chat_session_info()
     }
@@ -473,6 +477,7 @@ fn assistant_session_info() -> SessionInfo {
             checkpoints: None,
             account: None,
             safety: None,
+            digest: false,
         }),
         ..chat_session_info()
     }
@@ -2106,6 +2111,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AssistantList(AssistantListRequest::default()),
         ),
         ("notify_list", Request::NotifyList(Empty {})),
+        ("digest_status", Request::DigestStatus(Empty {})),
         (
             "notify_ack",
             Request::NotifyAck(NotifyAck {
@@ -4813,6 +4819,19 @@ fn events() -> Vec<(&'static str, Event)> {
             },
         ),
         (
+            "session_updated_chat_digest",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                        assistant: true,
+                        digest: true,
+                        ..chat
+                    }),
+                    ..harness_chat_session_info()
+                },
+            },
+        ),
+        (
             "session_updated_chat_account",
             Event::SessionUpdated {
                 session: SessionInfo {
@@ -7455,6 +7474,51 @@ fn responses_match_fixtures() {
                 16,
                 &NotifyList {
                     intents: vec![approval_intent(), open_intent()],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "digest_status",
+            ControlMessage::ok(
+                15,
+                &DigestStatus {
+                    schedule: "daily 08:30".into(),
+                    harness: Some("omp".into()),
+                    runnable: true,
+                    reason: None,
+                    verified_omp: "18.13.3".into(),
+                    omp_version: Some("18.13.3".into()),
+                    next_run_ms: Some(1_767_168_600_000),
+                    last_run: Some(DigestRunInfo {
+                        started_ms: 1_767_082_200_000,
+                        ended_ms: 1_767_082_260_000,
+                        outcome: "done".into(),
+                        reason: None,
+                        session_id: Some(sid()),
+                        tokens: Some(18_400),
+                    }),
+                    runs: 3,
+                    avg_tokens: Some(17_900),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "digest_status_refused",
+            ControlMessage::ok(
+                15,
+                &DigestStatus {
+                    schedule: "every 6 h".into(),
+                    harness: Some("claude".into()),
+                    runnable: false,
+                    reason: Some("the digest runs on OMP only".into()),
+                    verified_omp: "18.13.3".into(),
+                    omp_version: None,
+                    next_run_ms: Some(1_767_168_600_000),
+                    last_run: None,
+                    runs: 0,
+                    avg_tokens: None,
                 },
             )
             .unwrap(),

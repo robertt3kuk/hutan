@@ -1,0 +1,1 @@
+{"id":15,"result":{"harness":"claude","next_run_ms":1767168600000,"reason":"the digest runs on OMP only","runnable":false,"runs":0,"schedule":"every 6 h","verified_omp":"18.13.3"}}

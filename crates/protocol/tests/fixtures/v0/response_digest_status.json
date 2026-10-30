@@ -1,0 +1,1 @@
+{"id":15,"result":{"avg_tokens":17900,"harness":"omp","last_run":{"ended_ms":1767082260000,"outcome":"done","session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM","started_ms":1767082200000,"tokens":18400},"next_run_ms":1767168600000,"omp_version":"18.13.3","runnable":true,"runs":3,"schedule":"daily 08:30","verified_omp":"18.13.3"}}

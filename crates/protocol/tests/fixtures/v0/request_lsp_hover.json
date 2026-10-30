@@ -1,1 +1,1 @@
-{"id":240,"method":"lsp.hover","params":{"path":"/Users/me/repo/src/main.rs","position":{"character":9,"line":3}}}
+{"id":241,"method":"lsp.hover","params":{"path":"/Users/me/repo/src/main.rs","position":{"character":9,"line":3}}}

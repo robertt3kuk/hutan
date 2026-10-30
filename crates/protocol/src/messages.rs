@@ -289,6 +289,11 @@ pub enum Request {
     /// `AgentsStats`. Read-only; bounded (50 groups, 24 KiB).
     #[serde(rename = "agents.stats")]
     AgentsStats(AgentsStatsRequest),
+    /// Capability `digest.model` (protocol 0.69): where the scheduled model digest stands
+    /// (`notify.digest_model`): its schedule, whether a run could start, the next and the last
+    /// run, the tokens a run costs; answered with `DigestStatus`. Read-only.
+    #[serde(rename = "digest.status")]
+    DigestStatus(Empty),
     /// Capability `agents.review` (protocol 0.67): what an agent did in one turn — prompt, final
     /// message, tools and commands with exit codes, files and lines, diagnostics, requests that
     /// wait, labelled heuristic signals, and what is not recorded; answered with `TurnReview`.

@@ -1327,6 +1327,20 @@ impl Connection {
         client.agent_insight(session_id, node_id).await
     }
 
+    /// True while connected to a daemon that advertised capability `digest.model`
+    /// ([`Client::supports_digest_model`]); false when disconnected.
+    pub fn supports_digest_model(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_digest_model())
+    }
+
+    /// `digest.status` ([`Client::digest_status`]).
+    pub async fn digest_status(&self) -> Result<hutan_protocol::notify::DigestStatus, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.digest_status().await
+    }
+
     /// True while connected to a daemon that advertised capability `agents.review`
     /// ([`Client::supports_agents_review`]); false when disconnected.
     pub fn supports_agents_review(&self) -> bool {
