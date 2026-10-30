@@ -471,3 +471,219 @@ fn preview_tabs_stay_an_option(cx: &mut TestAppContext) {
         "the second look replaced the first"
     );
 }
+
+// ---- 3: files beside the agent ----------------------------------------------------------------
+
+fn pane_count(view: &Entity<Workbench>, cx: &VisualTestContext) -> usize {
+    view.read_with(cx, |wb, _| wb.state().center.panes().len())
+}
+
+/// The panes of the center with the names of their tabs (a session's tab by its kind).
+fn layout(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<Vec<String>> {
+    view.read_with(cx, |wb, _| {
+        wb.state()
+            .center
+            .panes()
+            .into_iter()
+            .map(|pane| {
+                pane.items
+                    .iter()
+                    .map(|item| match item {
+                        ItemRef::Chat { .. } => "chat".to_owned(),
+                        ItemRef::Terminal { .. } => "terminal".to_owned(),
+                        ItemRef::File { path } => Path::new(path)
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect()
+            })
+            .collect()
+    })
+}
+
+fn focused_pane_holds(view: &Entity<Workbench>, cx: &VisualTestContext, name: &str) -> bool {
+    view.read_with(cx, |wb, _| {
+        wb.state().active_pane().is_some_and(|p| {
+            p.active_item()
+                .and_then(|i| i.as_file())
+                .is_some_and(|f| f.ends_with(name))
+        })
+    })
+}
+
+#[gpui::test]
+fn a_file_opens_in_a_split_right_of_a_chat_and_the_split_is_reused(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    write_settings(&daemon, "");
+    let chat = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    show(&view, cx, chat.id);
+    let (_dir, files) = scratch_files(&["a.txt", "b.txt"]);
+
+    open_file(&view, cx, &files[0], FilePlace::Focused);
+    assert_eq!(layout(&view, cx), [vec!["chat"], vec!["a.txt"]]);
+    assert!(focused_pane_holds(&view, cx, "a.txt"));
+
+    // The chat in front again: the next file goes to the same split, as a tab.
+    view.update_in(cx, |wb, window, cx| wb.open_session(chat.id, window, cx));
+    wait_until(cx, "the chat to have the focus", |cx| {
+        view.read_with(cx, |wb, _| wb.focused_session() == Some(chat.id))
+    });
+    open_file(&view, cx, &files[1], FilePlace::Focused);
+    assert_eq!(layout(&view, cx), [vec!["chat"], vec!["a.txt", "b.txt"]]);
+    assert_eq!(pane_count(&view, cx), 2);
+
+    // The file's own pane in front: the next file stays with it (nothing to go beside).
+    let (_dir2, more) = scratch_files(&["c.txt"]);
+    open_file(&view, cx, &more[0], FilePlace::Focused);
+    assert_eq!(
+        layout(&view, cx),
+        [vec!["chat"], vec!["a.txt", "b.txt", "c.txt"]]
+    );
+}
+
+#[gpui::test]
+fn a_file_opens_beside_a_terminal_agent_but_not_beside_a_plain_terminal(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    write_settings(&daemon, "");
+    let agent = daemon.create_session(&["cat"], None);
+    report_working(&daemon, agent.id);
+    let plain = daemon.create_session(&["cat"], None);
+    let (view, cx) = open(cx, &daemon);
+    wait_working(&view, cx, agent.id);
+    let (_dir, files) = scratch_files(&["a.txt", "b.txt"]);
+
+    show(&view, cx, plain.id);
+    open_file(&view, cx, &files[0], FilePlace::Focused);
+    assert_eq!(
+        layout(&view, cx),
+        [vec!["terminal", "a.txt"]],
+        "a plain terminal: the file is a tab of the pane"
+    );
+
+    show(&view, cx, agent.id);
+    open_file(&view, cx, &files[1], FilePlace::Focused);
+    assert_eq!(
+        layout(&view, cx),
+        [vec!["terminal", "a.txt", "terminal"], vec!["b.txt"]],
+        "a terminal agent: the file goes to a split on its right"
+    );
+}
+
+#[gpui::test]
+fn beside_the_agent_is_a_setting(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    write_settings(&daemon, "[editor]\nopen_beside_agent = false\n");
+    let chat = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    show(&view, cx, chat.id);
+    let (_dir, files) = scratch_files(&["a.txt"]);
+    open_file(&view, cx, &files[0], FilePlace::Focused);
+    assert_eq!(layout(&view, cx), [vec!["chat", "a.txt"]]);
+}
+
+#[gpui::test]
+fn the_side_places_always_open_to_the_side_and_reuse_the_split(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    write_settings(&daemon, "");
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, files) = scratch_files(&["a.txt", "b.txt", "c.txt"]);
+    open_file(&view, cx, &files[0], FilePlace::Focused);
+    assert_eq!(layout(&view, cx), [vec!["a.txt"]]);
+
+    // Beside a file: a split, once; the pane it was opened from stays the one to open from.
+    open_file(&view, cx, &files[1], FilePlace::Split);
+    assert_eq!(layout(&view, cx), [vec!["a.txt"], vec!["b.txt"]]);
+    focus_first_pane(&view, cx);
+    open_file(&view, cx, &files[2], FilePlace::Split);
+    assert_eq!(
+        layout(&view, cx),
+        [vec!["a.txt"], vec!["b.txt", "c.txt"]],
+        "the split on the right takes it"
+    );
+}
+
+/// A click on the first tab of the first pane gives that pane the focus.
+fn focus_first_pane(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    let pane = view.read_with(cx, |wb, _| wb.state().center.panes()[0].id);
+    let target = Region::Tab(pane, 0);
+    wait_until(cx, "the first tab to be drawn", |cx| {
+        view.read_with(cx, |wb, _| wb.region_bounds(target).is_some())
+    });
+    let at = view
+        .read_with(cx, |wb, _| wb.region_bounds(target))
+        .unwrap()
+        .center();
+    click_at(cx, at);
+    wait_until(cx, "the first pane to have the focus", |cx| {
+        view.read_with(cx, |wb, _| wb.state().active_pane_id() == pane)
+    });
+}
+
+#[gpui::test]
+fn alt_click_in_the_files_tree_opens_to_the_side_and_the_command_reuses_the_split(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::theme::DensityExt as _;
+    use hutan_desktop::workbench::actions;
+    use hutan_desktop::workbench::panels::FilesPanel;
+    use hutan_desktop::workbench::style::UiStyle;
+    let daemon = TestDaemon::start();
+    write_settings(&daemon, "");
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, files) = scratch_files(&["a.txt", "b.txt"]);
+    let root = files[0].parent().unwrap().to_owned();
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_project_path(root.clone(), window, cx);
+    });
+    wait_until(cx, "the project to be the active one", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).files_root().as_deref() == Some(root.as_path())
+        })
+    });
+    cx.dispatch_action(actions::ShowFiles);
+    draw(cx);
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<FilesPanel>("files"))
+        .expect("the Files panel is drawn");
+    wait_until(cx, "two rows", |cx| {
+        panel.read_with(cx, |p, _| p.rows().len() == 2)
+    });
+    let row_at = |cx: &mut VisualTestContext, index: usize| {
+        let tree = view
+            .read_with(cx, |wb, _| wb.region_bounds(Region::Files("tree")))
+            .expect("the tree was drawn");
+        let height = cx.update(|_, app| UiStyle::get(app).density.ui().sidebar_row - 4.0);
+        gpui::point(
+            tree.origin.x + gpui::px(80.0),
+            tree.origin.y + gpui::px(height * (index as f32 + 0.5)),
+        )
+    };
+
+    // A plain click shows the file in the pane it is in; the ⌥-click puts the next beside it.
+    let at = row_at(cx, 0);
+    cx.simulate_click(at, gpui::Modifiers::none());
+    draw(cx);
+    wait_until(cx, "a.txt to be shown", |cx| {
+        file_names(&view, cx) == ["a.txt"]
+    });
+    assert_eq!(pane_count(&view, cx), 1);
+    let at = row_at(cx, 1);
+    cx.simulate_mouse_move(at, None, gpui::Modifiers::alt());
+    cx.simulate_click(at, gpui::Modifiers::alt());
+    draw(cx);
+    wait_until(cx, "b.txt to be shown to the side", |cx| {
+        layout(&view, cx) == [vec!["a.txt"], vec!["b.txt"]]
+    });
+
+    // *Open to the Side* from the first pane: the split is reused, no third pane.
+    focus_first_pane(&view, cx);
+    cx.dispatch_action(actions::FilesOpenToSide);
+    draw(cx);
+    assert_eq!(pane_count(&view, cx), 2);
+}

@@ -1478,6 +1478,11 @@ pub struct EditorSettings {
     /// time; a double click, an edit or *Keep Open* in its menu makes the tab permanent. Off
     /// (the default), every opened file keeps its own tab.
     pub preview_tabs: bool,
+    /// A file opened while an agent (a chat or a terminal agent) is the tab in front of the
+    /// focused pane opens in a split to its right (the one that is there, when there is one)
+    /// instead of replacing the agent. ⌥-click, ⌥Return and *Open to the Side* always open to
+    /// the side. Off, a file opens in the focused pane.
+    pub open_beside_agent: bool,
 }
 
 /// `editor.large_file_bytes` by default: 16 MiB.
@@ -1514,6 +1519,7 @@ impl Default for EditorSettings {
             soft_wrap: SoftWrap::Auto,
             wrap_column: hutan_code_view::DEFAULT_WRAP_COLUMN as u64,
             preview_tabs: false,
+            open_beside_agent: true,
         }
     }
 }

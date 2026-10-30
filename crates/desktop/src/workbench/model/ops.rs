@@ -776,6 +776,12 @@ impl WorkbenchState {
         self.center.equalize();
     }
 
+    /// The pane of the center that is geometrically next to `pane` in `dir` (the one that
+    /// overlaps it most, the top-most on a tie), if there is one.
+    pub fn pane_beside(&self, pane: PaneId, dir: Direction) -> Option<PaneId> {
+        neighbor_in(&self.center.layout(Rect::UNIT), pane, dir)
+    }
+
     /// Focus moves to the next pane of the center (`forward`, wrapping) or the previous one, in
     /// the order of the layout (Vim's `⌃W w` / `⌃W W`). Returns whether focus changed.
     pub fn cycle_pane(&mut self, forward: bool) -> bool {

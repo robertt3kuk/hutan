@@ -196,6 +196,9 @@ actions!(
         FilesRevealInFinder,
         /// Start a terminal in the selected folder (a file's folder).
         FilesOpenInTerminal,
+        /// Open the selected file in the split to the right (the one beside the agent, when
+        /// there is one), keeping the pane it was opened from.
+        FilesOpenToSide,
         /// Attach the selected files to the chat that is open (else copy `@path` text).
         FilesAttachToChat,
         /// Search the selected folder (a file's folder): the Search panel with its include glob.
@@ -949,6 +952,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Files: Copy Relative Path", FilesCopyRelativePath),
         command("Files: Reveal in Finder", FilesRevealInFinder),
         command("Files: Open in Terminal", FilesOpenInTerminal),
+        command("Files: Open to the Side", FilesOpenToSide),
         command("Files: Attach to Chat", FilesAttachToChat),
         command("Files: Find in Folder", FilesFindInFolder),
         command("Files: Select for Compare", FilesSelectForCompare),
@@ -1338,6 +1342,7 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<palette::SelectPrev>("ctrl-p", Some("Picker")),
         bind::<palette::Confirm>("enter", Some("Picker")),
         bind::<palette::ConfirmInSplit>("cmd-enter", Some("Picker")),
+        bind::<palette::ConfirmInSplit>("alt-enter", Some("Picker")),
         bind::<palette::Dismiss>("escape", Some("Picker")),
         bind::<setup::Continue>("enter", Some("Setup")),
         bind::<setup::Skip>("escape", Some("Setup")),
@@ -1862,6 +1867,7 @@ mod tests {
             "ctrl-p | palette::SelectPrev | Picker",
             "enter | palette::Confirm | Picker",
             "cmd-enter | palette::ConfirmInSplit | Picker",
+            "alt-enter | palette::ConfirmInSplit | Picker",
             "escape | palette::Dismiss | Picker",
             "enter | setup::Continue | Setup",
             "escape | setup::Skip | Setup",

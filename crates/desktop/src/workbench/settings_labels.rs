@@ -1097,6 +1097,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "editor",
+        "open_beside_agent",
+        "Open files beside the agent",
+        "While an agent (a chat or a terminal agent) is in front, a file you open — from Files, ⌘P, a link in the chat — opens in a split to its right instead of replacing it; the split is reused for the next file. Off, a file opens in the pane you are in. ⌥-click, ⌥Return and Open to the Side always open to the side.",
+    ),
+    field(
+        "editor",
         "scroll_beyond_last_line",
         "Scroll past the last line",
         "How far a file scrolls past its last line, as a fraction of the window's height: 0 stops with the last line at the bottom, 0.5 leaves half a screen of room, 1 a whole one. A file is never scrolled to a blank view.",

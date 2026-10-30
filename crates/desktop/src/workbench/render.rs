@@ -1409,6 +1409,11 @@ impl Workbench {
             }),
         )
         .on_action(
+            cx.listener(|this, _: &actions::FilesOpenToSide, window, cx| {
+                this.files_row_command(super::files_menu::FilesRowAction::OpenToSide, window, cx);
+            }),
+        )
+        .on_action(
             cx.listener(|this, _: &actions::FilesAttachToChat, window, cx| {
                 this.files_row_command(super::files_menu::FilesRowAction::AttachToChat, window, cx);
             }),

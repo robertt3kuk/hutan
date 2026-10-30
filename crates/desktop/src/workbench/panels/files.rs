@@ -2059,6 +2059,16 @@ impl FilesPanel {
                                     cx.notify();
                                     return;
                                 }
+                                // ⌥-click on a file opens it to the side (as ⌥Return does).
+                                if modifiers.alt
+                                    && let Some(row) = this.rows().get(index).cloned()
+                                    && matches!(row.kind, RowKind::File | RowKind::Link)
+                                {
+                                    this.set_single(row.path);
+                                    this.open_to_side(window, cx);
+                                    cx.notify();
+                                    return;
+                                }
                                 let double = event.click_count() >= 2;
                                 let kind = this.rows().get(index).map(|r| r.kind);
                                 match kind {

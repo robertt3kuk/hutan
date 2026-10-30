@@ -270,10 +270,43 @@ impl Workbench {
         super::persistence::note_recent_file(&mut self.recent_files, &key);
         self.ensure_buffer(&key, target.picked, Some(size), cx);
         let item = ItemRef::file(key.clone());
-        if place == FilePlace::Split {
-            let pane = self.state.active_pane_id();
-            self.try_mutate(cx, |s| s.split_pane(pane, Edge::Right, item.clone()));
-        } else if let Some((pane, index)) = self.state.find_item(&item) {
+        let existing = self.state.find_item(&item);
+        // To the side (⌥, ⌘Return, *Open to the Side*), or beside the agent that has the
+        // center: the pane right of where it is opened from, reused when there is one.
+        let side_of = match place {
+            FilePlace::Split => Some(self.state.active_pane_id()),
+            _ if existing.is_none() => self.agent_pane_to_open_beside(cx),
+            _ => None,
+        };
+        let mut into = None;
+        let mut placed = false;
+        if let Some(from) = side_of {
+            match self.side_pane_of(from, cx) {
+                Some(side) => match self
+                    .state
+                    .pane(side)
+                    .and_then(|p| p.items.iter().position(|i| *i == item))
+                {
+                    Some(index) => {
+                        self.try_mutate(cx, |s| {
+                            s.set_active_item(side, index)?;
+                            s.focus_pane(side)
+                        });
+                        placed = true;
+                    }
+                    None => into = Some(side),
+                },
+                None => {
+                    self.try_mutate(cx, |s| s.split_pane(from, Edge::Right, item.clone()));
+                    placed = true;
+                }
+            }
+        }
+        if placed {
+            // The tab was shown, not a look: whatever was the preview stays so.
+        } else if into.is_none()
+            && let Some((pane, index)) = existing
+        {
             self.try_mutate(cx, |s| {
                 s.set_active_item(pane, index)?;
                 s.focus_pane(pane)
@@ -283,7 +316,7 @@ impl Workbench {
                 self.keep_open(&key, cx);
             }
         } else {
-            let pane = self.state.active_pane_id();
+            let pane = into.unwrap_or_else(|| self.state.active_pane_id());
             let placeholder = self
                 .state
                 .pane(pane)
@@ -337,6 +370,40 @@ impl Workbench {
         if place != FilePlace::Preview {
             self.focus_root(window, cx);
         }
+    }
+
+    /// Whether the tab `item` is an agent: a chat, or a terminal that an agent runs in.
+    fn item_is_agent(&self, item: &ItemRef, cx: &gpui::App) -> bool {
+        let Some(session) = item.session().and_then(|s| s.parse().ok()) else {
+            return false;
+        };
+        let store = self.sessions.read(cx);
+        store.remembered_agent(session).is_some()
+            || store
+                .session(session)
+                .is_some_and(|info| crate::sessions::card::is_agent(info, None))
+    }
+
+    /// The pane a file opened now goes beside: the active pane when `editor.open_beside_agent`
+    /// is on and its tab in front is an agent (a chat or a terminal agent). A file would
+    /// otherwise replace what the user is talking to.
+    pub fn agent_pane_to_open_beside(&self, cx: &gpui::App) -> Option<PaneId> {
+        if !self.settings.get::<EditorSettings>().open_beside_agent {
+            return None;
+        }
+        let pane = self.state.active_pane_id();
+        let item = self.state.pane(pane)?.active_item()?;
+        self.item_is_agent(item, cx).then_some(pane)
+    }
+
+    /// The existing pane a file opened to the side of `from` goes to: the one right of it,
+    /// unless an agent is in front there. `None`: the file gets a split of its own.
+    fn side_pane_of(&self, from: PaneId, cx: &gpui::App) -> Option<PaneId> {
+        let side = self
+            .state
+            .pane_beside(from, super::model::Direction::Right)?;
+        let item = self.state.pane(side)?.active_item()?;
+        (!self.item_is_agent(item, cx)).then_some(side)
     }
 
     /// The buffer of `path`, made (and its file read) when there is none.

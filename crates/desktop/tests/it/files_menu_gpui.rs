@@ -569,13 +569,28 @@ fn open_to_the_side_open_in_terminal_and_find_in_folder_start_from_the_row(
                     .is_some()
             })
     });
-    // ⌥↩ with the keyboard in the tree does the same for the row under the cursor.
+    // ⌥↩ with the keyboard in the tree does the same for the row under the cursor: the split
+    // on the right is reused (TABS-FILES), so no third pane — the file is a tab of it.
+    let right_pane_has = |cx: &VisualTestContext, name: &str| {
+        let path = root.join(name).display().to_string();
+        view.read_with(cx, |wb, _| {
+            wb.state().center.panes().last().is_some_and(|p| {
+                p.items
+                    .contains(&hutan_desktop::workbench::model::ItemRef::file(
+                        path.clone(),
+                    ))
+            })
+        })
+    };
     click(cx, rows.at(2), none);
     cx.simulate_keystrokes("alt-enter");
-    wait_until(cx, "a third pane", |cx| panes(cx) == 3);
+    wait_until(cx, "todo.md beside", |cx| right_pane_has(cx, "todo.md"));
+    assert_eq!(panes(cx), 2);
     click(cx, rows.at(1), none);
     cx.simulate_keystrokes("cmd-enter");
-    wait_until(cx, "a fourth pane", |cx| panes(cx) == 4);
+    wait_until(cx, "notes.md beside", |cx| right_pane_has(cx, "notes.md"));
+    // (From the file's own pane, the side of it is a new split: it is the side of where you are.)
+    assert!(panes(cx) >= 2);
 
     // Open in Terminal: a session whose directory is the folder (a file's folder).
     draw(cx);
