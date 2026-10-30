@@ -165,6 +165,18 @@ pub fn read_only_names() -> impl Iterator<Item = &'static str> {
         .map(|tool| tool.name)
 }
 
+/// The names of the tools that change something, in the table's order: what `hutan mcp
+/// --gated-tools` prints. Every one of them goes through the daemon's gate (a Mutate request:
+/// `read_only_agrees_with_the_daemons_classification` checks it, and no tool of the table is
+/// user-only), so a Mawas harness need not ask the user as well: Hutan's card is the one
+/// question (`docs/control.md` § Mawas › One prompt per write).
+pub fn gated_names() -> impl Iterator<Item = &'static str> {
+    TOOLS
+        .iter()
+        .filter(|tool| !tool.read_only)
+        .map(|tool| tool.name)
+}
+
 pub fn find(name: &str) -> Option<&'static Tool> {
     TOOLS.iter().find(|tool| tool.name == name)
 }
@@ -1950,5 +1962,39 @@ mod tests {
         crate::mcp::print_read_only_tools(&mut out).unwrap();
         let printed = String::from_utf8(out).unwrap();
         assert_eq!(printed.lines().collect::<Vec<_>>(), names);
+    }
+
+    /// The gated list (`hutan mcp --gated-tools`) is the rest of the table: every tool that
+    /// changes something and, with the reads, every tool exactly once. Each of them is a Mutate
+    /// request of the daemon and never user-only (the test that checks `read_only` against the
+    /// router says so), so Hutan's own gate asks for every one a Mawas harness does not.
+    #[test]
+    fn the_gated_names_are_the_tables_writes_and_with_the_reads_all_of_it() {
+        let gated: Vec<&str> = gated_names().collect();
+        let reads: Vec<&str> = read_only_names().collect();
+        assert_eq!(gated.len() + reads.len(), tools().len());
+        for name in &gated {
+            assert!(!reads.contains(name), "{name}");
+            assert!(!find(name).unwrap().read_only, "{name}");
+        }
+        for write in [
+            "chat_send",
+            "chat_queue_add",
+            "ask_suggest",
+            "session_rename",
+        ] {
+            assert!(gated.contains(&write), "{write}");
+        }
+        for read in ["agents_board", "chat_queue_list"] {
+            assert!(!gated.contains(&read), "{read}");
+        }
+        let mut out = Vec::new();
+        crate::mcp::print_gated_tools(&mut out).unwrap();
+        let printed = String::from_utf8(out).unwrap();
+        assert_eq!(printed.lines().collect::<Vec<_>>(), gated);
+        // Nothing a user alone may do is a tool at all.
+        for user_only in ["approval_respond", "question_answer", "memory_write"] {
+            assert!(find(user_only).is_none(), "{user_only}");
+        }
     }
 }

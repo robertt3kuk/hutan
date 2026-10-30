@@ -52,6 +52,7 @@ use tracing::{info, warn};
 use crate::bus::EventBus;
 use crate::chat::ApprovalSource;
 use crate::config::{AgentPolicy, AssistantMode, ControlSettings};
+use crate::mcp_wiring::MAWAS_APPROVAL_MAX;
 use crate::registry::{self, RegistryHandle};
 use crate::tasks::TaskService;
 
@@ -256,6 +257,7 @@ impl ControlService {
         origin: SessionId,
         client: Option<ClientKind>,
         request: &Request,
+        gone: &CancellationToken,
     ) -> Result<Gated, ErrorBody> {
         let access = crate::router::classify(request);
         let free = Gated {
@@ -290,7 +292,7 @@ impl ControlService {
         }
         if let Some(mawas) = mawas {
             return self
-                .gate_mawas(mawas, client, request, method, describe)
+                .gate_mawas(mawas, client, request, method, describe, gone)
                 .await;
         }
         match self.settings().agents {
@@ -344,6 +346,7 @@ impl ControlService {
                     options,
                     mawas: None,
                     target: None,
+                    gone: gone.clone(),
                 };
                 self.ask(client, asked).await
             }
@@ -368,6 +371,7 @@ impl ControlService {
         request: &Request,
         method: &'static str,
         describe: Described,
+        gone: &CancellationToken,
     ) -> Result<Gated, ErrorBody> {
         let chats = self.registry.chats();
         let policy = chats.assistant_policy();
@@ -493,6 +497,7 @@ impl ControlService {
             detail.push_str("\nThis kind of change always asks: no grant covers it.");
         }
         let asked = Asked {
+            gone: gone.clone(),
             origin,
             method,
             grant: tool,
@@ -528,6 +533,7 @@ impl ControlService {
             options,
             mawas,
             target,
+            gone,
         } = asked;
         let target_id = target.as_ref().map(|target| target.session_id);
         let info = ApprovalInfo {
@@ -558,17 +564,37 @@ impl ControlService {
         info!(approval = %id, session = %origin, method, "an agent asks to control Hutan");
 
         let started = Instant::now();
-        let timeout = Duration::from_secs(self.settings().approval_timeout_secs);
-        let decision = tokio::select! {
+        // A Mawas approval waits at most as long as the harness waits for the call that raised
+        // it ([`MAWAS_APPROVAL_MAX`] < [`crate::mcp_wiring::MAWAS_CALL_WINDOW`]), whatever the
+        // setting says: a card must not outlive its call.
+        let mut timeout = Duration::from_secs(self.settings().approval_timeout_secs);
+        if mawas.is_some() {
+            timeout = timeout.min(MAWAS_APPROVAL_MAX);
+        }
+        // The caller going away (its connection closed: the MCP call was cancelled or timed
+        // out, the process died) withdraws the card: what nobody waits for must never run.
+        let mut withdrawn = false;
+        let mut decision = tokio::select! {
             decision = answered => decision.ok(),
             () = tokio::time::sleep(timeout) => None,
             () = self.shutdown.cancelled() => None,
+            () = gone.cancelled() => {
+                withdrawn = true;
+                None
+            }
         };
+        // An answer that arrived as the caller went away does not count: it was given to a
+        // card nobody waits behind any more.
+        if decision.is_some() && gone.is_cancelled() {
+            decision = None;
+            withdrawn = true;
+        }
         let waited_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         lock(&self.state).pending.remove(&id);
         let Some((option_id, decided_by)) = decision else {
-            // Nobody answered in time (or the daemon is going away).
-            self.write_row(&info, Some(ApprovalOutcome::Expired), None, None);
+            // Nobody answered in time, the caller stopped waiting, or the daemon is going away.
+            let decided_by = withdrawn.then(|| "caller_gone".to_owned());
+            self.write_row(&info, Some(ApprovalOutcome::Expired), None, decided_by);
             self.publish(&Event::ApprovalResolved {
                 approval_id: id,
                 session_id: origin,
@@ -579,7 +605,19 @@ impl ControlService {
                 .chats()
                 .clear_suggestion(AskTarget::Approval { id });
             if let Some(mawas) = &mawas {
-                self.audit_line(mawas, method, "expired", "nobody", None, target_id);
+                let decision = if withdrawn { "withdrawn" } else { "expired" };
+                let by = if withdrawn { "caller_gone" } else { "nobody" };
+                self.audit_line(mawas, method, decision, by, None, target_id);
+            }
+            if withdrawn {
+                info!(approval = %id, method, "the caller stopped waiting: the approval was withdrawn and `{method}` will not run");
+                return Err(forbidden(
+                    format!(
+                        "the caller stopped waiting for the approval (expired — it was \
+                         withdrawn): `{method}` was not run"
+                    ),
+                    "withdrawn",
+                ));
             }
             return Err(forbidden(
                 format!(
@@ -1110,6 +1148,8 @@ struct Asked {
     /// Set for Mawas's requests that act on another agent: shown on the card, and what an
     /// *Allow for this chat and this agent* grant is bound to.
     target: Option<ControlTarget>,
+    /// Cancelled when the requesting connection is gone: the card is withdrawn.
+    gone: CancellationToken,
 }
 
 /// Where a stored grant applies.

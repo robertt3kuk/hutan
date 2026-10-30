@@ -84,6 +84,16 @@ impl Server {
         }
         Err(ClientError::Disconnected)
     }
+
+    /// Runs `request` on a connection of its own, closed when the call ends or is dropped. A
+    /// call that changes something may wait for the user's approval inside the daemon; when the
+    /// host gives up on it (`notifications/cancelled`, a timeout, the process ending) dropping
+    /// the call closes this connection, which is how the daemon learns that nobody waits for
+    /// the answer and withdraws the card instead of leaving it to run later.
+    async fn call_dedicated(&self, request: Request) -> Result<Value, ClientError> {
+        let client = Client::connect(self.options()).await?;
+        client.call::<Value>(request).await
+    }
 }
 
 /// Serves MCP on `input`/`output` until `input` ends.
@@ -320,7 +330,12 @@ async fn run_tool(server: &Server, tool: &Tool, arguments: Value) -> ToolOutcome
             // A bad argument is `bad_request` from the typed decoder, with its own words.
             let request = Request::decode(method, params)
                 .map_err(|e| format!("bad arguments: {}", e.message))?;
-            let result = server.call(request).await.map_err(describe_error)?;
+            let result = if tool.read_only {
+                server.call(request).await
+            } else {
+                server.call_dedicated(request).await
+            }
+            .map_err(describe_error)?;
             Ok(describe_success(result))
         }
         Call::SessionOutput => session_output(server, arguments).await,

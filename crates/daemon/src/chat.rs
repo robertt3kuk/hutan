@@ -67,7 +67,8 @@ use crate::harness::{
 };
 use crate::insight::{InsightHub, InsightTarget};
 use crate::mcp_wiring::{
-    McpServerSpec, McpWiring, claude_allowed_tools, codex_read_overrides, omp_overlay,
+    ApprovedTools, McpServerSpec, McpWiring, claude_allowed_tools, codex_approval_overrides,
+    codex_window_override, omp_overlay, omp_window_env,
 };
 use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
@@ -868,33 +869,44 @@ impl ChatManager {
         self.mcp.get().and_then(|wiring| wiring.server_for(session))
     }
 
-    /// The tools of `hutan mcp` that only read, for a Mawas harness to run without asking the
-    /// user (`docs/control.md` § Mawas › Reads are free): the CLI's own table is the list. Empty
-    /// for any other chat, under `[control] mcp = false`, and when the CLI cannot be asked (the
-    /// harness then keeps its own prompts). What is told is logged, per session.
-    async fn mawas_reads(&self, session: SessionId, assistant: bool) -> Vec<String> {
+    /// The tools of `hutan mcp` a Mawas harness runs without asking the user itself
+    /// (`docs/control.md` § Mawas › Reads are free, One prompt per write): the ones that only
+    /// read, and the ones that change something, whose question is Hutan's own gate card. The
+    /// CLI's own table is the list. Empty for any other chat, under `[control] mcp = false`,
+    /// and when the CLI cannot be asked (the harness then keeps its own prompts). What is told
+    /// is logged, per session.
+    async fn mawas_tools(&self, session: SessionId, assistant: bool) -> ApprovedTools {
         let Some(wiring) = self.mcp.get().filter(|wiring| assistant && wiring.enabled) else {
-            return Vec::new();
+            return ApprovedTools::default();
         };
-        let names = wiring.read_only_tools().await;
-        if !names.is_empty() {
-            info!(%session, tools = %names.join(","), "Mawas's harness is told not to ask before these read-only Hutan tools");
+        let tools = wiring.approved_tools().await;
+        if !tools.is_empty() {
+            info!(
+                %session,
+                reads = %tools.reads.join(","),
+                writes = %tools.writes.join(","),
+                "Mawas's harness is told not to ask before these Hutan tools (changes ask on Hutan's card)"
+            );
         }
-        names
+        tools
     }
 
-    /// The Codex command line for the agent of `session`, with `hutan mcp` registered and the
-    /// read-only tools in `reads` approved without asking.
+    /// The Codex command line for the agent of `session`, with `hutan mcp` registered. For a
+    /// Mawas conversation (`assistant`) the tools in it are approved without Codex asking, and
+    /// a call of the server may take [`crate::mcp_wiring::MAWAS_CALL_WINDOW`].
     async fn codex_for(
         &self,
         session: SessionId,
         account: Option<&str>,
-        reads: &[String],
+        assistant: Option<&ApprovedTools>,
     ) -> Result<CodexConfig, ErrorBody> {
         let mut codex = self.resolved_codex(account).await?;
         if let Some(server) = self.mcp_server(session) {
             codex.args.extend(server.codex_overrides());
-            codex.args.extend(codex_read_overrides(reads));
+            if let Some(tools) = assistant {
+                codex.args.extend(codex_approval_overrides(&tools.all()));
+                codex.args.extend(codex_window_override());
+            }
         }
         Ok(codex)
     }
@@ -1361,8 +1373,14 @@ impl ChatManager {
             dirs: crate::session_dirs::existing(&spec.dirs),
             dirs_managed: spec.dirs_managed,
         };
-        let reads = self.mawas_reads(id, spec.assistant).await;
-        let codex = self.codex_for(id, spec.account.as_deref(), &reads).await?;
+        let tools = self.mawas_tools(id, spec.assistant).await;
+        let codex = self
+            .codex_for(
+                id,
+                spec.account.as_deref(),
+                spec.assistant.then_some(&tools),
+            )
+            .await?;
         let CodexSession {
             adapter,
             started,
@@ -1408,15 +1426,16 @@ impl ChatManager {
         let account = spec.account.clone();
         let safety = spec.safety;
         let mode = spec.assistant.then(|| self.assistant_policy().mode);
-        // Mawas's harness does not ask the user before Hutan's read-only tools (R1: reads are
-        // free): OMP through a private overlay file, Claude Code through `allowedTools` below.
-        let reads = self.mawas_reads(id, spec.assistant).await;
-        let overlay = (spec.agent == AGENT_OMP && !reads.is_empty())
+        // Mawas's harness does not ask the user itself before Hutan's tools: reads are free
+        // (R1), and a change asks once, on Hutan's own card. OMP gets a private overlay file,
+        // Claude Code `allowedTools` below.
+        let tools = self.mawas_tools(id, spec.assistant).await;
+        let overlay = (spec.agent == AGENT_OMP && !tools.is_empty())
             .then(|| {
                 let wiring = self.mcp.get()?;
                 wiring
-                    .write_private("omp-reads.yml", &omp_overlay(&reads))
-                    .map_err(|error| warn!(%error, "could not write the OMP overlay; OMP keeps asking before Hutan's read-only tools"))
+                    .write_private("omp-approvals.yml", &omp_overlay(&tools.all()))
+                    .map_err(|error| warn!(%error, "could not write the OMP overlay; OMP keeps asking before Hutan's tools"))
                     .ok()
             })
             .flatten();
@@ -1434,7 +1453,7 @@ impl ChatManager {
             }
             _ => None,
         };
-        let config = tokio::task::spawn_blocking(move || {
+        let mut config = tokio::task::spawn_blocking(move || {
             harnesses.acp_config_with(
                 &agent,
                 mode,
@@ -1446,6 +1465,15 @@ impl ChatManager {
         })
         .await
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}")))??;
+        // A call of Hutan's server may wait for the user's approval inside it: OMP gives it the
+        // window the daemon's own wait fits in, unless the user's own environment says
+        // otherwise (`[harness.omp] env`, the login environment).
+        if spec.assistant && spec.agent == AGENT_OMP && self.mcp_server(id).is_some() {
+            let (name, value) = omp_window_env();
+            if !config.env.iter().any(|(key, _)| *key == name) {
+                config.env.push((name, value));
+            }
+        }
         // What the errors below call the program, not the Seatbelt tool that runs it.
         let program = config.program.clone();
         // The folders the process is started with; a contained OMP can write in them too (the
@@ -1486,9 +1514,9 @@ impl ChatManager {
             resume_thread_id: spec.thread_id.clone(),
             developer_instructions: None,
             fork: fork_from(spec),
-            session_meta: if spec.assistant && spec.agent == AGENT_CLAUDE && !reads.is_empty() {
+            session_meta: if spec.assistant && spec.agent == AGENT_CLAUDE && !tools.is_empty() {
                 Some(serde_json::json!({
-                    "claudeCode": {"options": {"allowedTools": claude_allowed_tools(&reads)}}
+                    "claudeCode": {"options": {"allowedTools": claude_allowed_tools(&tools.all())}}
                 }))
             } else {
                 spec.safety

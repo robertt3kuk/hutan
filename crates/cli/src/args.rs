@@ -221,6 +221,10 @@ pub struct McpArgs {
     /// tells a Mawas harness not to ask the user about (it needs no daemon and starts no server)
     #[arg(long)]
     pub read_only_tools: bool,
+    /// Print the names of the tools that change something, one per line, and exit: what the
+    /// daemon tells a Mawas harness not to ask about itself, because Hutan's own gate asks
+    #[arg(long, conflicts_with = "read_only_tools")]
+    pub gated_tools: bool,
 }
 
 /// What the desktop window offers, and how to drive it. Needs a running desktop; anything an

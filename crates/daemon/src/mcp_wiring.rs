@@ -28,8 +28,22 @@ pub struct McpServerSpec {
     pub env: Vec<(String, String)>,
 }
 
-/// How long `hutan mcp --read-only-tools` may take.
-const READS_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long `hutan mcp --read-only-tools` / `--gated-tools` may take.
+const LIST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a Mawas harness waits for one call of Hutan's MCP server (a change may wait for the
+/// user's approval inside it): set per launch (OMP `OMP_MCP_TIMEOUT_MS`, Codex
+/// `tool_timeout_sec`), and longer than the most the daemon lets a Mawas approval wait
+/// ([`MAWAS_APPROVAL_MAX`]), so a card never outlives the call that raised it. The OMP default
+/// is 30 s, Codex's 60 s; Claude Code's own is hours.
+pub const MAWAS_CALL_WINDOW: Duration = Duration::from_secs(11 * 60);
+
+/// The longest a Mawas approval waits for the user, whatever `control.approval_timeout_secs`
+/// says: under [`MAWAS_CALL_WINDOW`] by a minute.
+pub const MAWAS_APPROVAL_MAX: Duration = Duration::from_secs(10 * 60);
+
+/// The environment variable OMP reads for its MCP call timeout (milliseconds).
+pub const OMP_MCP_TIMEOUT_ENV: &str = "OMP_MCP_TIMEOUT_MS";
 
 /// What the daemon needs to describe its own MCP server.
 #[derive(Debug, Clone)]
@@ -45,6 +59,8 @@ pub struct McpWiring {
     pub private_dir: PathBuf,
     /// The tools of `hutan mcp` that only read, asked of the CLI once (a failure is not kept).
     reads: Arc<OnceCell<Vec<String>>>,
+    /// The tools that change something, likewise.
+    writes: Arc<OnceCell<Vec<String>>>,
 }
 
 /// Whether `name` is a tool name as the table writes them: it goes into a harness's
@@ -56,17 +72,18 @@ fn is_tool_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// Runs `hutan mcp --read-only-tools`: the table of `hutan mcp` is the one list of which tools
-/// only read (`readOnlyHint`), and the CLI is what owns it.
-async fn list_read_only_tools(hutan_bin: &Path) -> Result<Vec<String>, String> {
+/// Runs `hutan mcp <flag>` (`--read-only-tools`, `--gated-tools`): the table of `hutan mcp` is
+/// the one list of which tools only read (`readOnlyHint`) and which change something, and the
+/// CLI is what owns it.
+async fn list_tools(hutan_bin: &Path, flag: &str) -> Result<Vec<String>, String> {
     let mut command = tokio::process::Command::new(hutan_bin);
     command
-        .args(["mcp", "--read-only-tools"])
+        .args(["mcp", flag])
         .env_remove("HUTAN_SESSION_ID")
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
-    let output = tokio::time::timeout(READS_TIMEOUT, command.output())
+    let output = tokio::time::timeout(LIST_TIMEOUT, command.output())
         .await
         .map_err(|_| "it did not answer in time".to_owned())?
         .map_err(|e| e.to_string())?;
@@ -83,6 +100,27 @@ async fn list_read_only_tools(hutan_bin: &Path) -> Result<Vec<String>, String> {
     }
     Ok(names)
 }
+
+/// What a Mawas harness is told to run without asking the user itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ApprovedTools {
+    /// The tools that only read: nothing asks.
+    pub reads: Vec<String>,
+    /// The tools that change something: the daemon's gate asks, once, on its own card.
+    pub writes: Vec<String>,
+}
+
+impl ApprovedTools {
+    /// Every name, reads first.
+    pub fn all(&self) -> Vec<String> {
+        self.reads.iter().chain(&self.writes).cloned().collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.reads.is_empty() && self.writes.is_empty()
+    }
+}
+
 impl McpWiring {
     pub fn new(enabled: bool, hutan_bin: PathBuf, socket: PathBuf, private_dir: PathBuf) -> Self {
         Self {
@@ -91,21 +129,30 @@ impl McpWiring {
             socket,
             private_dir,
             reads: Arc::default(),
+            writes: Arc::default(),
         }
     }
 
-    /// The tools of `hutan mcp` that only read, as its own table lists them; empty (and logged)
-    /// when the CLI cannot be asked, in which case nothing is pre-allowed and the harness keeps
-    /// its own prompts.
-    pub async fn read_only_tools(&self) -> Vec<String> {
-        self.reads
-            .get_or_try_init(|| list_read_only_tools(&self.hutan_bin))
+    async fn listed(&self, cell: &OnceCell<Vec<String>>, flag: &str, what: &str) -> Vec<String> {
+        cell.get_or_try_init(|| list_tools(&self.hutan_bin, flag))
             .await
             .cloned()
             .unwrap_or_else(|reason| {
-                warn!(bin = %self.hutan_bin.display(), %reason, "could not list the read-only Hutan tools; the harness keeps asking about them");
+                warn!(bin = %self.hutan_bin.display(), %reason, "could not list the {what} Hutan tools; the harness keeps asking about them");
                 Vec::new()
             })
+    }
+
+    /// The tools of `hutan mcp` that only read, and those that change something, as its own
+    /// table lists them; a list the CLI cannot give is empty (and logged), in which case
+    /// nothing of it is pre-allowed and the harness keeps its own prompts.
+    pub async fn approved_tools(&self) -> ApprovedTools {
+        ApprovedTools {
+            reads: self
+                .listed(&self.reads, "--read-only-tools", "read-only")
+                .await,
+            writes: self.listed(&self.writes, "--gated-tools", "gated").await,
+        }
     }
 
     /// Writes `content` to `file` in [`Self::private_dir`] (0700; the file 0600, replaced
@@ -190,8 +237,8 @@ impl McpServerSpec {
 /// OMP names an MCP tool `mcp__<server>_<tool>`.
 pub fn omp_overlay(names: &[String]) -> String {
     let mut out = String::from(
-        "# Written by Hutan for Mawas's OMP: the read-only tools of Hutan's MCP server run without\n\
-         # asking (docs/control.md, Reads are free). Replaced at every start.\n\
+        "# Written by Hutan for Mawas's OMP: the tools of Hutan's MCP server run without OMP's own\n\
+         # question (reads ask nobody; a change asks on Hutan's card). docs/control.md. Replaced at every start.\n\
          tools:\n  approval:\n",
     );
     for name in names {
@@ -212,7 +259,7 @@ pub fn claude_allowed_tools(names: &[String]) -> Vec<String> {
 
 /// Codex overrides (`-c key=value`) that approve `names` without asking:
 /// `mcp_servers.<server>.tools.<tool>.approval_mode = "approve"`.
-pub fn codex_read_overrides(names: &[String]) -> Vec<String> {
+pub fn codex_approval_overrides(names: &[String]) -> Vec<String> {
     names
         .iter()
         .flat_map(|name| {
@@ -222,6 +269,26 @@ pub fn codex_read_overrides(names: &[String]) -> Vec<String> {
             ]
         })
         .collect()
+}
+
+/// The Codex override that gives a call of Hutan's server [`MAWAS_CALL_WINDOW`] instead of
+/// Codex's 60 s: `mcp_servers.<server>.tool_timeout_sec`.
+pub fn codex_window_override() -> [String; 2] {
+    [
+        "-c".to_owned(),
+        format!(
+            "mcp_servers.{SERVER_NAME}.tool_timeout_sec={:.1}",
+            MAWAS_CALL_WINDOW.as_secs_f64()
+        ),
+    ]
+}
+
+/// The value of [`OMP_MCP_TIMEOUT_ENV`] that gives OMP's calls [`MAWAS_CALL_WINDOW`].
+pub fn omp_window_env() -> (String, String) {
+    (
+        OMP_MCP_TIMEOUT_ENV.to_owned(),
+        MAWAS_CALL_WINDOW.as_millis().to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -266,7 +333,7 @@ mod tests {
             claude_allowed_tools(&names()),
             ["mcp__hutan__agents_board", "mcp__hutan__question_list"]
         );
-        let codex = codex_read_overrides(&names());
+        let codex = codex_approval_overrides(&names());
         assert_eq!(codex.len(), 4);
         assert_eq!(codex[0], "-c");
         assert_eq!(
@@ -289,12 +356,30 @@ mod tests {
         }
     }
 
+    const CLI: &str = "case \"$2\" in --gated-tools) printf 'chat_send\\nsession_rename\\n';; \
+                       --read-only-tools) printf 'agents_board\\nquestion_list\\n';; esac";
+
     #[tokio::test]
-    async fn the_list_comes_from_the_cli_and_a_failure_is_not_kept() {
+    async fn the_lists_come_from_the_cli_and_a_failure_is_not_kept() {
         let dir = tempfile::tempdir().unwrap();
-        let bin = script(dir.path(), "printf 'agents_board\\nquestion_list\\n'");
-        let w = McpWiring::new(true, bin.clone(), PathBuf::new(), dir.path().join("p"));
-        assert_eq!(w.read_only_tools().await, names());
+        let w = McpWiring::new(
+            true,
+            script(dir.path(), CLI),
+            PathBuf::new(),
+            dir.path().join("p"),
+        );
+        let tools = w.approved_tools().await;
+        assert_eq!(tools.reads, names());
+        assert_eq!(tools.writes, ["chat_send", "session_rename"]);
+        assert_eq!(
+            tools.all(),
+            [
+                "agents_board",
+                "question_list",
+                "chat_send",
+                "session_rename"
+            ]
+        );
         // Garbage, a failing exit and an empty list all mean "nothing is pre-allowed" ...
         let failing = tempfile::tempdir().unwrap();
         let w = McpWiring::new(
@@ -303,10 +388,24 @@ mod tests {
             PathBuf::new(),
             dir.path().join("p"),
         );
-        assert!(w.read_only_tools().await.is_empty());
+        assert!(w.approved_tools().await.is_empty());
         // ... and the failure is not kept: the same wiring asks again once the CLI works.
-        script(failing.path(), "printf 'agents_board\\n'");
-        assert_eq!(w.read_only_tools().await, ["agents_board"]);
+        script(failing.path(), CLI);
+        assert_eq!(w.approved_tools().await.reads, names());
+        // Each list stands on its own: a CLI that knows only one of the flags gives that one.
+        let half = tempfile::tempdir().unwrap();
+        let w = McpWiring::new(
+            true,
+            script(
+                half.path(),
+                "if [ \"$2\" = --gated-tools ]; then exit 2; fi; printf 'agents_board\\n'",
+            ),
+            PathBuf::new(),
+            dir.path().join("p"),
+        );
+        let tools = w.approved_tools().await;
+        assert_eq!(tools.reads, ["agents_board"]);
+        assert!(tools.writes.is_empty());
         for body in ["exit 3", "true"] {
             let dir = tempfile::tempdir().unwrap();
             let w = McpWiring::new(
@@ -315,7 +414,7 @@ mod tests {
                 PathBuf::new(),
                 dir.path().join("p"),
             );
-            assert!(w.read_only_tools().await.is_empty(), "{body}");
+            assert!(w.approved_tools().await.is_empty(), "{body}");
         }
         let w = McpWiring::new(
             true,
@@ -323,7 +422,24 @@ mod tests {
             PathBuf::new(),
             dir.path().join("p"),
         );
-        assert!(w.read_only_tools().await.is_empty());
+        assert!(w.approved_tools().await.is_empty());
+    }
+
+    #[test]
+    fn the_harness_windows_outlast_the_most_an_approval_waits() {
+        assert!(MAWAS_CALL_WINDOW > MAWAS_APPROVAL_MAX);
+        assert_eq!(
+            omp_window_env(),
+            ("OMP_MCP_TIMEOUT_MS".to_owned(), "660000".to_owned())
+        );
+        let [flag, value] = codex_window_override();
+        assert_eq!(flag, "-c");
+        assert_eq!(value, "mcp_servers.hutan.tool_timeout_sec=660.0");
+        let parsed: toml::Table = value.parse().unwrap();
+        assert_eq!(
+            parsed["mcp_servers"]["hutan"]["tool_timeout_sec"].as_float(),
+            Some(660.0)
+        );
     }
 
     #[test]

@@ -158,7 +158,7 @@ impl Router {
         }
         let gated = self
             .control
-            .gate(origin, conn.client_kind(), &request)
+            .gate(origin, conn.client_kind(), &request, conn.gone())
             .await?;
         let result = self.run(conn, request, gated.sender.as_ref()).await?;
         Ok(gated.annotate(result))

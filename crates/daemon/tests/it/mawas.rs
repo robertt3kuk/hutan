@@ -2203,3 +2203,96 @@ async fn mawas_does_not_suggest_answers_to_her_own_requests() {
     forbidden(renaming.await.unwrap().unwrap_err());
     m.daemon.stop().await;
 }
+
+// ---- an approval never outlives the call that raised it (MAWAS-WRITES) --------------------------
+
+/// Waits for the control approval `id` to resolve as expired.
+async fn expired(events: &mut broadcast::Receiver<(Seq, Event)>, id: ApprovalId) {
+    wait_event(
+        events,
+        "the approval to be withdrawn",
+        |event| match event {
+            Event::ApprovalResolved {
+                approval_id,
+                outcome: hutan_core::agent::PermissionOutcome::Expired,
+                ..
+            } if *approval_id == id => Some(()),
+            _ => None,
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_card_whose_caller_goes_away_is_withdrawn_and_a_late_allow_does_nothing() {
+    let mut m = M::start("", &["plain-turn"; 2]).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let target = m.shell().await;
+    let before = m.title_of(target.id).await;
+
+    // The call that raised the card runs on a connection of its own, as `hutan mcp` makes it.
+    let caller = m.from(mawas.id).await;
+    let asking = {
+        let id = target.id;
+        tokio::spawn(async move { rename(&caller, id, "too-late").await })
+    };
+    let approval = m.next_approval().await;
+    assert_eq!(approval.session_id, mawas.id);
+    // The harness gives up (its MCP call was cancelled or timed out): its side closes.
+    asking.abort();
+    let _ = asking.await;
+    expired(&mut m.events, approval.id).await;
+
+    // Nothing is left to answer, and answering anyway runs nothing.
+    assert!(m.pending().await.is_empty());
+    let late = m
+        .user
+        .call::<Empty>(Request::ApprovalRespond(ApprovalRespond {
+            approval_id: approval.id,
+            option_id: "allow_once".to_owned(),
+        }))
+        .await;
+    assert!(
+        late.is_err(),
+        "a withdrawn card cannot be answered: {late:?}"
+    );
+    assert_eq!(m.title_of(target.id).await, before);
+
+    // Audited: the log says it was withdrawn because the caller went, and the row is expired.
+    let lines: Vec<String> = audit_lines()
+        .into_iter()
+        .filter(|line| line.contains(&mawas.id.to_string()))
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("mawas session.rename: withdrawn (caller_gone)")),
+        "{lines:#?}"
+    );
+    let rows = m.audit(1).await;
+    assert_eq!(
+        rows[0].outcome,
+        Some(hutan_storage::ApprovalOutcome::Expired),
+        "{rows:?}"
+    );
+    assert_eq!(
+        rows[0].decided_by.as_deref(),
+        Some("caller_gone"),
+        "{rows:?}"
+    );
+    // No grant came of it either.
+    assert!(m.grants().await.is_empty());
+
+    // The next call asks again and is answered normally: nothing carried over.
+    let caller = m.from(mawas.id).await;
+    let asking = {
+        let id = target.id;
+        tokio::spawn(async move { rename(&caller, id, "on-time").await })
+    };
+    let approval = m.next_approval().await;
+    m.answer(approval.id, "allow_once").await;
+    asking.await.unwrap().unwrap();
+    assert_eq!(m.title_of(target.id).await, "on-time");
+    m.daemon.stop().await;
+}

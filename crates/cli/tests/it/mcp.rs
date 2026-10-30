@@ -953,3 +953,153 @@ async fn the_read_only_tools_are_listed_without_a_daemon() {
         "it never started a daemon"
     );
 }
+
+/// `hutan mcp --gated-tools` is the other half of that list: the tools that change something,
+/// which the daemon's gate asks about (MAWAS-WRITES). Together with the reads they are the whole
+/// table, and the two flags exclude each other.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gated_tools_are_listed_without_a_daemon_and_are_not_the_reads() {
+    let home = tempfile::tempdir().unwrap();
+    let run = |flag: &'static str| {
+        let home = home.path().to_owned();
+        async move {
+            tokio::process::Command::new(HUTAN)
+                .args(["mcp", flag])
+                .env("HUTAN_HOME", home)
+                .env_remove("HUTAN_SOCKET")
+                .env_remove("HUTAN_SESSION_ID")
+                .stdin(std::process::Stdio::null())
+                .output()
+                .await
+                .unwrap()
+        }
+    };
+    let gated = run("--gated-tools").await;
+    assert!(gated.status.success(), "{gated:?}");
+    let gated = String::from_utf8(gated.stdout).unwrap();
+    let gated: Vec<&str> = gated.lines().collect();
+    for write in [
+        "chat_send",
+        "chat_queue_add",
+        "ask_suggest",
+        "session_rename",
+    ] {
+        assert!(gated.contains(&write), "{write} in {gated:?}");
+    }
+    let reads = run("--read-only-tools").await;
+    let reads = String::from_utf8(reads.stdout).unwrap();
+    assert!(
+        reads.lines().all(|read| !gated.contains(&read)),
+        "no tool is on both lists"
+    );
+    let both = tokio::process::Command::new(HUTAN)
+        .args(["mcp", "--gated-tools", "--read-only-tools"])
+        .env("HUTAN_HOME", home.path())
+        .output()
+        .await
+        .unwrap();
+    assert!(!both.status.success(), "the flags exclude each other");
+    assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
+}
+
+/// MAWAS-WRITES (safety): an approval card must not outlive the call that raised it. When the
+/// host gives up on a call that waits for the user (`notifications/cancelled`), the card is
+/// withdrawn — resolved as expired, never answerable — so a late *Allow* cannot run the change
+/// after the model was told it did not complete.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_call_withdraws_its_card_and_a_late_allow_runs_nothing() {
+    let t = start_with_policy("ask").await;
+    let agent = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    let target = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &agent).await;
+    let before = t.session(&target).await["title"].clone();
+    let mut mcp = Mcp::start(&t.paths.socket, Some(&agent)).await;
+    mcp.initialize().await;
+
+    let call = mcp
+        .tool_request(
+            "session_rename",
+            json!({"session_id": target, "title": "too-late"}),
+        )
+        .await;
+    let approval = first_pending(&t).await;
+    let id = approval["id"].as_str().unwrap().to_owned();
+    mcp.send(json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {"requestId": call, "reason": "timed out"},
+    }))
+    .await;
+    // The card goes away by itself, without anyone answering it.
+    timeout(WAIT, async {
+        loop {
+            let out = t.hutan(&["approvals", "--json"]).await.ok();
+            if out.json()["approvals"]
+                .as_array()
+                .is_none_or(|approvals| approvals.is_empty())
+            {
+                return;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the card of a cancelled call was left up");
+    // A late Allow finds nothing to answer, and nothing runs.
+    let late = t.hutan(&["approve", &id, "allow_once"]).await;
+    assert_ne!(late.code, 0, "{late:?}");
+    assert_eq!(t.session(&target).await["title"], before);
+    // The server is still up and the next call works as before.
+    assert!(mcp.call("ping", json!({})).await["result"].is_object());
+    let next = mcp
+        .tool_request(
+            "session_rename",
+            json!({"session_id": target, "title": "on-time"}),
+        )
+        .await;
+    let approval = first_pending(&t).await;
+    t.hutan(&["approve", approval["id"].as_str().unwrap(), "allow_once"])
+        .await
+        .ok();
+    let done = mcp.answer(next).await;
+    assert!(!is_error(&done), "{done}");
+    assert_eq!(t.session(&target).await["title"], "on-time");
+    t.stop().await;
+}
+
+/// The same when the host does not say anything: its process ends while the card waits.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_mcp_server_that_ends_withdraws_the_card_it_raised() {
+    let t = start_with_policy("ask").await;
+    let agent = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    let target = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &agent).await;
+    let before = t.session(&target).await["title"].clone();
+    let mut mcp = Mcp::start(&t.paths.socket, Some(&agent)).await;
+    mcp.initialize().await;
+    mcp.tool_request(
+        "session_rename",
+        json!({"session_id": target, "title": "orphan"}),
+    )
+    .await;
+    let approval = first_pending(&t).await;
+    let id = approval["id"].as_str().unwrap().to_owned();
+    drop(mcp);
+    timeout(WAIT, async {
+        loop {
+            let out = t.hutan(&["approvals", "--json"]).await.ok();
+            if out.json()["approvals"]
+                .as_array()
+                .is_none_or(|approvals| approvals.is_empty())
+            {
+                return;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the card of a dead caller was left up");
+    assert_ne!(t.hutan(&["approve", &id, "allow_once"]).await.code, 0);
+    assert_eq!(t.session(&target).await["title"], before);
+    t.stop().await;
+}

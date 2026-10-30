@@ -30,3 +30,11 @@ pub fn print_read_only_tools(out: &mut impl std::io::Write) -> std::io::Result<(
     }
     Ok(())
 }
+
+/// `hutan mcp --gated-tools`: the names of the tools that change something, one per line.
+pub fn print_gated_tools(out: &mut impl std::io::Write) -> std::io::Result<()> {
+    for name in table::gated_names() {
+        writeln!(out, "{name}")?;
+    }
+    Ok(())
+}

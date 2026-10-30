@@ -163,9 +163,19 @@ pub struct ConnHandle {
     cancel: CancellationToken,
     client: Arc<OnceLock<ClientInfo>>,
     origin: Arc<OnceLock<SessionId>>,
+    /// Cancelled when the connection stops being read: the peer closed it, or it was closed on
+    /// the daemon's side. A request that waits for the user on behalf of the peer
+    /// ([`crate::control::ControlService::gate`]) is withdrawn then, so what the peer no
+    /// longer waits for can never run later.
+    gone: CancellationToken,
 }
 
 impl ConnHandle {
+    /// Cancelled once the peer is no longer there to wait for an answer.
+    pub fn gone(&self) -> &CancellationToken {
+        &self.gone
+    }
+
     pub fn id(&self) -> ConnId {
         self.id
     }
@@ -351,6 +361,7 @@ async fn serve_halves<R, W>(
         cancel: cancel.clone(),
         client: Arc::new(OnceLock::new()),
         origin: Arc::new(OnceLock::new()),
+        gone: CancellationToken::new(),
     };
     let mut writer = tokio::spawn(write_loop(
         FramedWrite::new(write_half, FrameCodec),
@@ -360,6 +371,7 @@ async fn serve_halves<R, W>(
     ));
 
     run(&mut reader, &handle, &ctx).await;
+    handle.gone.cancel();
 
     ctx.bus.unsubscribe(id);
     // Render tasks hold connection handles; the writer below can only finish once they end.
@@ -507,6 +519,22 @@ async fn handle_frame(frame: Frame, handle: &ConnHandle, ctx: &Arc<ConnContext>)
                         } else {
                             ctx.router.dispatch(&handle, request).await
                         };
+                        handle.send_response(id, outcome);
+                    });
+                    return true;
+                }
+                // A change an agent asks for may wait for the user's approval, minutes at a
+                // time. It runs on a task of its own so that the connection goes on reading:
+                // when the agent's side closes (its MCP call was cancelled or timed out, its
+                // process died) the end of the connection is noticed and the card withdrawn
+                // (`handle.gone`), instead of staying up to be answered for nobody.
+                Ok(request)
+                    if handle.origin().is_some()
+                        && crate::router::classify(&request) == crate::control::Access::Mutate =>
+                {
+                    let (ctx, handle) = (ctx.clone(), handle.clone());
+                    tokio::spawn(async move {
+                        let outcome = ctx.router.dispatch(&handle, request).await;
                         handle.send_response(id, outcome);
                     });
                     return true;

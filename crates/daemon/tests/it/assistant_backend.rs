@@ -100,7 +100,7 @@ const CLAUDE_ADVISOR: &str =
 /// content in the system temp directory, so the system vets it once, not once per test.
 fn argv_logging_wrapper() -> PathBuf {
     static WRAPPER: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
-        let text = "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$ARGV_LOG\"\nexec \"$FIXTURE\" \"$@\"\n";
+        let text = "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$ARGV_LOG\"\nenv | grep '^OMP_MCP_TIMEOUT_MS=' >> \"$ARGV_LOG.env\"\nexec \"$FIXTURE\" \"$@\"\n";
         let dir = std::env::temp_dir().join("hutan-test-fake-clis");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("assistant-backend-argv-wrapper");
@@ -1320,8 +1320,10 @@ async fn a_harness_that_cannot_start_fails_its_first_message_and_another_backend
 
 // ---- reads are free (MAWAS-READS, ADR 0025 R1) ---------------------------------------------------
 
-/// A fake `hutan` that names two read-only tools, as `hutan mcp --read-only-tools` does.
-const READS_CLI: &str = "printf 'agents_board\\nquestion_list\\n'";
+/// A fake `hutan` that names two read-only and two gated tools, as `hutan mcp --read-only-tools`
+/// and `--gated-tools` do.
+const READS_CLI: &str = "case \"$2\" in --gated-tools) printf 'chat_send\\nsession_rename\\n';; \
+                         --read-only-tools) printf 'agents_board\\nquestion_list\\n';; *) exit 2;; esac";
 
 fn plain_chat(agent: &str, project: &WorkspaceInfo, cwd: &Path) -> Request {
     Request::ChatCreate(hutan_protocol::chat::ChatCreate {
@@ -1367,7 +1369,12 @@ async fn an_omp_assistant_runs_the_read_only_hutan_tools_without_asking_through_
     );
     let mode = std::fs::metadata(&overlay).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "{mode:o}");
-    let names = ["agents_board".to_owned(), "question_list".to_owned()];
+    let names = [
+        "agents_board".to_owned(),
+        "question_list".to_owned(),
+        "chat_send".to_owned(),
+        "session_rename".to_owned(),
+    ];
     assert_eq!(
         std::fs::read_to_string(&overlay).unwrap(),
         omp_overlay(&names)
@@ -1375,9 +1382,12 @@ async fn an_omp_assistant_runs_the_read_only_hutan_tools_without_asking_through_
     let text = std::fs::read_to_string(&overlay).unwrap();
     assert!(text.contains("mcp__hutan_agents_board: allow"), "{text}");
     assert!(
-        !text.contains("chat_send"),
-        "a tool that writes is not in it: {text}"
+        text.contains("mcp__hutan_session_rename: allow"),
+        "a change is not asked about by OMP either: Hutan's card is the one question: {text}"
     );
+    // OMP's MCP call window is longer than the longest a Mawas approval waits.
+    let env = std::fs::read_to_string(t.logs.path().join("omp-argv.log.env")).unwrap();
+    assert_eq!(env.trim(), "OMP_MCP_TIMEOUT_MS=660000");
     // The mode is still the one that asks for everything else.
     let mode = argv.iter().position(|a| a == "--approval-mode").unwrap();
     assert_eq!(argv[mode + 1], "always-ask");
@@ -1439,7 +1449,12 @@ async fn a_claude_assistant_gets_the_read_only_tools_as_allowed_tools_on_session
     let allowed = &new[0]["params"]["_meta"]["claudeCode"]["options"]["allowedTools"];
     assert_eq!(
         allowed,
-        &serde_json::json!(["mcp__hutan__agents_board", "mcp__hutan__question_list"]),
+        &serde_json::json!([
+            "mcp__hutan__agents_board",
+            "mcp__hutan__question_list",
+            "mcp__hutan__chat_send",
+            "mcp__hutan__session_rename"
+        ]),
         "{new:?}"
     );
     t.stop().await;
@@ -1464,10 +1479,19 @@ async fn a_codex_assistant_approves_the_read_only_tools_and_a_plain_chat_does_no
             .collect::<Vec<_>>()
     };
     let argv = log(&t);
-    for name in ["agents_board", "question_list"] {
+    for name in [
+        "agents_board",
+        "question_list",
+        "chat_send",
+        "session_rename",
+    ] {
         let wanted = format!("mcp_servers.hutan.tools.{name}.approval_mode=\"approve\"");
         assert!(argv.contains(&wanted), "{wanted}: {argv:?}");
     }
+    assert!(
+        argv.contains(&"mcp_servers.hutan.tool_timeout_sec=660.0".to_owned()),
+        "{argv:?}"
+    );
     assert!(
         argv.iter()
             .any(|a| a.starts_with("mcp_servers.hutan.command=")),
