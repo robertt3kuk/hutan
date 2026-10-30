@@ -2419,6 +2419,20 @@ pub struct AgentsArgs {
     /// With --board: list the agents that have finished too
     #[arg(long, requires = "board")]
     pub finished: bool,
+    /// Review one agent's turn instead: what it ran (with exit codes), the files it changed
+    /// (lines, from the turn's checkpoint), the diagnostics of those files, the requests that
+    /// wait, the heuristic signals and what is not recorded. Default turn: the last finished one
+    /// (`--turn` picks another). A terminal agent has no turns: its report and what is not
+    /// recorded. Session: id, unique id prefix, or title
+    #[arg(
+        long,
+        value_name = "SESSION",
+        conflicts_with_all = ["target", "watch", "board", "ws", "finished"]
+    )]
+    pub review: Option<String>,
+    /// With --review: this turn (a `turn_id` of `hutan chat log`)
+    #[arg(long, value_name = "TURN", requires = "review")]
+    pub turn: Option<String>,
 }
 
 /// `hutan ps`: the processes of the live sessions.

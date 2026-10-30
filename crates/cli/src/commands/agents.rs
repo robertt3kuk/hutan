@@ -2,7 +2,9 @@
 //! session; with `--watch`, again whenever a tree changes.
 
 use hutan_client::Client;
-use hutan_core::{AgentNode, AgentObservation, Liveness, NodeOutcome, NodeState, SessionId, Usage};
+use hutan_core::{
+    AgentNode, AgentObservation, Liveness, NodeOutcome, NodeState, SessionId, TurnId, Usage,
+};
 use hutan_protocol::activity::{
     ActivityDetail, ActivityEvent, AgentsActivity, AgentsActivityRequest, RequestKind, TurnOutcome,
 };
@@ -14,6 +16,7 @@ use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, Subscribed};
 use hutan_protocol::stats::{
     AgentsStats, AgentsStatsRequest, FailureSource, FlagKind, StatsBy, StatsGroup, WaitSource,
 };
+use hutan_protocol::review::AgentsReviewRequest;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Ctx;
@@ -32,6 +35,11 @@ impl Ctx {
         }
         if args.stats {
             return self.agents_stats(&client, &args).await;
+        }
+        if let Some(target) = &args.review {
+            return self
+                .agents_review(&client, target, args.turn.as_deref())
+                .await;
         }
         if args.ws.is_some() || args.since.is_some() || args.limit.is_some() {
             return Err(CliError::Usage(
@@ -174,6 +182,42 @@ impl Ctx {
         self.print(&observations, || {
             tree_report(&observations, &sessions, now_ms())
         })
+    }
+}
+
+impl Ctx {
+    /// `--review`: `agents.review` (protocol 0.66), as the packet's text or `--json`.
+    async fn agents_review(
+        &self,
+        client: &Client,
+        target: &str,
+        turn: Option<&str>,
+    ) -> Result<(), CliError> {
+        if !client.supports_agents_review() {
+            return Err(CliError::Failed(
+                "this daemon cannot review a turn (it predates protocol 0.66); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let sessions = self.session_list(client, None).await?.sessions;
+        let session = super::sessions::resolve_target(&sessions, target)?.id;
+        let turn_id = match turn {
+            Some(turn) => Some(turn.parse::<TurnId>().map_err(|_| {
+                CliError::Failed(format!(
+                    "`{turn}` is not a turn id (`hutan chat log` shows them)"
+                ))
+            })?),
+            None => None,
+        };
+        let packet = client
+            .agents_review(AgentsReviewRequest {
+                session_id: session,
+                turn_id,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&packet, || packet.text())
     }
 }
 

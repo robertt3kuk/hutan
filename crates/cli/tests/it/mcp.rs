@@ -832,7 +832,12 @@ async fn the_board_tools_read_and_mark_their_output_as_untrusted_data() {
     mcp.initialize().await;
 
     let listed = mcp.call("tools/list", json!({})).await;
-    for name in ["agents_board", "question_list", "history_sessions"] {
+    for name in [
+        "agents_board",
+        "agent_review",
+        "question_list",
+        "history_sessions",
+    ] {
         let tool = listed["result"]["tools"]
             .as_array()
             .unwrap()
@@ -943,6 +948,7 @@ async fn the_read_only_tools_are_listed_without_a_daemon() {
         "agents_board",
         "agents_activity",
         "agents_stats",
+        "agent_review",
         "question_list",
         "history_sessions",
     ] {
@@ -1149,6 +1155,41 @@ async fn agents_stats_reads_a_window_and_is_marked_untrusted() {
     let call = mcp
         .tool_request("agents_stats", json!({"last_days": 400}))
         .await;
+    assert!(is_error(&mcp.answer(call).await));
+    t.stop().await;
+}
+
+/// `agent_review` (protocol 0.66): read-only, marked as untrusted data, and a terminal agent's
+/// packet says what is not recorded.
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_review_reads_a_turn_and_marks_its_output_as_untrusted_data() {
+    let t = TestDaemon::start().await;
+    let id = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &id).await;
+
+    let mut mcp = Mcp::start(&t.paths.socket, None).await;
+    mcp.initialize().await;
+    let call = mcp
+        .tool_request("agent_review", json!({"session_id": id}))
+        .await;
+    let answer = mcp.answer(call).await;
+    assert!(!is_error(&answer), "{answer}");
+    assert!(text_of(&answer).starts_with("UNTRUSTED DATA"), "{answer}");
+    assert_eq!(answer["result"]["_meta"]["hutan/untrusted"], true);
+    let packet = &answer["result"]["structuredContent"];
+    assert_eq!(packet["session_id"], id);
+    assert_eq!(packet["source"], "hook");
+    assert_eq!(packet["not_recorded"][0]["what"], "turns and their outcome");
+
+    // A session that does not exist is an error, not an empty packet; the id is required.
+    let call = mcp
+        .tool_request(
+            "agent_review",
+            json!({"session_id": "01JZZZZZZZZZZZZZZZZZZZZZZZ"}),
+        )
+        .await;
+    assert!(is_error(&mcp.answer(call).await));
+    let call = mcp.tool_request("agent_review", json!({})).await;
     assert!(is_error(&mcp.answer(call).await));
     t.stop().await;
 }

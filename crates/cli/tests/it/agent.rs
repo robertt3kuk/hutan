@@ -621,3 +621,70 @@ exec sleep 600"#;
     }
     t.stop().await;
 }
+
+/// `hutan agents --review` (protocol 0.66): a terminal agent has a report and no turns, and the
+/// packet says what it cannot know; a shell, a bad turn id and an unknown session are errors.
+/// (A chat's turn — commands, files, signals — is covered by the daemon's `review` tests.)
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_review_reports_a_terminal_agent_and_says_what_is_not_recorded() {
+    let t = TestDaemon::start().await;
+    let agent = t
+        .new_session(
+            &[],
+            &[
+                "sh",
+                "-c",
+                r#"[ "$HUTAN_ENV" = 1 ] || exit 3
+"$HUTAN_BIN" agent report --source self --agent fake --state blocked --message "Run the migration?"
+exec sleep 600"#,
+            ],
+        )
+        .await;
+    wait_agent_state(&t, &agent, "blocked").await;
+    let shell = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+
+    let packet = t
+        .hutan(&["--json", "agents", "--review", &agent])
+        .await
+        .ok()
+        .json();
+    assert_eq!(packet["session_id"], agent);
+    assert_eq!(packet["source"], "hook");
+    assert_eq!(packet["report"]["state"], "blocked");
+    assert_eq!(packet["report"]["message"], "Run the migration?");
+    assert!(packet.get("turn").is_none() && packet.get("commands").is_none());
+    let what: Vec<&str> = packet["not_recorded"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["what"].as_str().unwrap())
+        .collect();
+    assert!(what.contains(&"turns and their outcome"), "{what:?}");
+    assert!(
+        what.contains(&"tools and commands, with exit codes"),
+        "{what:?}"
+    );
+
+    // The text names the source, the report and what is missing.
+    let text = t.hutan(&["agents", "--review", &agent]).await.ok().stdout;
+    for needle in [
+        "a terminal agent's hook report",
+        "Reported state: blocked — Run the migration?",
+        "Not recorded:",
+        "a terminal agent has no journal",
+        "none is a verdict",
+    ] {
+        assert!(text.contains(needle), "{needle:?} missing from:\n{text}");
+    }
+
+    // Errors say what is wrong.
+    for args in [
+        vec!["agents", "--review", &shell],
+        vec!["agents", "--review", &agent, "--turn", "not-a-turn"],
+        vec!["agents", "--review", "no-such-session"],
+    ] {
+        let out = finish(command(Path::new(HUTAN), Some(&t.paths.socket), &args)).await;
+        assert_ne!(out.code, 0, "{args:?}: {}", out.stderr);
+    }
+    t.stop().await;
+}
