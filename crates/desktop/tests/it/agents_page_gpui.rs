@@ -11,8 +11,8 @@ use common::agents::{Node, Reporter};
 use common::chat::ChatEnv;
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use hutan_agents_view::presentation::Group;
 use hutan_core::SessionId;
-use hutan_desktop::sessions::Group;
 use hutan_desktop::sessions::agents_text;
 use hutan_desktop::workbench::chat::LoadStatus;
 use hutan_desktop::workbench::model::{DockPosition, ItemRef};
@@ -572,7 +572,7 @@ fn a_session_waiting_for_a_request_says_approval_and_never_working(cx: &mut Test
     assert_eq!(agents_text::state_word(&record), "Approval");
     let (glyph, tone) = agents_text::lead(&record);
     assert_eq!(glyph.id(), "state.approval");
-    assert_eq!(tone, hutan_desktop::sessions::Tone::Warning);
+    assert_eq!(tone, hutan_agents_view::attention::Tone::Warning);
     let detail = agents_text::reason_detail(&record).expect("the reason");
     assert!(!detail.starts_with("Permission:"), "{detail}");
     assert!(
@@ -688,6 +688,6 @@ fn the_toolbar_folds_into_the_more_menu_below_640_pt_and_nothing_overflows(
     });
     assert_ne!(
         page.read_with(cx, |p, _| p.scope()),
-        hutan_desktop::sessions::Scope::All
+        hutan_agents_view::presentation::Scope::All
     );
 }

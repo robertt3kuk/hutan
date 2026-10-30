@@ -975,7 +975,7 @@ impl ChatView {
             crate::sessions::folders::folders_of(info).filter(|folders| folders.has_chip());
         let lineage_text = self.forked_from_text(info, cx);
         let state = ui::state_label(
-            presentation.icon(),
+            crate::sessions::agents::presentation_icon(&presentation),
             words,
             tone_color(theme, presentation.tone),
             attention,
@@ -2049,7 +2049,7 @@ impl Render for ChatView {
 /// `Plan to approve` — with the warning on the glyph; finished work and a failure say so
 /// (`Ready for review · turn finished`, `Failed · exit 1`) in the state's color; any other state
 /// is its word (`idle`, `working`).
-pub fn status_words(presentation: &crate::sessions::attention::Presentation) -> (String, bool) {
+pub fn status_words(presentation: &hutan_agents_view::attention::Presentation) -> (String, bool) {
     let Some(word) = presentation.state_word() else {
         return (presentation.label.clone(), false);
     };
@@ -2411,7 +2411,7 @@ mod mode_chip_tests {
     use hutan_protocol::chat::{ChatInfo, ChatMode};
 
     use super::{mode_chip, status_words};
-    use crate::sessions::attention::{Attention, Presentation, Tone};
+    use hutan_agents_view::attention::{Attention, Presentation, Tone};
 
     #[test]
     fn the_status_line_says_what_waits_as_such() {

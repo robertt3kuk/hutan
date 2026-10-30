@@ -13,6 +13,7 @@ use common::chat::ChatEnv;
 use common::mac::{Fakes, open, open_with_services};
 use common::{TestDaemon, draw, open_options, wait_until};
 use gpui::{Entity, OwnedMenuItem, TestAppContext, VisualTestContext};
+use hutan_agents_view::attention::AttentionKind;
 use hutan_client::{ConnectOptions, Connection};
 use hutan_core::SessionId;
 use hutan_desktop::app::start_connection;
@@ -21,7 +22,6 @@ use hutan_desktop::macos::{
     FAKE_BUNDLE, FakeLoginItem, LoginItem as _, LoginItemCall, LoginItemStatus, MacEvent,
     MacServices, MenuCommand, MenuSpec, PresenceCall, event_channel,
 };
-use hutan_desktop::sessions::AttentionKind;
 use hutan_desktop::workbench::actions::{self, daemon as daemon_actions};
 use hutan_desktop::workbench::model::ItemRef;
 use hutan_desktop::workbench::{Workbench, WorkbenchOptions};

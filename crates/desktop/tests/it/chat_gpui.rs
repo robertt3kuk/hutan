@@ -2298,7 +2298,7 @@ fn a_question_card_is_filled_with_clicks_and_keys_and_submitted_with_cmd_enter(
                 .read(cx)
                 .attention_entries()
                 .iter()
-                .all(|e| e.kind != hutan_desktop::sessions::AttentionKind::Question)
+                .all(|e| e.kind != hutan_agents_view::attention::AttentionKind::Question)
         })
     });
     pump(cx, "the turn to end", |cx| {
@@ -2327,7 +2327,7 @@ fn a_question_card_is_filled_with_clicks_and_keys_and_submitted_with_cmd_enter(
 fn a_question_can_be_declined_from_its_card_and_counts_as_attention_while_it_waits(
     cx: &mut TestAppContext,
 ) {
-    use hutan_desktop::sessions::AttentionKind;
+    use hutan_agents_view::attention::AttentionKind;
 
     let env = ChatEnv::new();
     let daemon = TestDaemon::start_with_codex(env.fixture("question-elicitation"));

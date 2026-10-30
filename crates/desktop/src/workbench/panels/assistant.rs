@@ -37,7 +37,6 @@ use serde_json::json;
 
 use super::common::state_dot;
 use crate::icons::{Icon, icon};
-use crate::sessions::models::picker_rows;
 use crate::settings::{AssistantSettings, HomeScope};
 use crate::workbench::actions::{
     ManageProviders, ShowAssistantChatsMenu, ShowAssistantFocusMenu, ShowAssistantModeMenu,
@@ -51,6 +50,7 @@ use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
 use crate::workbench::ui::{self, Button, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
+use hutan_agents_view::models::picker_rows;
 
 /// A conversation the panel keeps: one per scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

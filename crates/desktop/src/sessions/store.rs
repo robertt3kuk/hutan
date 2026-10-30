@@ -45,17 +45,18 @@ use hutan_protocol::worktree::{
 use hutan_terminal_view::DefaultColors;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::agents::{self, AgentAttentionChanged, AgentBadge};
-use super::attention::{
-    Attention, AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread,
-    classify, present,
-};
+use super::agents::AgentAttentionChanged;
 use super::calls;
-use super::models::{self, ModelNames};
-use super::presentation::{self, AgentPresentation, Facts};
 use super::tasks::TaskBook;
 use super::terminal::TerminalSession;
 use super::untracked::{self, Untracked};
+use hutan_agents_view::agents::{self, AgentBadge};
+use hutan_agents_view::attention::{
+    Attention, AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread,
+    classify, present,
+};
+use hutan_agents_view::models::{self, ModelNames};
+use hutan_agents_view::presentation::{self, AgentPresentation, Facts, Link};
 
 /// Who reports an agent that the user chose to track (`agent.report` `source`).
 pub const TRACK_SOURCE: &str = "hutan-desktop";
@@ -322,6 +323,19 @@ impl CheckoutActivity {
         self.places
             .iter()
             .any(|place| place.starts_with(path) || place.starts_with(canonical))
+    }
+}
+
+/// What the window knows about the daemon, as the agent reducer reads it: no first snapshot yet
+/// is *Loading* (no false zero), a lost connection is *Offline* with the last confirmation.
+fn link_of(state: &StoreState, last_confirmed_ms: Option<u64>) -> Link {
+    match state.connection {
+        ConnectionState::Connected => Link::Online,
+        ConnectionState::Connecting if state.epoch.is_none() => Link::Loading,
+        ConnectionState::Connecting => Link::Online,
+        ConnectionState::Reconnecting { .. } | ConnectionState::Stopped => {
+            Link::Offline { last_confirmed_ms }
+        }
     }
 }
 
@@ -857,7 +871,7 @@ impl SessionsStore {
             let known: Vec<SessionId> = self.state.sessions.iter().map(|s| s.id).collect();
             self.recent.retain(|id, _| !known.contains(id));
             for info in &self.state.sessions {
-                if let Some(app) = super::attention::agent_app(info)
+                if let Some(app) = hutan_agents_view::attention::agent_app(info)
                     && self.agent_apps.get(&info.id).map(String::as_str) != Some(app)
                 {
                     self.agent_apps.insert(info.id, app.to_owned());
@@ -2401,14 +2415,18 @@ impl SessionsStore {
         }
         let snoozed: HashSet<SessionId> = self.attention.snoozed_map().keys().copied().collect();
         let built = Arc::new(presentation::build(&Facts {
-            state: &self.state,
+            link: link_of(&self.state, self.last_confirmed_ms),
+            workspaces: &self.state.workspaces,
+            sessions: &self.state.sessions,
+            approvals: &self.state.approvals,
+            questions: &self.state.questions,
+            trees: &self.state.trees,
             unread: &unread,
             reviews: &reviews,
             changes_to_review: &seen,
             snoozed: &snoozed,
             answered_approvals: &self.answered,
             answered_questions: &self.answered_questions,
-            last_confirmed_ms: self.last_confirmed_ms,
             model_names: &self.model_names,
             revision: self.revision,
         }));
@@ -4286,6 +4304,54 @@ mod tests {
         assert!(ui_open_is_fresh(1_000, 16_000));
         assert!(!ui_open_is_fresh(1_000, 16_001));
         assert!(ui_open_is_fresh(5_000, 1_000), "a future stamp is current");
+    }
+
+    fn state_with(connection: ConnectionState, epoch: Option<hutan_core::Epoch>) -> StoreState {
+        StoreState {
+            connection,
+            epoch,
+            workspaces: Vec::new(),
+            sessions: Vec::new(),
+            approvals: Vec::new(),
+            questions: Vec::new(),
+            trees: Default::default(),
+            daemon_start: None,
+            autostart_halted: false,
+            daemon: None,
+            stopped_by: None,
+        }
+    }
+
+    #[test]
+    fn the_reducer_reads_the_connection_as_a_link() {
+        let epoch = Some(hutan_core::Epoch::new());
+        let retry = ConnectionState::Reconnecting {
+            attempt: 1,
+            retry_in: std::time::Duration::from_secs(1),
+        };
+        assert_eq!(
+            link_of(&state_with(ConnectionState::Connected, epoch), Some(5)),
+            Link::Online
+        );
+        // Reconnecting or stopped: the records are the last confirmed ones.
+        for connection in [retry, ConnectionState::Stopped] {
+            assert_eq!(
+                link_of(&state_with(connection, epoch), Some(5)),
+                Link::Offline {
+                    last_confirmed_ms: Some(5)
+                }
+            );
+        }
+        // Before the first snapshot there is nothing to show (no false zero); after it, a new
+        // attempt keeps the records.
+        assert_eq!(
+            link_of(&state_with(ConnectionState::Connecting, None), Some(5)),
+            Link::Loading
+        );
+        assert_eq!(
+            link_of(&state_with(ConnectionState::Connecting, epoch), Some(5)),
+            Link::Online
+        );
     }
 
     fn info(state: hutan_core::SessionState) -> SessionInfo {

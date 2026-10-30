@@ -293,7 +293,7 @@ fn parts_at<'a>(
 ) -> TitleParts {
     let plain = || TitleParts {
         head: if named_by_agent(info) {
-            super::card::strip_pictographs(&info.title).to_owned()
+            hutan_agents_view::titles::strip_pictographs(&info.title).to_owned()
         } else {
             info.title.clone()
         },
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn an_agents_emoji_prefix_goes_from_its_title_and_the_users_own_name_is_theirs() {
-        use super::super::card::strip_pictographs;
+        use hutan_agents_view::titles::strip_pictographs;
         assert_eq!(
             strip_pictographs("➖ SUB: Add sub function"),
             "SUB: Add sub function"

@@ -12,9 +12,9 @@ use hutan_core::{
     DeliveryState, SessionId, Task, TaskId, TaskPlacementKind, TaskRun, TaskState, WorkspaceId,
 };
 
-use super::Tone;
-use super::agents::format_duration;
-use super::models::ModelNames;
+use hutan_agents_view::agents::format_duration;
+use hutan_agents_view::attention::Tone;
+use hutan_agents_view::models::ModelNames;
 
 /// Every task the daemon told this window about.
 #[derive(Debug, Clone, Default)]

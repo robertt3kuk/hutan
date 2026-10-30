@@ -13,12 +13,12 @@ use std::time::{Duration, Instant};
 
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use hutan_agents_view::attention::Attention;
+use hutan_agents_view::attention::Tone;
 use hutan_core::{
     AfterPolicy, DeliveryActor, DeliveryState, ReviewDecision, SessionId, Task, TaskId,
     TaskPlacement, TaskPlacementKind, TaskRun, TaskState, WorkspaceId,
 };
-use hutan_desktop::sessions::Attention;
-use hutan_desktop::sessions::attention::Tone;
 use hutan_desktop::sessions::launch::LaunchKind;
 use hutan_desktop::sessions::tasks::{TaskAction, TaskRowView};
 use hutan_desktop::settings::TasksSettings;
@@ -2026,7 +2026,8 @@ fn held_turns(dir: &Path, turns: usize) -> PathBuf {
 
 #[gpui::test]
 fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAppContext) {
-    use hutan_desktop::sessions::{Group, agents_text};
+    use hutan_agents_view::presentation::Group;
+    use hutan_desktop::sessions::agents_text;
     use hutan_protocol::chat::{ChatSend, ChatSent};
 
     let chat = common::chat::ChatEnv::new();

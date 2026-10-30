@@ -198,7 +198,10 @@ impl Workbench {
     ) -> Vec<MenuEntry> {
         let current = page.read(cx).scope();
         let store = self.sessions.read(cx);
-        let mut choices = vec![("All workspaces".to_owned(), crate::sessions::Scope::All)];
+        let mut choices = vec![(
+            "All workspaces".to_owned(),
+            hutan_agents_view::presentation::Scope::All,
+        )];
         for info in store.workspaces() {
             // A project inside a workspace is part of its workspace's scope.
             if info.kind == WorkspaceKind::Project && info.parent_id.is_some() {
@@ -206,7 +209,7 @@ impl Workbench {
             }
             choices.push((
                 info.name.clone(),
-                crate::sessions::Scope::Workspace(info.id),
+                hutan_agents_view::presentation::Scope::Workspace(info.id),
             ));
         }
         choices

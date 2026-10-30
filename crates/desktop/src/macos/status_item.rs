@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 use super::MenuCommand;
 use super::login_item::LoginItemStatus;
-use crate::sessions::attention::AttentionEntry;
+use hutan_agents_view::attention::AttentionEntry;
 
 /// Most sessions listed in the menu; the rest are summarised.
 pub const MAX_LISTED: usize = 10;
@@ -443,7 +443,7 @@ mod tests {
 
     use super::*;
     use crate::macos::login_item::not_found_status;
-    use crate::sessions::attention::AttentionKind;
+    use hutan_agents_view::attention::AttentionKind;
 
     #[test]
     fn the_daemons_menu_bar_asks_for_settings_by_the_name_of_this_action() {

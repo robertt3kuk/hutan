@@ -2782,18 +2782,19 @@ impl Workbench {
                 .iter()
                 .filter_map(|id| {
                     let info = store.session(*id)?;
-                    Some(crate::sessions::tab_marks(
+                    Some(hutan_agents_view::attention::tab_marks(
                         info,
                         &store.presentation(info),
                         store.unread(*id),
                     ))
                 })
-                .fold(crate::sessions::TabMarks::default(), |all, one| {
-                    crate::sessions::TabMarks {
+                .fold(
+                    hutan_agents_view::attention::TabMarks::default(),
+                    |all, one| hutan_agents_view::attention::TabMarks {
                         state: all.state.or(one.state),
                         bell: all.bell || one.bell,
-                    }
-                })
+                    },
+                )
         };
         let bell = marks.bell || called;
         let waits = self.waits_on_tab(&tab_sessions, cx);
@@ -3183,7 +3184,7 @@ impl Workbench {
             working: if self.daemon_connected(cx) {
                 store
                     .agent_presentation()
-                    .counts(crate::sessions::Scope::All)
+                    .counts(hutan_agents_view::presentation::Scope::All)
                     .working
             } else {
                 0

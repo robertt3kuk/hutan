@@ -521,7 +521,7 @@ impl ContextPanel {
             return Some(Empty::NoSession);
         };
         if info.chat.is_none() {
-            return Some(match crate::sessions::agent_app(info) {
+            return Some(match hutan_agents_view::attention::agent_app(info) {
                 Some(app) => Empty::Terminal {
                     app: Some(app.to_owned()),
                     hooks: !card::without_hooks(info),
@@ -780,7 +780,7 @@ impl ContextPanel {
             .as_ref()
             .and_then(|insight| insight.harness.clone())
             .or_else(|| info.chat.as_ref().map(|chat| chat.agent.clone()))
-            .or_else(|| crate::sessions::agent_app(info).map(str::to_owned));
+            .or_else(|| hutan_agents_view::attention::agent_app(info).map(str::to_owned));
         let model_chip = self
             .insight
             .as_ref()

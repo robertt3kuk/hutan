@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 use common::agents::{Node, Reporter};
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use hutan_agents_view::attention::{Attention, AttentionKind};
 use hutan_core::SessionId;
-use hutan_desktop::sessions::{Attention, AttentionKind, SessionsStore};
+use hutan_desktop::sessions::SessionsStore;
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_settings::{SettingsPaths, SettingsStore};
 

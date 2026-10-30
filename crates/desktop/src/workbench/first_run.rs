@@ -390,7 +390,7 @@ impl Workbench {
         let wanted = {
             let store = self.sessions.read(cx);
             store.synced()
-                && (crate::sessions::Attention::ALL
+                && (hutan_agents_view::attention::Attention::ALL
                     .into_iter()
                     .any(|attention| !store.in_attention(attention).is_empty())
                     || !store.approvals().is_empty()

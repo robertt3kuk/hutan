@@ -8,9 +8,9 @@ use std::path::Path;
 
 use common::{TestDaemon, draw, open_with, screen_text, wait_until};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use hutan_agents_view::attention::Attention;
 use hutan_client::ConnectionState;
 use hutan_core::{SessionId, SessionState};
-use hutan_desktop::sessions::Attention;
 use hutan_desktop::theme::Density;
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::{ItemRef, LayoutPreset};

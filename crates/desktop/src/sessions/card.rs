@@ -17,9 +17,10 @@
 
 use hutan_protocol::messages::SessionInfo;
 
-use super::presentation::ReasonKind;
-use super::{AgentRecord, Presentation, Tone, Unread, agent_note, agent_subtitle};
 use crate::workbench::ui::BadgeState;
+use hutan_agents_view::attention::{Presentation, Tone, Unread, agent_note, agent_subtitle};
+use hutan_agents_view::presentation::AgentRecord;
+use hutan_agents_view::presentation::ReasonKind;
 
 /// Which fact a news line states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,30 +62,6 @@ pub struct News {
 /// whole sentence, a tooltip.
 pub const HOOKS_HINT_TIP: &str = "Install the agent's hooks to see its model and the tool it runs on its card. Click to open Agent integrations; this hint then goes away.";
 
-/// Whether `c` is part of an emoji or a pictograph: what a terminal title of an agent may begin
-/// with (`➖ SUB: …`, `👷 WORKER: …`) and the interface font draws as a flat grey shape.
-fn is_pictograph(c: char) -> bool {
-    matches!(c,
-        '\u{200d}' | '\u{20e3}' | '\u{fe0e}' | '\u{fe0f}'
-        | '\u{2190}'..='\u{21ff}'
-        | '\u{2300}'..='\u{23ff}'
-        | '\u{25a0}'..='\u{27bf}'
-        | '\u{2900}'..='\u{297f}'
-        | '\u{2b00}'..='\u{2bff}'
-        | '\u{3030}' | '\u{303d}' | '\u{3297}' | '\u{3299}'
-        | '\u{1f000}'..='\u{1faff}'
-        | '\u{e0020}'..='\u{e007f}')
-}
-
-/// `title` without the emoji and pictographs it begins with (and the spaces after them): `➖ SUB:
-/// Add sub` is `SUB: Add sub`. A title that is nothing else keeps them.
-pub fn strip_pictographs(title: &str) -> &str {
-    let rest = title
-        .trim_start_matches(|c: char| is_pictograph(c) || c.is_whitespace())
-        .trim_start();
-    if rest.is_empty() { title } else { rest }
-}
-
 /// The most characters of a reply the line keeps (the row cuts the rest with “…”).
 const REPLY_CHARS: usize = 160;
 
@@ -123,7 +100,7 @@ pub fn badge_state(
         BadgeState::Failed
     } else if matches!(presentation.label.as_str(), "working" | "starting") {
         BadgeState::Working
-    } else if !super::attention::bell_only(info, unread)
+    } else if !hutan_agents_view::attention::bell_only(info, unread)
         && (presentation.attention.is_some() || unread.is_some_and(Unread::is_unseen))
     {
         // Ready for review, a turn nobody has read, a mark: finished, unread. (A shell's bell is
@@ -273,7 +250,7 @@ mod tests {
     }
 
     fn presented(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
-        crate::sessions::present(info, unread, &Default::default())
+        hutan_agents_view::attention::present(info, unread, &Default::default())
     }
 
     #[test]
@@ -478,9 +455,9 @@ mod tests {
             AgentRecord {
                 session: SessionId::new(),
                 title: "t".into(),
-                role: crate::sessions::Role::Agent,
-                state: crate::sessions::State::Working,
-                group: crate::sessions::Group::Working,
+                role: hutan_agents_view::presentation::Role::Agent,
+                state: hutan_agents_view::presentation::State::Working,
+                group: hutan_agents_view::presentation::Group::Working,
                 reasons: Vec::new(),
                 requests: Vec::new(),
                 submitting: 0,

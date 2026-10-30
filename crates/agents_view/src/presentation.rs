@@ -1,8 +1,9 @@
 //! One agent truth (`docs/spikes/2026-10-20-chrome-v3.md` § 2.1–2.2): the **agent presentation**,
-//! one record per agent session, joined from everything the daemon tells the window about it —
+//! one record per agent session, joined from everything the daemon tells a client about it —
 //! the session, its report, its chat, its observation tree, its pending requests — and the one
 //! reducer that decides how a session shows up. The Agents page, the Agents panel, Mawas's Today
-//! rail and the nav badge all read these records, so they cannot disagree.
+//! rail and the nav badge all read these records, so they cannot disagree; the daemon links the
+//! same reducer to serve a board (ADR 0025).
 //!
 //! State, attention and observation are separate axes: a record carries its activity [`State`],
 //! its attention [`Reason`]s and its provenance independently. Reducer precedence:
@@ -28,13 +29,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
-use hutan_client::{ConnectionState, StoreState};
 use hutan_core::agent::PermissionOptionKind;
 use hutan_core::{
     AgentNode, AgentObservation, ApprovalId, Liveness, NodeOutcome, NodeState, QuestionId,
     SessionId, SessionState, WorkspaceId,
 };
-use hutan_protocol::chat::{ApprovalInfo, ChatInfo};
+use hutan_protocol::chat::{ApprovalInfo, ChatInfo, QuestionInfo};
 use hutan_protocol::messages::{AgentState, SessionInfo, WorkspaceInfo, WorkspaceKind};
 use hutan_protocol::worktree::PlacementKind;
 
@@ -89,22 +89,6 @@ impl State {
             State::Stopped => "Stopped",
             State::Interrupted => "Interrupted",
             State::Disconnected => "Disconnected",
-        }
-    }
-
-    /// The state's own shape: state is never color alone.
-    pub const fn glyph(self) -> crate::icons::Icon {
-        use crate::icons::Icon;
-        match self {
-            State::Working => Icon::StateWorking,
-            State::Blocked => Icon::StateBlocked,
-            State::Idle => Icon::StateIdle,
-            State::Unconfirmed => Icon::StateUnknown,
-            State::Completed => Icon::StateCompleted,
-            State::Failed => Icon::StateFailed,
-            State::Stopped => Icon::StateStopped,
-            State::Interrupted => Icon::StateInterrupted,
-            State::Disconnected => Icon::StateDisconnected,
         }
     }
 
@@ -617,10 +601,21 @@ impl AgentPresentation {
     }
 }
 
-/// What the reducer reads, besides the daemon's own state.
+/// What the reducer reads: the daemon's state as slices of protocol types (what a client holds
+/// after its snapshot, and what the daemon holds itself), then what only a window knows. A
+/// caller with no window — the daemon — leaves those empty.
 #[derive(Debug)]
 pub struct Facts<'a> {
-    pub state: &'a StoreState,
+    /// What the caller knows about the daemon. [`Link::Loading`] yields no records.
+    pub link: Link,
+    pub workspaces: &'a [WorkspaceInfo],
+    pub sessions: &'a [SessionInfo],
+    /// Permission requests waiting for an answer.
+    pub approvals: &'a [ApprovalInfo],
+    /// Questions waiting for an answer.
+    pub questions: &'a [QuestionInfo],
+    /// The observation tree of every session that has agents.
+    pub trees: &'a BTreeMap<SessionId, AgentObservation>,
     pub unread: &'a BTreeMap<SessionId, Unread>,
     /// Sessions whose finished task waits for a reviewer and that the user has not seen yet.
     pub reviews: &'a HashSet<SessionId>,
@@ -633,8 +628,6 @@ pub struct Facts<'a> {
     /// Approvals this window answered; the daemon has not confirmed them yet.
     pub answered_approvals: &'a HashMap<ApprovalId, String>,
     pub answered_questions: &'a HashSet<QuestionId>,
-    /// When this window last saw the daemon's state confirmed.
-    pub last_confirmed_ms: Option<u64>,
     /// The display names of the harnesses' models.
     pub model_names: &'a ModelNames,
     pub revision: u64,
@@ -642,42 +635,33 @@ pub struct Facts<'a> {
 
 /// The agents of `facts`, joined and reduced.
 pub fn build(facts: &Facts<'_>) -> AgentPresentation {
-    let state = facts.state;
-    let link = match state.connection {
-        ConnectionState::Connected => Link::Online,
-        ConnectionState::Connecting if state.epoch.is_none() => Link::Loading,
-        ConnectionState::Connecting => Link::Online,
-        ConnectionState::Reconnecting { .. } | ConnectionState::Stopped => Link::Offline {
-            last_confirmed_ms: facts.last_confirmed_ms,
-        },
-    };
+    let link = facts.link;
     if link == Link::Loading {
         return AgentPresentation::empty(link, facts.revision);
     }
     let mut approvals: HashMap<SessionId, Vec<&ApprovalInfo>> = HashMap::new();
-    for approval in &state.approvals {
+    for approval in facts.approvals {
         approvals
             .entry(approval.session_id)
             .or_default()
             .push(approval);
     }
-    let mut questions: HashMap<SessionId, Vec<&hutan_protocol::chat::QuestionInfo>> =
-        HashMap::new();
-    for question in &state.questions {
+    let mut questions: HashMap<SessionId, Vec<&QuestionInfo>> = HashMap::new();
+    for question in facts.questions {
         questions
             .entry(question.session_id)
             .or_default()
             .push(question);
     }
     let workspaces: HashMap<WorkspaceId, &WorkspaceInfo> =
-        state.workspaces.iter().map(|w| (w.id, w)).collect();
+        facts.workspaces.iter().map(|w| (w.id, w)).collect();
     let ctx = Ctx {
         facts,
         approvals,
         questions,
         workspaces,
     };
-    let mut records: Vec<AgentRecord> = state
+    let mut records: Vec<AgentRecord> = facts
         .sessions
         .iter()
         .filter_map(|info| ctx.record(info))
@@ -753,7 +737,7 @@ struct Reduced {
 
 impl Ctx<'_> {
     fn record(&self, info: &SessionInfo) -> Option<AgentRecord> {
-        let tree = self.facts.state.trees.get(&info.id);
+        let tree = self.facts.trees.get(&info.id);
         // An agent session has an observation tree, a report or a chat; a plain shell is not
         // one, whatever its unread flag says (that stays in Projects and the global attention).
         if tree.is_none() && info.agent.is_none() && info.chat.is_none() {
@@ -1423,8 +1407,18 @@ mod tests {
         }
     }
 
+    /// What a client holds of the daemon after its snapshot.
+    struct Snapshot {
+        link: Link,
+        workspaces: Vec<WorkspaceInfo>,
+        sessions: Vec<SessionInfo>,
+        approvals: Vec<ApprovalInfo>,
+        questions: Vec<QuestionInfo>,
+        trees: BTreeMap<SessionId, AgentObservation>,
+    }
+
     struct World {
-        state: StoreState,
+        state: Snapshot,
         unread: BTreeMap<SessionId, Unread>,
         reviews: HashSet<SessionId>,
         seen: HashSet<SessionId>,
@@ -1436,18 +1430,13 @@ mod tests {
     impl World {
         fn new(workspaces: Vec<WorkspaceInfo>) -> Self {
             Self {
-                state: StoreState {
-                    connection: ConnectionState::Connected,
-                    epoch: Some(hutan_core::Epoch::new()),
+                state: Snapshot {
+                    link: Link::Online,
                     workspaces,
                     sessions: Vec::new(),
                     approvals: Vec::new(),
                     questions: Vec::new(),
                     trees: BTreeMap::new(),
-                    daemon_start: None,
-                    autostart_halted: false,
-                    daemon: None,
-                    stopped_by: None,
                 },
                 unread: BTreeMap::new(),
                 reviews: HashSet::new(),
@@ -1466,14 +1455,18 @@ mod tests {
 
         fn build(&self) -> AgentPresentation {
             build(&Facts {
-                state: &self.state,
+                link: self.state.link,
+                workspaces: &self.state.workspaces,
+                sessions: &self.state.sessions,
+                approvals: &self.state.approvals,
+                questions: &self.state.questions,
+                trees: &self.state.trees,
                 unread: &self.unread,
                 reviews: &self.reviews,
                 changes_to_review: &self.seen,
                 snoozed: &self.snoozed,
                 answered_approvals: &self.answered,
                 answered_questions: &HashSet::new(),
-                last_confirmed_ms: Some(NOW),
                 model_names: &self.model_names,
                 revision: 7,
             })
@@ -1994,9 +1987,8 @@ mod tests {
         let mut info = session(home.id, "work");
         info.agent = Some(report(AgentState::Idle, 1));
         world.add(info);
-        world.state.connection = ConnectionState::Reconnecting {
-            attempt: 1,
-            retry_in: std::time::Duration::from_secs(1),
+        world.state.link = Link::Offline {
+            last_confirmed_ms: Some(NOW),
         };
         let presentation = world.build();
         assert_eq!(presentation.records.len(), 1);
@@ -2006,8 +1998,7 @@ mod tests {
                 last_confirmed_ms: Some(NOW)
             }
         );
-        world.state.connection = ConnectionState::Connecting;
-        world.state.epoch = None;
+        world.state.link = Link::Loading;
         let presentation = world.build();
         assert_eq!(presentation.link, Link::Loading);
         assert!(presentation.records.is_empty());

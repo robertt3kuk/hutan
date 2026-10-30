@@ -4,7 +4,7 @@
 //! draw it at all.
 //!
 //! *Requests* lists what the Agents page lists in its *Requests* group, in its order (the one
-//! reducer, `sessions::presentation`): each permission request with the options the daemon
+//! reducer, `hutan_agents_view::presentation`): each permission request with the options the daemon
 //! offered (answered in place; Mawas's own first), each question and plan, and one row for a
 //! session that is blocked without saying on what. *Failed* and *Ready for review* list the
 //! sessions of those groups (one row each): a finished turn is never a request. *Working* lists
@@ -22,9 +22,7 @@ use hutan_core::{ApprovalId, QuestionId, SessionId};
 use super::assistant::AssistantPanel;
 use super::common::{agent_lead_glyph, agent_state_word, agent_title_line};
 use crate::icons::{Icon, icon};
-use crate::sessions::{
-    AgentRecord, Attention, Group, ReasonKind, Role, SessionsStore, agents_text,
-};
+use crate::sessions::{SessionsStore, agents_text};
 use crate::settings::AssistantSettings;
 use crate::workbench::actions::{
     EditMemoryProposal, JumpToNextAttention, OpenMawasMemory, OpenSession,
@@ -33,6 +31,8 @@ use crate::workbench::chat::Look;
 use crate::workbench::render::probe;
 use crate::workbench::ui::{self, Button, StyledExt as _};
 use crate::workbench::view::Region;
+use hutan_agents_view::attention::Attention;
+use hutan_agents_view::presentation::{AgentRecord, Group, ReasonKind, Role};
 
 /// The width of the rail.
 pub const RAIL_WIDTH: f32 = 300.0;

@@ -707,7 +707,7 @@ fn a_blocked_agent_badges_the_row_the_tab_and_the_card_and_clears_on_resolution(
     );
     assert_eq!(b.running_text().as_deref(), Some("2"));
     assert_eq!(
-        b.blocked_icon(),
+        hutan_desktop::sessions::agents::blocked_icon(&b),
         Some(hutan_desktop::icons::Icon::StateBlocked)
     );
     assert_eq!(b.tooltip(), "2 subagents running\nBlocked: reviewer");

@@ -15,8 +15,8 @@ use super::render::probe;
 use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, Button, StyledExt as _};
 use super::view::{Region, Workbench};
-use crate::sessions::Tone;
 use crate::theme::DensityExt as _;
+use hutan_agents_view::attention::Tone;
 use hutan_client::recovery::{ChipTone, RowAction};
 
 const WIDTH: f32 = 520.0;

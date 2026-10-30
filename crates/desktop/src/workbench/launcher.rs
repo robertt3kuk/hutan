@@ -841,9 +841,9 @@ impl Workbench {
         };
         match &launcher.agent {
             LaunchAgent::Harness(id) => match self.env.harnesses.read(cx).models(id) {
-                // In the pickers' order: by provider, family, newest first (`sessions::models`).
+                // In the pickers' order: by provider, family, newest first (`hutan_agents_view::models`).
                 Some(Models::Ready(models)) => Models::Ready(
-                    crate::sessions::models::picker_rows(id, models, "", None, true)
+                    hutan_agents_view::models::picker_rows(id, models, "", None, true)
                         .into_iter()
                         .map(|row| row.model.clone())
                         .collect(),
@@ -905,7 +905,7 @@ impl Workbench {
         &self,
         list: &'a [ModelInfo],
         cx: &gpui::App,
-    ) -> Vec<crate::sessions::models::ModelRow<'a>> {
+    ) -> Vec<hutan_agents_view::models::ModelRow<'a>> {
         let Some(launcher) = self.launcher.as_ref() else {
             return Vec::new();
         };
@@ -914,7 +914,7 @@ impl Workbench {
             LaunchAgent::Direct(_) => ("", false),
         };
         let current = self.launcher_chosen_model(cx).map(|m| m.id);
-        crate::sessions::models::picker_rows(agent, list, "", current.as_deref(), ordered)
+        hutan_agents_view::models::picker_rows(agent, list, "", current.as_deref(), ordered)
     }
 
     /// Has the open Model popover scroll to the model a start would use. A list that was just

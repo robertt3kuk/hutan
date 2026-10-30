@@ -12,7 +12,7 @@ use hutan_core::{SessionId, SessionKind};
 use hutan_protocol::messages::SessionInfo;
 
 use crate::icons::{Icon, icon};
-use crate::sessions::{AgentBadge, AgentRecord, PlacementBadge, Presentation, Tone};
+use crate::sessions::PlacementBadge;
 use crate::sessions::{ScopeKind, ScopeLabel};
 use crate::theme::{Theme, Tokens};
 use crate::workbench::actions::{OpenSettingsFor, SessionMenuAt, ShowPlacementMenu};
@@ -24,6 +24,9 @@ use crate::workbench::text_field::{EditableText, FieldMut, FieldRef, FieldState,
 use crate::workbench::ui::{FocusRingExt as _, StyledExt as _};
 use crate::workbench::vim_ui::{self, VimConfig};
 use crate::workbench::{BadgeSite, Region};
+use hutan_agents_view::agents::AgentBadge;
+use hutan_agents_view::attention::{Presentation, Tone};
+use hutan_agents_view::presentation::AgentRecord;
 
 pub fn tone_color(theme: &Theme, tone: Tone) -> Hsla {
     match tone {
@@ -61,14 +64,14 @@ pub fn agent_title_line_with(
     theme: &Theme,
     tokens: &Tokens,
 ) -> gpui::Div {
-    use crate::sessions::presentation::Role;
+    use hutan_agents_view::presentation::Role;
     // The name as the sidebar's card writes it: regular, semibold while something waits for a
     // look, faint once the session ended; an agent's own emoji prefix is not drawn.
     let needs = record.group.attention().is_some();
     let (head, tail) = match parts {
         Some(parts) => (parts.head, parts.tail),
         None => (
-            crate::sessions::card::strip_pictographs(&record.title).to_owned(),
+            hutan_agents_view::titles::strip_pictographs(&record.title).to_owned(),
             None,
         ),
     };
@@ -140,7 +143,7 @@ pub fn agent_lead_glyph(record: &AgentRecord, theme: &Theme) -> gpui::Div {
 /// harness's monogram (an agent chat the same as an agent in a terminal), the bubble of a direct
 /// chat, Mawas's sparkle.
 pub fn record_icon(record: &AgentRecord) -> Icon {
-    use crate::sessions::presentation::Role;
+    use hutan_agents_view::presentation::Role;
     match (record.role, record.agent.as_str()) {
         (Role::Assistant, _) => Icon::PanelAssistant,
         (_, "direct") => Icon::SessionDirect,
@@ -164,7 +167,7 @@ pub fn agent_lane(record: &AgentRecord, selected: bool, ground: Hsla, theme: &Th
 /// State shape and tone from the same presentation used by the adjacent label/tooltip.
 pub fn state_dot(theme: &Theme, presentation: &Presentation) -> AnyElement {
     icon(
-        presentation.icon(),
+        crate::sessions::agents::presentation_icon(presentation),
         14.0,
         tone_color(theme, presentation.tone),
     )
@@ -211,7 +214,7 @@ pub fn agent_badge(
                     .child(crate::icons::glyph(Icon::ActionSubagents))
                     .child(SharedString::from(text))
             }))
-            .children(badge.blocked_icon().map(|id| {
+            .children(crate::sessions::agents::blocked_icon(badge).map(|id| {
                 div()
                     .text_color(theme.warning)
                     .child(crate::icons::glyph(id))
@@ -417,7 +420,7 @@ pub fn session_icon_with(info: &SessionInfo, remembered: Option<&str>) -> Icon {
         // A terminal with a coding agent in it is that agent's, not a plain terminal; so is one
         // that started as the agent's program, and one that has ended.
         SessionKind::Terminal => {
-            match crate::sessions::agent_app(info)
+            match hutan_agents_view::attention::agent_app(info)
                 .or(remembered)
                 .or_else(|| started_as(info))
             {

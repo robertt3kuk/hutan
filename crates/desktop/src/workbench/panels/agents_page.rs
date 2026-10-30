@@ -4,7 +4,7 @@
 //! **Unconfirmed**, **Idle** and **Finished** (folded), one 64 pt row per agent session with its
 //! reason and its safe next action, subagents on disclosure.
 //!
-//! Everything it shows is the shared agent presentation (`sessions/presentation.rs`): the same
+//! Everything it shows is the shared agent presentation (`crates/agents_view/src/presentation.rs`): the same
 //! records the Agents panel and Mawas's Today read. The list is virtualized (only the rows in
 //! view are built), its order is frozen while a pointer rests on an action, a menu is open or a
 //! request is being read, its selection is a domain id that survives updates, and a page that
@@ -29,10 +29,10 @@ use hutan_core::{ApprovalId, SessionId, WorkspaceId};
 
 use super::common::{now_ms, tone_color};
 use crate::icons::{Icon, glyph, icon};
+use crate::sessions::StoreChanged;
+use crate::sessions::agents::state_icon;
 use crate::sessions::agents_list::{self, Empty, Key, Listing, Query, Row};
 use crate::sessions::agents_text;
-use crate::sessions::presentation::{AgentPresentation, AgentRecord, Group, Link};
-use crate::sessions::{Counts, Scope, StoreChanged};
 use crate::settings::AgentsSettings;
 use crate::theme::{Density, DensityExt as _, Theme, Tokens};
 use crate::workbench::actions::{
@@ -48,6 +48,8 @@ use crate::workbench::text_field::FieldRef;
 use crate::workbench::ui::{self, FocusRingExt as _, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
+use hutan_agents_view::presentation::{AgentPresentation, AgentRecord, Group, Link};
+use hutan_agents_view::presentation::{Counts, Scope};
 
 /// How often the durations and ages refresh while the page is drawn and an agent runs.
 pub const TICK: Duration = Duration::from_secs(1);
@@ -1696,7 +1698,7 @@ impl AgentsPage {
         let now = now_ms();
         let time = child.started_at_ms.map(|start| {
             let end = child.ended_at_ms.unwrap_or(now);
-            crate::sessions::agents::format_duration(end.saturating_sub(start))
+            hutan_agents_view::agents::format_duration(end.saturating_sub(start))
         });
         let mut line = div()
             .flex()
@@ -1709,7 +1711,7 @@ impl AgentsPage {
                     .flex_none()
                     .w(px(14.0))
                     .text_color(color)
-                    .child(glyph(child.state.glyph())),
+                    .child(glyph(state_icon(child.state))),
             )
             .child(
                 div()

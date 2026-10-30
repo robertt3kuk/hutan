@@ -1,5 +1,5 @@
 //! The `agents` panel (M13-B, AG-1): the compact, scoped projection of the Agents page. It lists
-//! the same agent records (`sessions::presentation`) as the page, Today and the badges — one
+//! the same agent records (`hutan_agents_view::presentation`) as the page, Today and the badges — one
 //! section per agent session (workspace › session title, its state word and its headline
 //! reason), the observation tree indented below it: state glyph, name, model, live duration,
 //! usage and the current activity of every node. A session the daemon reports no tree for (a
@@ -21,15 +21,8 @@ use gpui::{
 use hutan_core::{NodeState, SessionId};
 
 use super::common::{now_ms, state_word_color, tone_color};
-use crate::sessions::agents::{
-    self, Filters, NodeRow, activity_text, any_running, duration_ms, format_duration, glyph,
-    usage_label, visible_rows,
-};
-use crate::sessions::agents_text;
-use crate::sessions::models::ModelNames;
-use crate::sessions::{
-    AgentPresentation, AgentRecord, Counts, Group, Role, Scope, SessionsStore, State, Tone,
-};
+use crate::sessions::agents::{glyph, state_icon};
+use crate::sessions::{SessionsStore, agents_text};
 use crate::settings::{AgentsScope, AgentsSettings};
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
@@ -39,6 +32,15 @@ use crate::workbench::render::probe;
 use crate::workbench::style::UiStyle;
 use crate::workbench::ui::motion::reduce_motion;
 use crate::workbench::ui::{self, Mascot};
+use hutan_agents_view::agents::{
+    self, Filters, NodeRow, activity_text, any_running, duration_ms, format_duration, usage_label,
+    visible_rows,
+};
+use hutan_agents_view::attention::Tone;
+use hutan_agents_view::models::ModelNames;
+use hutan_agents_view::presentation::{
+    AgentPresentation, AgentRecord, Counts, Group, Role, Scope, State,
+};
 
 /// How often the durations (and the working dots) refresh while the panel is drawn.
 pub const TICK: Duration = Duration::from_secs(1);
@@ -132,7 +134,7 @@ fn session_row(record: &AgentRecord) -> RowView {
         depth: 0,
         label: record.title.clone(),
         agent_type: None,
-        glyph: record.state.glyph(),
+        glyph: state_icon(record.state),
         meaning: record.state.label(),
         tone: record.state.tone(),
         animated: record.state == State::Working,

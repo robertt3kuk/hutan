@@ -38,11 +38,11 @@ use super::common::{
 };
 use crate::icons::{Icon, icon};
 use crate::sessions::PlacementBadge;
+use crate::sessions::StoreChanged;
 use crate::sessions::card::{self, News};
 use crate::sessions::tree::{
     self, Node, ProjectNode, Subtitle, SubtitleInputs, folder_label, session_folder,
 };
-use crate::sessions::{Attention, StoreChanged};
 use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
 };
@@ -64,6 +64,7 @@ use crate::workbench::ui::BadgeState;
 use crate::workbench::ui::{self, FocusRingExt as _, StyledExt as _};
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 use crate::workbench::{BadgeSite, DragPreview, Region};
+use hutan_agents_view::attention::Attention;
 
 /// Row refresh for the relative ages.
 /// What a row of the list is tall before it is measured, in pixels: the scrollbar's thumb and
@@ -1432,7 +1433,7 @@ fn diffstat_view(
 
 /// The word of a session's state when its lane draws a glyph; an idle session draws nothing
 /// (the hollow circle every idle row used to start with said nothing).
-fn lane_word(presentation: &crate::sessions::Presentation) -> Option<String> {
+fn lane_word(presentation: &hutan_agents_view::attention::Presentation) -> Option<String> {
     (presentation.label != "idle").then(|| {
         presentation
             .state_word()
@@ -2241,8 +2242,9 @@ impl SessionsPanel {
         let presentation = self.env.sessions.read(cx).presentation(info);
         // A failure the user has looked at stays listed but no longer wears the unread dot.
         let unread_state = self.env.sessions.read(cx).unread(info.id);
-        let belled = crate::sessions::bell_only(info, unread_state);
-        let unread = unread_state.is_some_and(crate::sessions::Unread::is_unseen) && !belled;
+        let belled = hutan_agents_view::attention::bell_only(info, unread_state);
+        let unread =
+            unread_state.is_some_and(hutan_agents_view::attention::Unread::is_unseen) && !belled;
         let live = info.state.is_live();
         let hover = card_hover(&theme);
         let id = info.id.to_string();

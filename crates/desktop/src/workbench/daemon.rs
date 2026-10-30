@@ -27,8 +27,8 @@ use super::panels::{
 };
 use super::view::Workbench;
 use crate::app::DaemonMenu;
-use crate::sessions::Attention;
 use crate::settings::{AppSettings, LastWindowClose};
+use hutan_agents_view::attention::Attention;
 
 /// Longest wait for a stopping daemon to remove its socket.
 const STOP_WAIT: Duration = Duration::from_secs(10);

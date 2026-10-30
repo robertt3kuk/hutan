@@ -23,7 +23,6 @@ use hutan_protocol::worktree::{
 };
 
 use super::{ChangesEvent, ChangesView, Listing, Merged};
-use crate::sessions::presentation::harness_label;
 use crate::theme::{Theme, Tokens};
 use crate::workbench::chat::vim::{Outcome, Vim};
 use crate::workbench::chat::{Look, TextInput};
@@ -33,6 +32,7 @@ use crate::workbench::text_field::{FieldMut, FieldRef};
 use crate::workbench::ui::{self, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, VimConfig};
+use hutan_agents_view::presentation::harness_label;
 
 /// The `daemon.toml` setting that says whether a Finish pushes.
 const PUSH_SETTING: &str = "finish.push";

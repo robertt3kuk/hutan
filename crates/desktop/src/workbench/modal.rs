@@ -1,8 +1,8 @@
 //! A small confirm / prompt dialog (stop session, rename session, save layout as preset, quit
 //! with live sessions).
 
-use crate::sessions::Tone;
 use crate::theme::DensityExt as _;
+use hutan_agents_view::attention::Tone;
 use std::rc::Rc;
 
 use gpui::{

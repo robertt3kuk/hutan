@@ -628,9 +628,7 @@ fn model_names_survive_an_app_restart_with_no_harness_spawn(cx: &mut TestAppCont
     let daemon = daemon(scripts.path(), "plain-turn", "");
     let app = tempfile::tempdir().unwrap();
     let state = app.path().join("desktop-state.json");
-    let names_file = app
-        .path()
-        .join(hutan_desktop::sessions::models::MODEL_NAMES_FILE);
+    let names_file = app.path().join(hutan_agents_view::models::MODEL_NAMES_FILE);
 
     // The first run asks OMP for its models once (the Start sheet does) and starts a chat.
     let (view, vcx) = open_at(cx, &daemon, Some(state.clone()));

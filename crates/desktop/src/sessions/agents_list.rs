@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use hutan_core::{SessionId, WorkspaceId};
 
-use super::presentation::{AgentPresentation, Counts, Group, Link, Scope};
+use hutan_agents_view::presentation::{AgentPresentation, Counts, Group, Link, Scope};
 
 /// What the list is filtered by.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -271,7 +271,7 @@ pub fn empty(presentation: &AgentPresentation, listing: &Listing) -> Empty {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::presentation::*;
+    use hutan_agents_view::presentation::*;
 
     fn record(title: &str, group: Group, workspace: WorkspaceId) -> AgentRecord {
         AgentRecord {

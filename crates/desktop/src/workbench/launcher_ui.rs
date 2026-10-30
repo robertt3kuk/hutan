@@ -21,8 +21,8 @@ use super::view::{Region, Workbench};
 use super::vim_ui::VimConfig;
 use super::workspaces::tilde;
 use crate::sessions::launch::LaunchKind;
-use crate::sessions::models::row_child_index;
 use crate::theme::{DensityExt as _, Theme, Tokens};
+use hutan_agents_view::models::row_child_index;
 
 /// Width of the label column.
 const LABEL_WIDTH: f32 = 84.0;

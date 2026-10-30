@@ -11,7 +11,6 @@ use hutan_core::SessionId;
 use super::{AgentsPage, Layout, Look};
 use crate::icons::{Icon, glyph, icon};
 use crate::sessions::agents_text::{self, Primary};
-use crate::sessions::presentation::AgentRecord;
 use crate::workbench::actions::{
     InterruptSessionById, SessionMenuAt, ShowAgentMenu, StopSessionById,
 };
@@ -23,6 +22,7 @@ use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
 use crate::workbench::ui::{self, FocusRingExt as _};
 use crate::workbench::view::Region;
+use hutan_agents_view::presentation::AgentRecord;
 
 /// A fixed-width column of the wide layout.
 const LOCATION_WIDTH: f32 = 200.0;

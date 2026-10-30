@@ -3,7 +3,7 @@
 use super::changes::ReviewComment;
 use super::model::{LayoutNote, ModelError, WorkbenchState};
 use crate::install::InstallRecord;
-use crate::sessions::Marks;
+use hutan_agents_view::attention::Marks;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

@@ -249,7 +249,7 @@ pub enum Region {
     /// Option `index` of the expanded request of a session's row: the only way to answer it.
     AgentOption(hutan_core::SessionId, usize),
     /// The heading of a group of the Agents page.
-    AgentGroup(crate::sessions::Group),
+    AgentGroup(hutan_agents_view::presentation::Group),
     /// The row of subagent `index` of a session on the Agents page.
     AgentChild(hutan_core::SessionId, usize),
     /// The right strip's More menu button.
@@ -860,7 +860,7 @@ pub struct Workbench {
     /// What the user did to the attention queue (marked unread, snoozed): kept in the state file
     /// so it survives a restart, and told to the store at start. The store owns the truth; this
     /// is its last saved copy.
-    pub(crate) attention_marks: crate::sessions::Marks,
+    pub(crate) attention_marks: hutan_agents_view::attention::Marks,
     /// The files opened last, saved with the layout (see [`persistence::RecentFiles`]).
     pub(crate) recent_files: persistence::RecentFiles,
     /// The open folders of the Files panel per root, saved with the layout (see
@@ -1216,7 +1216,7 @@ impl Workbench {
                 options
                     .state_path
                     .as_deref()
-                    .map(|p| p.with_file_name(crate::sessions::models::MODEL_NAMES_FILE)),
+                    .map(|p| p.with_file_name(hutan_agents_view::models::MODEL_NAMES_FILE)),
                 cx,
             );
         });

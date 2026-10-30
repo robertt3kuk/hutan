@@ -169,7 +169,7 @@ fn the_quit_sheet_lists_the_sessions_and_counts_the_ones_it_does_not_show(cx: &m
 fn a_session_line_of_the_quit_sheet_is_a_dot_an_icon_and_a_name_never_a_hollow_circle(
     cx: &mut TestAppContext,
 ) {
-    use hutan_desktop::sessions::Tone;
+    use hutan_agents_view::attention::Tone;
     use hutan_settings::themes::icons::IconId;
 
     let daemon = TestDaemon::start();

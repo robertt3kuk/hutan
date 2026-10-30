@@ -1,0 +1,24 @@
+[package]
+name = "hutan-agents-view"
+description = "Hutan agent presentation: the GPUI-free reducer that turns the daemon's sessions, requests and observation trees into one record per agent, shared by the desktop and the daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "hutan_agents_view"
+
+[dependencies]
+hutan-core.workspace = true
+hutan-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

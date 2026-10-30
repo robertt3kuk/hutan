@@ -9,8 +9,8 @@
 
 use hutan_client::time::local_time_seconds_text;
 
-use super::agents::format_duration;
-use super::presentation::{AgentRecord, Group, ReasonKind, State};
+use hutan_agents_view::agents::format_duration;
+use hutan_agents_view::presentation::{AgentRecord, Group, ReasonKind, State};
 
 /// `12s ago`, `3m ago`, `2h ago`, `4d ago`.
 pub fn age_text(now_ms: u64, then_ms: u64) -> String {
@@ -191,9 +191,9 @@ pub fn lane_state(record: &AgentRecord) -> crate::workbench::ui::BadgeState {
 /// The leading glyph of a row and the tone of the state word: attention first (each kind of
 /// request, a failure and finished work have a shape of their own), else the state's own shape.
 /// Never colour alone.
-pub fn lead(record: &AgentRecord) -> (crate::icons::Icon, super::Tone) {
-    use super::Tone;
+pub fn lead(record: &AgentRecord) -> (crate::icons::Icon, hutan_agents_view::attention::Tone) {
     use crate::icons::Icon;
+    use hutan_agents_view::attention::Tone;
     match record.headline().map(|reason| reason.kind) {
         Some(ReasonKind::Approval | ReasonKind::Blocked) => (Icon::StateApproval, Tone::Warning),
         Some(ReasonKind::Question) => (Icon::StateQuestion, Tone::Warning),
@@ -201,7 +201,7 @@ pub fn lead(record: &AgentRecord) -> (crate::icons::Icon, super::Tone) {
         Some(ReasonKind::Failed) => (Icon::StateFailed, Tone::Error),
         Some(ReasonKind::Review | ReasonKind::CompletedUnread) => (Icon::StateReview, Tone::Accent),
         Some(ReasonKind::MarkedUnread) => (Icon::StateUnread, Tone::Accent),
-        None => (record.state.glyph(), record.state.tone()),
+        None => (super::agents::state_icon(record.state), record.state.tone()),
     }
 }
 
@@ -308,7 +308,7 @@ pub fn accessible_name(record: &AgentRecord) -> String {
     if let Some(reason) = reason_text(record) {
         parts.push(reason);
     }
-    if record.role == super::presentation::Role::Assistant {
+    if record.role == hutan_agents_view::presentation::Role::Assistant {
         parts.insert(1, "Assistant".to_owned());
     }
     parts.retain(|p| !p.is_empty());
@@ -352,7 +352,7 @@ pub fn primary(record: &AgentRecord) -> Primary {
         && record.checkout.is_some()
     {
         Primary::ReviewChanges
-    } else if record.role == super::presentation::Role::Assistant {
+    } else if record.role == hutan_agents_view::presentation::Role::Assistant {
         Primary::OpenMawas
     } else {
         Primary::OpenSession
@@ -441,7 +441,7 @@ mod tests {
     use hutan_core::{SessionId, WorkspaceId};
 
     use super::*;
-    use crate::sessions::presentation::{Checkout, Reason, Request, Role};
+    use hutan_agents_view::presentation::{Checkout, Reason, Request, Role};
 
     fn record() -> AgentRecord {
         AgentRecord {
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn a_session_waiting_for_a_decision_says_so_and_never_working() {
-        use crate::sessions::presentation::{Reason, ReasonKind};
+        use hutan_agents_view::presentation::{Reason, ReasonKind};
         let mut r = record();
         assert_eq!(state_word(&r), "Working");
         // The agent is still `Working` underneath; attention wins.
@@ -582,7 +582,7 @@ mod tests {
         assert_eq!(state_word(&r), "Approval");
         assert_eq!(reason_detail(&r).unwrap(), "edit: src/lib.rs");
         assert_eq!(lead(&r).0, crate::icons::Icon::StateApproval);
-        assert_eq!(lead(&r).1, crate::sessions::Tone::Warning);
+        assert_eq!(lead(&r).1, hutan_agents_view::attention::Tone::Warning);
         r.reasons[0] = Reason {
             kind: ReasonKind::Question,
             text: "Question: which branch".into(),
@@ -613,12 +613,12 @@ mod tests {
         assert_eq!(state_word(&r), "Failed");
         assert_eq!(lead(&r).0, crate::icons::Icon::StateFailed);
         assert_eq!(reason_detail(&r), reason_text(&r));
-        assert_eq!(lead(&r).1, crate::sessions::Tone::Error);
+        assert_eq!(lead(&r).1, hutan_agents_view::attention::Tone::Error);
     }
 
     #[test]
     fn seen_work_waiting_for_review_says_idle_with_a_link_unseen_says_ready_for_review() {
-        use crate::sessions::presentation::ReasonKind;
+        use hutan_agents_view::presentation::ReasonKind;
         let mut r = record();
         r.state = State::Idle;
         r.group = Group::Review;
@@ -671,7 +671,7 @@ mod tests {
         assert_eq!(primary(&r), Primary::OpenSession);
         r.role = Role::Assistant;
         assert_eq!(primary(&r), Primary::OpenMawas);
-        r.questions = vec![crate::sessions::presentation::Ask {
+        r.questions = vec![hutan_agents_view::presentation::Ask {
             id: hutan_core::QuestionId::new(),
             title: "branch".into(),
             requested_at_ms: 1,
@@ -754,7 +754,7 @@ mod tests {
 
     #[test]
     fn a_reason_says_who_reported_it_and_how_long_ago_on_hover() {
-        use crate::sessions::presentation::{Reason, ReasonKind};
+        use hutan_agents_view::presentation::{Reason, ReasonKind};
         let mut r = record();
         assert_eq!(reason_tooltip(&r, 1_000_000), None, "nothing to explain");
         r.group = Group::Requests;
@@ -797,8 +797,8 @@ mod tests {
 
     #[test]
     fn the_lane_of_a_row_on_the_agents_page_says_what_the_sidebar_says() {
-        use crate::sessions::presentation::ReasonKind;
         use crate::workbench::ui::BadgeState;
+        use hutan_agents_view::presentation::ReasonKind;
         let mut r = record();
         assert_eq!(lane_state(&r), BadgeState::Working);
         r.state = State::Idle;

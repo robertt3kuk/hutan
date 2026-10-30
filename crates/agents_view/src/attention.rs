@@ -115,26 +115,6 @@ impl Presentation {
             _ => return None,
         })
     }
-
-    /// The state word remains the accessible meaning; artwork is independently replaceable.
-    pub fn icon(&self) -> crate::icons::Icon {
-        use crate::icons::Icon;
-        match self.label.as_str() {
-            "working" | "starting" | "running" => Icon::StateWorking,
-            "blocked" => Icon::StateBlocked,
-            "approval" => Icon::StateApproval,
-            "question" => Icon::StateQuestion,
-            "plan" => Icon::StatePlan,
-            "done" | "completed" | "exited" => Icon::StateCompleted,
-            "failed" => Icon::StateFailed,
-            "stopped" => Icon::StateStopped,
-            "interrupted" => Icon::StateInterrupted,
-            "disconnected" => Icon::StateDisconnected,
-            "review" => Icon::StateReview,
-            "idle" => Icon::StateIdle,
-            _ => Icon::StateUnknown,
-        }
-    }
 }
 
 /// Why a session counts in the menu bar item and the Dock badge (design.md § Attention
@@ -818,7 +798,7 @@ pub fn agent_subtitle(info: &SessionInfo) -> Option<String> {
         .as_ref()
         .and_then(|agent| agent.title.clone())
         .filter(|title| *title != info.title)
-        .map(|title| super::card::strip_pictographs(&title).to_owned())
+        .map(|title| super::titles::strip_pictographs(&title).to_owned())
 }
 
 /// What a tab says about its session besides the title: how the work went and whether the

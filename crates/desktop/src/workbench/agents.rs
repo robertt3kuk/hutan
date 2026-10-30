@@ -32,9 +32,9 @@ use super::ui::scroll::ScrollExt as _;
 use super::ui::{self, Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
-use crate::sessions::models::{ModelRow, picker_rows, row_child_index};
 use crate::settings::ChatSettings;
 use crate::theme::DensityExt as _;
+use hutan_agents_view::models::{ModelRow, picker_rows, row_child_index};
 
 pub use super::harnesses::CODEX;
 
@@ -73,7 +73,7 @@ pub struct AgentPicker {
 
 impl AgentPicker {
     /// The rows the dialog lists: the models that match the filter, OMP's grouped by provider
-    /// and every harness's in the pickers' order (`sessions::models`); a provider's list keeps
+    /// and every harness's in the pickers' order (`hutan_agents_view::models`); a provider's list keeps
     /// its own. The model the chat runs is marked current.
     pub fn rows(&self) -> Vec<ModelRow<'_>> {
         match &self.models {

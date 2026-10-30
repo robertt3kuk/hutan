@@ -22,7 +22,7 @@ use hutan_terminal_view::{
     DefaultColors, ImagePasteTarget, PasteAgent, SharedTerminal, TerminalBackend, ViewStatus,
 };
 
-use super::attention::ended_text;
+use hutan_agents_view::attention::ended_text;
 
 type SharedHandle = Rc<RefCell<Option<TerminalHandle>>>;
 

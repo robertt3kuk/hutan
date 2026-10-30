@@ -12,6 +12,7 @@ repository = "https://github.com/robertt3kuk/hutan"
 
 [workspace.dependencies]
 hutan-agents = { path = "crates/agents" }
+hutan-agents-view = { path = "crates/agents_view" }
 hutan-buffer = { path = "crates/buffer" }
 hutan-chat-view = { path = "crates/chat_view" }
 hutan-client = { path = "crates/client" }
