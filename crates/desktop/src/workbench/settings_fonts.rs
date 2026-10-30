@@ -240,6 +240,16 @@ impl std::fmt::Debug for FontCatalog {
 const SHOWN: usize = 8;
 /// The height of one line of the list, in pixels (what the wheel scrolls by).
 const LINE_HEIGHT: f32 = 26.0;
+/// What the preview's caption calls a family: the system's own hidden families (the interface
+/// font of the system is `.SystemUIFont`) are the system font, not an internal name.
+fn family_caption(family: &str) -> String {
+    if family.starts_with('.') {
+        "System font".to_owned()
+    } else {
+        family.to_owned()
+    }
+}
+
 /// The text of the preview line.
 const SAMPLE: &str = "The quick brown fox jumps over the lazy dog 0123456789 {}[]() <= != -> =>";
 
@@ -815,7 +825,7 @@ impl Workbench {
                         div()
                             .text_size(px(tokens.secondary_font_size))
                             .text_color(theme.muted)
-                            .child(SharedString::from(name.clone())),
+                            .child(SharedString::from(family_caption(&name))),
                     )
                     .child(
                         div()
@@ -943,6 +953,13 @@ mod tests {
             fam("Helvetica", false),
             fam("Menlo", true),
         ]
+    }
+
+    #[test]
+    fn the_preview_caption_never_shows_an_internal_family_name() {
+        assert_eq!(family_caption(".SystemUIFont"), "System font");
+        assert_eq!(family_caption(".SF NS Mono"), "System font");
+        assert_eq!(family_caption("Menlo"), "Menlo");
     }
 
     fn values(rows: &[FontRow]) -> Vec<&str> {
