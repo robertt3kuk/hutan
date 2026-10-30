@@ -19,7 +19,14 @@ A server is a row of the built-in table, optionally changed by `daemon.toml [lsp
 | `bash-language-server` | `bash-language-server start` | `shellscript` | — | `npm install -g bash-language-server` |
 | `vscode-json-languageserver` | `vscode-json-language-server --stdio` | `json`, `jsonc` | — | `npm install -g vscode-langservers-extracted` |
 | `taplo` | `taplo lsp stdio` | `toml` | — | `cargo install taplo-cli --locked --features lsp` |
-| `marksman` | `marksman server` | `markdown` | `.marksman.toml` | `brew install marksman` |
+| `marksman` (opt-in) | `marksman server` | `markdown` | `.marksman.toml` | `brew install marksman` |
+
+**`marksman` is off until you turn it on.** Markdown has its own preview in the editor (`docs/editor.md` § Markdown preview), and a language server for it is a link checker — not something a README should ask for trust over in every folder. So the daemon does not offer it: a Markdown document gets no server, no trust bar and no install bar. To get marksman's diagnostics (broken links, duplicate headings), give it a table in `daemon.toml`; an empty one is enough, and the usual keys apply (`command`, `args`, `root_markers`, …); `hutan lsp restart marksman` or the next document starts it, in a folder you trust like any other server. `enabled = false` turns it off again:
+
+```toml
+[lsp.servers.marksman]        # on: `brew install marksman` first (the command is shown, never run)
+# command = "/opt/homebrew/bin/marksman"
+```
 
 The language of a file comes from its name (`.rs` → `rust`, `.tsx` → `typescriptreact`, `.sh` → `shellscript`, …); an extension with no entry names itself (`.zig` → `zig`), which is what a server of your own lists. `doc.open` may name the language.
 
@@ -127,6 +134,7 @@ No unbounded channel anywhere (a test greps `crates/daemon/src/lsp` and `crates/
 | Diagnostics are `stale` | The server is still indexing (rust-analyzer on a large workspace takes a while); ask again when `hutan lsp ls` says `ready`. |
 | A second server for one repository | Two roots: a nested project with its own marker outside the topmost one's folder, or `[lsp.projects]` roots. `hutan lsp status` shows each root. |
 | Nothing happens for a file type | `hutan lsp status` shows no server for the language; configure one under `[lsp.servers.<id>]` with `languages` naming the file's language id (its extension for uncommon ones). |
+| A Markdown file gets no server | By design (MD-PREVIEW): `marksman` is opt-in, add `[lsp.servers.marksman]` to `daemon.toml` and restart the daemon (§ Servers). The preview (⇧⌘V) needs no server. |
 | rust-analyzer uses much memory | It is a separate process (see `hutan ps`); lower `max_servers`/`idle_stop_secs`, or `hutan lsp stop` it. |
 
 ## Tests

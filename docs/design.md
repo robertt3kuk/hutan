@@ -533,6 +533,8 @@ soft_wrap = "auto"            # auto (Markdown and plain text wrap at the window
 wrap_column = 100             # for soft_wrap = "column": cells per row, 20–1000 (a narrower window wraps at its own edge)
 preview_tabs = false          # true: a single click on a file in the Files tree shows it in an italic preview tab the next click replaces (Workability fixes, FX-WORK-2); false (default since TABS-FILES): every opened file keeps its own tab
 open_beside_agent = true      # a file opened while an agent (chat or terminal agent) has the center opens in a split to its right instead of replacing it; the split is reused (TABS-FILES)
+markdown_preview = "toggle"  # a Markdown file tab: off | toggle (⇧⌘V and Source | Preview turn the tab into its page) | side (⇧⌘V opens the page in a split to the right); ⌘K "Markdown: Open Preview to the Side" (MD-PREVIEW, docs/editor.md § Markdown preview)
+markdown_open = "source"      # source | preview: how a Markdown file opens
 
 [languages.rust]              # per language, by name (markdown, rust, toml, …; plaintext for files without one); no page in the sheet
 soft_wrap = "viewport"        # overrides editor.soft_wrap for this language
