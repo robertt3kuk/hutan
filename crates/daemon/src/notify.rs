@@ -1127,6 +1127,7 @@ mod tests {
             ],
             requested_at_ms: 1,
             target: None,
+            suggestion: None,
         }
     }
 

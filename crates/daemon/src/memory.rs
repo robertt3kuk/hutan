@@ -796,6 +796,7 @@ fn proposal_approval(row: &st::ProposalRow, session: SessionId) -> Option<Approv
         ],
         requested_at_ms: row.created_ms,
         target: None,
+        suggestion: None,
     })
 }
 

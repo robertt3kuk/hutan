@@ -42,6 +42,7 @@ use hutan_protocol::grants::{
 use hutan_protocol::messages::{
     AgentState, ClientKind, Event, Request, SessionInfo, SessionListFilter, TerminalAgentState,
 };
+use hutan_protocol::suggest::AskTarget;
 use hutan_storage::{ApprovalOutcome, ApprovalRow, GrantRow, Storage};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -275,6 +276,16 @@ impl ControlService {
             return Err(forbidden(
                 format!("`{method}` is only available to the user, not to agents"),
                 "user_only",
+            ));
+        }
+        // Only Mawas suggests: refused before any card, whatever the policy says.
+        if matches!(request, Request::AskSuggest(_)) && mawas.is_none() {
+            self.audit_auto(origin, &describe, "deny_not_mawas");
+            return Err(forbidden(
+                "`ask.suggest` is for Mawas, the user's assistant: other agents do not suggest \
+                 answers to the user's requests"
+                    .to_owned(),
+                "not_mawas",
             ));
         }
         if let Some(mawas) = mawas {
@@ -529,6 +540,7 @@ impl ControlService {
             options,
             requested_at_ms: registry::now_ms(),
             target: target.clone(),
+            suggestion: None,
         };
         let id = info.id;
         let (answer, answered) = oneshot::channel();
@@ -563,6 +575,9 @@ impl ControlService {
                 outcome: hutan_core::agent::PermissionOutcome::Expired,
                 decided_by: None,
             });
+            self.registry
+                .chats()
+                .clear_suggestion(AskTarget::Approval { id });
             if let Some(mawas) = &mawas {
                 self.audit_line(mawas, method, "expired", "nobody", None, target_id);
             }
@@ -591,6 +606,9 @@ impl ControlService {
                 client_name: None,
             }),
         });
+        self.registry
+            .chats()
+            .clear_suggestion(AskTarget::Approval { id });
         if let Some(mawas) = &mawas {
             self.audit_line(mawas, method, &option_id, decided_by, None, target_id);
         }
@@ -659,6 +677,11 @@ impl ControlService {
     }
 
     // Mawas: origin, grants, limits ---------------------------------------------------------------
+
+    /// Whether `session` is a Mawas chat: the only origin `ask.suggest` takes.
+    pub async fn is_mawas_origin(&self, session: SessionId) -> bool {
+        self.mawas_origin(session).await.is_some()
+    }
 
     /// The chat and workspace of `session` when it is Mawas (an assistant chat).
     async fn mawas_origin(&self, session: SessionId) -> Option<MawasOrigin> {
@@ -1463,6 +1486,14 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
             r.path.display(),
             r.into.as_deref().unwrap_or("the default branch")
         ),
+        Request::AskSuggest(r) => match r.target {
+            AskTarget::Approval { id } => {
+                format!("suggest an answer to the waiting approval {id} (you decide)")
+            }
+            AskTarget::Question { id } => {
+                format!("suggest an answer to the waiting question {id} (you decide)")
+            }
+        },
         Request::TaskCreate(r) => format!("create the task “{}”", r.title),
         Request::TaskUpdate(r) => format!("change task {}", r.id),
         Request::TaskDelete(r) => format!("delete task {}", r.id),

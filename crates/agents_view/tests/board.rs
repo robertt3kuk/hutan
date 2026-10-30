@@ -88,6 +88,7 @@ fn approval(session: SessionId, title: &str, at: u64) -> ApprovalInfo {
         }],
         requested_at_ms: at,
         target: None,
+        suggestion: None,
     }
 }
 

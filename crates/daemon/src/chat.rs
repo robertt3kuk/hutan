@@ -16,6 +16,7 @@
 //! so a client that joins mid-stream starts from the text so far.
 
 mod fork;
+mod suggest;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -44,6 +45,7 @@ use hutan_protocol::chat::{
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{ClientKind, Event};
+use hutan_protocol::suggest::{AskTarget, Suggestion};
 use hutan_storage::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus,
     QuestionOutcome as StoredOutcome, QuestionRow, Storage,
@@ -559,6 +561,9 @@ pub struct ChatManager {
     wakes: Mutex<HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>>,
     approvals: Mutex<HashMap<ApprovalId, Pending>>,
     questions: Mutex<HashMap<QuestionId, PendingQuestion>>,
+    /// The suggestion each pending approval or question carries (protocol 0.64): at most one,
+    /// the newest; gone with the request.
+    suggestions: Mutex<HashMap<AskTarget, Suggestion>>,
     /// Model catalogs by agent.
     models: Mutex<HashMap<String, (Instant, Vec<ModelInfo>)>>,
     external: Mutex<Vec<Weak<dyn ApprovalSource>>>,
@@ -708,6 +713,7 @@ impl ChatManager {
             wakes: Mutex::new(HashMap::new()),
             approvals: Mutex::new(HashMap::new()),
             questions: Mutex::new(HashMap::new()),
+            suggestions: Mutex::new(HashMap::new()),
             models: Mutex::new(HashMap::new()),
             external: Mutex::new(Vec::new()),
             memory: Mutex::new(None),
@@ -2495,6 +2501,9 @@ impl ChatManager {
                 .cmp(&b.requested_at_ms)
                 .then_with(|| a.id.cmp(&b.id))
         });
+        for approval in &mut approvals {
+            approval.suggestion = self.suggestion_of(AskTarget::Approval { id: approval.id });
+        }
         ApprovalList { approvals }
     }
 
@@ -2581,6 +2590,9 @@ impl ChatManager {
                 .cmp(&b.requested_at_ms)
                 .then_with(|| a.id.cmp(&b.id))
         });
+        for question in &mut questions {
+            question.suggestion = self.suggestion_of(AskTarget::Question { id: question.id });
+        }
         QuestionList { questions }
     }
 
@@ -3142,6 +3154,7 @@ impl ChatManager {
                     options: options.clone(),
                     requested_at_ms: ts_ms,
                     target: None,
+                    suggestion: None,
                 };
                 self.write_approval_request(&info);
                 lock(&self.approvals).insert(
@@ -3176,6 +3189,7 @@ impl ChatManager {
                     turn_id: event.turn_id,
                     spec: spec.clone(),
                     requested_at_ms: ts_ms,
+                    suggestion: None,
                 };
                 self.write_question_request(&info);
                 lock(&self.questions).insert(
@@ -3240,6 +3254,7 @@ impl ChatManager {
                 outcome,
                 decided_by,
             });
+            self.clear_suggestion(AskTarget::Approval { id: approval_id });
         }
         if let Some(info) = asked {
             self.emit(&Event::QuestionRequired {
@@ -3253,6 +3268,7 @@ impl ChatManager {
                 outcome,
                 decided_by,
             });
+            self.clear_suggestion(AskTarget::Question { id: question_id });
         }
         // The session's state follows what happened: the registry is told after the events
         // are out, so a client that sees the state change has the events already.

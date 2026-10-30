@@ -1405,6 +1405,7 @@ mod tests {
             }],
             requested_at_ms: at,
             target: None,
+            suggestion: None,
         }
     }
 
@@ -1791,6 +1792,7 @@ mod tests {
                 expires: Default::default(),
             },
             requested_at_ms: at,
+            suggestion: None,
         }
     }
 

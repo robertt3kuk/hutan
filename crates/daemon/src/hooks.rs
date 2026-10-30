@@ -1269,6 +1269,7 @@ mod tests {
             options: Vec::new(),
             requested_at_ms: 1,
             target: None,
+            suggestion: None,
         }
     }
 

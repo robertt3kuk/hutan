@@ -101,6 +101,7 @@ pub const CAPABILITIES: &[&str] = &[
     "assistant.focus",
     "control.grants.target",
     "agents.board",
+    "ask.suggest",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

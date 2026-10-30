@@ -509,6 +509,41 @@ static TOOLS: &[Tool] = &[
         call: request("approval.list"),
         schema: || object(json!({"session_id": session_id()}), &[]),
     },
+    Tool {
+        name: "ask_suggest",
+        description: ask!(
+            "Suggest an answer to a request that waits for the user — an approval (`approval_list`) \
+             or a question — without answering it: the user sees your suggestion and your \
+             reason on the request's card, labelled as yours, and clicks *Use* (their own \
+             click answers) or dismisses it. One suggestion per request; a new one replaces the \
+             old. For an approval the answer is one of its options (`{\"kind\": \"option\", \
+             \"option_id\": \"allow_once\"}`); for a question, values for its fields \
+             (`{\"kind\": \"values\", \"values\": {…}}`, checked against them) or \
+             `{\"kind\": \"decline\"}`; a question with a secret field takes none. `reason` \
+             (at most 400 characters) says why. You cannot suggest for your own requests, and \
+             you never answer anything yourself."
+        ),
+        read_only: false,
+        call: request("ask.suggest"),
+        schema: || {
+            object(
+                json!({
+                    "target": {
+                        "type": "object",
+                        "description": "What the suggestion is for: `{\"kind\": \"approval\", \"id\"}` or `{\"kind\": \"question\", \"id\"}`.",
+                        "examples": [{"kind": "approval", "id": ULID_EXAMPLE}],
+                    },
+                    "answer": {
+                        "type": "object",
+                        "description": "The suggested answer: `{\"kind\": \"option\", \"option_id\"}` for an approval; `{\"kind\": \"values\", \"values\": {field id: value}}` or `{\"kind\": \"decline\"}` for a question.",
+                        "examples": [{"kind": "option", "option_id": "allow_once"}],
+                    },
+                    "reason": text("Why, in a sentence or two (at most 400 characters)."),
+                }),
+                &["target", "answer", "reason"],
+            )
+        },
+    },
     // ---- usage ------------------------------------------------------------------------------
     Tool {
         name: "usage_summary",
@@ -1642,6 +1677,7 @@ mod tests {
             "chat_fork",
             "chat_log",
             "approval_list",
+            "ask_suggest",
             "usage_summary",
             "agent_insight",
             "task_add",

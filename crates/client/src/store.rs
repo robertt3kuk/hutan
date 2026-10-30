@@ -13,6 +13,7 @@ use hutan_protocol::chat::{ApprovalInfo, QuestionInfo};
 use hutan_protocol::messages::{Event, SessionInfo, SessionSnapshot, StopBy, WorkspaceInfo};
 use hutan_protocol::notify::NotificationIntent;
 use hutan_protocol::resources::ResourceSample;
+use hutan_protocol::suggest::AskTarget;
 
 use crate::identity::DaemonIdentity;
 use crate::start_failure::StartFailure;
@@ -474,6 +475,18 @@ impl StoreState {
             Event::QuestionResolved { question_id, .. } => {
                 self.questions.retain(|q| q.id != question_id);
             }
+            Event::AskSuggestion(change) => match change.target {
+                AskTarget::Approval { id } => {
+                    if let Some(approval) = self.approvals.iter_mut().find(|a| a.id == id) {
+                        approval.suggestion = change.suggestion;
+                    }
+                }
+                AskTarget::Question { id } => {
+                    if let Some(question) = self.questions.iter_mut().find(|q| q.id == id) {
+                        question.suggestion = change.suggestion;
+                    }
+                }
+            },
             // Chat events are not state of the sessions list: they go to whoever renders the
             // chat (`Connection::chat_updates`).
             Event::ChatEvent { event, .. } => effects.chat.push(*event),

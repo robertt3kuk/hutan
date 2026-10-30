@@ -492,6 +492,31 @@ impl Router {
                     .await?;
                 ok(&Empty {})
             }
+            Request::AskSuggest(req) => {
+                // Only a Mawas chat suggests, whoever else got this far (the user's own
+                // connection, a plain shell): the gate refuses other agents before this.
+                let Some(from) = conn.origin() else {
+                    return Err(not_mawas());
+                };
+                if !self.control.is_mawas_origin(from).await {
+                    return Err(not_mawas());
+                }
+                // She does not steer the user's answers to a request of a Mawas session (her
+                // own, or another Mawas chat's).
+                let asking = self
+                    .registry
+                    .chats()
+                    .check_suggestion(&req.target, &req.answer)?;
+                if self.control.is_mawas_origin(asking).await {
+                    let mut error = ErrorBody::new(
+                        ErrorCode::Forbidden,
+                        "Mawas does not suggest answers to the requests of a Mawas session",
+                    );
+                    error.data = Some(serde_json::json!({"control": {"decision": "mawas_target"}}));
+                    return Err(error);
+                }
+                ok(&self.registry.chats().suggest(from, req)?)
+            }
             Request::ChatSetModel(req) => ok(&SessionResult {
                 session: self.registry.set_chat_model(req).await?,
             }),
@@ -1037,6 +1062,16 @@ fn client_label(conn: &ConnHandle) -> &'static str {
     }
 }
 
+/// What `ask.suggest` answers a connection that is not a Mawas chat.
+fn not_mawas() -> ErrorBody {
+    let mut error = ErrorBody::new(
+        ErrorCode::Forbidden,
+        "`ask.suggest` is for Mawas, the user's assistant: nobody else suggests answers",
+    );
+    error.data = Some(serde_json::json!({"control": {"decision": "not_mawas"}}));
+    error
+}
+
 fn ok<T: Serialize>(value: &T) -> Result<Value, ErrorBody> {
     serde_json::to_value(value)
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("encoding result: {e}")))
@@ -1129,6 +1164,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::QuestionList(_) => ("question.list", Read),
         // An agent never answers questions, its own included.
         Request::QuestionAnswer(_) => ("question.answer", UserOnly),
+        // Advisory only: it attaches words to a card, answers nothing, and only Mawas asks.
+        Request::AskSuggest(_) => ("ask.suggest", Mutate),
         Request::ProviderList(_) => ("provider.list", Read),
         // Provider configuration decides where credentials are sent: the user's.
         Request::ProviderAdd(_) => ("provider.add", UserOnly),

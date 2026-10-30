@@ -1505,6 +1505,22 @@ impl Client {
         .await
     }
 
+    /// True when the daemon advertised capability `ask.suggest` (protocol 0.64).
+    pub fn supports_ask_suggest(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == "ask.suggest")
+    }
+
+    /// `ask.suggest`: from a Mawas chat, attaches an advisory answer to a pending approval or
+    /// question. `forbidden` for any other client. Answers nothing.
+    pub async fn ask_suggest(
+        &self,
+        request: hutan_protocol::suggest::AskSuggest,
+    ) -> Result<hutan_protocol::suggest::AskSuggested, ClientError> {
+        self.call(Request::AskSuggest(request)).await
+    }
     /// True when the daemon advertised capability `control.grants` (protocol 0.31): the grants
     /// Mawas's approvals store can be listed and revoked.
     pub fn supports_control_grants(&self) -> bool {

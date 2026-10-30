@@ -1825,3 +1825,381 @@ async fn a_task_review_is_bound_to_the_agent_of_the_task() {
     assert!(m.pending().await.is_empty());
     m.daemon.stop().await;
 }
+
+// ---- suggested answers (ASK-SUGGEST, protocol 0.64, ADR 0025 R2) --------------------------------
+
+use hutan_core::question::QuestionResponse;
+use hutan_protocol::chat::{QuestionAnswer, QuestionList, QuestionListRequest};
+use hutan_protocol::suggest::{AskSuggest, AskTarget, SuggestedAnswer};
+
+impl M {
+    /// Waits until the approval of `session` is pending and returns it.
+    async fn card_of(&self, session: SessionId) -> ApprovalInfo {
+        timeout(WAIT, async {
+            loop {
+                if let Some(info) = self
+                    .pending()
+                    .await
+                    .into_iter()
+                    .find(|a| a.session_id == session)
+                {
+                    return info;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("an approval never appeared")
+    }
+
+    async fn questions(&self) -> Vec<hutan_protocol::chat::QuestionInfo> {
+        self.user
+            .call::<QuestionList>(Request::QuestionList(QuestionListRequest::default()))
+            .await
+            .unwrap()
+            .questions
+    }
+
+    /// Waits until a question is pending and returns it.
+    async fn next_question(&self) -> hutan_protocol::chat::QuestionInfo {
+        timeout(WAIT, async {
+            loop {
+                if let Some(q) = self.questions().await.into_iter().next() {
+                    return q;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("a question never appeared")
+    }
+}
+
+fn suggest(
+    agent: &Client,
+    target: AskTarget,
+    answer: SuggestedAnswer,
+    reason: &str,
+) -> impl std::future::Future<Output = Result<hutan_protocol::suggest::AskSuggested, ClientError>>
++ Send
++ 'static {
+    let agent = agent.clone();
+    let reason = reason.to_owned();
+    async move {
+        agent
+            .ask_suggest(AskSuggest {
+                target,
+                answer,
+                reason,
+            })
+            .await
+    }
+}
+
+fn option_of(option_id: &str) -> SuggestedAnswer {
+    SuggestedAnswer::Option {
+        option_id: option_id.to_owned(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mawas_suggests_an_answer_to_an_approval_and_only_the_user_answers() {
+    let mut m = M::start("", &["permission-allow"]).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let agent = m.from(mawas.id).await;
+    let api = m.target("api").await;
+    m.user.chat_send(api.id, "go").await.unwrap();
+    let waiting = m.card_of(api.id).await;
+    let target = AskTarget::Approval { id: waiting.id };
+    assert_eq!(waiting.suggestion, None);
+
+    // Only Mawas suggests: the user's own connection, and another agent, are refused — the
+    // other agent before any card.
+    assert_eq!(
+        decision(
+            m.user
+                .ask_suggest(AskSuggest {
+                    target,
+                    answer: option_of("allow_once"),
+                    reason: "because".into(),
+                })
+                .await
+                .unwrap_err()
+        ),
+        (ErrorCode::Forbidden, "not_mawas".to_owned())
+    );
+    let shell = m.shell().await;
+    let reported = hutan_protocol::messages::AgentReportRequest {
+        pid: None,
+        session_id: shell.id,
+        source: "fake-hooks".into(),
+        agent: "fake".into(),
+        state: Some(hutan_protocol::messages::AgentState::Working),
+        message: None,
+        seq: 1,
+        agent_session_id: None,
+        resume_argv: None,
+        node: None,
+    };
+    m.user
+        .call::<hutan_protocol::messages::AgentApplied>(Request::AgentReport(reported))
+        .await
+        .unwrap();
+    let other_agent = m.from(shell.id).await;
+    assert_eq!(
+        decision(
+            suggest(&other_agent, target, option_of("allow_once"), "because")
+                .await
+                .unwrap_err()
+        ),
+        (ErrorCode::Forbidden, "not_mawas".to_owned())
+    );
+    assert_eq!(m.pending().await.len(), 1, "no card for a refusal");
+
+    // Mawas: a change like the others (it asks), allowed for this chat.
+    let first = tokio::spawn(suggest(
+        &agent,
+        target,
+        option_of("allow_once"),
+        "Same edit you allowed twice today.",
+    ));
+    let card = m.card_of(mawas.id).await;
+    assert!(
+        card.title
+            .contains("suggest an answer to the waiting approval"),
+        "{}",
+        card.title
+    );
+    m.answer(card.id, "allow_chat").await;
+    let given = first.await.unwrap().unwrap();
+    assert!(!given.replaced);
+    assert_eq!(given.suggestion.from, mawas.id);
+    assert_eq!(given.suggestion.answer, option_of("allow_once"));
+    // It is on the request's card — and nothing was answered.
+    let listed = m
+        .pending()
+        .await
+        .into_iter()
+        .find(|a| a.id == waiting.id)
+        .expect("still waiting for the user");
+    assert_eq!(listed.suggestion, Some(given.suggestion.clone()));
+    let set = wait_event(&mut m.events, "the suggestion event", |event| match event {
+        Event::AskSuggestion(change) if change.target == target && change.suggestion.is_some() => {
+            Some((**change).clone())
+        }
+        _ => None,
+    })
+    .await;
+    assert_eq!(set.suggestion, Some(given.suggestion));
+
+    // The latest replaces the previous one (covered by the grant: no card).
+    let second = suggest(
+        &agent,
+        target,
+        option_of("reject_once"),
+        "On reflection, no.",
+    )
+    .await
+    .unwrap();
+    assert!(second.replaced);
+    let listed = m
+        .pending()
+        .await
+        .into_iter()
+        .find(|a| a.id == waiting.id)
+        .unwrap();
+    assert_eq!(listed.suggestion, Some(second.suggestion));
+
+    // Bounds and checks.
+    let bad = |result: Result<_, ClientError>| match result.unwrap_err() {
+        ClientError::Remote(body) => body.code,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        bad(suggest(&agent, target, option_of("no_such_option"), "x").await),
+        ErrorCode::BadRequest,
+        "an option the approval does not offer"
+    );
+    assert_eq!(
+        bad(suggest(&agent, target, option_of("allow_once"), "  ").await),
+        ErrorCode::BadRequest,
+        "a reason is required"
+    );
+    assert_eq!(
+        bad(suggest(&agent, target, option_of("allow_once"), &"r".repeat(401)).await),
+        ErrorCode::BadRequest,
+        "a reason of at most 400 characters"
+    );
+    assert_eq!(
+        bad(suggest(&agent, target, SuggestedAnswer::Decline, "x").await),
+        ErrorCode::BadRequest,
+        "an approval takes an option"
+    );
+
+    // Answering stays the user's: Mawas cannot, and her suggestion answered nothing.
+    let refused = agent
+        .call::<Empty>(Request::ApprovalRespond(ApprovalRespond {
+            approval_id: waiting.id,
+            option_id: "allow_once".into(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        decision(refused),
+        (ErrorCode::Forbidden, "user_only".to_owned())
+    );
+    assert!(m.pending().await.iter().any(|a| a.id == waiting.id));
+
+    // The user's own answer ends the request, and the suggestion goes with it.
+    m.answer(waiting.id, "allow_once").await;
+    let cleared = wait_event(&mut m.events, "the suggestion to go", |event| match event {
+        Event::AskSuggestion(change) if change.target == target && change.suggestion.is_none() => {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+    let () = cleared;
+    assert_eq!(
+        bad(suggest(&agent, target, option_of("allow_once"), "late").await),
+        ErrorCode::NotFound,
+        "nothing waits any more"
+    );
+    m.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mawas_suggests_values_or_a_decline_for_a_question_and_the_user_answers() {
+    let mut m = M::start("", &["question-ask"]).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let agent = m.from(mawas.id).await;
+    let api = m.target("api").await;
+    m.user.chat_send(api.id, "go").await.unwrap();
+    let question = m.next_question().await;
+    let target = AskTarget::Question { id: question.id };
+    let field = question.spec.fields[0].id.clone();
+
+    // Grant first: one card for the first suggestion, none after.
+    let values = |choice: &str| SuggestedAnswer::Values {
+        values: [(field.clone(), serde_json::json!(choice))].into(),
+    };
+    let first = tokio::spawn(suggest(
+        &agent,
+        target,
+        values("SQLite"),
+        "The project uses it.",
+    ));
+    let card = m.card_of(mawas.id).await;
+    assert!(
+        card.title
+            .contains("suggest an answer to the waiting question")
+    );
+    m.answer(card.id, "allow_chat").await;
+    let given = first.await.unwrap().unwrap();
+    assert!(!given.replaced);
+    let listed = m.next_question().await;
+    assert_eq!(listed.suggestion, Some(given.suggestion));
+
+    // Values the question would refuse are refused now, not when the user clicks.
+    let unknown = SuggestedAnswer::Values {
+        values: [("nope".to_owned(), serde_json::json!("x"))].into(),
+    };
+    match suggest(&agent, target, unknown, "x").await.unwrap_err() {
+        ClientError::Remote(body) => assert_eq!(body.code, ErrorCode::BadRequest),
+        other => panic!("{other:?}"),
+    }
+    // A decline replaces the values.
+    let declined = suggest(&agent, target, SuggestedAnswer::Decline, "It can wait.")
+        .await
+        .unwrap();
+    assert!(declined.replaced);
+    assert_eq!(
+        m.next_question().await.suggestion.map(|s| s.answer),
+        Some(SuggestedAnswer::Decline)
+    );
+    // Mawas cannot answer a question either, and the suggestion answered nothing.
+    let refused = agent
+        .call::<Empty>(Request::QuestionAnswer(QuestionAnswer {
+            question_id: question.id,
+            response: QuestionResponse::Decline,
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        decision(refused),
+        (ErrorCode::Forbidden, "user_only".to_owned())
+    );
+    assert_eq!(m.questions().await.len(), 1);
+
+    // The user's answer ends it, and the suggestion goes.
+    m.user
+        .call::<Empty>(Request::QuestionAnswer(QuestionAnswer {
+            question_id: question.id,
+            response: QuestionResponse::Submit {
+                values: [(field.clone(), serde_json::json!("SQLite"))].into(),
+            },
+        }))
+        .await
+        .unwrap();
+    wait_event(&mut m.events, "the suggestion to go", |event| match event {
+        Event::AskSuggestion(change) if change.target == target && change.suggestion.is_none() => {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+    m.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mawas_does_not_suggest_answers_to_her_own_requests() {
+    let m = M::start("", &["plain-turn"]).await;
+    let ws = m.workspace("alpha").await;
+    let mawas = m.mawas(ws, false).await;
+    let target_session = m.shell().await;
+    let renaming = {
+        let agent = m.from(mawas.id).await;
+        let id = target_session.id;
+        tokio::spawn(async move { rename(&agent, id, "x").await })
+    };
+    let own = m.card_of(mawas.id).await;
+    // A second connection of the same chat asks to suggest for it: it asks like any change, and
+    // is then refused — she does not steer the user's answer to her own request.
+    let agent = m.from(mawas.id).await;
+    let suggesting = tokio::spawn(suggest(
+        &agent,
+        AskTarget::Approval { id: own.id },
+        option_of("allow_once"),
+        "Please.",
+    ));
+    let card = timeout(WAIT, async {
+        loop {
+            if let Some(info) = m
+                .pending()
+                .await
+                .into_iter()
+                .find(|a| a.id != own.id && a.session_id == mawas.id)
+            {
+                return info;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    m.answer(card.id, "allow_once").await;
+    forbidden(suggesting.await.unwrap().unwrap_err());
+    assert_eq!(
+        m.pending()
+            .await
+            .iter()
+            .find(|a| a.id == own.id)
+            .and_then(|a| a.suggestion.clone()),
+        None
+    );
+    m.answer(own.id, "deny").await;
+    forbidden(renaming.await.unwrap().unwrap_err());
+    m.daemon.stop().await;
+}

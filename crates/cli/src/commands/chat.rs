@@ -1041,6 +1041,7 @@ mod tests {
             options: Vec::new(),
             requested_at_ms: 1,
             target,
+            suggestion: None,
         };
         let table = approval_table(&[
             approval("Mawas asks Hutan to rename a session", None),
