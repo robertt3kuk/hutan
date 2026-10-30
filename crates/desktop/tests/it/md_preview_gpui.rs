@@ -311,7 +311,8 @@ fn a_page_beside_the_text_follows_its_edits_and_redraws_only_what_changed(cx: &m
     settle_page(&page, cx);
     assert_eq!(page.read_with(cx, |p, _| p.parsed().blocks.len()), 61);
     assert_eq!(page.read_with(cx, |p, _| p.work().1), 1);
-    assert!(page.read_with(cx, |p, cx| p.shown_version() == tab.buffer.read(cx).version()));
+    assert!(page.read_with(cx, |p, cx| p.shown_version()
+        == tab.buffer.read(cx).version()));
 
     // Again with the same shortcut: the open page is focused, not opened twice.
     view.update_in(cx, |wb, window, cx| {

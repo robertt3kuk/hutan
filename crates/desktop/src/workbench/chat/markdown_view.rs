@@ -168,9 +168,9 @@ fn run(font: Font, len: usize, color: gpui::Hsla) -> TextRun {
     }
 }
 
-/// Text runs for `styled`'s spans. A `heading` is set in the UI sans at medium weight, a
-/// paragraph in the look's text face.
-fn runs(spans: &[Span], look: &Look, heading: bool) -> Vec<TextRun> {
+/// Text runs for `styled`'s spans. A heading (`Some(weight)`) is set in the UI sans at that
+/// weight, a paragraph in the look's text face.
+fn runs(spans: &[Span], look: &Look, heading: Option<FontWeight>) -> Vec<TextRun> {
     let theme = &look.theme;
     spans
         .iter()
@@ -178,13 +178,13 @@ fn runs(spans: &[Span], look: &Look, heading: bool) -> Vec<TextRun> {
             let style = &span.style;
             let mut face = if style.code {
                 font(look.mono.clone())
-            } else if heading {
+            } else if heading.is_some() {
                 Font::default()
             } else {
                 look.text_face()
             };
-            if heading {
-                face.weight = FontWeight::MEDIUM;
+            if let Some(weight) = heading {
+                face.weight = weight;
             } else if style.bold {
                 face.weight = FontWeight::BOLD;
             }
@@ -218,6 +218,29 @@ fn runs(spans: &[Span], look: &Look, heading: bool) -> Vec<TextRun> {
 /// One paragraph or heading: the inlines as a single styled text; link ranges are clickable
 /// (in a document every link is, and the document opens it).
 pub fn inline_text(content: &[Inline], look: &Look, bold: bool, id: ElementId) -> AnyElement {
+    text_element(content, look, bold.then_some(FontWeight::MEDIUM), None, id)
+}
+
+/// [`inline_text`] for a heading of a document: `size` pixels at `weight`.
+fn heading_text(
+    content: &[Inline],
+    look: &Look,
+    size: f32,
+    weight: FontWeight,
+    id: ElementId,
+) -> AnyElement {
+    text_element(content, look, Some(weight), Some(size), id)
+}
+
+/// The text of `content` as one element. `heading`: set as a heading at that weight; `size`: a
+/// size of its own (else the look's paragraph type).
+fn text_element(
+    content: &[Inline],
+    look: &Look,
+    heading: Option<FontWeight>,
+    size: Option<f32>,
+    id: ElementId,
+) -> AnyElement {
     let policy = if look.doc.is_some() {
         Links::Any
     } else {
@@ -227,20 +250,24 @@ pub fn inline_text(content: &[Inline], look: &Look, bold: bool, id: ElementId) -
     if styled.text.is_empty() {
         return div().into_any_element();
     }
-    let text_runs = runs(&styled.spans, look, bold);
+    let text_runs = runs(&styled.spans, look, heading);
     let links: Vec<(std::ops::Range<usize>, String)> = styled
         .spans
         .iter()
         .filter_map(|span| span.style.link.clone().map(|url| (span.range.clone(), url)))
         .collect();
     let text = StyledText::new(styled.text).with_runs(text_runs);
+    let container = match size {
+        Some(size) => div().text_size(px(size)).line_height(gpui::relative(1.3)),
+        None => look.text_box(),
+    };
     if links.is_empty() {
-        return look.text_box().child(text).into_any_element();
+        return container.child(text).into_any_element();
     }
     let ranges = links.iter().map(|(range, _)| range.clone()).collect();
     let urls: Vec<String> = links.into_iter().map(|(_, url)| url).collect();
     let doc = look.doc.clone();
-    look.text_box()
+    container
         .child(
             InteractiveText::new(id, text).on_click(ranges, move |index, window, cx| {
                 let Some(url) = urls.get(index) else {
@@ -459,6 +486,9 @@ fn paragraph_with_pictures(content: &[Inline], look: &Look, ids: &mut Ids) -> Op
     )
 }
 
+/// The narrowest a table's column is drawn, in pixels.
+const TABLE_COLUMN_MIN: f32 = 110.0;
+
 fn table(
     align: &[Align],
     header: &[Vec<Inline>],
@@ -476,7 +506,7 @@ fn table(
             .children(cells.iter().enumerate().map(|(column, content)| {
                 let cell = div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(TABLE_COLUMN_MIN))
                     .px(px(tokens.spacing * 2.0))
                     .py(px(tokens.spacing))
                     .when(column > 0, |s| s.border_l_1().border_color(theme.border));
@@ -493,15 +523,25 @@ fn table(
     for cells in rows {
         lines.push(row(cells, false, false, ids));
     }
+    // A page narrower than its columns scrolls the table sideways rather than cutting words.
+    let scroll_id = ids.next("table");
+    let width = TABLE_COLUMN_MIN * align.len().max(1) as f32;
     div()
-        .flex()
-        .flex_col()
         .w_full()
         .rounded(px(tokens.radius))
         .border_1()
         .border_color(theme.border)
         .overflow_hidden()
-        .children(lines)
+        .child(
+            div().id(scroll_id).overflow_x_scroll().child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .min_w(px(width))
+                    .children(lines),
+            ),
+        )
         .into_any_element()
 }
 
@@ -527,6 +567,27 @@ pub fn block_element(block: &Block, look: &Look, ids: &mut Ids) -> AnyElement {
     match block {
         Block::Paragraph(content) => paragraph_with_pictures(content, look, ids)
             .unwrap_or_else(|| inline_text(content, look, false, ids.next("p"))),
+        Block::Heading { level, content } if look.doc.is_some() => {
+            // A page's headings are titles: sized and weighted by level, the first two with a
+            // hairline under them (GitHub's page).
+            let base = tokens.prose_font_size;
+            let (size, weight) = match level {
+                1 => (base + 12.0, FontWeight::BOLD),
+                2 => (base + 8.0, FontWeight::BOLD),
+                3 => (base + 4.0, FontWeight::SEMIBOLD),
+                4 => (base + 2.0, FontWeight::SEMIBOLD),
+                _ => (base, FontWeight::SEMIBOLD),
+            };
+            div()
+                .mt(px(tokens.spacing * 2.0))
+                .when(*level <= 2, |s| {
+                    s.pb(px(tokens.spacing))
+                        .border_b_1()
+                        .border_color(theme.border)
+                })
+                .child(heading_text(content, look, size, weight, ids.next("h")))
+                .into_any_element()
+        }
         Block::Heading { level, content } => {
             let size = match level {
                 1 => tokens.prose_font_size + 5.0,

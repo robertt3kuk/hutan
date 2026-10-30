@@ -108,7 +108,8 @@ pub struct Located {
 
 /// The blocks of a Markdown file, CommonMark's way (a single newline is a space), each with the
 /// line it starts at: what a preview scrolls by. A YAML front matter (`---` … `---` on the first
-/// lines) is a `yaml` code block.
+/// lines) is a `yaml` code block, and `[name]: url` lines (reference definitions) are not text:
+/// the links `[label][name]`, `[name][]` and `[name]` of the document point at their urls.
 pub fn parse_located(text: &str) -> Vec<Located> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
@@ -123,6 +124,8 @@ pub fn parse_located(text: &str) -> Vec<Located> {
         });
         from = end + 1;
     }
+    let (defined, lines) = split_definitions(&lines, from);
+    let _scope = DefinitionScope::set(defined);
     out.extend(
         parse_spanned(&lines[from..], 0, Newlines::Soft)
             .into_iter()
@@ -132,6 +135,96 @@ pub fn parse_located(text: &str) -> Vec<Located> {
             }),
     );
     out
+}
+
+thread_local! {
+    /// The reference definitions of the document being parsed on this thread.
+    static DEFINITIONS: std::cell::RefCell<std::collections::HashMap<String, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Makes `defined` the definitions of the thread's parse until dropped.
+struct DefinitionScope;
+
+impl DefinitionScope {
+    fn set(defined: std::collections::HashMap<String, String>) -> Self {
+        DEFINITIONS.with(|slot| *slot.borrow_mut() = defined);
+        Self
+    }
+}
+
+impl Drop for DefinitionScope {
+    fn drop(&mut self) {
+        DEFINITIONS.with(|slot| slot.borrow_mut().clear());
+    }
+}
+
+/// A reference name as links spell it: lower case, runs of white space one space.
+fn normalize_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// `[name]: url "title"` as a name and a url (a footnote `[^1]: …` is not one).
+fn definition(line: &str) -> Option<(String, String)> {
+    if indent_of(line) > 3 {
+        return None;
+    }
+    let rest = line.trim().strip_prefix('[')?;
+    let (name, after) = rest.split_once("]:")?;
+    if name.is_empty() || name.starts_with('^') || name.contains(['[', ']']) {
+        return None;
+    }
+    let after = after.trim();
+    let (url, title) = match after.strip_prefix('<') {
+        Some(inner) => {
+            let (url, title) = inner.split_once('>')?;
+            (url, title.trim())
+        }
+        None => after
+            .split_once(char::is_whitespace)
+            .map_or((after, ""), |(url, title)| (url, title.trim())),
+    };
+    let titled = title.is_empty()
+        || (title.len() >= 2
+            && matches!(
+                (title.chars().next(), title.chars().next_back()),
+                (Some('"'), Some('"')) | (Some('\''), Some('\'')) | (Some('('), Some(')'))
+            ));
+    (!url.is_empty() && titled).then(|| (normalize_label(name), url.to_owned()))
+}
+
+/// The reference definitions of `lines` from `from` on (outside fenced code), and the lines with
+/// those emptied (so every other line keeps its number).
+fn split_definitions<'a>(
+    lines: &[&'a str],
+    from: usize,
+) -> (std::collections::HashMap<String, String>, Vec<&'a str>) {
+    let mut defined = std::collections::HashMap::new();
+    let mut out = lines.to_vec();
+    let mut fence: Option<Fence> = None;
+    for (at, line) in lines.iter().enumerate().skip(from) {
+        match &fence {
+            Some(open) => {
+                if fence_close(line, open) {
+                    fence = None;
+                }
+            }
+            None => {
+                if let Some(open) = fence_open(line) {
+                    fence = Some(open);
+                } else if let Some((name, url)) = definition(line) {
+                    // The first definition of a name wins.
+                    defined.entry(name).or_insert(url);
+                    out[at] = "";
+                }
+            }
+        }
+    }
+    (defined, out)
 }
 
 /// The line of the `---` that closes a front matter opened on the first line (within the first
@@ -709,22 +802,22 @@ fn inline(s: &str, depth: usize) -> Vec<Inline> {
                 continue;
             }
             '!' if s[i + 1..].starts_with('[') => {
-                if let Some((label, url, end)) = bracket_link(s, i + 1) {
+                if let Some((label, url, end)) = link_at(s, i + 1) {
                     flush(&mut plain, &mut out);
                     out.push(Inline::Image {
                         alt: label_text(label, depth),
-                        url: url.to_owned(),
+                        url,
                     });
                     i = end;
                     continue;
                 }
             }
             '[' if depth < MAX_DEPTH => {
-                if let Some((label, url, end)) = bracket_link(s, i) {
+                if let Some((label, url, end)) = link_at(s, i) {
                     flush(&mut plain, &mut out);
                     out.push(Inline::Link {
                         content: inline(label, depth + 1),
-                        url: url.to_owned(),
+                        url,
                     });
                     i = end;
                     continue;
@@ -884,12 +977,11 @@ fn bare_url_end(s: &str, start: usize) -> usize {
     }
 }
 
-/// `[label](url)` at `at`: the label, the url and the index after the closing parenthesis.
-fn bracket_link(s: &str, at: usize) -> Option<(&str, &str, usize)> {
+/// The `]` that closes the `[` at `at`, with nested brackets, escapes and code spans passed.
+fn bracket_close(s: &str, at: usize) -> Option<usize> {
     let bytes = s.as_bytes();
     let mut depth = 0usize;
     let mut i = at;
-    let mut close = None;
     while i < s.len() {
         match bytes[i] {
             b'\\' => i += 1,
@@ -905,15 +997,50 @@ fn bracket_link(s: &str, at: usize) -> Option<(&str, &str, usize)> {
             b']' => {
                 depth -= 1;
                 if depth == 0 {
-                    close = Some(i);
-                    break;
+                    return Some(i);
                 }
             }
             _ => {}
         }
         i += 1;
     }
-    let close = close?;
+    None
+}
+
+/// A link or an image's target at `at`: `[label](url)`, or a reference to a `[name]: url` line
+/// of the document (`[label][name]`, `[name][]`, `[name]`). The label, the url and the index
+/// after it.
+fn link_at(s: &str, at: usize) -> Option<(&str, String, usize)> {
+    if let Some((label, url, end)) = bracket_link(s, at) {
+        return Some((label, url.to_owned(), end));
+    }
+    reference_link(s, at)
+}
+
+/// [`link_at`]'s reference forms.
+fn reference_link(s: &str, at: usize) -> Option<(&str, String, usize)> {
+    let close = bracket_close(s, at)?;
+    let label = &s[at + 1..close];
+    let after = close + 1;
+    let (key, end) = match s[after..].strip_prefix('[') {
+        Some(rest) => {
+            let named = rest.find(']')?;
+            let name = &rest[..named];
+            (
+                if name.is_empty() { label } else { name },
+                after + 1 + named + 1,
+            )
+        }
+        None => (label, after),
+    };
+    let url = DEFINITIONS.with(|defined| defined.borrow().get(&normalize_label(key)).cloned())?;
+    Some((label, url, end))
+}
+
+/// `[label](url)` at `at`: the label, the url and the index after the closing parenthesis.
+fn bracket_link(s: &str, at: usize) -> Option<(&str, &str, usize)> {
+    let bytes = s.as_bytes();
+    let close = bracket_close(s, at)?;
     if bytes.get(close + 1) != Some(&b'(') {
         return None;
     }
@@ -1608,6 +1735,66 @@ mod tests {
         assert_eq!(
             links(flatten_links(&inlines, Links::Any)),
             ["docs/x.md", "#top", "https://x.y"]
+        );
+    }
+
+    #[test]
+    fn reference_links_point_at_their_definitions_which_are_not_text() {
+        let located = parse_located(
+            "See [the guide][g], [docs][], [Home Page] and ![logo][img].\n\n\
+             [g]: guide.md \"The guide\"\n[DOCS]: <docs/a b.md>\n[home  page]: https://x.y\n\
+             [img]: img/logo.png\n\n```\n[g]: not.md\n```\n\n[^1]: a footnote stays\n\n[missing] and [x]\n",
+        );
+        let Block::Paragraph(first) = &located[0].block else {
+            panic!("{located:?}")
+        };
+        let urls: Vec<String> = first
+            .iter()
+            .filter_map(|node| match node {
+                Inline::Link { url, .. } | Inline::Image { url, .. } => Some(url.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            urls,
+            ["guide.md", "docs/a b.md", "https://x.y", "img/logo.png"]
+        );
+        // The definition lines are gone (their numbers are not reused), the fence keeps its
+        // text, a footnote definition and unknown names are text.
+        let kinds: Vec<(usize, &str)> = located
+            .iter()
+            .map(|l| {
+                (
+                    l.line,
+                    match &l.block {
+                        Block::Paragraph(_) => "paragraph",
+                        Block::Code { .. } => "code",
+                        _ => "other",
+                    },
+                )
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (0, "paragraph"),
+                (7, "code"),
+                (11, "paragraph"),
+                (13, "paragraph")
+            ]
+        );
+        assert!(matches!(&located[1].block, Block::Code { text, .. } if text == "[g]: not.md"));
+        let Block::Paragraph(last) = &located[3].block else {
+            panic!()
+        };
+        assert_eq!(plain_text(last), "[missing] and [x]");
+        // A message (no definitions) reads them as text, as before.
+        assert_eq!(
+            parse("[a][b]\n\n[b]: x.md"),
+            vec![
+                Block::Paragraph(vec![text("[a][b]")]),
+                Block::Paragraph(vec![text("[b]: x.md")]),
+            ]
         );
     }
 
