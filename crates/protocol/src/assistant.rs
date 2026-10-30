@@ -5,7 +5,7 @@
 //! `chat.agent = "assistant"`. Its scope follows from its workspace: the Home workspace has the
 //! `global` assistant, every other workspace has `workspace` ones.
 
-use hutan_core::{AgentEvent, SessionId, TerminalId, WorkspaceId};
+use hutan_core::{AgentEvent, SessionId, TerminalId, TurnId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 use crate::messages::SessionInfo;
@@ -232,6 +232,8 @@ pub enum AttachmentKind {
     /// Protocol 0.23: text the user pasted into the composer.
     PastedText,
     Search,
+    /// Protocol 0.66: the review packet of an agent's turn.
+    TurnReview,
 }
 
 impl AttachmentKind {
@@ -244,6 +246,7 @@ impl AttachmentKind {
             Self::Image => "image",
             Self::PastedText => "pasted_text",
             Self::Search => "search",
+            Self::TurnReview => "turn_review",
         }
     }
 }
@@ -306,6 +309,15 @@ pub enum Attachment {
     /// [`PASTED_TEXT_MAX_BYTES`]; redacted and bounded like any text attachment. An
     /// agent-originated request is `forbidden`.
     PastedText { text: String },
+    /// Protocol 0.66 (capability `agents.review`): the review packet of one turn of an agent
+    /// (`agents.review`), as text: what ran, what changed, the heuristic signals and what is not
+    /// recorded. `turn_id` absent: the last finished turn. Gated by `[assistant.context]
+    /// agents`.
+    TurnReview {
+        session_id: SessionId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+    },
 }
 
 impl Attachment {
@@ -318,6 +330,7 @@ impl Attachment {
             Self::Image { .. } => AttachmentKind::Image,
             Self::PastedText { .. } => AttachmentKind::PastedText,
             Self::Search { .. } => AttachmentKind::Search,
+            Self::TurnReview { .. } => AttachmentKind::TurnReview,
         }
     }
 }

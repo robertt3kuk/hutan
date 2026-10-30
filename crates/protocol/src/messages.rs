@@ -64,6 +64,7 @@ use crate::render::Row;
 use crate::resources::{
     AgentInterrupt, ProcessSignal, ResourceSample, ResourcesListRequest, ResourcesSubscribe,
 };
+use crate::review::AgentsReviewRequest;
 use crate::stats::AgentsStatsRequest;
 use crate::suggest::{AskSuggest, AskSuggestion};
 use crate::task::{TaskCreate, TaskDelete, TaskListRequest, TaskRef, TaskReview, TaskUpdate};
@@ -288,6 +289,12 @@ pub enum Request {
     /// `AgentsStats`. Read-only; bounded (50 groups, 24 KiB).
     #[serde(rename = "agents.stats")]
     AgentsStats(AgentsStatsRequest),
+    /// Capability `agents.review` (protocol 0.66): what an agent did in one turn — prompt, final
+    /// message, tools and commands with exit codes, files and lines, diagnostics, requests that
+    /// wait, labelled heuristic signals, and what is not recorded; answered with `TurnReview`.
+    /// Read-only; redacted; bounded (24 KiB).
+    #[serde(rename = "agents.review")]
+    AgentsReview(AgentsReviewRequest),
     /// Capability `chat.codex`: the journal of a session; answered with `ChatHistory`.
     #[serde(rename = "chat.history")]
     ChatHistory(ChatHistoryRequest),

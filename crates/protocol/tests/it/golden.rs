@@ -59,6 +59,7 @@ use hutan_protocol::recovery::*;
 use hutan_protocol::render::*;
 use hutan_protocol::resources::*;
 use hutan_protocol::stats::*;
+use hutan_protocol::review::*;
 use hutan_protocol::suggest::*;
 use hutan_protocol::task::*;
 use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch, TerminalSearchResult};
@@ -2070,6 +2071,10 @@ fn requests() -> Vec<(&'static str, Request)> {
                         query: "scheduler stall".into(),
                         limit: 5,
                     },
+                    Attachment::TurnReview {
+                        session_id: sid(),
+                        turn_id: Some(turn()),
+                    },
                 ],
             }),
         ),
@@ -3989,6 +3994,20 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AgentsBoard(AgentsBoardRequest {
                 workspace_id: Some(ws()),
                 include_finished: true,
+            }),
+        ),
+        (
+            "agents_review",
+            Request::AgentsReview(AgentsReviewRequest {
+                session_id: sid(),
+                turn_id: None,
+            }),
+        ),
+        (
+            "agents_review_turn",
+            Request::AgentsReview(AgentsReviewRequest {
+                session_id: sid(),
+                turn_id: Some(turn()),
             }),
         ),
         (
@@ -5912,6 +5931,166 @@ fn activity_fixture() -> AgentsActivity {
             "turns and durations of terminal agents".into(),
             "terminal agents' states over time (only the current one exists)".into(),
         ],
+/// The review of a finished turn of a chat: commands with and without exit codes, files from a
+/// checkpoint, diagnostics, a request that waits, two signals and what is not recorded.
+fn review_fixture() -> TurnReview {
+    TurnReview {
+        generated_at_ms: 1_791_894_300_000,
+        session_id: sid(),
+        title: "api: add health endpoint".into(),
+        harness: Some("codex".into()),
+        model: Some("gpt-5.2".into()),
+        source: BoardSource::Journal,
+        turn: Some(ReviewTurn {
+            turn_id: turn(),
+            number: 3,
+            status: ReviewTurnStatus::Completed,
+            started_ms: 1_791_894_000_000,
+            ended_ms: Some(1_791_894_185_000),
+            wall_ms: Some(185_000),
+            tools_ms: Some(41_200),
+            error: None,
+        }),
+        report: None,
+        prompt: Some(ReviewText {
+            text: "Add a /health endpoint to the api and cover it with a test.".into(),
+            chars: 58,
+            truncated: false,
+        }),
+        final_message: Some(ReviewText {
+            text: "Done: /health returns 200 and the tests pass.".into(),
+            chars: 45,
+            truncated: false,
+        }),
+        tools: Some(ReviewTools {
+            calls: 9,
+            failed: 1,
+            declined: 0,
+            by_name: vec![
+                ReviewToolCount {
+                    name: "command".into(),
+                    calls: 5,
+                    failed: 1,
+                },
+                ReviewToolCount {
+                    name: "file_change".into(),
+                    calls: 4,
+                    failed: 0,
+                },
+            ],
+        }),
+        commands: Some(ReviewCommands {
+            total: 2,
+            omitted: 0,
+            items: vec![
+                ReviewCommand {
+                    text: "cargo nextest run -p api".into(),
+                    status: ReviewToolStatus::Failed,
+                    exit_code: Some(101),
+                    duration_ms: Some(22_400),
+                },
+                ReviewCommand {
+                    text: "git status --short".into(),
+                    status: ReviewToolStatus::Completed,
+                    exit_code: None,
+                    duration_ms: None,
+                },
+            ],
+        }),
+        files: Some(ReviewFiles {
+            source: ReviewFilesSource::Checkpoint,
+            checkpoint_id: Some(checkpoint_id(1)),
+            total: 2,
+            added: Some(41),
+            removed: Some(3),
+            omitted: 0,
+            items: vec![
+                ReviewFile {
+                    path: "Cargo.toml".into(),
+                    status: CheckpointFileStatus::Modified,
+                    added: Some(1),
+                    removed: Some(0),
+                    binary: false,
+                },
+                ReviewFile {
+                    path: "src/health.rs".into(),
+                    status: CheckpointFileStatus::Added,
+                    added: Some(40),
+                    removed: Some(3),
+                    binary: false,
+                },
+            ],
+        }),
+        diagnostics: Some(ReviewDiagnostics {
+            stale: true,
+            errors: 1,
+            warnings: 0,
+            files: vec![ReviewDiagnosticFile {
+                path: "src/health.rs".into(),
+                errors: 1,
+                warnings: 0,
+                first: vec![ReviewDiagnostic {
+                    severity: "error".into(),
+                    line: Some(12),
+                    message: "cannot find value `status` in this scope".into(),
+                }],
+            }],
+        }),
+        requests: vec![ReviewRequest {
+            kind: ReviewRequestKind::Approval,
+            title: "git push origin main".into(),
+            since_ms: Some(1_791_894_190_000),
+        }],
+        signals: vec![
+            ReviewSignal {
+                id: ReviewSignalId::DependencyFileChanged,
+                label: "a lockfile or a package manifest changed".into(),
+                evidence: vec!["Cargo.toml".into()],
+            },
+            ReviewSignal {
+                id: ReviewSignalId::FailedCommandThenDone,
+                label: "a command failed and was not run again with success, and the final \
+                        message sounds done"
+                    .into(),
+                evidence: vec!["exit 101: cargo nextest run -p api".into()],
+            },
+        ],
+        not_recorded: vec![NotRecorded::new(
+            "active time of the turn",
+            "no harness reports it per turn",
+        )],
+        cut: Vec::new(),
+    }
+}
+
+/// The review of a terminal agent: it has no turns, only what it reported.
+fn review_terminal_fixture() -> TurnReview {
+    TurnReview {
+        generated_at_ms: 1_791_894_300_000,
+        session_id: sid(),
+        title: "scratch".into(),
+        harness: Some("claude".into()),
+        model: None,
+        source: BoardSource::Hook,
+        turn: None,
+        report: Some(ReviewReport {
+            state: "blocked".into(),
+            message: Some("Waiting for permission".into()),
+            updated_ms: Some(1_791_894_250_000),
+        }),
+        prompt: None,
+        final_message: None,
+        tools: None,
+        commands: None,
+        files: None,
+        diagnostics: None,
+        requests: Vec::new(),
+        signals: Vec::new(),
+        not_recorded: vec![
+            NotRecorded::new("turns", "a terminal agent has no journal"),
+            NotRecorded::new("commands and files", "only its current state is reported"),
+        ],
+        cut: Vec::new(),
     }
 }
 
@@ -9391,6 +9570,14 @@ fn responses_match_fixtures() {
                 },
             )
             .unwrap(),
+        ),
+        (
+            "agents_review",
+            ControlMessage::ok(94, &review_fixture()).unwrap(),
+        ),
+        (
+            "agents_review_terminal",
+            ControlMessage::ok(95, &review_terminal_fixture()).unwrap(),
         ),
         (
             "agent_context_measured",

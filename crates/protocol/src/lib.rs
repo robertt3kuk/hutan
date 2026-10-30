@@ -152,6 +152,7 @@ pub mod provider;
 pub mod recovery;
 pub mod render;
 pub mod resources;
+pub mod review;
 pub mod stats;
 pub mod suggest;
 pub mod task;
@@ -172,7 +173,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 66,
+    minor: 67,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
