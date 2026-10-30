@@ -2343,3 +2343,183 @@ async fn a_focused_workspace_that_forbids_files_has_its_agents_md_left_out_but_t
     // A Focus is no permission: Home's own context permissions are unchanged.
     w.daemon.stop().await;
 }
+
+// ---- the supervisor playbook of a Global chat (MAWAS-PLAYBOOK, ADR 0025) -------------------------
+
+/// The prompt files are read from the one OMP start that `n` names.
+fn prompt_of_start(w: &W, n: usize) -> String {
+    let prompts = w.append_prompts("omp");
+    assert!(prompts.len() > n, "start {n} of {prompts:?}");
+    std::fs::read_to_string(&prompts[n]).unwrap_or_else(|_| prompts[n].clone())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_global_omp_chat_is_given_the_playbook_beside_its_focus_and_a_workspace_chat_is_not() {
+    use hutan_daemon::playbook::{PLAYBOOK, PLAYBOOK_MARKER, PLAYBOOK_MAX_BYTES, PLAYBOOK_VERSION};
+    let mut w = W::start(
+        "",
+        Scripts {
+            omp: &["plain-turn"; 2],
+            ..Scripts::default()
+        },
+    )
+    .await;
+    let alpha = w.workspace("alpha").await;
+    w.remember(
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Profile,
+        "Prefers short answers.",
+    )
+    .await;
+    let home = w.home_mawas().await;
+    w.focus(home.id, Some(alpha.id)).await;
+    w.send(home.id, "what are my agents doing?").await;
+
+    let global = prompt_of_start(&w, 0);
+    assert!(
+        global.contains("You are Mawas"),
+        "Mawas's own prompt stays: {global}"
+    );
+    assert!(
+        global.contains(PLAYBOOK),
+        "the playbook as a whole: {global}"
+    );
+    assert!(
+        global.contains(&format!("{PLAYBOOK_MARKER} v{PLAYBOOK_VERSION} ")),
+        "the version is named"
+    );
+    assert!(global.contains("Prefers short answers."), "{global}");
+    assert!(
+        global.contains("--- Hutan focus") && global.contains("Focus: \"alpha\""),
+        "the Focus block: {global}"
+    );
+    // The job comes before the Focus that narrows where she looks.
+    assert!(
+        global.find(PLAYBOOK).unwrap() < global.find("--- Hutan focus").unwrap(),
+        "{global}"
+    );
+    // The prompt budget: the fixed text is bounded and the whole start stays small.
+    assert!(PLAYBOOK.len() <= PLAYBOOK_MAX_BYTES, "{}", PLAYBOOK.len());
+    assert!(global.len() < 8 * 1024, "{} bytes", global.len());
+    // The playbook is not memory: what the daemon recorded as the snapshot has none of it.
+    assert!(
+        w.snapshots(home.id)
+            .iter()
+            .all(|row| !row.rendered.contains(PLAYBOOK_MARKER)),
+        "the snapshot is the memory alone"
+    );
+
+    // A workspace chat watches nothing: no supervisor role, no board.
+    let workspace_chat = w.mawas(alpha.id, false).await;
+    w.send(workspace_chat.id, "hello").await;
+    let own = prompt_of_start(&w, 1);
+    assert!(own.contains("You are Mawas"), "{own}");
+    assert!(
+        !own.contains(PLAYBOOK_MARKER) && !own.contains("agents_board"),
+        "a workspace chat is no supervisor: {own}"
+    );
+    w.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_global_chat_with_memory_off_still_gets_the_playbook() {
+    use hutan_daemon::playbook::PLAYBOOK;
+    let mut w = W::start(
+        "memory = false",
+        Scripts {
+            omp: &["plain-turn"],
+            ..Scripts::default()
+        },
+    )
+    .await;
+    w.remember(
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Profile,
+        "Prefers short answers.",
+    )
+    .await;
+    let home = w.home_mawas().await;
+    w.send(home.id, "hello").await;
+    let prompt = prompt_of_start(&w, 0);
+    assert!(prompt.contains(PLAYBOOK), "{prompt}");
+    assert!(
+        !prompt.contains("Prefers short answers."),
+        "memory is off: {prompt}"
+    );
+    w.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_playbook_reaches_each_backend_through_its_own_channel_and_a_chat_only_one_has_none() {
+    use hutan_daemon::playbook::{PLAYBOOK, PLAYBOOK_MARKER};
+    // Codex: the developer instructions of its thread, for a Global chat only.
+    let mut w = W::start(
+        "backend = \"codex\"\nmodel = \"gpt-6.1-sol\"",
+        Scripts {
+            codex: &["plain-turn"; 2],
+            ..Scripts::default()
+        },
+    )
+    .await;
+    let alpha = w.workspace("alpha").await;
+    let home = w.home_mawas().await;
+    w.send(home.id, "hello").await;
+    let workspace_chat = w.mawas(alpha.id, false).await;
+    w.send(workspace_chat.id, "hello").await;
+    let starts = w.received_of("codex", "thread/start");
+    assert_eq!(starts.len(), 2);
+    let instructions = |n: usize| {
+        starts[n]["params"]["developerInstructions"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert!(instructions(0).contains(PLAYBOOK), "{}", instructions(0));
+    assert!(
+        !instructions(1).contains(PLAYBOOK_MARKER),
+        "{}",
+        instructions(1)
+    );
+    w.daemon.stop().await;
+
+    // Claude Code: a labelled block of the first turn, once.
+    let mut w = W::start(
+        &format!("backend = \"claude\"\nmodel = \"{FIXTURE_MODEL}\""),
+        Scripts {
+            claude: &["two-turns"],
+            ..Scripts::default()
+        },
+    )
+    .await;
+    let home = w.home_mawas().await;
+    w.send(home.id, "first").await;
+    w.send(home.id, "second").await;
+    let prompts = w.received_of("claude", "session/prompt");
+    // `prompt_text` is JSON: the playbook is in it with its quotes and newlines escaped.
+    let escaped = serde_json::to_string(PLAYBOOK).unwrap();
+    let escaped = &escaped[1..escaped.len() - 1];
+    assert!(
+        prompt_text(&prompts[0]).contains(escaped),
+        "{}",
+        prompt_text(&prompts[0])
+    );
+    assert!(
+        !prompt_text(&prompts[1]).contains(PLAYBOOK_MARKER),
+        "{}",
+        prompt_text(&prompts[1])
+    );
+    w.daemon.stop().await;
+
+    // The direct provider backend has no tools: it is not told to use a board it cannot reach.
+    let mut w = provider_world("").await;
+    let home = w.home_mawas().await;
+    w.send(home.id, "hello").await;
+    let requests = w.mock.requests_to("/v1/chat/completions");
+    let messages = requests[0].json()["messages"].clone();
+    let system = messages[0]["content"].as_str().unwrap();
+    assert!(system.contains("You are Mawas"), "{system}");
+    assert!(!system.contains(PLAYBOOK_MARKER), "{system}");
+    w.daemon.stop().await;
+}
