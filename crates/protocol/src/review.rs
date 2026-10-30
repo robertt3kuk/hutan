@@ -1,4 +1,4 @@
-//! Reviewing a turn (protocol 0.66, capability `agents.review`, ADR 0025): the DTOs of
+//! Reviewing a turn (protocol 0.67, capability `agents.review`, ADR 0025): the DTOs of
 //! `agents.review` and the readable text of its packet (`docs/protocol.md` § Reviewing a turn).
 //!
 //! One bounded, read-only, redacted packet says what an agent did in one turn, from what the

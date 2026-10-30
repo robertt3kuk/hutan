@@ -289,7 +289,7 @@ pub enum Request {
     /// `AgentsStats`. Read-only; bounded (50 groups, 24 KiB).
     #[serde(rename = "agents.stats")]
     AgentsStats(AgentsStatsRequest),
-    /// Capability `agents.review` (protocol 0.66): what an agent did in one turn — prompt, final
+    /// Capability `agents.review` (protocol 0.67): what an agent did in one turn — prompt, final
     /// message, tools and commands with exit codes, files and lines, diagnostics, requests that
     /// wait, labelled heuristic signals, and what is not recorded; answered with `TurnReview`.
     /// Read-only; redacted; bounded (24 KiB).

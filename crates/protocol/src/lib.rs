@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`review`], [`assistant`]: `agents.review` and the `turn_review` attachment — what an agent did
+//!   in one turn, from the journal, the checkpoint and the language servers, with named heuristic
+//!   signals and what is not recorded (protocol 0.67, capability `agents.review`, ADR 0025).
 //! - [`stats`]: `agents.stats` — where the time goes, what agents wait on and what fails again,
 //!   with the coverage of every number (protocol 0.66, capability `agents.stats`, ADR 0025).
 //! - [`activity`]: `agents.activity` — what happened across agents in a window, from what the

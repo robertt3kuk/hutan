@@ -1159,7 +1159,7 @@ async fn agents_stats_reads_a_window_and_is_marked_untrusted() {
     t.stop().await;
 }
 
-/// `agent_review` (protocol 0.66): read-only, marked as untrusted data, and a terminal agent's
+/// `agent_review` (protocol 0.67): read-only, marked as untrusted data, and a terminal agent's
 /// packet says what is not recorded.
 #[tokio::test(flavor = "multi_thread")]
 async fn agent_review_reads_a_turn_and_marks_its_output_as_untrusted_data() {

@@ -207,7 +207,7 @@ A harness assistant (`omp`, `claude`, `codex`) is a helper for occasional questi
 | `agent_transcript` | `session_id`, `last_turns` ≤ 20 | a Hutan chat's journal (Codex, direct, assistant: the `message_end` events), else the history index rows of that session id (Claude Code, Codex, OMP; needs indexing) | the newest turns |
 | `file` | `path`, `range?` `{start, end}` (1-based, inclusive) | the file, under the session's workspace roots only | the start |
 | `search` | `query`, `limit` ≤ 10 | `history.search` (needs indexing): one line per session with its id, so that it can be attached next | the best hits |
-| `turn_review` | `session_id`, `turn_id?` (default: the last finished turn) | the `agents.review` packet of that turn as text (protocol 0.66, § Reviewing a turn); gated by `agents` | the start |
+| `turn_review` | `session_id`, `turn_id?` (default: the last finished turn) | the `agents.review` packet of that turn as text (protocol 0.67, § Reviewing a turn); gated by `agents` | the start |
 
 Attachments also go to chats through the OMP and Claude Code harnesses (protocol 0.17, `docs/agents.md` § ACP harnesses): the agent gets each one as an ACP embedded resource, under the same permissions and bounds, and the journal's user message shows what it was given.
 

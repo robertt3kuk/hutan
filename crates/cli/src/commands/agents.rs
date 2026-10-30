@@ -13,10 +13,10 @@ use hutan_protocol::board::{
     BoardWaitKind,
 };
 use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, Subscribed};
+use hutan_protocol::review::AgentsReviewRequest;
 use hutan_protocol::stats::{
     AgentsStats, AgentsStatsRequest, FailureSource, FlagKind, StatsBy, StatsGroup, WaitSource,
 };
-use hutan_protocol::review::AgentsReviewRequest;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Ctx;
@@ -85,7 +85,7 @@ impl Ctx {
     async fn agents_stats(&self, client: &Client, args: &AgentsArgs) -> Result<(), CliError> {
         if !client.supports_agents_stats() {
             return Err(CliError::Failed(
-                "this daemon has no flow statistics (it predates protocol 0.66); restart it with \
+                "this daemon has no flow statistics (it predates protocol 0.67); restart it with \
                  `hutan daemon stop` and run the command again"
                     .to_owned(),
             ));
@@ -186,7 +186,7 @@ impl Ctx {
 }
 
 impl Ctx {
-    /// `--review`: `agents.review` (protocol 0.66), as the packet's text or `--json`.
+    /// `--review`: `agents.review` (protocol 0.67), as the packet's text or `--json`.
     async fn agents_review(
         &self,
         client: &Client,
@@ -195,7 +195,7 @@ impl Ctx {
     ) -> Result<(), CliError> {
         if !client.supports_agents_review() {
             return Err(CliError::Failed(
-                "this daemon cannot review a turn (it predates protocol 0.66); restart it with \
+                "this daemon cannot review a turn (it predates protocol 0.67); restart it with \
                  `hutan daemon stop` and run the command again"
                     .to_owned(),
             ));

@@ -1,4 +1,4 @@
-//! *Review* on the footer of a finished turn (AGENTS-REVIEW; protocol 0.66, capability
+//! *Review* on the footer of a finished turn (AGENTS-REVIEW; protocol 0.67, capability
 //! `agents.review`): the turn's review packet becomes a chip of Mawas's composer, for the user to
 //! read (the chip opens the packet) and to send with a question of their own. Nothing is sent and
 //! nothing is read until the user opens the chip or sends the message.

@@ -146,7 +146,7 @@ pub struct AssistantService {
     accounts: Arc<AccountService>,
     /// Two `assistant.open` of one scope at once must not create two defaults.
     open_lock: Mutex<()>,
-    /// `turn_review` attachments (protocol 0.66); set once the daemon has built it.
+    /// `turn_review` attachments (protocol 0.67); set once the daemon has built it.
     review: OnceLock<Arc<ReviewService>>,
 }
 
@@ -1084,7 +1084,7 @@ impl AssistantService {
         ))
     }
 
-    /// `turn_review` (protocol 0.66): the packet of `agents.review` as text, redacted again and
+    /// `turn_review` (protocol 0.67): the packet of `agents.review` as text, redacted again and
     /// cut to the share like any attachment.
     async fn turn_review(
         &self,

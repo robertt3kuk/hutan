@@ -622,7 +622,7 @@ exec sleep 600"#;
     t.stop().await;
 }
 
-/// `hutan agents --review` (protocol 0.66): a terminal agent has a report and no turns, and the
+/// `hutan agents --review` (protocol 0.67): a terminal agent has a report and no turns, and the
 /// packet says what it cannot know; a shell, a bad turn id and an unknown session are errors.
 /// (A chat's turn — commands, files, signals — is covered by the daemon's `review` tests.)
 #[tokio::test(flavor = "multi_thread")]

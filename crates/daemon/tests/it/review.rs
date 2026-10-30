@@ -1,4 +1,4 @@
-//! `agents.review` (protocol 0.66) end to end: a real daemon whose Codex is `hutan-codex-fixture
+//! `agents.review` (protocol 0.67) end to end: a real daemon whose Codex is `hutan-codex-fixture
 //! replay` working in a git repository the test creates (it edits the files while the replay
 //! holds the turn open, as the agent would), and a terminal agent that reports through a hook.
 //! Nothing here starts a real harness or calls a model; the rules of the packet itself

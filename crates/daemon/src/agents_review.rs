@@ -1,4 +1,4 @@
-//! `agents.review` (protocol 0.66, capability `agents.review`, ADR 0025): what an agent did in one
+//! `agents.review` (protocol 0.67, capability `agents.review`, ADR 0025): what an agent did in one
 //! turn, from what the daemon recorded.
 //!
 //! [`build_review`] is a pure function of [`ReviewInputs`] — the turn's journal events, the

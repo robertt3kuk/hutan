@@ -65,7 +65,7 @@ pub struct ContextChip {
     pub thumb: Option<Thumb>,
     /// A folded paste is open (its text is shown under the chips).
     pub expanded: bool,
-    /// The readable text of a review chip once it was opened (protocol 0.66).
+    /// The readable text of a review chip once it was opened (protocol 0.67).
     pub preview: Preview,
 }
 
@@ -219,7 +219,7 @@ impl ContextChip {
         )
     }
 
-    /// The review packet of one turn of the agent `session` (protocol 0.66): `turn` is the
+    /// The review packet of one turn of the agent `session` (protocol 0.67): `turn` is the
     /// turn, `number` its place among the chat's turns when the footer knows it; without a
     /// turn it is the last finished one. Clicking the chip opens the packet's text.
     pub fn review(

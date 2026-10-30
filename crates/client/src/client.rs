@@ -681,7 +681,7 @@ impl Client {
         self.call(Request::AgentsBoard(request)).await
     }
 
-    /// True when the daemon advertised capability `agents.review` (protocol 0.66).
+    /// True when the daemon advertised capability `agents.review` (protocol 0.67).
     pub fn supports_agents_review(&self) -> bool {
         self.welcome
             .capabilities
