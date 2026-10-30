@@ -1268,6 +1268,7 @@ mod tests {
             detail: Some("the whole command line".to_owned()),
             options: Vec::new(),
             requested_at_ms: 1,
+            target: None,
         }
     }
 

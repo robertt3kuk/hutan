@@ -3028,6 +3028,7 @@ impl ChatManager {
                     detail: detail.clone(),
                     options: options.clone(),
                     requested_at_ms: ts_ms,
+                    target: None,
                 };
                 self.write_approval_request(&info);
                 lock(&self.approvals).insert(

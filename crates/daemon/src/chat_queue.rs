@@ -82,6 +82,7 @@ impl Queue {
             id,
             text,
             queued_at_ms: registry::now_ms(),
+            origin: None,
         }
     }
 }
@@ -139,6 +140,7 @@ impl Queues {
                         id: row.item_id,
                         text: row.text,
                         queued_at_ms: row.queued_at_ms,
+                        origin: None,
                     })
                     .collect(),
                 next_id,

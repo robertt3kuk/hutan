@@ -1404,6 +1404,7 @@ mod tests {
                 provider: None,
             }],
             requested_at_ms: at,
+            target: None,
         }
     }
 

@@ -500,6 +500,7 @@ fn approval_info() -> ApprovalInfo {
         detail: Some("in /repo".into()),
         options: permission_options(),
         requested_at_ms: 1_791_894_170_500,
+        target: None,
     }
 }
 
@@ -1198,6 +1199,7 @@ fn control_approval() -> ApprovalInfo {
             },
         ],
         requested_at_ms: 1_791_894_180_000,
+        target: None,
     }
 }
 
@@ -1232,6 +1234,49 @@ fn control_grants_approval() -> ApprovalInfo {
             option("deny", "Deny", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: 1_791_894_180_000,
+        target: None,
+    }
+}
+
+fn mawas_origin() -> MessageOrigin {
+    MessageOrigin {
+        kind: MessageOriginKind::Mawas,
+        session_id: sid(),
+        approval: "allow_once".into(),
+    }
+}
+
+/// What Mawas's approval for a message to another agent looks like (protocol 0.62): the target
+/// and the whole text, and no workspace-wide option.
+fn control_target_approval() -> ApprovalInfo {
+    let option = |id: &str, label: &str, kind| PermissionOption {
+        id: id.into(),
+        label: label.into(),
+        kind,
+        provider: None,
+    };
+    ApprovalInfo {
+        id: approval(),
+        session_id: sid(),
+        turn_id: None,
+        kind: PermissionKind::Control,
+        title: "Mawas asks Hutan to queue a message (42 characters) for the chat “api” (01K7F3B5N2Q9W8E4R6T1Y0V3KN)".into(),
+        detail: Some("Please run the formatter before you commit".into()),
+        options: vec![
+            option("allow_once", "Allow once", PermissionOptionKind::AllowOnce),
+            option(
+                "allow_chat",
+                "Allow for this chat and this agent",
+                PermissionOptionKind::AllowAlways,
+            ),
+            option("deny", "Deny", PermissionOptionKind::RejectOnce),
+        ],
+        requested_at_ms: 1_791_894_180_000,
+        target: Some(ControlTarget {
+            session_id: sid2(),
+            title: "api".into(),
+            text: Some("Please run the formatter before you commit".into()),
+        }),
     }
 }
 
@@ -1326,6 +1371,7 @@ fn memory_approval() -> ApprovalInfo {
             option("reject", "Reject", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: 1_791_894_180_000,
+        target: None,
     }
 }
 
@@ -4099,11 +4145,13 @@ fn chat_queue_fixture(held: Option<QueueHold>, steer: bool) -> ChatQueue {
                 id: 1,
                 text: "Then run the tests".into(),
                 queued_at_ms: 1_760_000_000_000,
+                origin: None,
             },
             QueuedMessage {
                 id: 2,
                 text: "And update the changelog".into(),
                 queued_at_ms: 1_760_000_001_000,
+                origin: None,
             },
         ],
         held,
@@ -5438,6 +5486,31 @@ fn events() -> Vec<(&'static str, Event)> {
                     }),
                     ..harness_assistant_session_info()
                 },
+            },
+        ),
+        (
+            "chat_event_message_end_mawas",
+            Event::ChatEvent {
+                session_id: sid2(),
+                event: Box::new({
+                    let mut draft = AgentEventDraft::new(AgentEventKind::MessageEnd {
+                        role: MessageRole::User,
+                        phase: None,
+                        text: "Please run the formatter before you commit".into(),
+                    });
+                    draft.turn_id = Some(turn());
+                    draft.item_id = Some(item());
+                    draft.payload = Some(serde_json::json!({
+                        MESSAGE_ORIGIN_KEY: mawas_origin(),
+                    }));
+                    draft.into_event(sid2(), 12, 1_791_894_170_044)
+                }),
+            },
+        ),
+        (
+            "approval_required_control_target",
+            Event::ApprovalRequired {
+                approval: Box::new(control_target_approval()),
             },
         ),
     ]
@@ -7629,6 +7702,7 @@ fn responses_match_fixtures() {
                             tool: "session.rename".into(),
                             workspace_id: Some(ws()),
                             chat_session_id: None,
+                            target_session_id: None,
                             created_ms: 1_791_894_190_000,
                         },
                         ControlGrant {
@@ -7636,9 +7710,27 @@ fn responses_match_fixtures() {
                             tool: "ui.run:workbench::SplitRight".into(),
                             workspace_id: None,
                             chat_session_id: Some(sid()),
+                            target_session_id: None,
                             created_ms: 1_791_894_185_000,
                         },
                     ],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "control_grants_target",
+            ControlMessage::ok(
+                902,
+                &ControlGrants {
+                    grants: vec![ControlGrant {
+                        id: 8,
+                        tool: "chat.queue.add".into(),
+                        workspace_id: None,
+                        chat_session_id: Some(sid()),
+                        target_session_id: Some(sid2()),
+                        created_ms: 1_791_894_195_000,
+                    }],
                 },
             )
             .unwrap(),
@@ -8120,6 +8212,22 @@ fn responses_match_fixtures() {
                         id: 3,
                         text: "Then run the tests".into(),
                         queued_at_ms: 1_760_000_002_000,
+                        origin: None,
+                    },
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "chat_queued_mawas",
+            ControlMessage::ok(
+                901,
+                &ChatQueued {
+                    item: QueuedMessage {
+                        id: 4,
+                        text: "Please run the formatter before you commit".into(),
+                        queued_at_ms: 1_760_000_003_000,
+                        origin: Some(mawas_origin()),
                     },
                 },
             )
@@ -9374,4 +9482,44 @@ fn only_fs_resource_and_diagnostics_events_are_connection_local() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn grants_approvals_and_queued_messages_of_an_older_peer_have_no_target_or_origin() {
+    // Protocol 0.61 and older: no target on a grant or an approval, no origin on a queued
+    // message, and a user message whose payload has no `origin`.
+    let grant: ControlGrant = serde_json::from_value(serde_json::json!({
+        "id": 1, "tool": "chat.send", "chat_session_id": sid(), "created_ms": 1
+    }))
+    .unwrap();
+    assert_eq!(grant.target_session_id, None);
+    let approval: ApprovalInfo = serde_json::from_value(serde_json::json!({
+        "id": approval(), "session_id": sid(), "kind": "control", "title": "t",
+        "options": [], "requested_at_ms": 1
+    }))
+    .unwrap();
+    assert_eq!(approval.target, None);
+    let queued: QueuedMessage = serde_json::from_value(serde_json::json!({
+        "id": 1, "text": "x", "queued_at_ms": 1
+    }))
+    .unwrap();
+    assert_eq!(queued.origin, None);
+
+    let plain = AgentEventDraft::new(AgentEventKind::MessageEnd {
+        role: MessageRole::User,
+        phase: None,
+        text: "typed".into(),
+    })
+    .into_event(sid(), 1, 1);
+    assert_eq!(message_origin(&plain), None);
+
+    // A kind this build does not know is no origin at all, not a failure.
+    let mut unknown = plain.clone();
+    unknown.payload = Some(serde_json::json!({
+        MESSAGE_ORIGIN_KEY: {"kind": "someone_new", "session_id": sid(), "approval": "allow_once"}
+    }));
+    assert_eq!(message_origin(&unknown), None);
+    let mut mawas = plain;
+    mawas.payload = Some(serde_json::json!({ MESSAGE_ORIGIN_KEY: mawas_origin() }));
+    assert_eq!(message_origin(&mawas), Some(mawas_origin()));
 }

@@ -443,6 +443,7 @@ impl ControlService {
             detail: Some(detail),
             options,
             requested_at_ms: registry::now_ms(),
+            target: None,
         };
         let id = info.id;
         let (answer, answered) = oneshot::channel();
@@ -614,6 +615,7 @@ impl ControlService {
             tool,
             workspace_id,
             chat_session_id,
+            target_session_id: None,
             created_ms: registry::now_ms(),
         };
         let row = GrantRow {
@@ -900,6 +902,7 @@ fn grant_of_row(row: GrantRow) -> ControlGrant {
         tool: row.tool,
         workspace_id: row.workspace_id,
         chat_session_id: row.chat_session_id,
+        target_session_id: None,
         created_ms: row.created_ms,
     }
 }

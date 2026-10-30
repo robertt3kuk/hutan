@@ -795,6 +795,7 @@ fn proposal_approval(row: &st::ProposalRow, session: SessionId) -> Option<Approv
             option(OPTION_REJECT, "Reject", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: row.created_ms,
+        target: None,
     })
 }
 

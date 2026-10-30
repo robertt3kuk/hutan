@@ -11,6 +11,15 @@
 //! The approval's options are plain ids (`allow_once`, `allow_chat`, `allow_workspace`,
 //! `deny`) in the existing `ApprovalInfo.options` / `approval.respond`; no new wire shape is
 //! involved in answering.
+//!
+//! **Target-bound grants** (protocol 0.62, capability `control.grants.target`, ADR 0025
+//! decision 3, `docs/control.md` § Mawas › Acting on another agent). The requests that act on
+//! *another agent* — `chat.send`, `chat.send_now`, `chat.queue.add`, `chat.interrupt`,
+//! `agent.interrupt` and `task.review` — are answered, if at all, per Mawas chat **and target
+//! session**: the approval offers *Allow once*, *Allow for this chat and this agent*
+//! (`allow_chat`, stored with the target) and *Deny*, never a workspace-wide option, and shows
+//! the target ([`crate::chat::ApprovalInfo::target`]). A grant without a
+//! [`ControlGrant::target_session_id`] never covers them.
 
 use hutan_core::{SessionId, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -19,6 +28,11 @@ use serde::{Deserialize, Serialize};
 pub const OPTION_ALLOW_CHAT: &str = "allow_chat";
 /// The option that grants a tool in the workspace the chat lives in.
 pub const OPTION_ALLOW_WORKSPACE: &str = "allow_workspace";
+
+/// Longest message Mawas may send to another agent (`chat.send`, `chat.send_now`,
+/// `chat.queue.add`, a `task.review` note), in bytes: the approval card shows all of it, so a
+/// longer one is refused (`bad_request`, before anything is asked).
+pub const MAWAS_MESSAGE_MAX_BYTES: usize = 2 * 1024;
 
 /// One stored grant: `tool` (the request's method, narrowed for `ui.run` per action and
 /// `ui.set_setting` per namespace) may run without asking where the grant applies.
@@ -36,6 +50,11 @@ pub struct ControlGrant {
     /// The grant covers this chat only ("allow for this chat"). Absent for a workspace grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_session_id: Option<SessionId>,
+    /// Protocol 0.62: the agent the grant is bound to. Present on the grants of the requests
+    /// that act on another agent (`chat_session_id` is then the Mawas chat that was allowed,
+    /// and the grant covers `tool` toward this session only); absent on every other grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_session_id: Option<SessionId>,
     pub created_ms: u64,
 }
 

@@ -398,6 +398,48 @@ pub struct QueuedMessage {
     pub id: u64,
     pub text: String,
     pub queued_at_ms: u64,
+    /// Protocol 0.62: who wrote it when it was not the user — a message Mawas queued with the
+    /// user's approval. The queue strip says *from Mawas*; the user can send it now or remove
+    /// it like any queued message. Editing it removes the label: the words are then the user's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<MessageOrigin>,
+}
+
+/// The key of a user message's `payload` that holds its [`MessageOrigin`] (protocol 0.62).
+pub const MESSAGE_ORIGIN_KEY: &str = "origin";
+
+/// Who a user message of a chat is from when the user did not type it (protocol 0.62,
+/// capability `control.grants.target`, ADR 0025 R4): carried in the `payload` of the user's
+/// `message_end` event under [`MESSAGE_ORIGIN_KEY`] and on the [`QueuedMessage`] it waited as.
+/// The agent is told too (a context block of Hutan's with the message), and the journal has a
+/// notice, so the three agree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageOrigin {
+    pub kind: MessageOriginKind,
+    /// The Mawas chat that sent it.
+    pub session_id: SessionId,
+    /// How the user approved sending it: `allow_once`, `allow_chat` (the approval that stored
+    /// the grant) or `allow_grant` (a stored grant covered it).
+    pub approval: String,
+}
+
+/// What wrote a message the user did not type. A kind this build does not know makes the
+/// whole [`MessageOrigin`] unreadable, so [`message_origin`] returns `None` for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageOriginKind {
+    /// Mawas, the assistant, with the user's approval.
+    Mawas,
+}
+
+/// The origin a chat event's `payload` names; `None` for a message the user typed and for any
+/// other event.
+pub fn message_origin(event: &AgentEvent) -> Option<MessageOrigin> {
+    event
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get(MESSAGE_ORIGIN_KEY))
+        .and_then(|origin| serde_json::from_value(origin.clone()).ok())
 }
 
 /// Why a queue waits instead of sending its next message once no turn runs.
@@ -592,6 +634,26 @@ pub struct ApprovalInfo {
     /// What the agent offered; only these can be chosen.
     pub options: Vec<PermissionOption>,
     pub requested_at_ms: u64,
+    /// Protocol 0.62 (capability `control.grants.target`): the agent a `control` approval of
+    /// Mawas acts on, and the exact text it would send. Absent for every other approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ControlTarget>,
+}
+
+/// The agent a `control` approval of Mawas acts on (protocol 0.62): what the card shows besides
+/// its title — *who* is addressed and, for a message, *all* of what is said (at most
+/// [`MAWAS_MESSAGE_MAX_BYTES`](crate::grants::MAWAS_MESSAGE_MAX_BYTES); a longer one is
+/// refused before anything is asked).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlTarget {
+    /// The session that would receive the message or the interrupt.
+    pub session_id: SessionId,
+    /// Its title when the approval was raised (cut at 200 characters).
+    pub title: String,
+    /// The whole message (`chat.send`, `chat.send_now`, `chat.queue.add`) or review note
+    /// (`task.review`); absent for an interrupt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

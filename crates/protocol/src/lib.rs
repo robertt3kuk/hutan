@@ -1,5 +1,9 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`grants`] and [`chat`] also carry the target-bound grants of Mawas acting on another agent:
+//!   `ControlGrant.target_session_id`, `ApprovalInfo.target` (who is addressed and the whole
+//!   text), `QueuedMessage.origin` and the `origin` of a user message's payload (protocol 0.62,
+//!   capability `control.grants.target`, ADR 0025 decision 3).
 //! - [`assistant`] also carries `assistant.focus` and `ChatInfo.focus` — the workspace a Global
 //!   Mawas chat looks at, a filter and a source of notes and project instructions that changes
 //!   no permission (protocol 0.61, capability `assistant.focus`, ADR 0025).
@@ -153,7 +157,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 61,
+    minor: 62,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
