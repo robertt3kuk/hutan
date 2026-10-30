@@ -133,6 +133,10 @@ pub enum Write {
     UpsertChatTurn(ChatTurnRow),
     /// Inserts an approval or replaces how it ended.
     UpsertApproval(Box<ApprovalRow>),
+    /// Appends a state of an agent to the log and forgets what is older than its retention.
+    AppendAgentState(Box<crate::state_log::AgentStateRow>),
+    /// Empties the log.
+    ClearAgentStates,
     /// Inserts a question of an agent or replaces how it ended.
     UpsertQuestion(Box<QuestionRow>),
     /// Inserts a provider or replaces everything but its creation time.
@@ -369,6 +373,8 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
         Write::SetChatQueue { session_id, items } => set_chat_queue(conn, *session_id, items)?,
         Write::UpsertChatTurn(row) => upsert_chat_turn(conn, row)?,
         Write::UpsertApproval(row) => upsert_approval(conn, row)?,
+        Write::AppendAgentState(row) => crate::state_log::append(conn, row)?,
+        Write::ClearAgentStates => crate::state_log::clear(conn)?,
         Write::UpsertQuestion(row) => upsert_question(conn, row)?,
         Write::UpsertProvider(row) => {
             conn.execute(

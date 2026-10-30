@@ -14,6 +14,7 @@ mod memory;
 mod migrate;
 mod rows;
 mod sql;
+mod state_log;
 #[cfg(test)]
 mod tests;
 mod usage;
@@ -47,6 +48,7 @@ pub use rows::{
     WorkspaceRow, WorktreeRow, WorktreeSetupTrustRow,
 };
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
+pub use state_log::{AgentStateLog, AgentStateRow, STATE_LOG_KEPT_DAYS};
 pub use usage::{USAGE_KEPT_DAYS, Usage, UsageLimitRow, UsageSum, UsageTurnRow};
 
 /// Commands waiting for the writer before submitters wait their turn.
@@ -209,6 +211,10 @@ impl Storage {
 
     pub fn checkpoints(&self) -> Checkpoints<'_> {
         Checkpoints(self)
+    }
+
+    pub fn agent_state_log(&self) -> AgentStateLog<'_> {
+        AgentStateLog(self)
     }
 
     pub fn usage(&self) -> Usage<'_> {

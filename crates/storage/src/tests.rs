@@ -1698,6 +1698,65 @@ fn what_happened_in_a_window_is_read_by_when_it_was_asked_or_decided() {
     storage.close();
 }
 
+fn state(session: SessionId, at_ms: u64, source: &str, state: &str) -> crate::AgentStateRow {
+    crate::AgentStateRow {
+        session_id: session,
+        at_ms,
+        source: source.to_owned(),
+        state: state.to_owned(),
+        kind: None,
+        message: None,
+    }
+}
+
+#[test]
+fn the_state_log_keeps_rows_for_fourteen_days_and_is_emptied_on_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let id = chat_session(&storage);
+    let other = chat_session(&storage);
+    let day = 86_400_000;
+    let now = 100 * day;
+    let log = storage.agent_state_log();
+
+    // Written in order; a row older than the retention goes when a newer one is written.
+    log.append(state(id, now - 16 * day, "osc7501", "working"))
+        .unwrap();
+    log.append(state(id, now - 3 * day, "osc7501", "blocked"))
+        .unwrap();
+    let mut blocked = state(id, now - 2 * day, "osc7501", "blocked");
+    blocked.kind = Some("permission".into());
+    blocked.message = Some("Run the full suite?".into());
+    log.append(blocked.clone()).unwrap();
+    log.append(state(other, now - day, "omp-extension", "working"))
+        .unwrap();
+    assert_eq!(log.count().unwrap(), 3, "the 16 day old row went");
+
+    // The window, oldest first, with what was recorded.
+    let window = log.in_window(now - 3 * day, now).unwrap();
+    assert_eq!(
+        window.iter().map(|r| r.state.as_str()).collect::<Vec<_>>(),
+        ["blocked", "blocked", "working"]
+    );
+    assert_eq!(window[1], blocked);
+
+    // What each agent was doing when a window began.
+    let before = log.latest_before(now - day - 1).unwrap();
+    assert_eq!(before.len(), 1, "only the session that had said something");
+    assert_eq!(before[0], blocked);
+
+    // Emptied, and a new row is written again afterwards.
+    log.clear().unwrap();
+    assert_eq!(log.count().unwrap(), 0);
+    log.append(state(id, now, "osc7501", "idle")).unwrap();
+    assert_eq!(log.count().unwrap(), 1);
+
+    // A deleted session takes its rows with it.
+    storage.sessions().delete(id).unwrap();
+    assert_eq!(log.count().unwrap(), 0);
+    storage.close();
+}
+
 #[test]
 fn a_snapshot_event_is_replaced_in_place_and_deleted() {
     let dir = tempfile::tempdir().unwrap();
