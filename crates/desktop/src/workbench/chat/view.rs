@@ -48,12 +48,15 @@ const COMPOSER_MAX_HEIGHT: f32 = 220.0;
 /// Diameter of the composer's round send / stop button.
 const SEND_SIZE: f32 = 32.0;
 
+/// What clicking the *Catch up* chip does.
+pub type CatchUpOpen = Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// Mawas Home's *Catch up* chip in the empty conversation: one line of what happened while the
 /// user was away, and what clicking it does (the page opens its Recent tab).
 #[derive(Clone)]
 pub struct CatchUp {
     pub text: SharedString,
-    pub open: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub open: CatchUpOpen,
 }
 
 impl std::fmt::Debug for CatchUp {
