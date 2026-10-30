@@ -294,12 +294,15 @@ mod system {
         }
     }
 
+    /// A notification center and the token of the observer added to it.
+    type Watch = (
+        Retained<NSNotificationCenter>,
+        Retained<ProtocolObject<dyn NSObjectProtocol>>,
+    );
+
     /// Removes the observers when dropped.
     struct FontObserver {
-        observers: [(
-            Retained<NSNotificationCenter>,
-            Retained<ProtocolObject<dyn NSObjectProtocol>>,
-        ); 2],
+        observers: [Watch; 2],
     }
 
     impl Drop for FontObserver {
