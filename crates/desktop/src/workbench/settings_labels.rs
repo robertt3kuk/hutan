@@ -1304,7 +1304,7 @@ const FIELDS: &[FieldText] = &[
         "assistant",
         "rail_tab",
         "Today tab",
-        "The tab of the Today column that is open: Now (the board of every agent: what needs you, failed, ready for review, working, idle) or Memory (what waits for you in Mawas's memory and its latest entries). The column opens on the one you left.",
+        "The tab of the Today column that is open: Now (the board of every agent: requests, failed, ready for review, working, idle) or Memory (what waits for you in Mawas's memory and its latest entries). The column opens on the one you left.",
         &[("now", "Now"), ("memory", "Memory")],
     ),
     choice(

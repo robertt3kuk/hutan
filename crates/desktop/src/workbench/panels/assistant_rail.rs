@@ -448,7 +448,7 @@ impl AssistantPanel {
             .into_any_element()
     }
 
-    /// The tab strip: **Now** with the number of sessions that need you, **Memory** with the
+    /// The tab strip: **Now** with the number of sessions with a request, **Memory** with the
     /// number of proposals that wait.
     fn render_rail_tabs(
         &self,

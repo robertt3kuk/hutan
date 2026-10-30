@@ -2210,7 +2210,7 @@ pub struct AssistantSettings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RailTab {
-    /// The board: what needs you, failed, ready for review, working, idle.
+    /// The board: requests, failed, ready for review, working, idle.
     #[default]
     Now,
     /// Mawas's memory: proposals that wait for you and the latest entries.

@@ -850,8 +850,8 @@ mod audit {
         ),
         (
             "desktop/src/workbench/panels/assistant_rail.rs",
-            1,
-            "a Today row",
+            2,
+            "a Today row and a tab of the rail",
         ),
         (
             "desktop/src/workbench/panels/changes.rs",
