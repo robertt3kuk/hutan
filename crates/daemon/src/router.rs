@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::accounts::AccountService;
+use crate::agents_review::ReviewService;
 use crate::assistant::{AssistantService, Origin};
 use crate::bus::EventBus;
 use crate::checkpoints::turns::RestoreContext;
@@ -71,6 +72,7 @@ pub struct Services {
     pub ui: Arc<UiHub>,
     pub hooks: Arc<HooksService>,
     pub insight: Arc<InsightHub>,
+    pub review: Arc<ReviewService>,
     pub updates: Arc<UpdateService>,
     pub settings: Arc<SettingsService>,
     pub storage: hutan_storage::Storage,
@@ -100,6 +102,7 @@ pub struct Router {
     ui: Arc<UiHub>,
     hooks: Arc<HooksService>,
     insight: Arc<InsightHub>,
+    review: Arc<ReviewService>,
     updates: Arc<UpdateService>,
     settings: Arc<SettingsService>,
     storage: hutan_storage::Storage,
@@ -139,6 +142,7 @@ impl Router {
             ui: services.ui,
             hooks: services.hooks,
             insight: services.insight,
+            review: services.review,
             updates: services.updates,
             settings: services.settings,
             storage: services.storage,
@@ -421,6 +425,7 @@ impl Router {
             Request::AgentsBoard(req) => ok(&self.agents_board(req).await?),
             Request::AgentsActivity(req) => ok(&self.agents_activity(req).await?),
             Request::AgentsStats(req) => ok(&self.agents_stats(req).await?),
+            Request::AgentsReview(req) => ok(&self.review.review(req).await?),
             Request::AgentMeasureContext(req) => ok(&self.measure_context(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
@@ -1161,6 +1166,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentsActivity(_) => ("agents.activity", Read),
         // Flow statistics (protocol 0.66): read-only, from what the daemon records.
         Request::AgentsStats(_) => ("agents.stats", Read),
+        // What an agent did in one turn (protocol 0.66): read-only, redacted, bounded.
+        Request::AgentsReview(_) => ("agents.review", Read),
         Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.

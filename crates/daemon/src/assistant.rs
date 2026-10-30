@@ -15,10 +15,10 @@
 
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use hutan_core::agent::MessageRole;
-use hutan_core::{AgentEvent, AgentEventKind, SessionId, TerminalId, WorkspaceId};
+use hutan_core::{AgentEvent, AgentEventKind, SessionId, TerminalId, TurnId, WorkspaceId};
 use hutan_index::{Role, SessionTextQuery, Source};
 use hutan_protocol::account::{HARNESS_CLAUDE, HARNESS_OMP};
 use hutan_protocol::assistant::{
@@ -32,11 +32,13 @@ use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::history::HistorySearch;
 use hutan_protocol::messages::{SessionInfo, SessionListFilter, WorkspaceInfo, WorkspaceKind};
+use hutan_protocol::review::AgentsReviewRequest;
 use hutan_storage::Storage;
 use parking_lot::RwLock;
 use tokio::sync::Mutex;
 
 use crate::accounts::AccountService;
+use crate::agents_review::ReviewService;
 use crate::assistant_pick::{CATALOG_TIMEOUT, is_loopback_url, pick_assistant_model};
 use crate::chat::AGENT_CODEX;
 use crate::config::{AssistantSettings, ContextPermissions, gating_setting};
@@ -144,6 +146,8 @@ pub struct AssistantService {
     accounts: Arc<AccountService>,
     /// Two `assistant.open` of one scope at once must not create two defaults.
     open_lock: Mutex<()>,
+    /// `turn_review` attachments (protocol 0.66); set once the daemon has built it.
+    review: OnceLock<Arc<ReviewService>>,
 }
 
 /// What the session a message is sent in may read, and where.
@@ -179,7 +183,14 @@ impl AssistantService {
             storage,
             accounts,
             open_lock: Mutex::new(()),
+            review: OnceLock::new(),
         })
+    }
+
+    /// The review service `turn_review` attachments are read through; it needs the language
+    /// servers, which start after the assistants.
+    pub fn set_review(&self, review: Arc<ReviewService>) {
+        let _ = self.review.set(review);
     }
 
     pub fn settings(&self) -> AssistantSettings {
@@ -851,6 +862,10 @@ impl AssistantService {
             } => resolve_image(&access.roots, path.as_deref(), data_base64.as_deref()).await,
             Attachment::PastedText { text } => Ok(pasted_text_part(text, share)),
             Attachment::Search { query, limit } => self.search(query, *limit, share).await,
+            Attachment::TurnReview {
+                session_id,
+                turn_id,
+            } => self.turn_review(*session_id, *turn_id, share).await,
         }
     }
 
@@ -1066,6 +1081,45 @@ impl AssistantService {
             Keep::Start,
             true,
             false,
+        ))
+    }
+
+    /// `turn_review` (protocol 0.66): the packet of `agents.review` as text, redacted again and
+    /// cut to the share like any attachment.
+    async fn turn_review(
+        &self,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        share: usize,
+    ) -> Result<Part, ErrorBody> {
+        let review = self
+            .review
+            .get()
+            .ok_or_else(|| error(ErrorCode::Internal, "the review service is not running"))?
+            .review(AgentsReviewRequest {
+                session_id,
+                turn_id,
+            })
+            .await?;
+        let description = match &review.turn {
+            Some(turn) => format!(
+                "{} · turn {} {}",
+                one_line(&review.title),
+                turn.number,
+                turn.status.as_str()
+            ),
+            None => format!("{} · no turns recorded", one_line(&review.title)),
+        };
+        let body = redact_and_bound(&review.text(), share, Keep::Start);
+        let truncated = body.truncated;
+        Ok(Part::new(
+            AttachmentKind::TurnReview,
+            &review.title,
+            &description,
+            body,
+            Keep::Start,
+            true,
+            truncated,
         ))
     }
 }

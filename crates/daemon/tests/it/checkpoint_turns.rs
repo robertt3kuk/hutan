@@ -661,7 +661,7 @@ pub(crate) fn held_turns(dir: &Path, gates: &[PathBuf]) -> PathBuf {
 }
 
 /// A recorded fixture with a hold after `turn/started`.
-fn held_fixture(dir: &Path, name: &str, gate: &Path) -> PathBuf {
+pub(crate) fn held_fixture(dir: &Path, name: &str, gate: &Path) -> PathBuf {
     let real = fs::read_to_string(fixtures().join(format!("{name}.jsonl"))).unwrap();
     let mut out = Vec::new();
     for line in real.lines() {

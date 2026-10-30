@@ -533,6 +533,18 @@ impl Chat<'_> {
             .read(move |conn| sql::chat_items_of_kind(conn, session, &kind, limit))
     }
 
+    /// The first `limit` events of one turn, oldest first (what a review of the turn reads).
+    pub fn items_of_turn(
+        &self,
+        session: SessionId,
+        turn: &str,
+        limit: u32,
+    ) -> Result<Vec<ChatItemRow>> {
+        let turn = turn.to_owned();
+        self.0
+            .read(move |conn| sql::chat_items_of_turn(conn, session, &turn, limit))
+    }
+
     /// The highest journaled `seq`; 0 when nothing was journaled.
     pub fn last_seq(&self, session: SessionId) -> Result<u64> {
         self.0.read(move |conn| sql::chat_last_seq(conn, session))

@@ -140,6 +140,7 @@ fn tag(kind: AttachmentKind) -> &'static str {
         AttachmentKind::Image => "image",
         AttachmentKind::PastedText => "pasted text",
         AttachmentKind::Search => "search",
+        AttachmentKind::TurnReview => "review",
     }
 }
 
@@ -468,6 +469,8 @@ pub fn check_bounds(attachment: &Attachment) -> Result<(), String> {
                 Ok(())
             }
         }
+        // A session and a turn id: whether they exist is the review's own answer.
+        Attachment::TurnReview { .. } => Ok(()),
     }
 }
 

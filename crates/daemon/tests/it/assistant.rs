@@ -734,6 +734,113 @@ async fn attachments_are_resolved_journaled_and_sent_and_nothing_else_is() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_turn_review_is_attached_as_text_journaled_and_redacted() {
+    let mut env = Env::start("", false, true).await;
+    let work = env.work.clone();
+    let project = env.project("proj", &work).await;
+    let assistant = env
+        .open(AssistantScope::Workspace, Some(project.id), false)
+        .await;
+    // The conversation to review: a direct chat's one turn, with a key in the question.
+    let earlier = env
+        .open(AssistantScope::Workspace, Some(project.id), true)
+        .await;
+    env.mock.route(
+        "POST",
+        PATH,
+        reply(&format!("earlier answer about pangolins, key {SECRET}")),
+    );
+    env.ask(earlier.id, "earlier question about pangolins", vec![])
+        .await;
+    env.mock.set_route("POST", PATH, reply("noted"));
+
+    let events = env
+        .ask(
+            assistant.id,
+            "was that turn fine?",
+            vec![Attachment::TurnReview {
+                session_id: earlier.id,
+                turn_id: None,
+            }],
+        )
+        .await;
+    let text = user_text(&events);
+    assert!(
+        text.starts_with("was that turn fine?\n\n--- attached context"),
+        "{text}"
+    );
+    for part in [
+        "[review: ",
+        " · turn 1 completed]",
+        "Prompt:\nearlier question about pangolins",
+        "Agent's final message (its own words, not evidence):\nearlier answer about pangolins",
+        "Commands (0):",
+        "Signals are heuristics that point at evidence; none is a verdict.",
+        // A direct chat has no checkpoint and no file tools: said, not guessed.
+        "Not recorded:",
+        "files changed in the turn",
+    ] {
+        assert!(text.contains(part), "missing {part:?} in\n{text}");
+    }
+    assert!(!text.contains(SECRET) && !text.contains("sk-abc"), "{text}");
+    let meta = attachments_meta(user_event(&events));
+    assert_eq!(meta.len(), 1);
+    assert_eq!(meta[0].kind, AttachmentKind::TurnReview);
+    assert!(meta[0].chars > 0 && !meta[0].truncated, "{meta:?}");
+
+    // A session that does not exist is not found; a shell is no agent.
+    let missing = env
+        .send(
+            assistant.id,
+            "x",
+            vec![Attachment::TurnReview {
+                session_id: SessionId::new(),
+                turn_id: None,
+            }],
+        )
+        .await;
+    assert_eq!(error_of(missing).await.0, ErrorCode::NotFound);
+    let shell = create_in(&env.client, Some(project.id), sh("exec cat")).await;
+    let not_an_agent = env
+        .send(
+            assistant.id,
+            "x",
+            vec![Attachment::TurnReview {
+                session_id: shell.id,
+                turn_id: None,
+            }],
+        )
+        .await;
+    assert_eq!(error_of(not_an_agent).await.0, ErrorCode::BadRequest);
+    env.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_review_follows_the_agents_setting() {
+    let env = Env::start("\n[assistant.context]\nagents = false\n", false, true).await;
+    let work = env.work.clone();
+    let project = env.project("proj", &work).await;
+    let assistant = env
+        .open(AssistantScope::Workspace, Some(project.id), false)
+        .await;
+    let refused = env
+        .send(
+            assistant.id,
+            "q",
+            vec![Attachment::TurnReview {
+                session_id: assistant.id,
+                turn_id: None,
+            }],
+        )
+        .await;
+    let (code, message) = error_of(refused).await;
+    assert_eq!(code, ErrorCode::Forbidden);
+    assert!(message.contains("assistant.context.agents"), "{message}");
+    assert!(env.journal(assistant.id).await.is_empty());
+    env.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_transcript_of_another_tool_comes_from_the_index() {
     let mut env = Env::start("", true, true).await;
     let id = "5f3e1c1a-8d51-4a7e-9c0d-1b2c3d4e5f60";

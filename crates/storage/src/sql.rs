@@ -914,6 +914,40 @@ pub fn chat_items_of_kind(
     Ok(items)
 }
 
+/// The first `limit` events of the turn `turn`, oldest first.
+pub fn chat_items_of_turn(
+    conn: &Connection,
+    session: SessionId,
+    turn: &str,
+    limit: u32,
+) -> Result<Vec<ChatItemRow>> {
+    let context = "reading the events of a chat turn";
+    let mut stmt = conn
+        .prepare(
+            "SELECT seq, ts_ms, turn_id, item_id, kind, event_json FROM chat_items \
+             WHERE session_id = ?1 AND turn_id = ?2 ORDER BY seq ASC LIMIT ?3",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map(
+            params![session.to_string(), turn, i64::from(limit)],
+            |row| {
+                Ok(ChatItemRow {
+                    session_id: session,
+                    seq: unms(row.get(0)?),
+                    ts_ms: unms(row.get(1)?),
+                    turn_id: row.get(2)?,
+                    item_id: row.get(3)?,
+                    kind: row.get(4)?,
+                    event_json: row.get(5)?,
+                })
+            },
+        )
+        .map_err(StorageError::sqlite(context))?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(StorageError::sqlite(context))
+}
+
 /// The newest `limit` events of one `kind` with `seq <= through_seq`, oldest first (what a fork
 /// reads of the prefix it keeps).
 pub fn chat_items_of_kind_through(

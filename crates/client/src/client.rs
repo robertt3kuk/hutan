@@ -252,6 +252,8 @@ pub(crate) const AGENTS_BOARD_CAPABILITY: &str = "agents.board";
 pub(crate) const AGENTS_ACTIVITY_CAPABILITY: &str = "agents.activity";
 /// Capability for `agents.stats` (protocol 0.66).
 pub(crate) const AGENTS_STATS_CAPABILITY: &str = "agents.stats";
+/// Capability for `agents.review` and the `turn_review` attachment (protocol 0.67).
+pub(crate) const AGENTS_REVIEW_CAPABILITY: &str = "agents.review";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -319,6 +321,7 @@ const CAPABILITIES: &[&str] = &[
     AGENTS_BOARD_CAPABILITY,
     AGENTS_ACTIVITY_CAPABILITY,
     AGENTS_STATS_CAPABILITY,
+    AGENTS_REVIEW_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -676,6 +679,22 @@ impl Client {
         request: hutan_protocol::board::AgentsBoardRequest,
     ) -> Result<hutan_protocol::board::AgentsBoard, ClientError> {
         self.call(Request::AgentsBoard(request)).await
+    }
+
+    /// True when the daemon advertised capability `agents.review` (protocol 0.66).
+    pub fn supports_agents_review(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENTS_REVIEW_CAPABILITY)
+    }
+
+    /// `agents.review`: what an agent did in one turn (the last finished one by default).
+    pub async fn agents_review(
+        &self,
+        request: hutan_protocol::review::AgentsReviewRequest,
+    ) -> Result<hutan_protocol::review::TurnReview, ClientError> {
+        self.call(Request::AgentsReview(request)).await
     }
 
     /// True when the daemon advertised capability `agent.insight` (protocol 0.59).

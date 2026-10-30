@@ -492,6 +492,10 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         shutdown: shutdown.clone(),
     })
     .map_err(DaemonError::Lsp)?;
+    // `agents.review`, and the `turn_review` attachment the assistants resolve through it.
+    let review =
+        crate::agents_review::ReviewService::new(registry.clone(), storage.clone(), lsp.clone());
+    assistant.set_review(review.clone());
     let resources = ResourceService::new(
         registry.clone(),
         hub.clone(),
@@ -592,6 +596,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             ui,
             hooks,
             insight,
+            review,
             updates,
             settings: settings_service,
             storage: storage.clone(),

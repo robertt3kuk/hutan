@@ -1938,6 +1938,42 @@ fn chat_events_can_be_read_by_kind() {
     storage.close();
 }
 
+#[test]
+fn the_events_of_one_turn_are_read_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let id = chat_session(&storage);
+    for (seq, turn) in [
+        (1, "turn-1"),
+        (2, "turn-1"),
+        (3, "turn-2"),
+        (4, "turn-2"),
+        (5, "turn-2"),
+    ] {
+        let mut row = chat_item(id, seq, "tool_end");
+        row.turn_id = Some(turn.to_owned());
+        storage.chat().append(row).unwrap();
+    }
+    let seqs = |turn: &str, limit: u32| -> Vec<u64> {
+        storage
+            .chat()
+            .items_of_turn(id, turn, limit)
+            .unwrap()
+            .iter()
+            .map(|r| r.seq)
+            .collect()
+    };
+    assert_eq!(seqs("turn-2", 10), [3, 4, 5]);
+    assert_eq!(seqs("turn-1", 10), [1, 2]);
+    assert_eq!(
+        seqs("turn-2", 2),
+        [3, 4],
+        "the first events when there are more"
+    );
+    assert!(seqs("turn-9", 10).is_empty());
+    storage.close();
+}
+
 fn provider(id: &str, created: u64) -> ProviderRow {
     ProviderRow {
         id: id.to_owned(),

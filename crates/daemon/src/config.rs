@@ -467,7 +467,7 @@ impl ContextPermissions {
     pub fn allows(self, kind: AttachmentKind) -> bool {
         match kind {
             AttachmentKind::ShellBlock | AttachmentKind::ShellRecent => self.shell,
-            AttachmentKind::AgentTranscript => self.agents,
+            AttachmentKind::AgentTranscript | AttachmentKind::TurnReview => self.agents,
             AttachmentKind::File | AttachmentKind::Image => self.files,
             AttachmentKind::PastedText => true,
             AttachmentKind::Search => self.search,
@@ -479,7 +479,7 @@ impl ContextPermissions {
 pub fn gating_setting(kind: AttachmentKind) -> &'static str {
     match kind {
         AttachmentKind::ShellBlock | AttachmentKind::ShellRecent => "shell",
-        AttachmentKind::AgentTranscript => "agents",
+        AttachmentKind::AgentTranscript | AttachmentKind::TurnReview => "agents",
         AttachmentKind::File | AttachmentKind::Image | AttachmentKind::PastedText => "files",
         AttachmentKind::Search => "search",
     }
