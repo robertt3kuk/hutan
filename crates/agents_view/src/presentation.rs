@@ -35,7 +35,9 @@ use hutan_core::{
     SessionId, SessionState, WorkspaceId,
 };
 use hutan_protocol::chat::{ApprovalInfo, ChatInfo, QuestionInfo};
-use hutan_protocol::messages::{AgentState, SessionInfo, WorkspaceInfo, WorkspaceKind};
+use hutan_protocol::messages::{
+    AgentState, SessionInfo, TerminalAgentState, WorkspaceInfo, WorkspaceKind,
+};
 use hutan_protocol::worktree::PlacementKind;
 
 use super::agents::{self, Filters, activity_text, display_name, usage_label};
@@ -948,9 +950,12 @@ impl Ctx<'_> {
             .or_else(|| info.agent.as_ref().map(|r| r.agent.clone()))
             .or_else(|| root.map(|n| n.agent.clone()))
             .unwrap_or_default();
-        let model_id = root
-            .and_then(|n| n.model.clone())
-            .or_else(|| chat.map(|c| c.model.clone()))
+        // A chat the daemon runs knows its model exactly (Switch model changes it); the
+        // observation tree's root keeps the model the harness started with.
+        let model_id = chat
+            .map(|c| c.model.clone())
+            .filter(|m| !m.trim().is_empty())
+            .or_else(|| root.and_then(|n| n.model.clone()))
             .filter(|m| !m.trim().is_empty());
         let model = model_id
             .as_deref()
@@ -1105,9 +1110,25 @@ impl Ctx<'_> {
             && let Some(outcome) = root.and_then(|n| n.outcome)
         {
             let state = State::of_outcome(outcome);
+            let mut detail = format!("The main agent {}", state.label().to_lowercase());
+            // Why it failed, in the agent's own words when it said (the sidebar shows the
+            // same): `The main agent failed: cargo test failed: 3 tests in parser::tests`.
+            if state == State::Failed
+                && let Some(message) = info
+                    .terminal_agent
+                    .as_ref()
+                    .filter(|agent| agent.state == TerminalAgentState::Error)
+                    .and_then(|agent| agent.message.as_deref())
+                    .or_else(|| info.agent.as_ref().and_then(|r| r.message.as_deref()))
+                    .map(str::trim)
+                    .filter(|message| !message.is_empty())
+            {
+                detail.push_str(": ");
+                detail.push_str(message);
+            }
             return reduced(
                 state,
-                format!("The main agent {}", state.label().to_lowercase()),
+                detail,
                 vec!["Observation: the main agent finished".to_owned()],
             );
         }
@@ -1944,6 +1965,59 @@ mod tests {
         assert_eq!(record.usage, None, "no counter was sent");
         assert_eq!(record.started_at_ms, None);
         assert_eq!(record.ended_at_ms, None);
+    }
+
+    #[test]
+    fn a_failed_terminal_agent_keeps_its_own_words_as_the_reason() {
+        let home = home();
+        let mut world = World::new(vec![home.clone()]);
+        let mut info = session(home.id, "perf-bench");
+        info.terminal_agent = Some(hutan_protocol::messages::TerminalAgent {
+            app: "omp".into(),
+            state: TerminalAgentState::Error,
+            kind: None,
+            message: Some("cargo test failed: 3 tests in parser::tests".into()),
+            since_ms: 5,
+            title: None,
+            source: hutan_protocol::messages::TerminalAgentSource::Osc,
+        });
+        let id = world.add(info);
+        let mut root = node("root", None, NodeState::Idle);
+        root.outcome = Some(NodeOutcome::Failed);
+        world.state.trees.insert(id, tree(id, vec![root]));
+        let record = &world.build().records[0];
+        assert_eq!(record.state, State::Failed);
+        assert_eq!(
+            record.detail,
+            "The main agent failed: cargo test failed: 3 tests in parser::tests"
+        );
+        // Without words of its own the reason stays what is known.
+        let mut quiet = World::new(vec![home.clone()]);
+        let id = quiet.add(session(home.id, "plain"));
+        let mut root = node("root", None, NodeState::Idle);
+        root.outcome = Some(NodeOutcome::Failed);
+        quiet.state.trees.insert(id, tree(id, vec![root]));
+        assert_eq!(quiet.build().records[0].detail, "The main agent failed");
+    }
+
+    #[test]
+    fn a_chats_model_is_the_one_it_runs_now_not_the_one_its_harness_started_with() {
+        let home = home();
+        let mut world = World::new(vec![home.clone()]);
+        let mut info = session(home.id, "Mawas");
+        info.kind = SessionKind::Harness;
+        let mut chat = chat("omp", true, true);
+        chat.model = "anthropic/claude-haiku-5-5".into();
+        info.chat = Some(chat);
+        let id = world.add(info);
+        let mut root = node("root", None, NodeState::Idle);
+        root.model = Some("anthropic/claude-sonnet-5-5".into());
+        world.state.trees.insert(id, tree(id, vec![root]));
+        let record = &world.build().records[0];
+        assert_eq!(
+            record.model_id.as_deref(),
+            Some("anthropic/claude-haiku-5-5")
+        );
     }
 
     #[test]
