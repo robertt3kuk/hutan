@@ -1132,6 +1132,10 @@ impl Workbench {
         if let Some(checkpoints) = self.checkpoints_menu_entry(session, cx) {
             entries.insert(entries.len() - 1, checkpoints);
         }
+        // What Mawas can check of the agent (AGENTS-REVIEW), after the checkpoints.
+        if let Some(review) = self.turn_review_entry(session, cx) {
+            entries.insert(entries.len() - 1, review);
+        }
         // After the openers, before Rename…: what the user can do to the queue.
         for (at, entry) in self.attention_entries(session, cx).into_iter().enumerate() {
             entries.insert(3 + at, entry);

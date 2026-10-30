@@ -13,9 +13,10 @@ use gpui::{
     ObjectFit, ParentElement, PathPromptOptions, SharedString, StatefulInteractiveElement, Styled,
     StyledImage as _, Window, div, img, prelude::*, px,
 };
-use hutan_protocol::assistant::AttachmentKind;
+use hutan_protocol::assistant::{Attachment, AttachmentKind};
+use hutan_protocol::review::AgentsReviewRequest;
 
-use super::context::{ContextChip, Thumb};
+use super::context::{ContextChip, Preview, Thumb};
 use super::markdown_view::Look;
 use super::rich::{chip_for_image_data, chip_for_path, chip_for_text, is_long_paste};
 use super::view::ChatView;
@@ -27,6 +28,8 @@ use crate::workbench::view::Region;
 
 /// Side of an image chip's thumbnail.
 const THUMB: f32 = 22.0;
+/// Tallest the open packet of a review chip grows before it scrolls.
+const REVIEW_MAX_HEIGHT: f32 = 360.0;
 /// Tallest the open text of a folded paste grows before it scrolls.
 const PASTE_MAX_HEIGHT: f32 = 160.0;
 /// Name of the group whose drag-over shows the drop overlay.
@@ -235,6 +238,54 @@ impl ChatView {
         .detach();
     }
 
+    /// Opens (or closes) the review chip `index`: opening asks the daemon for the packet and
+    /// shows its text under the chips — what `agents.review` says now, in the words the model
+    /// would be given. Nothing is sent to anyone.
+    pub(super) fn toggle_review(&mut self, index: usize, cx: &mut Context<Self>) {
+        let open = self
+            .model
+            .update(cx, |model, cx| model.toggle_review_open(index, cx));
+        if !open {
+            return;
+        }
+        let Some(Attachment::TurnReview {
+            session_id,
+            turn_id,
+        }) = self
+            .model
+            .read(cx)
+            .context()
+            .get(index)
+            .map(|chip| chip.attachment.clone())
+        else {
+            return;
+        };
+        let attachment = Attachment::TurnReview {
+            session_id,
+            turn_id,
+        };
+        let connection = self.sessions.read(cx).connection().clone();
+        cx.spawn(async move |this, cx| {
+            let answer = connection
+                .agents_review(AgentsReviewRequest {
+                    session_id,
+                    turn_id,
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let preview = match answer {
+                    Ok(packet) => Preview::Ready(packet.text()),
+                    Err(error) => Preview::Failed(error.to_string()),
+                };
+                this.model.update(cx, |model, cx| {
+                    model.set_context_preview(&attachment, preview, cx)
+                });
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// The thumbnail of an image chip, or the icon of the other kinds.
     fn chip_icon(&self, chip: &ContextChip, look: &Look) -> AnyElement {
         let theme = &look.theme;
@@ -279,7 +330,8 @@ impl ChatView {
                 let refusal = self.chip_refusal(chip, cx);
                 let refused = refusal.is_some();
                 let color = if refused { theme.danger } else { theme.accent };
-                let foldable = chip.kind() == AttachmentKind::PastedText;
+                let review = chip.kind() == AttachmentKind::TurnReview;
+                let foldable = review || chip.kind() == AttachmentKind::PastedText;
                 let open = chip.expanded;
                 let rich = matches!(
                     chip.kind(),
@@ -309,8 +361,13 @@ impl ChatView {
                     .when(foldable, |s| {
                         s.cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.model
-                                    .update(cx, |model, cx| model.toggle_context_open(index, cx));
+                                if review {
+                                    this.toggle_review(index, cx);
+                                } else {
+                                    this.model.update(cx, |model, cx| {
+                                        model.toggle_context_open(index, cx)
+                                    });
+                                }
                             }))
                     })
                     .when(rich, |s| s.child(self.chip_icon(chip, look)))
@@ -356,16 +413,28 @@ impl ChatView {
             .enumerate()
             .filter(|(_, chip)| chip.expanded)
             .filter_map(|(index, chip)| match &chip.attachment {
-                hutan_protocol::assistant::Attachment::PastedText { text } => Some((index, text)),
+                Attachment::PastedText { text } => Some((index, text.clone(), "paste")),
+                Attachment::TurnReview { .. } => {
+                    let text = match &chip.preview {
+                        Preview::Ready(text) => text.clone(),
+                        Preview::Failed(why) => format!("Could not read the review: {why}"),
+                        Preview::Loading | Preview::None => "Reading the review…".to_owned(),
+                    };
+                    Some((index, text, "review"))
+                }
                 _ => None,
             })
-            .map(|(index, text)| {
+            .map(|(index, text, part)| {
                 hutan_ui::scroll_y(
-                    SharedString::from(format!("chat-paste-scroll-{index}")),
+                    SharedString::from(format!("chat-{part}-scroll-{index}")),
                     div()
-                        .id(SharedString::from(format!("chat-paste-{index}")))
+                        .id(SharedString::from(format!("chat-{part}-{index}")))
                         .relative()
-                        .max_h(px(PASTE_MAX_HEIGHT))
+                        .max_h(px(if part == "review" {
+                            REVIEW_MAX_HEIGHT
+                        } else {
+                            PASTE_MAX_HEIGHT
+                        }))
                         .p(px(tokens.spacing * 2.0))
                         .rounded(px(tokens.radius))
                         .bg(theme.bg)
@@ -373,8 +442,8 @@ impl ChatView {
                         .border_color(theme.border)
                         .font_family(look.mono.clone())
                         .text_size(px(tokens.secondary_font_size))
-                        .child(SharedString::from(text.clone()))
-                        .child(probe(&self.regions, Region::Chat("paste"))),
+                        .child(SharedString::from(text))
+                        .child(probe(&self.regions, Region::Chat(part))),
                 )
                 .into_any_element()
             })

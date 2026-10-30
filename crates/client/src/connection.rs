@@ -1302,6 +1302,23 @@ impl Connection {
         client.agent_insight(session_id, node_id).await
     }
 
+    /// True while connected to a daemon that advertised capability `agents.review`
+    /// ([`Client::supports_agents_review`]); false when disconnected.
+    pub fn supports_agents_review(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_agents_review())
+    }
+
+    /// `agents.review` ([`Client::agents_review`]).
+    pub async fn agents_review(
+        &self,
+        request: hutan_protocol::review::AgentsReviewRequest,
+    ) -> Result<hutan_protocol::review::TurnReview, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agents_review(request).await
+    }
+
     /// `agent.measure_context` ([`Client::agent_measure_context`]).
     pub async fn agent_measure_context(
         &self,

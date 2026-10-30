@@ -2250,3 +2250,193 @@ fn the_flow_section_shows_the_waits_with_what_they_rest_on_and_analyse_fills_the
             .is_some_and(|c| c.turn_active)
     );
 }
+
+/// The chip of Mawas's composer that holds a `turn_review`, once there is one.
+fn review_chip(
+    model: &Entity<hutan_desktop::workbench::chat::ChatModel>,
+    cx: &VisualTestContext,
+) -> Option<hutan_desktop::workbench::chat::ContextChip> {
+    model.read_with(cx, |m, _| {
+        m.context()
+            .iter()
+            .find(|chip| chip.kind() == hutan_protocol::assistant::AttachmentKind::TurnReview)
+            .cloned()
+    })
+}
+
+#[gpui::test]
+fn review_this_turn_attaches_the_packet_to_mawas_without_sending_and_the_chip_opens_it(
+    cx: &mut TestAppContext,
+) {
+    use common::chat::ChatEnv;
+    use hutan_desktop::workbench::chat::{LoadStatus, Preview, ended_turns};
+    use hutan_protocol::assistant::Attachment;
+    use hutan_protocol::chat::{ChatSend, ChatSent};
+
+    let chat_env = ChatEnv::new();
+    let env = AssistantEnv::start(Options {
+        configured: true,
+        codex: Some(chat_env.fixture("plain-turn")),
+        ..Options::default()
+    });
+    let chat = env.daemon.create_chat(&chat_env.cwd());
+    let (view, cx) = open(cx, &env.daemon);
+    let panel = open_assistant(&view, cx);
+    let (mawas, mawas_model, _) = shown(&panel, cx);
+    let _: ChatSent = env.daemon.call(Request::ChatSend(ChatSend {
+        session_id: chat.id,
+        text: "ping".into(),
+        attachments: Vec::new(),
+    }));
+    view.update_in(cx, |wb, window, cx| wb.open_session(chat.id, window, cx));
+    wait_until(cx, "the chat to load", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(chat.id)
+                .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+        })
+    });
+    let model = view
+        .read_with(cx, |wb, _| wb.chat_model_of(chat.id))
+        .unwrap();
+    let mut turn = None;
+    pump_until(cx, "the turn to end", |cx| {
+        turn = model.read_with(cx, |m, _| {
+            ended_turns(m.transcript(), false).first().map(|t| t.turn)
+        });
+        turn.is_some()
+    });
+    let turn = turn.unwrap();
+    assert!(
+        review_chip(&mawas_model, cx).is_none(),
+        "nothing attached yet"
+    );
+
+    // *Review* sits on the turn's footer.
+    let mut button = None;
+    pump_until(cx, "the Review button of the footer", |cx| {
+        draw(cx);
+        button = (0..64)
+            .find_map(|n| view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatReview(n))));
+        button.is_some()
+    });
+    common::click_at(cx, button.unwrap().center());
+
+    // It attaches the turn's review to Mawas's composer — and sends nothing.
+    pump_until(cx, "the chip on Mawas's composer", |cx| {
+        review_chip(&mawas_model, cx).is_some()
+    });
+    let chip = review_chip(&mawas_model, cx).unwrap();
+    assert_eq!(
+        chip.attachment,
+        Attachment::TurnReview {
+            session_id: chat.id,
+            turn_id: Some(turn),
+        }
+    );
+    assert!(chip.label().starts_with("review · "), "{}", chip.label());
+    assert_eq!(
+        chip.preview,
+        Preview::None,
+        "nothing is read until it is opened"
+    );
+    assert!(
+        mawas_model.read_with(cx, |m, _| m.transcript().entries().is_empty()),
+        "Mawas was sent nothing"
+    );
+    assert_eq!(env.mock.requests_to(PATH).len(), 0, "no model was called");
+    let _ = mawas;
+
+    // Mawas Home is shown with the chip; opening it reads the packet and shows its text.
+    let chip_at = drawn(&view, cx, Region::ChatContextChip(0));
+    common::click_at(cx, chip_at.center());
+    pump_until(cx, "the packet's text", |cx| {
+        matches!(
+            review_chip(&mawas_model, cx).map(|c| c.preview),
+            Some(Preview::Ready(_))
+        )
+    });
+    let Some(Preview::Ready(text)) = review_chip(&mawas_model, cx).map(|c| c.preview) else {
+        unreachable!()
+    };
+    for part in [
+        "Review of ",
+        "Turn 1 completed",
+        "Prompt:",
+        "Signals are heuristics",
+        "Not recorded:",
+    ] {
+        assert!(text.contains(part), "missing {part:?} in\n{text}");
+    }
+    drawn(&view, cx, Region::Chat("review"));
+    assert_eq!(
+        env.mock.requests_to(PATH).len(),
+        0,
+        "opening it sent nothing either"
+    );
+
+    // Closing it hides the text again (the composer grows upward while it is open, so the chip
+    // has moved: ask where it is now).
+    let chip_at = drawn(&view, cx, Region::ChatContextChip(0));
+    common::click_at(cx, chip_at.center());
+    pump_until(cx, "the packet's text to close", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("review")))
+            .is_none()
+    });
+}
+
+#[gpui::test]
+fn a_terminal_agent_is_reviewed_from_its_menu_entry_and_the_chip_says_what_is_not_recorded(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::chat::Preview;
+
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    let panel = open_assistant(&view, cx);
+    let (_, mawas_model, _) = shown(&panel, cx);
+    let agent = reported_agent(&env);
+
+    // The entry of the session menus dispatches this action (a terminal agent has no turns:
+    // none is named).
+    wait_until(cx, "the agent to be known to the window", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .session(agent.id)
+                .is_some_and(|s| s.agent.is_some())
+        })
+    });
+    cx.dispatch_action(actions::ReviewTurn(actions::ReviewAt {
+        session: agent.id,
+        turn: None,
+        number: None,
+    }));
+    pump_until(cx, "the chip", |cx| review_chip(&mawas_model, cx).is_some());
+    let chip = review_chip(&mawas_model, cx).unwrap();
+    assert!(
+        chip.label().ends_with("last finished turn"),
+        "{}",
+        chip.label()
+    );
+
+    let chip_at = drawn(&view, cx, Region::ChatContextChip(0));
+    common::click_at(cx, chip_at.center());
+    pump_until(cx, "the packet's text", |cx| {
+        matches!(
+            review_chip(&mawas_model, cx).map(|c| c.preview),
+            Some(Preview::Ready(_))
+        )
+    });
+    let Some(Preview::Ready(text)) = review_chip(&mawas_model, cx).map(|c| c.preview) else {
+        unreachable!()
+    };
+    for part in [
+        "a terminal agent's hook report",
+        "Reported state: working",
+        "Not recorded:",
+        "a terminal agent has no journal",
+    ] {
+        assert!(text.contains(part), "missing {part:?} in\n{text}");
+    }
+}

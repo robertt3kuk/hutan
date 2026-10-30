@@ -564,6 +564,9 @@ pub enum Region {
     ChatCheckpoint(usize),
     /// The *Fork…* of the footer of chat entry `index` (CHAT-FORK-B).
     ChatFork(usize),
+    /// The *Review* of the footer of chat entry `index` (AGENTS-REVIEW): it attaches the turn's
+    /// review packet to Mawas's composer.
+    ChatReview(usize),
     /// A control of the hover bar of the user message of chat entry `index`: `bar`, `copy`,
     /// `fork`, `rewind`.
     ChatMessageAction(usize, &'static str),

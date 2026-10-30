@@ -65,6 +65,18 @@ pub struct ContextChip {
     pub thumb: Option<Thumb>,
     /// A folded paste is open (its text is shown under the chips).
     pub expanded: bool,
+    /// The readable text of a review chip once it was opened (protocol 0.66).
+    pub preview: Preview,
+}
+
+/// The text a review chip shows when opened: fetched from the daemon (`agents.review`) the
+/// first time, so a chip costs nothing until someone looks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Preview {
+    None,
+    Loading,
+    Ready(String),
+    Failed(String),
 }
 
 /// What an image chip shows as its thumbnail.
@@ -106,6 +118,7 @@ impl ContextChip {
             refused: None,
             thumb: None,
             expanded: false,
+            preview: Preview::None,
         }
     }
 
@@ -206,6 +219,30 @@ impl ContextChip {
         )
     }
 
+    /// The review packet of one turn of the agent `session` (protocol 0.66): `turn` is the
+    /// turn, `number` its place among the chat's turns when the footer knows it; without a
+    /// turn it is the last finished one. Clicking the chip opens the packet's text.
+    pub fn review(
+        title: &str,
+        session: hutan_core::SessionId,
+        turn: Option<hutan_core::TurnId>,
+        number: Option<u32>,
+    ) -> Self {
+        let bounds = match (turn, number) {
+            (_, Some(number)) => format!("turn {number}"),
+            (Some(_), None) => "one turn".to_owned(),
+            (None, None) => "last finished turn".to_owned(),
+        };
+        Self::new(
+            Attachment::TurnReview {
+                session_id: session,
+                turn_id: turn,
+            },
+            shorten(title, COMMAND_CHARS),
+            bounds,
+        )
+    }
+
     pub fn kind(&self) -> AttachmentKind {
         self.attachment.kind()
     }
@@ -251,6 +288,7 @@ pub fn kind_label(kind: AttachmentKind) -> &'static str {
         AttachmentKind::Image => "image",
         AttachmentKind::PastedText => "pasted text",
         AttachmentKind::Search => "search",
+        AttachmentKind::TurnReview => "review",
     }
 }
 
@@ -285,7 +323,7 @@ pub fn meta_text(meta: &AttachmentMeta) -> String {
 pub fn gating_setting(kind: AttachmentKind) -> &'static str {
     match kind {
         AttachmentKind::ShellBlock | AttachmentKind::ShellRecent => "shell",
-        AttachmentKind::AgentTranscript => "agents",
+        AttachmentKind::AgentTranscript | AttachmentKind::TurnReview => "agents",
         AttachmentKind::File | AttachmentKind::Image | AttachmentKind::PastedText => "files",
         AttachmentKind::Search => "search",
     }
@@ -638,6 +676,32 @@ mod tests {
         assert!(!refused_by(
             "assistant.context.files",
             AttachmentKind::Search
+        ));
+    }
+
+    #[test]
+    fn a_review_chip_names_the_agent_and_the_turn_and_is_gated_like_a_transcript() {
+        use hutan_core::{SessionId, TurnId};
+        let (session, turn) = (SessionId::new(), TurnId::new());
+        assert_eq!(
+            ContextChip::review("api server", session, Some(turn), Some(3)).label(),
+            "review · api server · turn 3"
+        );
+        assert_eq!(
+            ContextChip::review("api server", session, None, None).label(),
+            "review · api server · last finished turn"
+        );
+        assert_eq!(
+            ContextChip::review("api", session, Some(turn), None).bounds,
+            "one turn"
+        );
+        assert!(refused_by(
+            "assistant.context.agents",
+            AttachmentKind::TurnReview
+        ));
+        assert!(!refused_by(
+            "assistant.context.files",
+            AttachmentKind::TurnReview
         ));
     }
 

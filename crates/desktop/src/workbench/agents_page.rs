@@ -142,6 +142,9 @@ impl Workbench {
         // Agents page → session ⋯ → Checkpoints… (CK-5): each turn that changed files, with
         // its Rewind….
         entries.extend(self.checkpoints_menu_entry(session, cx));
+        // Agents page → session ⋯ → Review with Mawas (AGENTS-REVIEW): the last finished turn
+        // (or, for a terminal agent, what it reports) becomes a chip of Mawas's composer.
+        entries.extend(self.turn_review_entry(session, cx));
         entries.push(Self::entry("Copy session ID", move |this, _, cx| {
             this.copy_session_id(session, cx);
         }));

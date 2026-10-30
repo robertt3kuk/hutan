@@ -1161,6 +1161,9 @@ impl Workbench {
         .on_action(cx.listener(|this, a: &actions::ForkChat, window, cx| {
             this.show_fork_popover(a.0.session, a.0.turn, a.0.position, window, cx);
         }))
+        .on_action(cx.listener(|this, a: &actions::ReviewTurn, window, cx| {
+            this.review_turn_with_mawas(a.0, window, cx);
+        }))
         .on_action(
             cx.listener(|this, a: &actions::ForkSessionLatest, window, cx| {
                 if let Ok(id) = a.0.session.parse() {

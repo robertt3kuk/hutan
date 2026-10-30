@@ -381,6 +381,15 @@ pub struct ForkAt {
     pub position: gpui::Point<gpui::Pixels>,
 }
 
+/// The turn of an agent *Review this turn* attaches to Mawas's composer (AGENTS-REVIEW).
+/// `turn: None` is the last finished turn; `number` is the turn's place when the footer knows it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ReviewAt {
+    pub session: hutan_core::SessionId,
+    pub turn: Option<hutan_core::TurnId>,
+    pub number: Option<u32>,
+}
+
 /// What a "▶ Start" button opens the Start… sheet with.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct LauncherOpen {
@@ -449,6 +458,9 @@ data_actions! {
     UndoRestore(CheckpointAt);
     /// Open the Fork popover of a chat turn (the turn footer's and the message bar's *Fork…*).
     ForkChat(ForkAt);
+    /// *Review this turn* (the turn footer's button, the session menus' entry): the review
+    /// packet of the turn becomes a chip of Mawas's composer; nothing is sent.
+    ReviewTurn(ReviewAt);
     /// The sidebar row's ⑂: fork the chat at its latest turn (the popover opens by the row
     /// when a choice is needed).
     ForkSessionLatest(SessionMenuAt);

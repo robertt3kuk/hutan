@@ -649,6 +649,91 @@ impl Workbench {
         });
     }
 
+    /// *Review this turn* (AGENTS-REVIEW): the review packet of `turn` of `session` — the last
+    /// finished turn without one — becomes a chip of the composer of Mawas (the Global chat, or
+    /// the workspace's with `follow_workspace`), which is shown with the keyboard in it. Nothing
+    /// is sent: the user reads the packet by opening the chip, and asks their question.
+    pub(crate) fn review_turn_with_mawas(
+        &mut self,
+        at: actions::ReviewAt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.assistant_enabled() {
+            return;
+        }
+        let (title, key) = {
+            let store = self.sessions.read(cx);
+            if !store.connection().supports_agents_review() {
+                return;
+            }
+            let Some(info) = store.session(at.session) else {
+                return;
+            };
+            let key = if self
+                .settings
+                .get::<crate::settings::AssistantSettings>()
+                .home_scope
+                == crate::settings::HomeScope::Global
+            {
+                ScopeKey::Global
+            } else {
+                store
+                    .workspace(info.workspace_id)
+                    .map_or(ScopeKey::Global, ScopeKey::of)
+            };
+            (info.title.clone(), key)
+        };
+        let chip = ContextChip::review(&title, at.session, at.turn, at.number);
+        let Some(panel) = self.assistant_panel(window, cx) else {
+            return;
+        };
+        self.assistant_last = true;
+        panel.update(cx, |panel, cx| {
+            panel.attach_to_scope(key, chip, cx);
+            panel.focus_composer(cx);
+        });
+    }
+
+    /// The session menus' line *Review Last Turn with Mawas* (AGENTS-REVIEW): for an agent's
+    /// chat the last finished turn; for a terminal agent, which has no turns, what it reports
+    /// and what is not recorded. Nothing for Mawas's own chats, for plain shells, without the
+    /// daemon's capability and with Mawas off.
+    pub(crate) fn turn_review_entry(
+        &self,
+        session: SessionId,
+        cx: &gpui::App,
+    ) -> Option<MenuEntry> {
+        if !self.assistant_enabled() {
+            return None;
+        }
+        let store = self.sessions.read(cx);
+        if !store.connection().supports_agents_review() || !store.connection().supports_assistant()
+        {
+            return None;
+        }
+        let info = store.session(session)?;
+        let label = match &info.chat {
+            Some(chat) if chat.is_assistant() => return None,
+            Some(_) => "Review Last Turn with Mawas",
+            None if info.agent.is_some() || info.terminal_agent.is_some() => {
+                "Review with Mawas (what it reports)"
+            }
+            None => return None,
+        };
+        Some(Self::entry(label, move |this, window, cx| {
+            this.review_turn_with_mawas(
+                actions::ReviewAt {
+                    session,
+                    turn: None,
+                    number: None,
+                },
+                window,
+                cx,
+            );
+        }))
+    }
+
     /// What the terminal view knows of block `block`: its command and exit code.
     pub(crate) fn block_facts(
         &self,

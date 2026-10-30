@@ -19,6 +19,7 @@ mod question;
 mod question_card;
 mod queue_view;
 mod retry;
+mod review_turn;
 mod rewind;
 mod rich;
 mod rich_view;
@@ -29,7 +30,7 @@ pub(crate) mod widgets;
 pub(crate) use cards::{RowFlow, counts_of, diff_row, diff_row_flow};
 pub use chip::{Chip, cut_to};
 pub use context::{
-    ContextChip, DEFAULT_HITS, DEFAULT_LINES, DEFAULT_TURNS, Mention, MentionKind, Thumb,
+    ContextChip, DEFAULT_HITS, DEFAULT_LINES, DEFAULT_TURNS, Mention, MentionKind, Preview, Thumb,
     find_mention, is_gateway_chat, is_harness_chat, kind_label, parse_file_arg, split_context,
 };
 pub use fork::{EndedTurn, ended_turns};

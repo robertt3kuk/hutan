@@ -523,6 +523,38 @@ impl ChatModel {
         }
     }
 
+    /// Opens a review chip (or closes it). Opening starts its text from scratch: it is what the
+    /// daemon says now. Returns whether the chip is open, for the caller that must fetch it.
+    pub fn toggle_review_open(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
+        let Some(chip) = self.context.get_mut(index) else {
+            return false;
+        };
+        chip.expanded = !chip.expanded;
+        if chip.expanded {
+            chip.preview = super::context::Preview::Loading;
+        }
+        let open = chip.expanded;
+        cx.notify();
+        open
+    }
+
+    /// The text a review chip shows when open: what `agents.review` answered for `attachment`.
+    pub fn set_context_preview(
+        &mut self,
+        attachment: &hutan_protocol::assistant::Attachment,
+        preview: super::context::Preview,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(chip) = self
+            .context
+            .iter_mut()
+            .find(|chip| &chip.attachment == attachment)
+        {
+            chip.preview = preview;
+            cx.notify();
+        }
+    }
+
     /// Whether the draft has structured attachments.
     pub fn has_context(&self) -> bool {
         !self.context.is_empty()

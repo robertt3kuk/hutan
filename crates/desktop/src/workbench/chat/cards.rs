@@ -189,8 +189,8 @@ impl ChatView {
                 let retry = failed
                     .and_then(|(message, at)| self.footer_retry(index, &message, at, &look, cx));
                 // The files the turn changed, with Rewind… (CK-5).
-                let fork = self.fork_button(index, turn, &look, cx);
-                let files = self.checkpoint_footer(index, turn, fork, &look, cx);
+                let turn_actions = self.turn_actions(index, turn, &look, cx);
+                let files = self.checkpoint_footer(index, turn, turn_actions, &look, cx);
                 match (card, files) {
                     // A turn that simply completed says so on its cards and in the status line;
                     // its footer is drawn only for what nothing else says (usage, a failure,
