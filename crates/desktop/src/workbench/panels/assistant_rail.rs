@@ -482,9 +482,17 @@ impl AssistantPanel {
                 s.flex_none()
                     .w(px(width))
                     .bg(theme.surface)
-                    .when_some(rail_edge(&theme), |s, edge| {
-                        s.border_l_1().border_color(edge)
-                    })
+                    // Drawn over the rail's first pixel column, not as a border: the rail's
+                    // width (and the page beside it) stays what the setting says.
+                    .children(rail_edge(&theme).map(|edge| {
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left_0()
+                            .w(px(1.0))
+                            .bg(edge)
+                    }))
             })
             .when(full, |s| s.flex_1().min_w_0())
             .child(self.render_rail_tabs(tab, &today, look, cx))
