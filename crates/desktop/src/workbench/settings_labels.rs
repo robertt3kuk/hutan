@@ -1565,7 +1565,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "notify.digest_hours",
         "Notify me after being away",
-        "After this many hours with no Hutan window active, and only if something needs you (a request that waits, a failed turn or task, work sent to review), Hutan shows one quiet notification with the same line as Catch up on Mawas Home. At most one per period; no model is asked. 0 switches it off (the default).",
+        "After this many hours with no Hutan window active, and only if something waits for you (a request that waits for an answer, a failed turn or task, work sent to review), Hutan shows one quiet notification with the same line as Catch up on Mawas Home. At most one per period; no model is asked. 0 switches it off (the default).",
     ),
     field(
         "daemon",
