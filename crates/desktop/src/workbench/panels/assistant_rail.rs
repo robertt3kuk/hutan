@@ -474,9 +474,18 @@ impl AssistantPanel {
             .flex()
             .flex_col()
             .h_full()
-            // The rail is a card: a `surface` fill and no hairline. As a page of its own it is
-            // the page's background.
-            .when(!full, |s| s.flex_none().w(px(width)).bg(theme.surface))
+            // The rail is a card: a `surface` fill. On a light pack that fill is 1.05:1 against
+            // the page, so its left edge carries the cards' hairline (`Theme::card_edge`); on a
+            // dark pack the fill alone separates it. As a page of its own it is the page's
+            // background.
+            .when(!full, |s| {
+                s.flex_none()
+                    .w(px(width))
+                    .bg(theme.surface)
+                    .when_some(rail_edge(&theme), |s, edge| {
+                        s.border_l_1().border_color(edge)
+                    })
+            })
             .when(full, |s| s.flex_1().min_w_0())
             .child(self.render_rail_tabs(tab, &today, look, cx))
             .child(body)
@@ -1768,6 +1777,12 @@ fn recent_summary_lines(s: &ActivitySummary) -> Vec<String> {
     lines
 }
 
+/// The hairline on the rail's left edge: the cards' (`Theme::card_edge`) on a light pack, where
+/// the rail's `surface` fill is 1.05:1 against the page; none on a dark pack.
+pub(crate) fn rail_edge(theme: &crate::theme::Theme) -> Option<gpui::Hsla> {
+    (!theme.dark).then(|| theme.card_edge())
+}
+
 /// The lines of the Flow section: waits on the user, failures that came again, tokens by project
 /// and what is worth a look — every line only from what was recorded, with its coverage.
 pub fn flow_lines(flow: &hutan_protocol::stats::AgentsStats) -> Vec<String> {
@@ -2114,5 +2129,18 @@ mod wording_tests {
         assert_eq!(blocked_label("Run the migration?"), "Question");
         assert_eq!(blocked_label("Question: which branch"), "Question");
         assert_eq!(blocked_label("Waiting for you"), "Waiting for you");
+    }
+}
+
+#[cfg(test)]
+mod rail_edge_tests {
+    use super::*;
+    use crate::theme::Theme;
+
+    #[test]
+    fn the_rail_has_the_cards_hairline_on_a_light_pack_and_none_on_a_dark_one() {
+        let light = Theme::light();
+        assert_eq!(rail_edge(&light), Some(light.card_edge()));
+        assert_eq!(rail_edge(&Theme::dark()), None);
     }
 }
