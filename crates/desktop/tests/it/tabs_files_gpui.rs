@@ -379,3 +379,95 @@ fn splits_follow_the_same_rule(cx: &mut TestAppContext) {
         both.iter().all(|s| !known(&view, cx, *s))
     });
 }
+
+// ---- 2: one tab per file ---------------------------------------------------------------------
+
+use hutan_desktop::workbench::FileOpen;
+use hutan_desktop::workbench::files::FilePlace;
+use std::path::{Path, PathBuf};
+
+fn scratch_files(names: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let paths = names
+        .iter()
+        .map(|name| {
+            let path = root.join(name);
+            std::fs::write(&path, name).unwrap();
+            path
+        })
+        .collect();
+    (dir, paths)
+}
+
+/// Opens `path` the way a click in the Files tree does and waits until its tab is shown.
+fn open_file(view: &Entity<Workbench>, cx: &mut VisualTestContext, path: &Path, place: FilePlace) {
+    let target = path.display().to_string();
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_file_placed(FileOpen::picked(path), place, window, cx);
+    });
+    wait_until(cx, &format!("{target} to have a tab"), |cx| {
+        file_tab(view, cx, &target).is_some()
+    });
+}
+
+fn file_tab(
+    view: &Entity<Workbench>,
+    cx: &VisualTestContext,
+    path: &str,
+) -> Option<(PaneId, usize)> {
+    view.read_with(cx, |wb, _| wb.state().find_item(&ItemRef::file(path)))
+}
+
+/// The names of the file tabs of every pane, in tree order.
+fn file_names(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |wb, _| {
+        wb.state()
+            .center
+            .panes()
+            .into_iter()
+            .flat_map(|pane| pane.items.iter())
+            .filter_map(|item| item.as_file())
+            .map(|p| {
+                Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn every_file_opened_gets_its_own_tab_by_default(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    write_settings(&daemon, "");
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, files) = scratch_files(&["a.txt", "b.txt", "c.txt"]);
+    // What a single click in the Files tree does, three times.
+    for file in &files {
+        open_file(&view, cx, file, FilePlace::Preview);
+    }
+    assert_eq!(file_names(&view, cx), ["a.txt", "b.txt", "c.txt"]);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.preview_file().map(str::to_owned)),
+        None,
+        "no tab is a preview"
+    );
+}
+
+#[gpui::test]
+fn preview_tabs_stay_an_option(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    write_settings(&daemon, "[editor]\npreview_tabs = true\n");
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, files) = scratch_files(&["a.txt", "b.txt"]);
+    open_file(&view, cx, &files[0], FilePlace::Preview);
+    open_file(&view, cx, &files[1], FilePlace::Preview);
+    assert_eq!(
+        file_names(&view, cx),
+        ["b.txt"],
+        "the second look replaced the first"
+    );
+}

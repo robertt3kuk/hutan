@@ -1093,7 +1093,7 @@ const FIELDS: &[FieldText] = &[
         "editor",
         "preview_tabs",
         "Preview tabs",
-        "A single click on a file in the Files tree shows it in a preview tab (its title is in italics) that the next file you click replaces. A double click, an edit or Keep Open in the tab's menu makes it a regular tab. Off, every file you open keeps its own tab.",
+        "Every file you open keeps its own tab. On, a single click on a file in the Files tree shows it in a preview tab (its title is in italics) that the next file you click replaces; a double click, an edit or Keep Open in the tab's menu makes it a regular tab.",
     ),
     field(
         "editor",

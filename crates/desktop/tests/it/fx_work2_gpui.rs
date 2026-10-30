@@ -16,7 +16,8 @@ use hutan_settings::{SettingsPaths, SettingsStore};
 fn settings(daemon: &TestDaemon) -> SettingsStore {
     std::fs::write(
         daemon.home().join("settings.toml"),
-        "[app]\nsetup_done = true\n",
+        // Preview tabs are off by default (TABS-FILES); this file is about them.
+        "[app]\nsetup_done = true\n[editor]\npreview_tabs = true\n",
     )
     .unwrap();
     SettingsStore::new(SettingsPaths::in_dir(daemon.home()))

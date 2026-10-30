@@ -1475,8 +1475,8 @@ pub struct EditorSettings {
     pub wrap_column: u64,
     /// A single click on a file in the Files tree (or Space on its row) shows it in a *preview
     /// tab* — italic title, replaced by the next file you click — instead of a new tab each
-    /// time; a double click, an edit or *Keep Open* in its menu makes the tab permanent. Off,
-    /// every opened file keeps its tab.
+    /// time; a double click, an edit or *Keep Open* in its menu makes the tab permanent. Off
+    /// (the default), every opened file keeps its own tab.
     pub preview_tabs: bool,
 }
 
@@ -1513,7 +1513,7 @@ impl Default for EditorSettings {
             inline_blame: false,
             soft_wrap: SoftWrap::Auto,
             wrap_column: hutan_code_view::DEFAULT_WRAP_COLUMN as u64,
-            preview_tabs: true,
+            preview_tabs: false,
         }
     }
 }
