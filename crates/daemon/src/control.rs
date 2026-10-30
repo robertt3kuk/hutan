@@ -1694,6 +1694,84 @@ mod tests {
     }
 
     #[test]
+    fn what_acts_on_another_agent_is_six_requests_and_its_words_are_the_text() {
+        use hutan_core::{ReviewDecision, TaskId};
+        use hutan_protocol::chat::{ChatInterrupt, ChatQueueAdd, ChatSend, ChatSendNow};
+        use hutan_protocol::resources::AgentInterrupt;
+        use hutan_protocol::task::TaskReview;
+
+        let session_id = SessionId::new();
+        let acts: [(Request, Option<&str>); 6] = [
+            (
+                Request::ChatSend(ChatSend {
+                    session_id,
+                    text: "a".to_owned(),
+                    attachments: Vec::new(),
+                }),
+                Some("a"),
+            ),
+            (
+                Request::ChatSendNow(ChatSendNow {
+                    session_id,
+                    text: Some("b".to_owned()),
+                    item_id: None,
+                }),
+                Some("b"),
+            ),
+            (
+                Request::ChatQueueAdd(ChatQueueAdd {
+                    session_id,
+                    text: "c".to_owned(),
+                }),
+                Some("c"),
+            ),
+            (
+                Request::ChatInterrupt(ChatInterrupt {
+                    session_id,
+                    keep_queue: false,
+                }),
+                None,
+            ),
+            (
+                Request::AgentInterrupt(AgentInterrupt {
+                    session_id,
+                    node_id: None,
+                    force: false,
+                }),
+                None,
+            ),
+            (
+                Request::TaskReview(TaskReview {
+                    id: TaskId::new(),
+                    decision: ReviewDecision::RequestChanges,
+                    note: Some("d".to_owned()),
+                }),
+                Some("d"),
+            ),
+        ];
+        for (request, text) in &acts {
+            assert!(acts_on_agent(request), "{}", request_method(request));
+            assert_eq!(message_text(request), *text, "{}", request_method(request));
+        }
+        // A send of a queued message, by its id, has no words to show; the others are not this.
+        let queued = Request::ChatSendNow(ChatSendNow {
+            session_id,
+            text: None,
+            item_id: Some(1),
+        });
+        assert!(acts_on_agent(&queued) && message_text(&queued).is_none());
+        for request in [
+            Request::SessionRename(SessionRename {
+                session_id,
+                title: "x".to_owned(),
+            }),
+            Request::ChatRetry(hutan_protocol::chat::ChatRetry { session_id }),
+        ] {
+            assert!(!acts_on_agent(&request), "{}", request_method(&request));
+        }
+    }
+
+    #[test]
     fn requests_are_described_in_plain_words_with_the_target_session() {
         let id = SessionId::new();
         let request = Request::SessionRename(SessionRename {

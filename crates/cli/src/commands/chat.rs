@@ -997,16 +997,68 @@ fn approval_table(approvals: &[ApprovalInfo]) -> String {
             *width = (*width).max(cell.chars().count());
         }
     }
-    std::iter::once(&header)
-        .chain(&rows)
-        .map(|row| {
-            let mut line = String::new();
-            for (cell, width) in row.iter().zip(widths) {
-                line.push_str(&format!("{cell:<width$}  "));
+    // What Mawas would say to another agent is shown whole under its row (protocol 0.62): the
+    // user who answers here sees the same words as the card.
+    let mut lines = Vec::new();
+    for (index, row) in std::iter::once(&header).chain(&rows).enumerate() {
+        let mut line = String::new();
+        for (cell, width) in row.iter().zip(widths) {
+            line.push_str(&format!("{cell:<width$}  "));
+        }
+        line.push_str(&row[3]);
+        lines.push(line);
+        if let Some(target) = index
+            .checked_sub(1)
+            .and_then(|i| approvals[i].target.as_ref())
+        {
+            lines.push(format!("    to {} ({})", target.title, target.session_id));
+            for text in target.text.iter().flat_map(|text| text.lines()) {
+                lines.push(format!("    | {text}"));
             }
-            line.push_str(&row[3]);
-            line
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+        }
+    }
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use hutan_core::agent::PermissionKind;
+    use hutan_core::{ApprovalId, SessionId};
+    use hutan_protocol::chat::ControlTarget;
+
+    use super::*;
+
+    #[test]
+    fn the_approval_table_shows_the_agent_and_every_word_of_a_message_of_mawas() {
+        let target = SessionId::new();
+        let approval = |title: &str, target: Option<ControlTarget>| ApprovalInfo {
+            id: ApprovalId::new(),
+            session_id: SessionId::new(),
+            turn_id: None,
+            kind: PermissionKind::Control,
+            title: title.to_owned(),
+            detail: None,
+            options: Vec::new(),
+            requested_at_ms: 1,
+            target,
+        };
+        let table = approval_table(&[
+            approval("Mawas asks Hutan to rename a session", None),
+            approval(
+                "Mawas asks Hutan to queue a message",
+                Some(ControlTarget {
+                    session_id: target,
+                    title: "api".to_owned(),
+                    text: Some("Run the formatter.\nThen commit.".to_owned()),
+                }),
+            ),
+        ]);
+        let lines: Vec<&str> = table.lines().collect();
+        // The header, the two requests, and under the second the agent and its two lines.
+        assert_eq!(lines.len(), 1 + 2 + 1 + 2, "{table}");
+        assert!(lines[2].contains("queue a message"), "{table}");
+        assert_eq!(lines[3], format!("    to api ({target})"));
+        assert_eq!(lines[4], "    | Run the formatter.");
+        assert_eq!(lines[5], "    | Then commit.");
+    }
 }
