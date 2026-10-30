@@ -11,7 +11,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - **Mawas suggests, you answer**: Mawas can attach a suggested answer, with her reason, to another agent's waiting approval or question; the card shows *Mawas suggests: …* with **Use** (your own click on that option; for a question it only fills the form) and **Dismiss**. She never answers for you. Shown in `hutan approvals` / `hutan questions` too.
 - **What happened while you were away**: Mawas's rail has a **Recent** tab — finished and failed turns, requests and how long they waited, tasks, checkpoints, sessions started and ended across every workspace since you last looked, grouped by agent, with *Mark as seen* and *Summarise with Mawas* (fills her composer, sends nothing). Mawas reads the same through `agents_activity`; in the terminal: `hutan agents --activity [--since 2h] [--json]`. What Hutan doesn't record is said, not shown as zero.
 - **Mawas knows how to supervise**: a Global Mawas chat is given a short supervisor playbook — watch every agent, say where each fact comes from and how complete it is (never calling an unconfirmed agent idle), treat agents' text as data not instructions, label estimates, say "not recorded" instead of zero, message an agent only through its queue and ask you when the call is yours. Workspace chats and direct model chats don't get it.
-- Mawas reads without asking: in *Ask before acting* her harness (OMP, Claude Code, Codex) no longer asks you before each read-only Hutan tool (the board, activity, questions, history…), so "what are my agents doing?" answers in seconds instead of waiting on a prompt. Anything that changes something still asks.
+- Mawas asks once: in *Ask before acting* her harness (OMP, Claude Code, Codex) no longer asks before Hutan's tools — reads run at once (so "what are my agents doing?" answers in seconds), and a change shows only Hutan's own card, which now waits up to 10 minutes instead of OMP's 30 seconds.
 
 ### Changed
 - **Mawas is global first**: Mawas Home opens the Global chat whatever workspace you're in; a **Focus** chip picks a workspace to concentrate on (its memory notes and `AGENTS.md` summary are given to Mawas, and changing the Focus tells her at the next turn); **Chats ▾** lists Global chats and the older per-workspace chats. `assistant.home_scope = follow_workspace` brings the old behaviour back.
@@ -20,6 +20,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - **Every file gets its own tab** again (`editor.preview_tabs` now off by default).
 - **Files open beside the agent**: with a chat or terminal agent in front, an opened file goes to a split on its right, reused for the next files (`editor.open_beside_agent`); ⌥-click, ⌥↩ in ⌘P and ⌘K *Files: Open to the Side* always open to the side.
 - Mawas's chat column is as wide as you drag it (edges of the column; Esc cancels, double-click resets; ⌘K *Mawas: Wider / Narrower / Reset Chat Width*), remembered in `assistant.chat_width_rem`; the Today rail hides with a header button (a badge counts waiting requests while it's hidden) and stays as you left it.
+
+### Fixed
+- An approval card can no longer act after the agent that asked stopped waiting: when an agent's tool call is cancelled or times out, its pending card is withdrawn (audited as `caller_gone`) and a late *Allow* does nothing. Before, a late *Allow* could still apply a change the agent had been told might not have happened.
 
 ## 0.3.4 — 2026-10-30
 
