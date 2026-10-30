@@ -922,18 +922,22 @@ fn question_table(questions: &[QuestionInfo]) -> String {
             *width = (*width).max(cell.chars().count());
         }
     }
-    std::iter::once(&header)
-        .chain(&rows)
-        .map(|row| {
-            let mut line = String::new();
-            for (cell, width) in row.iter().zip(widths) {
-                line.push_str(&format!("{cell:<width$}  "));
-            }
-            line.push_str(&row[3]);
-            line
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut lines = Vec::new();
+    for (index, row) in std::iter::once(&header).chain(&rows).enumerate() {
+        let mut line = String::new();
+        for (cell, width) in row.iter().zip(widths) {
+            line.push_str(&format!("{cell:<width$}  "));
+        }
+        line.push_str(&row[3]);
+        lines.push(line);
+        if let Some(suggestion) = index
+            .checked_sub(1)
+            .and_then(|i| questions[i].suggestion.as_ref())
+        {
+            lines.push(suggestion_line(suggestion));
+        }
+    }
+    lines.join("\n")
 }
 
 /// One pending approval: exact id, or a unique prefix of at least [`MIN_PREFIX`] characters.
@@ -1016,8 +1020,36 @@ fn approval_table(approvals: &[ApprovalInfo]) -> String {
                 lines.push(format!("    | {text}"));
             }
         }
+        if let Some(suggestion) = index
+            .checked_sub(1)
+            .and_then(|i| approvals[i].suggestion.as_ref())
+        {
+            lines.push(suggestion_line(suggestion));
+        }
     }
     lines.join("\n")
+}
+
+/// What a suggestion of Mawas says, for a table: the answer and why, under the request it is
+/// for. It answers nothing: the user does, with `hutan approve` or `hutan answer`.
+fn suggestion_line(suggestion: &hutan_protocol::suggest::Suggestion) -> String {
+    use hutan_protocol::suggest::SuggestedAnswer;
+    let answer = match &suggestion.answer {
+        SuggestedAnswer::Option { option_id } => option_id.clone(),
+        SuggestedAnswer::Values { values } => values
+            .iter()
+            .map(|(field, value)| match value.as_str() {
+                Some(text) => format!("{field}={text}"),
+                None => format!("{field}={value}"),
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        SuggestedAnswer::Decline => "decline".to_owned(),
+    };
+    format!(
+        "    Mawas suggests: {answer} — {} (only a suggestion: you answer)",
+        suggestion.reason
+    )
 }
 
 #[cfg(test)]
@@ -1061,5 +1093,65 @@ mod tests {
         assert_eq!(lines[3], format!("    to api ({target})"));
         assert_eq!(lines[4], "    | Run the formatter.");
         assert_eq!(lines[5], "    | Then commit.");
+    }
+
+    #[test]
+    fn the_tables_show_a_suggestion_of_mawas_under_its_request_and_say_it_answers_nothing() {
+        use hutan_core::QuestionId;
+        use hutan_protocol::suggest::{SuggestedAnswer, Suggestion};
+
+        let suggestion = |answer| Suggestion {
+            answer,
+            reason: "Same edit you allowed twice today.".to_owned(),
+            from: SessionId::new(),
+            suggested_at_ms: 1,
+        };
+        let approval = ApprovalInfo {
+            id: ApprovalId::new(),
+            session_id: SessionId::new(),
+            turn_id: None,
+            kind: PermissionKind::Command,
+            title: "edit: src/lib.rs".to_owned(),
+            detail: None,
+            options: Vec::new(),
+            requested_at_ms: 1,
+            target: None,
+            suggestion: Some(suggestion(SuggestedAnswer::Option {
+                option_id: "allow_once".to_owned(),
+            })),
+        };
+        let table = approval_table(&[approval]);
+        let lines: Vec<&str> = table.lines().collect();
+        assert_eq!(lines.len(), 3, "{table}");
+        assert_eq!(
+            lines[2],
+            "    Mawas suggests: allow_once — Same edit you allowed twice today. (only a suggestion: you answer)"
+        );
+
+        let question = QuestionInfo {
+            id: QuestionId::new(),
+            session_id: SessionId::new(),
+            turn_id: None,
+            spec: hutan_core::QuestionSpec {
+                title: "Which database?".to_owned(),
+                prompt: String::new(),
+                fields: Vec::new(),
+                raw_schema: None,
+                source: None,
+                expires: Default::default(),
+            },
+            requested_at_ms: 1,
+            suggestion: Some(suggestion(SuggestedAnswer::Values {
+                values: [("db".to_owned(), serde_json::json!("sqlite"))].into(),
+            })),
+        };
+        let table = question_table(&[question]);
+        assert!(
+            table
+                .lines()
+                .nth(2)
+                .is_some_and(|line| line.starts_with("    Mawas suggests: db=sqlite — Same edit")),
+            "{table}"
+        );
     }
 }
