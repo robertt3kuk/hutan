@@ -105,6 +105,63 @@ pub struct ActivitySummary {
     pub sessions_ended: usize,
 }
 
+impl ActivitySummary {
+    /// What the user was away for, as one line, what needs them first: `2 requests wait for you
+    /// · 1 turn failed · 3 turns finished · 4 files changed`. `None` when nothing that matters
+    /// happened (a plain shell starting or ending is not news). The Catch-up chip of Mawas Home
+    /// and the daemon's digest notification say exactly this, so they cannot disagree.
+    pub fn line(&self) -> Option<String> {
+        fn count(n: usize, one: &str, many: &str) -> String {
+            format!("{n} {}", if n == 1 { one } else { many })
+        }
+        let mut parts = Vec::new();
+        if self.requests_open > 0 {
+            parts.push(count(
+                self.requests_open,
+                "request waits for you",
+                "requests wait for you",
+            ));
+        }
+        if self.turns_failed > 0 {
+            parts.push(count(self.turns_failed, "turn failed", "turns failed"));
+        }
+        if self.tasks_failed > 0 {
+            parts.push(count(self.tasks_failed, "task failed", "tasks failed"));
+        }
+        if self.tasks_review > 0 {
+            parts.push(count(
+                self.tasks_review,
+                "task sent to review",
+                "tasks sent to review",
+            ));
+        }
+        if self.turns_finished > 0 {
+            parts.push(count(
+                self.turns_finished,
+                "turn finished",
+                "turns finished",
+            ));
+        }
+        if self.tasks_done > 0 {
+            parts.push(count(self.tasks_done, "task done", "tasks done"));
+        }
+        if let Some(files) = self.files_changed.filter(|files| *files > 0) {
+            parts.push(count(files as usize, "file changed", "files changed"));
+        }
+        (!parts.is_empty()).then(|| parts.join(" · "))
+    }
+
+    /// Whether something in the window needs the user: a request that still waits, a turn or a
+    /// task that failed, work sent to review. What a digest notification is for; finished work
+    /// alone is not worth a ping.
+    pub fn needs_you(&self) -> bool {
+        self.requests_open > 0
+            || self.turns_failed > 0
+            || self.tasks_failed > 0
+            || self.tasks_review > 0
+    }
+}
+
 /// One thing that happened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActivityEvent {
@@ -184,4 +241,59 @@ pub enum TurnOutcome {
 pub enum RequestKind {
     Approval,
     Question,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_line_says_what_needs_the_user_first_and_nothing_when_nothing_happened() {
+        assert_eq!(ActivitySummary::default().line(), None);
+        // A plain shell starting and ending is not news.
+        let quiet = ActivitySummary {
+            sessions_started: 3,
+            sessions_ended: 2,
+            ..ActivitySummary::default()
+        };
+        assert_eq!((quiet.line(), quiet.needs_you()), (None, false));
+        let busy = ActivitySummary {
+            turns_finished: 3,
+            turns_failed: 1,
+            requests_asked: 4,
+            requests_open: 2,
+            tasks_review: 1,
+            files_changed: Some(4),
+            ..ActivitySummary::default()
+        };
+        assert_eq!(
+            busy.line().as_deref(),
+            Some(
+                "2 requests wait for you · 1 turn failed · 1 task sent to review · \
+                 3 turns finished · 4 files changed"
+            )
+        );
+        assert!(busy.needs_you());
+    }
+
+    #[test]
+    fn finished_work_alone_is_a_line_but_not_a_reason_to_ping() {
+        let done = ActivitySummary {
+            turns_finished: 1,
+            tasks_done: 1,
+            files_changed: Some(1),
+            ..ActivitySummary::default()
+        };
+        assert_eq!(
+            done.line().as_deref(),
+            Some("1 turn finished · 1 task done · 1 file changed")
+        );
+        assert!(!done.needs_you());
+        // A count nobody recorded is absent, not zero.
+        let none = ActivitySummary {
+            files_changed: Some(0),
+            ..ActivitySummary::default()
+        };
+        assert_eq!(none.line(), None);
+    }
 }

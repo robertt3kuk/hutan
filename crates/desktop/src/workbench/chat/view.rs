@@ -48,6 +48,14 @@ const COMPOSER_MAX_HEIGHT: f32 = 220.0;
 /// Diameter of the composer's round send / stop button.
 const SEND_SIZE: f32 = 32.0;
 
+/// Mawas Home's *Catch up* chip in the empty conversation: one line of what happened while the
+/// user was away, and what clicking it does (the page opens its Recent tab).
+#[derive(Clone)]
+pub struct CatchUp {
+    pub text: SharedString,
+    pub open: Rc<dyn Fn(&mut Window, &mut App)>,
+}
+
 pub struct ChatView {
     pub(super) session: SessionId,
     pub(super) model: Entity<ChatModel>,
@@ -64,6 +72,10 @@ pub struct ChatView {
     /// column): the cards and the composer fill it instead of stopping at the theme's reading
     /// width (`reading.width`).
     pub(super) fills_column: bool,
+    /// Mawas Home's *Catch up* chip: what happened while the user was away, in one line, with
+    /// what a click does. Set by the page that hosts the chat (no model call made it); drawn
+    /// only in the empty conversation.
+    catch_up: std::cell::RefCell<Option<CatchUp>>,
     /// What the parts of the header take with all their words, as last drawn.
     natural: std::cell::Cell<Option<HeaderWidths>>,
     /// The queue's chips as drawn last, and those that left (`queue_view.rs`).
@@ -275,6 +287,7 @@ impl ChatView {
             fit: std::cell::Cell::new(HeaderFit::Full),
             header_seen: Rc::default(),
             fills_column: false,
+            catch_up: std::cell::RefCell::default(),
             natural: std::cell::Cell::new(None),
             queue_seen: std::cell::RefCell::default(),
             approvals_seen: std::cell::RefCell::default(),
@@ -381,6 +394,18 @@ impl ChatView {
             self.fills_column = fills;
             cx.notify();
         }
+    }
+
+    /// The hosting page's *Catch up* chip for the empty conversation (`None`: nothing to say).
+    /// Takes effect with the next frame; nothing is notified, so a page may call it while it
+    /// draws.
+    pub fn set_catch_up(&self, catch_up: Option<CatchUp>) {
+        *self.catch_up.borrow_mut() = catch_up;
+    }
+
+    /// The chip's text, while there is one.
+    pub fn catch_up_text(&self) -> Option<SharedString> {
+        self.catch_up.borrow().as_ref().map(|c| c.text.clone())
     }
 
     /// The pill's click: back to the end of the conversation, following it again.
@@ -1533,6 +1558,24 @@ impl ChatView {
             empty.hint("Only what you attach is sent to the model of its backend.")
         } else {
             empty
+        };
+        let catch_up = self.catch_up.borrow().clone();
+        let empty = match catch_up {
+            Some(chip) if mawas && matches!(self.model.read(cx).status(), LoadStatus::Ready) => {
+                let open = chip.open.clone();
+                empty.action(
+                    Button::new(
+                        "chat-catch-up",
+                        SharedString::from(format!("Catch up · {}", chip.text)),
+                        &look.theme,
+                        &look.tokens,
+                    )
+                    .compact()
+                    .on_click(move |_, window, cx| open(window, cx))
+                    .child(probe(&self.regions, Region::Chat("catch-up"))),
+                )
+            }
+            _ => empty,
         };
         empty.render(&look.theme, &look.tokens).into_any_element()
     }
