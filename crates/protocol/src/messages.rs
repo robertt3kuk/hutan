@@ -19,6 +19,7 @@ use crate::assistant::{
     AssistantConfigure, AssistantFocus, AssistantListRequest, AssistantOpen, AssistantReset,
 };
 use crate::blocks::{Block, TerminalBlockText, TerminalBlocks};
+use crate::board::AgentsBoardRequest;
 use crate::chat::{
     ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatAddDir, ChatCreate, ChatDir, ChatFork,
     ChatHistoryRequest, ChatInfo, ChatInterrupt, ChatModelsRequest, ChatQueue, ChatQueueAdd,
@@ -269,6 +270,11 @@ pub enum Request {
     /// and reads the answer; answered with `AgentContextMeasured` once the turn ended.
     #[serde(rename = "agent.measure_context")]
     AgentMeasureContext(AgentMeasureContext),
+    /// Capability `agents.board` (protocol 0.63): every agent across workspaces — state, what it
+    /// waits for, where its facts come from — from the reducer the Agents page uses; answered
+    /// with `AgentsBoard`. Read-only; bounded (200 agents, 24 KiB).
+    #[serde(rename = "agents.board")]
+    AgentsBoard(AgentsBoardRequest),
     /// Capability `chat.codex`: the journal of a session; answered with `ChatHistory`.
     #[serde(rename = "chat.history")]
     ChatHistory(ChatHistoryRequest),

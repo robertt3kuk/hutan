@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`board`]: `agents.board` — every agent across workspaces in one bounded, read-only,
+//!   redacted answer: state and group of the shared reducer, what each waits for, where its facts
+//!   come from (protocol 0.63, capability `agents.board`, ADR 0025).
 //! - [`grants`] and [`chat`] also carry the target-bound grants of Mawas acting on another agent:
 //!   `ControlGrant.target_session_id`, `ApprovalInfo.target` (who is addressed and the whole
 //!   text), `QueuedMessage.origin` and the `origin` of a user message's payload (protocol 0.62,
@@ -117,6 +120,7 @@
 pub mod account;
 pub mod assistant;
 pub mod blocks;
+pub mod board;
 pub mod chat;
 pub mod checkpoint;
 pub mod control;
@@ -157,7 +161,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 62,
+    minor: 63,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

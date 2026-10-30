@@ -32,6 +32,7 @@ use hutan_protocol::blocks::{
     Block, BlockPart, BlockState, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks,
     TerminalBlocksResult,
 };
+use hutan_protocol::board::*;
 use hutan_protocol::chat::*;
 use hutan_protocol::checkpoint::*;
 use hutan_protocol::control::ControlMessage;
@@ -3943,6 +3944,17 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AgentMeasureContext(AgentMeasureContext { session_id: sid() }),
         ),
         (
+            "agents_board",
+            Request::AgentsBoard(AgentsBoardRequest::default()),
+        ),
+        (
+            "agents_board_workspace",
+            Request::AgentsBoard(AgentsBoardRequest {
+                workspace_id: Some(ws()),
+                include_finished: true,
+            }),
+        ),
+        (
             "chat_create_dirs",
             Request::ChatCreate(ChatCreate {
                 extra_dirs: vec!["/work/api".into(), "/work/shared".into()],
@@ -5595,6 +5607,121 @@ fn update_status_fixture() -> UpdateStatus {
             message: None,
         }),
         install: None,
+    }
+}
+
+/// A board with one agent of every source: a chat that asks, a hooked terminal agent at work, a
+/// recognised one whose state is not known, and the counts that cover finished ones too.
+fn board_fixture() -> AgentsBoard {
+    let project = BoardRef {
+        id: ws(),
+        name: "hutan".into(),
+    };
+    let agent = |kind, source, state, group| BoardAgent {
+        session_id: sid(),
+        title: "Release checklist".into(),
+        role: BoardRole::Agent,
+        kind,
+        harness: "OMP".into(),
+        model: None,
+        project: project.clone(),
+        workspace: None,
+        checkout: None,
+        state,
+        group,
+        detail: String::new(),
+        waiting: Vec::new(),
+        activity: None,
+        turn_active: false,
+        started_ms: None,
+        last_event_ms: None,
+        reported_ms: None,
+        subagents: BoardSubagents::default(),
+        source,
+    };
+    AgentsBoard {
+        generated_at_ms: 1_791_894_200_000,
+        counts: BoardCounts {
+            agents: 4,
+            requests: 1,
+            failed: 0,
+            review: 0,
+            working: 1,
+            unconfirmed: 1,
+            idle: 0,
+            finished: 1,
+        },
+        coverage: BoardCoverage {
+            chats: 2,
+            terminal_reported: 1,
+            terminal_recognised: 1,
+        },
+        agents: vec![
+            BoardAgent {
+                model: Some("claude-haiku-5-5".into()),
+                workspace: Some(BoardRef {
+                    id: ws2(),
+                    name: "Shop".into(),
+                }),
+                checkout: Some(BoardCheckout {
+                    branch: Some("slice/board".into()),
+                    worktree: true,
+                    shared: false,
+                }),
+                waiting: vec![
+                    BoardWaiting {
+                        kind: BoardWaitKind::Approval,
+                        title: "run cargo test".into(),
+                        since_ms: Some(1_791_894_100_000),
+                        ref_id: Some("appr_01".into()),
+                    },
+                    BoardWaiting {
+                        kind: BoardWaitKind::Question,
+                        title: "Which branch?".into(),
+                        since_ms: Some(1_791_894_150_000),
+                        ref_id: None,
+                    },
+                ],
+                turn_active: true,
+                started_ms: Some(1_791_894_000_000),
+                last_event_ms: Some(1_791_894_150_000),
+                subagents: BoardSubagents {
+                    live: 2,
+                    blocked: 1,
+                    finished: 3,
+                },
+                ..agent(
+                    BoardKind::Chat,
+                    BoardSource::Journal,
+                    BoardState::Blocked,
+                    BoardGroup::Requests,
+                )
+            },
+            BoardAgent {
+                title: "Refactor auth".into(),
+                activity: Some("Editing src/auth.rs".into()),
+                last_event_ms: Some(1_791_894_190_000),
+                reported_ms: Some(1_791_894_190_000),
+                ..agent(
+                    BoardKind::Terminal,
+                    BoardSource::Hook,
+                    BoardState::Working,
+                    BoardGroup::Working,
+                )
+            },
+            BoardAgent {
+                title: "Docs pass".into(),
+                detail: "This harness has not reported its current state.".into(),
+                ..agent(
+                    BoardKind::Terminal,
+                    BoardSource::Recognised,
+                    BoardState::Unconfirmed,
+                    BoardGroup::Unconfirmed,
+                )
+            },
+        ],
+        hidden_finished: 1,
+        omitted: 0,
     }
 }
 
@@ -8820,6 +8947,25 @@ fn responses_match_fixtures() {
                         1,
                         1_791_894_200_000,
                     ),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "agents_board",
+            ControlMessage::ok(92, &board_fixture()).unwrap(),
+        ),
+        (
+            "agents_board_empty",
+            ControlMessage::ok(
+                93,
+                &AgentsBoard {
+                    generated_at_ms: 1_791_894_200_000,
+                    counts: BoardCounts::default(),
+                    coverage: BoardCoverage::default(),
+                    agents: Vec::new(),
+                    hidden_finished: 0,
+                    omitted: 0,
                 },
             )
             .unwrap(),
