@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`activity`]: `agents.activity` — what happened across agents in a window, from what the
+//!   daemon already records: turns, requests, checkpoints, tasks, sessions; bounded, read-only and
+//!   redacted (protocol 0.65, capability `agents.activity`, ADR 0025).
 //! - [`board`]: `agents.board` — every agent across workspaces in one bounded, read-only,
 //!   redacted answer: state and group of the shared reducer, what each waits for, where its facts
 //!   come from (protocol 0.63, capability `agents.board`, ADR 0025).
@@ -121,6 +124,7 @@
 //! - [`render`]: terminal render snapshot/frame DTOs carried in binary frames.
 
 pub mod account;
+pub mod activity;
 pub mod assistant;
 pub mod blocks;
 pub mod board;
@@ -165,7 +169,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 64,
+    minor: 65,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

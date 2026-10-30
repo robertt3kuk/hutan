@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 
 use crate::ProtocolVersion;
 use crate::account::{AccountAdd, AccountDefaultSet, AccountLogin, AccountLogout, AccountRemove};
+use crate::activity::AgentsActivityRequest;
 use crate::assistant::{
     AssistantConfigure, AssistantFocus, AssistantListRequest, AssistantOpen, AssistantReset,
 };
@@ -276,6 +277,11 @@ pub enum Request {
     /// with `AgentsBoard`. Read-only; bounded (200 agents, 24 KiB).
     #[serde(rename = "agents.board")]
     AgentsBoard(AgentsBoardRequest),
+    /// Capability `agents.activity` (protocol 0.65): what happened across agents in a window —
+    /// turns, requests, checkpoints, tasks, sessions — from what the daemon records; answered
+    /// with `AgentsActivity`. Read-only; bounded (200 events, 24 KiB).
+    #[serde(rename = "agents.activity")]
+    AgentsActivity(AgentsActivityRequest),
     /// Capability `chat.codex`: the journal of a session; answered with `ChatHistory`.
     #[serde(rename = "chat.history")]
     ChatHistory(ChatHistoryRequest),

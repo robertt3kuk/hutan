@@ -27,6 +27,7 @@ use hutan_core::{
     CheckpointId, Epoch, Seq, SessionId, SessionKind, SessionState, TerminalId, WorkspaceId,
 };
 use hutan_protocol::account::*;
+use hutan_protocol::activity::*;
 use hutan_protocol::assistant::*;
 use hutan_protocol::blocks::{
     Block, BlockPart, BlockState, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks,
@@ -3951,6 +3952,20 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AgentMeasureContext(AgentMeasureContext { session_id: sid() }),
         ),
         (
+            "agents_activity",
+            Request::AgentsActivity(AgentsActivityRequest::default()),
+        ),
+        (
+            "agents_activity_window",
+            Request::AgentsActivity(AgentsActivityRequest {
+                since_ms: Some(1_791_890_000_000),
+                until_ms: Some(1_791_894_200_000),
+                workspace_id: Some(ws()),
+                session_id: Some(sid()),
+                limit: Some(50),
+            }),
+        ),
+        (
             "agents_board",
             Request::AgentsBoard(AgentsBoardRequest::default()),
         ),
@@ -5668,6 +5683,111 @@ fn update_status_fixture() -> UpdateStatus {
             message: None,
         }),
         install: None,
+    }
+}
+
+/// A catch-up with one event of every kind, a summary with the optional counts present, and what
+/// the daemon says it did not record.
+fn activity_fixture() -> AgentsActivity {
+    let event = |at_ms: u64, detail: ActivityDetail| ActivityEvent {
+        at_ms,
+        session_id: Some(sid()),
+        title: "Release checklist".into(),
+        project: "hutan".into(),
+        detail,
+    };
+    AgentsActivity {
+        from_ms: 1_791_890_000_000,
+        to_ms: 1_791_894_200_000,
+        coverage_from_ms: Some(1_791_800_000_000),
+        summary: ActivitySummary {
+            turns_finished: 2,
+            turns_failed: 1,
+            turns_cancelled: 0,
+            turns_running: 1,
+            requests_asked: 2,
+            requests_resolved: 1,
+            requests_open: 1,
+            wait_total_ms: Some(95_000),
+            wait_longest_ms: Some(95_000),
+            checkpoints: 1,
+            files_changed: Some(3),
+            lines_added: Some(42),
+            lines_removed: Some(7),
+            tasks_done: 1,
+            tasks_failed: 0,
+            tasks_review: 1,
+            sessions_started: 1,
+            sessions_ended: 1,
+        },
+        events: vec![
+            event(
+                1_791_894_100_000,
+                ActivityDetail::Request {
+                    request: RequestKind::Approval,
+                    text: "run cargo test".into(),
+                    asked_ms: 1_791_894_100_000,
+                    resolved_ms: None,
+                    wait_ms: None,
+                    outcome: None,
+                    decided_by: None,
+                },
+            ),
+            event(
+                1_791_893_900_000,
+                ActivityDetail::Request {
+                    request: RequestKind::Question,
+                    text: "Which branch?".into(),
+                    asked_ms: 1_791_893_805_000,
+                    resolved_ms: Some(1_791_893_900_000),
+                    wait_ms: Some(95_000),
+                    outcome: Some("answered".into()),
+                    decided_by: Some("desktop".into()),
+                },
+            ),
+            event(
+                1_791_893_800_000,
+                ActivityDetail::TurnEnded {
+                    outcome: TurnOutcome::Failed,
+                    duration_ms: Some(3_850),
+                    error: Some("Rate limited: retry in 40 s".into()),
+                },
+            ),
+            event(
+                1_791_893_700_000,
+                ActivityDetail::Checkpoint {
+                    files: 3,
+                    added: 42,
+                    removed: 7,
+                },
+            ),
+            ActivityEvent {
+                session_id: None,
+                title: "Add the card".into(),
+                ..event(
+                    1_791_893_600_000,
+                    ActivityDetail::Task {
+                        state: "awaiting_review".into(),
+                        run: false,
+                    },
+                )
+            },
+            event(
+                1_791_893_500_000,
+                ActivityDetail::SessionEnded {
+                    state: "exited 0".into(),
+                },
+            ),
+            event(
+                1_791_891_000_000,
+                ActivityDetail::SessionStarted { chat: true },
+            ),
+        ],
+        omitted: 3,
+        not_recorded: vec![
+            "turns and durations of terminal agents".into(),
+            "terminal agents' states over time (only the current one exists)".into(),
+        ],
     }
 }
 
@@ -9071,6 +9191,26 @@ fn responses_match_fixtures() {
         (
             "agents_board",
             ControlMessage::ok(92, &board_fixture()).unwrap(),
+        ),
+        (
+            "agents_activity",
+            ControlMessage::ok(94, &activity_fixture()).unwrap(),
+        ),
+        (
+            "agents_activity_empty",
+            ControlMessage::ok(
+                95,
+                &AgentsActivity {
+                    from_ms: 1_791_807_800_000,
+                    to_ms: 1_791_894_200_000,
+                    coverage_from_ms: None,
+                    summary: ActivitySummary::default(),
+                    events: Vec::new(),
+                    omitted: 0,
+                    not_recorded: Vec::new(),
+                },
+            )
+            .unwrap(),
         ),
         (
             "agents_board_empty",
