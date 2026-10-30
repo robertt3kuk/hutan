@@ -33,6 +33,8 @@ const METHOD_NOT_FOUND: i64 = -32601;
 #[derive(Debug, Clone)]
 pub struct Target {
     pub socket: Option<std::path::PathBuf>,
+    /// Serve only the tools of [`table::unattended_names`].
+    pub unattended: bool,
 }
 
 /// One server: the lazily made daemon connection and the requests in flight.
@@ -178,7 +180,7 @@ where
                 in_flight.lock().await.insert(key, task.abort_handle());
             }
             (Some(method), Some(id)) => {
-                let reply = match handle(&method, params) {
+                let reply = match handle(&method, params, server.target.unattended) {
                     Ok(result) => response(id, result),
                     Err((code, message)) => error_response(id, code, &message),
                 };
@@ -207,7 +209,7 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 }
 
 /// The requests that need no daemon.
-fn handle(method: &str, params: Value) -> Result<Value, (i64, String)> {
+fn handle(method: &str, params: Value, unattended: bool) -> Result<Value, (i64, String)> {
     match method {
         "initialize" => {
             let asked = params.get("protocolVersion").and_then(Value::as_str);
@@ -225,7 +227,12 @@ fn handle(method: &str, params: Value) -> Result<Value, (i64, String)> {
         }
         "ping" => Ok(json!({})),
         "tools/list" => {
-            Ok(json!({"tools": table::tools().iter().map(describe).collect::<Vec<_>>()}))
+            let listed = table::tools()
+                .iter()
+                .filter(|tool| !unattended || table::is_unattended(tool))
+                .map(describe)
+                .collect::<Vec<_>>();
+            Ok(json!({"tools": listed}))
         }
         other => Err((METHOD_NOT_FOUND, format!("method not found: {other}"))),
     }
@@ -275,7 +282,9 @@ async fn call_tool(server: &Server, params: Value) -> Value {
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return protocol_error_result("tools/call needs a tool `name`");
     };
-    let Some(tool) = table::find(name) else {
+    let Some(tool) =
+        table::find(name).filter(|tool| !server.target.unattended || table::is_unattended(tool))
+    else {
         return protocol_error_result(&format!("unknown tool `{name}`"));
     };
     let arguments = match params.get("arguments") {
@@ -630,9 +639,19 @@ mod tests {
 
     #[test]
     fn initialize_negotiates_the_protocol_version() {
-        let ok = handle("initialize", json!({"protocolVersion": "2025-03-26"})).unwrap();
+        let ok = handle(
+            "initialize",
+            json!({"protocolVersion": "2025-03-26"}),
+            false,
+        )
+        .unwrap();
         assert_eq!(ok["protocolVersion"], "2025-03-26");
-        let newer = handle("initialize", json!({"protocolVersion": "2099-01-01"})).unwrap();
+        let newer = handle(
+            "initialize",
+            json!({"protocolVersion": "2099-01-01"}),
+            false,
+        )
+        .unwrap();
         assert_eq!(newer["protocolVersion"], LATEST);
         assert_eq!(ok["serverInfo"]["name"], "hutan");
         assert!(ok["capabilities"]["tools"].is_object());
@@ -640,7 +659,7 @@ mod tests {
 
     #[test]
     fn tools_list_carries_schemas_and_hints() {
-        let list = handle("tools/list", Value::Null).unwrap();
+        let list = handle("tools/list", Value::Null, false).unwrap();
         let tools = list["tools"].as_array().unwrap();
         assert_eq!(tools.len(), table::tools().len());
         for tool in tools {
@@ -652,8 +671,63 @@ mod tests {
     }
 
     #[test]
+    fn an_unattended_server_lists_and_calls_only_the_tools_that_read_and_leave_nothing_to_answer() {
+        let list = handle("tools/list", Value::Null, true).unwrap();
+        let names: Vec<&str> = list["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, table::unattended_names().collect::<Vec<_>>());
+        for tool in &names {
+            assert!(table::find(tool).unwrap().read_only, "{tool}");
+        }
+        // Every writer is out, and so is the one reader that leaves a proposal for the user.
+        for out in [
+            "session_rename",
+            "chat_send",
+            "ask_suggest",
+            "memory_propose",
+        ] {
+            assert!(!names.contains(&out), "{out}");
+        }
+        for kept in [
+            "agents_board",
+            "agents_activity",
+            "agents_stats",
+            "question_list",
+        ] {
+            assert!(names.contains(&kept), "{kept}");
+        }
+        assert!(names.len() < table::read_only_names().count() + 1);
+    }
+
+    #[tokio::test]
+    async fn an_unattended_server_refuses_a_tool_it_does_not_list() {
+        let server = Server {
+            target: Target {
+                socket: None,
+                unattended: true,
+            },
+            client: Mutex::new(None),
+        };
+        for name in ["session_rename", "memory_propose"] {
+            let result = call_tool(&server, json!({"name": name, "arguments": {}})).await;
+            assert_eq!(result["isError"], true, "{name}: {result}");
+            assert!(
+                result["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("unknown tool"),
+                "{name}: {result}"
+            );
+        }
+    }
+
+    #[test]
     fn unknown_methods_are_method_not_found() {
-        let (code, _) = handle("resources/list", Value::Null).unwrap_err();
+        let (code, _) = handle("resources/list", Value::Null, false).unwrap_err();
         assert_eq!(code, METHOD_NOT_FOUND);
     }
 

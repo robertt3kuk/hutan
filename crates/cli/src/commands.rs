@@ -93,7 +93,11 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             crate::mcp::print_gated_tools(&mut std::io::stdout().lock())?;
             Ok(())
         }
-        Command::Mcp(_) => crate::mcp::run(ctx?.socket_arg).await,
+        Command::Mcp(args) if args.unattended_tools => {
+            crate::mcp::print_unattended_tools(&mut std::io::stdout().lock())?;
+            Ok(())
+        }
+        Command::Mcp(args) => crate::mcp::run(ctx?.socket_arg, args.unattended).await,
         Command::Ui(command) => ctx?.ui(command).await,
         Command::Setup => ctx?.setup().await,
         Command::Daemon(DaemonCommand::Start) => ctx?.daemon_start().await,

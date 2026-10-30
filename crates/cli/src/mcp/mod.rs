@@ -13,11 +13,13 @@ use std::path::PathBuf;
 use crate::error::CliError;
 
 /// Runs until the host closes stdin. Logs only to stderr: stdout is the protocol.
-pub async fn run(socket: Option<PathBuf>) -> Result<(), CliError> {
+///
+/// `unattended`: serve only [`table::unattended_names`] (the scheduled digest's launch).
+pub async fn run(socket: Option<PathBuf>, unattended: bool) -> Result<(), CliError> {
     server::serve(
         tokio::io::stdin(),
         tokio::io::stdout(),
-        server::Target { socket },
+        server::Target { socket, unattended },
     )
     .await?;
     Ok(())
@@ -26,6 +28,15 @@ pub async fn run(socket: Option<PathBuf>) -> Result<(), CliError> {
 /// `hutan mcp --read-only-tools`: the names of the tools that only read, one per line.
 pub fn print_read_only_tools(out: &mut impl std::io::Write) -> std::io::Result<()> {
     for name in table::read_only_names() {
+        writeln!(out, "{name}")?;
+    }
+    Ok(())
+}
+
+/// `hutan mcp --unattended-tools`: the names of the tools an unattended run may call, one per
+/// line.
+pub fn print_unattended_tools(out: &mut impl std::io::Write) -> std::io::Result<()> {
+    for name in table::unattended_names() {
         writeln!(out, "{name}")?;
     }
     Ok(())

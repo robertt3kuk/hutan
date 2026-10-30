@@ -225,6 +225,15 @@ pub struct McpArgs {
     /// daemon tells a Mawas harness not to ask about itself, because Hutan's own gate asks
     #[arg(long, conflicts_with = "read_only_tools")]
     pub gated_tools: bool,
+    /// Print the names of the tools an unattended run (the scheduled digest) may call, one per
+    /// line, and exit: the tools that only read, less those that can leave a proposal for the
+    /// user to answer
+    #[arg(long, conflicts_with_all = ["read_only_tools", "gated_tools"])]
+    pub unattended_tools: bool,
+    /// Serve only [`--unattended-tools`](Self::unattended_tools): every other tool is not
+    /// listed and not called (what the scheduled digest's model gets)
+    #[arg(long, conflicts_with_all = ["read_only_tools", "gated_tools", "unattended_tools"])]
+    pub unattended: bool,
 }
 
 /// What the desktop window offers, and how to drive it. Needs a running desktop; anything an

@@ -191,6 +191,26 @@ pub fn read_only_names() -> impl Iterator<Item = &'static str> {
         .map(|tool| tool.name)
 }
 
+/// Read-only tools an unattended run still does not get: `memory_propose` leaves a proposal
+/// that waits for the user's answer, and nothing may wait for the user in a run nobody
+/// started.
+const NOT_UNATTENDED: &[&str] = &["memory_propose"];
+
+/// Whether an unattended run (the scheduled digest, `docs/assistant.md` § Catching up) may
+/// call `tool`: it only reads and leaves nothing for the user to answer.
+pub fn is_unattended(tool: &Tool) -> bool {
+    tool.read_only && !NOT_UNATTENDED.contains(&tool.name)
+}
+
+/// The names of the tools an unattended run may call, in the table's order: what `hutan mcp
+/// --unattended-tools` prints and `hutan mcp --unattended` serves.
+pub fn unattended_names() -> impl Iterator<Item = &'static str> {
+    TOOLS
+        .iter()
+        .filter(|tool| is_unattended(tool))
+        .map(|tool| tool.name)
+}
+
 /// The names of the tools that change something, in the table's order: what `hutan mcp
 /// --gated-tools` prints. Every one of them goes through the daemon's gate (a Mutate request:
 /// `read_only_agrees_with_the_daemons_classification` checks it, and no tool of the table is
@@ -2086,5 +2106,24 @@ mod tests {
         for user_only in ["approval_respond", "question_answer", "memory_write"] {
             assert!(find(user_only).is_none(), "{user_only}");
         }
+    }
+
+    /// The scheduled digest's tools (`hutan mcp --unattended-tools`): the readers less the one
+    /// that leaves a proposal for the user to answer.
+    #[test]
+    fn the_unattended_list_is_the_read_list_without_what_waits_for_the_user() {
+        let reads: Vec<&str> = read_only_names().collect();
+        let unattended: Vec<&str> = unattended_names().collect();
+        assert_eq!(unattended.len() + 1, reads.len());
+        assert!(reads.contains(&"memory_propose") && !unattended.contains(&"memory_propose"));
+        for name in &unattended {
+            assert!(reads.contains(name), "{name}");
+        }
+        let mut out = Vec::new();
+        crate::mcp::print_unattended_tools(&mut out).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap().lines().collect::<Vec<_>>(),
+            unattended
+        );
     }
 }
