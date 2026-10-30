@@ -137,6 +137,8 @@ pub enum Write {
     AppendAgentState(Box<crate::state_log::AgentStateRow>),
     /// Empties the log.
     ClearAgentStates,
+    /// Records a run of the scheduled model digest and forgets all but the newest 50.
+    AppendDigestRun(Box<crate::digest_runs::DigestRunRow>),
     /// Inserts a question of an agent or replaces how it ended.
     UpsertQuestion(Box<QuestionRow>),
     /// Inserts a provider or replaces everything but its creation time.
@@ -375,6 +377,7 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
         Write::UpsertApproval(row) => upsert_approval(conn, row)?,
         Write::AppendAgentState(row) => crate::state_log::append(conn, row)?,
         Write::ClearAgentStates => crate::state_log::clear(conn)?,
+        Write::AppendDigestRun(row) => crate::digest_runs::append(conn, row)?,
         Write::UpsertQuestion(row) => upsert_question(conn, row)?,
         Write::UpsertProvider(row) => {
             conn.execute(

@@ -9,6 +9,7 @@
 //! reads, [`Storage::flush`], [`Storage::close`]) on a blocking thread.
 
 mod checkpoints;
+mod digest_runs;
 mod error;
 mod memory;
 mod migrate;
@@ -34,6 +35,7 @@ use tracing::{debug, error};
 pub use checkpoints::{
     CheckpointFilter, CheckpointPage, CheckpointRow, CheckpointScope, Checkpoints,
 };
+pub use digest_runs::{DIGEST_RUNS_KEPT, DigestRunRow, DigestRuns};
 pub use error::{Result, StorageError};
 pub use memory::{
     Action, Author, Category, Change, EntryRow, EntryState, EntryView, Memory, MemoryError,
@@ -211,6 +213,10 @@ impl Storage {
 
     pub fn checkpoints(&self) -> Checkpoints<'_> {
         Checkpoints(self)
+    }
+
+    pub fn digest_runs(&self) -> DigestRuns<'_> {
+        DigestRuns(self)
     }
 
     pub fn agent_state_log(&self) -> AgentStateLog<'_> {

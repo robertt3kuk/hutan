@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::{DIGEST_RUNS_KEPT, DigestRunRow};
 use std::fs;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -2977,5 +2978,36 @@ fn confirmed_setup_commands_are_kept_by_repository_and_hash_and_survive_a_reopen
     storage.close();
     let storage = Storage::open(db(&dir)).unwrap();
     assert_eq!(storage.worktree_setup_trust().list().unwrap(), expected);
+    storage.close();
+}
+
+#[test]
+fn digest_runs_are_listed_newest_first_and_only_the_newest_fifty_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let id = chat_session(&storage);
+    let runs = storage.digest_runs();
+    assert!(runs.newest(10).unwrap().is_empty());
+    for n in 0..55u64 {
+        runs.append(DigestRunRow {
+            started_ms: 1_000 + n,
+            ended_ms: 1_500 + n,
+            outcome: if n == 54 { "skipped" } else { "done" }.to_owned(),
+            reason: (n == 54).then(|| "version differs".to_owned()),
+            session_id: Some(id),
+            tokens: (n != 54).then_some(1_000 + n),
+        })
+        .unwrap();
+    }
+    let kept = runs.newest(100).unwrap();
+    assert_eq!(kept.len(), usize::try_from(DIGEST_RUNS_KEPT).unwrap());
+    assert_eq!(kept[0].started_ms, 1_054, "newest first");
+    assert_eq!(kept[0].outcome, "skipped");
+    assert_eq!(kept[0].reason.as_deref(), Some("version differs"));
+    assert_eq!(kept[0].tokens, None);
+    assert_eq!(kept[1].tokens, Some(1_053));
+    assert_eq!(kept[1].session_id, Some(id));
+    assert_eq!(kept.last().unwrap().started_ms, 1_005);
+    assert_eq!(runs.newest(2).unwrap().len(), 2);
     storage.close();
 }
