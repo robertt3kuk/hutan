@@ -35,8 +35,6 @@ use crate::workbench::ui::{self, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, VimConfig};
 
-/// The UI font, for the cards drawn inside the diff's monospace block.
-
 /// Lines of one hunk of the shown file's diff, as indices into its lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
