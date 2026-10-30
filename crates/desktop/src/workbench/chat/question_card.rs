@@ -388,7 +388,14 @@ impl ChatView {
                             .join(", "),
                         other => other.to_string(),
                     };
-                    Some(format!("{}: {text}", field.label))
+                    // A label that only repeats the question is not said again.
+                    let echoed = same_words(&field.label, &question.spec.title)
+                        || same_words(&field.label, &question.spec.prompt);
+                    Some(if echoed {
+                        text
+                    } else {
+                        format!("{}: {text}", field.label)
+                    })
                 })
                 .collect::<Vec<_>>()
                 .join(" · "),
