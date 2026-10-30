@@ -1662,6 +1662,9 @@ impl Render for ResourcesPanel {
                     move |_, bounds, window, cx| {
                         if Tier::of(bounds.size.width) != tier {
                             cx.notify(window.current_view());
+                            // Asking for the frame wakes the platform: a redraw that is only marked is not drawn
+                            // until the next input.
+                            window.request_animation_frame();
                         }
                     },
                 )

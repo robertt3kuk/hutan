@@ -1,7 +1,7 @@
 //! Layout operations on [`WorkbenchState`].
 
 use super::{
-    Direction, DockMode, DockPosition, Edge, FocusTarget, ItemRef, ModelError, Pane, PaneId,
+    Axis, Direction, DockMode, DockPosition, Edge, FocusTarget, ItemRef, ModelError, Pane, PaneId,
     PanelId, Rect, WorkbenchState,
 };
 
@@ -286,6 +286,14 @@ impl WorkbenchState {
         self.focus = FocusTarget::Pane(id);
         self.normalize();
         Ok(id)
+    }
+
+    /// After `pane` was split at a left or right edge into `new`: the two keep at least `min`
+    /// points of the `center_width` the center has, taken from the other panes beside them (a
+    /// side view that is a sliver is no view). Nothing else changes.
+    pub fn make_room_beside(&mut self, pane: PaneId, new: PaneId, center_width: f32, min: f32) {
+        self.center
+            .fit_pair([pane, new], Axis::Horizontal, center_width, min);
     }
 
     /// Move an item between tab strips, into a new split, or into a dock (panels only).

@@ -178,6 +178,71 @@ impl PaneTree {
         }
     }
 
+    /// Makes room for two panes (`pair`) that sit next to each other in a split along `axis`:
+    /// each gets at least `min` points of the `length` points this node has along that axis,
+    /// taken from their siblings by how much more than `min` each has. When the siblings cannot
+    /// give that much, the split is shared equally. Panes that are not `pair` never grow
+    /// because of it. Returns whether a split holding both was found.
+    pub fn fit_pair(&mut self, pair: [PaneId; 2], axis: Axis, length: f32, min: f32) -> bool {
+        let PaneTree::Split {
+            axis: own,
+            ratios,
+            children,
+        } = self
+        else {
+            return false;
+        };
+        let direct = |c: &PaneTree, id: PaneId| matches!(c, PaneTree::Pane(p) if p.id == id);
+        if *own == axis
+            && pair
+                .iter()
+                .all(|id| children.iter().any(|c| direct(c, *id)))
+        {
+            let n = children.len();
+            let mut sizes: Vec<f32> = ratios.iter().map(|r| r * length).collect();
+            let wanted: Vec<bool> = children
+                .iter()
+                .map(|c| pair.iter().any(|id| direct(c, *id)))
+                .collect();
+            let deficit: f32 = sizes
+                .iter()
+                .zip(&wanted)
+                .filter(|(_, w)| **w)
+                .map(|(size, _)| (min - size).max(0.0))
+                .sum();
+            if deficit <= 0.0 {
+                return true;
+            }
+            // Whoever has more than `min` gives, by how much more (a pane of the pair that is
+            // wide enough too, a pane that is narrow already not at all).
+            let spare: f32 = sizes.iter().map(|size| (size - min).max(0.0)).sum();
+            if spare < deficit || length <= 0.0 {
+                *ratios = vec![1.0 / n as f32; n];
+                return true;
+            }
+            let give = deficit / spare;
+            for (size, wanted) in sizes.iter_mut().zip(&wanted) {
+                if *wanted && *size < min {
+                    *size = min;
+                } else {
+                    *size -= (*size - min).max(0.0) * give;
+                }
+            }
+            let total: f32 = sizes.iter().sum();
+            *ratios = sizes.iter().map(|size| size / total).collect();
+            return true;
+        }
+        let (own, lengths): (Axis, Vec<f32>) = (*own, ratios.iter().map(|r| r * length).collect());
+        children.iter_mut().zip(lengths).any(|(child, own_length)| {
+            child.fit_pair(
+                pair,
+                axis,
+                if own == axis { own_length } else { length },
+                min,
+            )
+        })
+    }
+
     /// Every split shares its space equally among its children (Vim's `⌃W =`).
     pub fn equalize(&mut self) {
         if let PaneTree::Split {
@@ -261,10 +326,20 @@ impl PaneTree {
                 let old_children = std::mem::take(children);
                 let old_ratios = std::mem::take(ratios);
                 let mut kept: Vec<(f32, PaneTree)> = Vec::new();
+                // The share of a child that went away: it goes to the neighbour it was next to
+                // (the one before it, else the one after), so the other panes keep their widths
+                // instead of all growing a little (a pane closed and opened again comes back to
+                // the size it had).
+                let mut freed = 0.0;
                 for (mut child, ratio) in old_children.into_iter().zip(old_ratios) {
+                    let ratio = sanitize_ratio(ratio);
                     // Only the overall root may stay empty, and only when it is a lone pane.
                     if child.prune(false) {
-                        kept.push((sanitize_ratio(ratio), child));
+                        kept.push((ratio + std::mem::take(&mut freed), child));
+                    } else if let Some((before, _)) = kept.last_mut() {
+                        *before += ratio;
+                    } else {
+                        freed += ratio;
                     }
                 }
                 // Merge same-axis child splits into this split.

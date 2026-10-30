@@ -384,6 +384,32 @@ impl Workbench {
         cx.notify();
     }
 
+    /// The sheet owns the keyboard while it is open: whatever else takes it (a terminal that is
+    /// shown again, a view that attaches, a tab the daemon opens) gives it back at the next frame,
+    /// so Escape closes Settings and no key reaches what is under it. An overlay of its own
+    /// (the palette, a menu, a dialog) keeps the keyboard it was given.
+    pub(super) fn keep_sheet_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sheet.is_none() || self.sheet_focus.contains_focused(window, cx) {
+            return;
+        }
+        let overlays = [
+            &self.launcher_focus,
+            &self.agent_focus,
+            &self.picker_focus,
+            &self.palette_focus,
+            &self.menu_focus,
+            &self.modal_focus,
+            &self.daemon_focus,
+        ];
+        if overlays
+            .iter()
+            .any(|focus| focus.contains_focused(window, cx))
+        {
+            return;
+        }
+        window.focus(&self.sheet_focus, cx);
+    }
+
     /// Escape: closes what is open over the page, innermost first (the `⋯` menu of a picker, a
     /// dropdown or picker, a text edit, the Problems list), then the sheet. The keyboard stays
     /// on the row the dropdown was opened from.

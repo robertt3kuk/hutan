@@ -1404,6 +1404,9 @@ impl ChangesView {
                     // The layout was built for another width (the stacked or the side-by-side
                     // one, or the file list's share of it): build it again.
                     cx.notify(window.current_view());
+                    // Asking for the frame wakes the platform: a redraw that is only marked is not drawn
+                    // until the next input.
+                    window.request_animation_frame();
                 }
             },
         )

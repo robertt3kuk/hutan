@@ -52,6 +52,8 @@ actions!(
         ToggleOverview,
         ShowAgentsPage,
         ClosePaneItem,
+        /// *Tab: Reopen Closed Tab*: the session closed last comes back (⇧⌘T is New Agent).
+        ReopenClosedTab,
         ToggleZoom,
         TogglePalette,
         NewTerminal,
@@ -846,6 +848,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Layout: Use New Default", UseNewDefaultLayout),
         command("Layout: Save Layout as Preset…", SaveLayoutAsPreset),
         command("Tab: Close (Detach)", ClosePaneItem),
+        command("Tab: Reopen Closed Tab", ReopenClosedTab),
         command("Tab: Open Panel as Tab", OpenActivePanelAsTab),
         command("Tab: Previous", ActivatePreviousTab),
         command("Tab: Next", ActivateNextTab),

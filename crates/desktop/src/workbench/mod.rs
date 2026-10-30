@@ -9,7 +9,7 @@ mod attention_toast;
 mod blame;
 mod changes;
 pub mod chat;
-mod closing;
+pub mod closing;
 mod customize;
 mod customize_bar;
 mod customize_sidebar;

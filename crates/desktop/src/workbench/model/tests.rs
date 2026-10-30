@@ -262,6 +262,92 @@ fn split_unknown_pane_errors_and_panel_duplicate_rejected() {
     check(&state);
 }
 
+/// The widths of the center's panes in points, left to right.
+fn widths(state: &WorkbenchState, total: f32) -> Vec<f32> {
+    let mut rects = state.center.layout(Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 1.0,
+        h: 1.0,
+    });
+    rects.sort_by(|a, b| a.1.x.total_cmp(&b.1.x));
+    rects.iter().map(|(_, r)| r.w * total).collect()
+}
+
+#[test]
+fn a_split_beside_a_narrow_pane_takes_space_from_the_wide_one_and_keeps_the_pair_readable() {
+    // An agent (half) and a file (a quarter) and a quarter that becomes the preview: 530/265/265.
+    let mut state = WorkbenchState::with_center(leaf(1, &["agent"]));
+    let file = state
+        .split_pane(PaneId(1), Edge::Right, item("file"))
+        .unwrap();
+    let side = state
+        .split_pane(file, Edge::Right, item("preview"))
+        .unwrap();
+    assert_eq!(widths(&state, 1060.0), vec![530.0, 265.0, 265.0]);
+    state.make_room_beside(file, side, 1060.0, 340.0);
+    check(&state);
+    let w = widths(&state, 1060.0);
+    assert!(
+        (w[1] - 340.0).abs() < 0.5 && (w[2] - 340.0).abs() < 0.5,
+        "{w:?}"
+    );
+    assert!(
+        (w[0] - 380.0).abs() < 0.5,
+        "the agent gave the space: {w:?}"
+    );
+    assert!((w.iter().sum::<f32>() - 1060.0).abs() < 0.5);
+}
+
+#[test]
+fn room_is_made_only_when_the_pair_is_too_narrow_and_never_for_other_panes() {
+    let mut state = WorkbenchState::with_center(leaf(1, &["a"]));
+    let b = state.split_pane(PaneId(1), Edge::Right, item("b")).unwrap();
+    let c = state.split_pane(b, Edge::Right, item("c")).unwrap();
+    // Wide enough: nothing moves.
+    let before = widths(&state, 2000.0);
+    state.make_room_beside(b, c, 2000.0, 340.0);
+    assert_eq!(widths(&state, 2000.0), before);
+    // The first pane was narrow before the split: it is not widened, only the pair is.
+    state.center.set_divider(&[], 0, 0.1);
+    let narrow = widths(&state, 1000.0)[0];
+    state.make_room_beside(b, c, 1000.0, 340.0);
+    let w = widths(&state, 1000.0);
+    assert!(w[0] <= narrow + 0.5, "{w:?}");
+    assert!(w[1] >= 339.5 && w[2] >= 339.5, "{w:?}");
+    // No room for three: shared equally.
+    let mut state = WorkbenchState::with_center(leaf(1, &["a"]));
+    let b = state.split_pane(PaneId(1), Edge::Right, item("b")).unwrap();
+    let c = state.split_pane(b, Edge::Right, item("c")).unwrap();
+    state.make_room_beside(b, c, 900.0, 340.0);
+    assert_eq!(widths(&state, 900.0), vec![300.0, 300.0, 300.0]);
+}
+
+#[test]
+fn a_closed_pane_gives_its_share_to_the_neighbour_it_was_beside() {
+    let mut state = WorkbenchState::with_center(leaf(1, &["agent"]));
+    let file = state
+        .split_pane(PaneId(1), Edge::Right, item("file"))
+        .unwrap();
+    let side = state
+        .split_pane(file, Edge::Right, item("preview"))
+        .unwrap();
+    let before = widths(&state, 1060.0);
+    state.close_item(side, 0).unwrap();
+    check(&state);
+    // The agent keeps its width; the file takes the preview's.
+    assert_eq!(
+        widths(&state, 1060.0),
+        vec![before[0], before[1] + before[2]]
+    );
+    // Opened again, the preview takes what it had.
+    let side = state
+        .split_pane(file, Edge::Right, item("preview"))
+        .unwrap();
+    let _ = side;
+    assert_eq!(widths(&state, 1060.0), before);
+}
+
 #[test]
 fn pane_ids_are_never_reused() {
     let mut state = WorkbenchState::default();
@@ -304,7 +390,7 @@ fn closing_last_item_collapses_pane_and_flattens_split() {
 }
 
 #[test]
-fn collapse_renormalizes_ratios() {
+fn a_closed_pane_gives_its_share_to_the_pane_before_it_and_the_ratios_still_sum_to_one() {
     let mut state = WorkbenchState::with_center(split(
         Axis::Horizontal,
         &[0.2, 0.3, 0.5],
@@ -315,8 +401,9 @@ fn collapse_renormalizes_ratios() {
     let PaneTree::Split { ratios, .. } = &state.center else {
         panic!("expected split");
     };
-    assert!((ratios[0] - 0.2 / 0.7).abs() < 1e-5);
-    assert!((ratios[1] - 0.5 / 0.7).abs() < 1e-5);
+    // The 0.3 of the closed pane goes to the pane it was beside; the other keeps its share.
+    assert!((ratios[0] - 0.5).abs() < 1e-5);
+    assert!((ratios[1] - 0.5).abs() < 1e-5);
 }
 
 #[test]

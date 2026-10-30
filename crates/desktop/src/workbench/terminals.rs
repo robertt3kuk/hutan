@@ -585,7 +585,7 @@ impl Workbench {
         self.show_workspace_of(session, cx);
         let pane = self.state.active_pane_id();
         let item = self.item_for(session, cx);
-        self.try_mutate(cx, |s| s.split_pane(pane, edge, item));
+        self.split_pane_with_room(pane, edge, item, cx);
         self.focus_root(window, cx);
     }
 
@@ -2030,13 +2030,35 @@ impl Workbench {
                 ];
                 // "Close" (by `tabs.close_session`) stays last; where it also closes the
                 // session, the tab can still be closed alone.
-                let close = entries.pop();
+                let mut close = entries.pop();
                 entries.append(&mut extra);
-                if self.close_session_mode() != crate::settings::CloseSessionMode::Never {
-                    entries.push(Self::entry(
-                        "Close Tab, Keep Running",
-                        move |this, window, cx| this.close_tab_with_fade(pane, index, window, cx),
-                    ));
+                let mode = self.close_session_mode();
+                // Three ways to close, each named for what it does: the tab (and the session as
+                // the Tabs setting says, the way ⌘W does), the tab alone, the session.
+                if let Some(close) = close.as_mut() {
+                    close.label = "Close Tab".into();
+                    close.tip = Some(
+                        match mode {
+                            crate::settings::CloseSessionMode::Never => {
+                                "Closes the tab; the session keeps running."
+                            }
+                            crate::settings::CloseSessionMode::WhenIdle => {
+                                "Closes the tab, and the session when nothing runs in it (⌘W)."
+                            }
+                            crate::settings::CloseSessionMode::Always => {
+                                "Closes the tab and the session (⌘W), stopping what runs in it; Undo brings it back."
+                            }
+                        }
+                        .into(),
+                    );
+                }
+                if mode != crate::settings::CloseSessionMode::Never {
+                    let mut only =
+                        Self::entry("Close Tab, Keep Running", move |this, window, cx| {
+                            this.close_tab_with_fade(pane, index, window, cx)
+                        });
+                    only.tip = Some("Closes the tab alone; the session keeps running.".into());
+                    entries.push(only);
                 }
                 entries.extend(close);
                 Self::tidy_session_menu(&mut entries);

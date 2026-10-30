@@ -324,7 +324,12 @@ fn the_tab_menu_can_still_close_the_tab_alone(cx: &mut TestAppContext) {
         labels.iter().any(|l| l == "Close Tab, Keep Running"),
         "{labels:?}"
     );
-    assert_eq!(labels.last().map(String::as_str), Some("Close"));
+    assert_eq!(
+        labels.last().map(String::as_str),
+        Some("Close Tab"),
+        "the three ways to close are named for what they do"
+    );
+    assert!(labels.iter().any(|l| l == "Close session…"), "{labels:?}");
 }
 
 #[gpui::test]

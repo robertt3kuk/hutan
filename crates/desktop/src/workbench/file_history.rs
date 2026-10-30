@@ -470,6 +470,9 @@ impl Render for FileHistoryView {
                             width.set(measured);
                             if (measured < STACK_BELOW * em) != was_stacked {
                                 cx.notify(window.current_view());
+                                // Asking for the frame wakes the platform: a redraw that is only marked is not drawn
+                                // until the next input.
+                                window.request_animation_frame();
                             }
                         },
                     )

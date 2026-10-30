@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use crate::theme::DensityExt as _;
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString, Styled,
-    Window, div, px,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement as _, Styled, Window, div, px,
 };
 use hutan_core::SessionId;
 use hutan_protocol::messages::SessionBusy;
@@ -22,8 +22,22 @@ use super::view::{Region, Workbench};
 use crate::sessions::CloseFailure;
 use crate::settings::CloseSessionMode;
 
-/// How long the Undo toast stays.
-pub const TOAST_TIME: Duration = Duration::from_secs(5);
+/// How long the Undo toast stays once the pointer is not on it: long enough to read what was
+/// closed and decide (a closed chat can be a long conversation). While the pointer is on it the
+/// time does not run.
+pub const TOAST_TIME: Duration = Duration::from_secs(12);
+
+/// How many closed sessions *Reopen Closed Tab* remembers.
+pub const RECENTLY_CLOSED_KEPT: usize = 20;
+
+/// A session this window closed, as it stood: what *Reopen Closed Tab* needs.
+#[derive(Debug, Clone)]
+pub struct ClosedSession {
+    pub session: SessionId,
+    pub title: SharedString,
+    /// The tab of terminal splits it was in (see [`CloseToast`]).
+    split: Option<TermSplit>,
+}
 
 /// The widest an Undo toast is: a long label is cut, never wrapped to a second line.
 pub const UNDO_TOAST_MAX_WIDTH: f32 = 360.0;
@@ -410,8 +424,10 @@ impl Workbench {
         }
     }
 
-    /// The session the sidebar selects when `session` goes: the next one of its project, else
-    /// the one before it. A session that closes together with it (`closing`) never is it.
+    /// The session that takes the keyboard when `session` goes: the next one of its project
+    /// that has a tab open, else the one before it. A session that closes together with it
+    /// (`closing`) never is it, and neither is one without a tab: closing a tab shows what is
+    /// already open, it never opens another agent's session.
     fn neighbour_of(
         &self,
         session: SessionId,
@@ -425,7 +441,11 @@ impl Workbench {
             .iter()
             .filter(|s| s.workspace_id == workspace)
             .map(|s| s.id)
-            .filter(|id| *id == session || !closing.contains(id))
+            .filter(|id| {
+                *id == session
+                    || (!closing.contains(id)
+                        && self.state.find_session_tab(&id.to_string()).is_some())
+            })
             .collect();
         let at = same.iter().position(|id| *id == session)?;
         same.get(at + 1)
@@ -451,6 +471,17 @@ impl Workbench {
         split: Option<TermSplit>,
         cx: &mut Context<Self>,
     ) {
+        self.recently_closed.retain(|c| c.session != session);
+        self.recently_closed.push(ClosedSession {
+            session,
+            title: title.clone().into(),
+            split: split.clone(),
+        });
+        let excess = self
+            .recently_closed
+            .len()
+            .saturating_sub(RECENTLY_CLOSED_KEPT);
+        self.recently_closed.drain(..excess);
         self.toast_rev += 1;
         let rev = self.toast_rev;
         self.close_toast = Some(CloseToast {
@@ -459,10 +490,20 @@ impl Workbench {
             split,
             rev,
         });
+        self.close_toast_hovered = false;
+        self.time_close_toast(rev, cx);
+        cx.notify();
+    }
+
+    /// Takes the Undo toast away after [`TOAST_TIME`] (unless it was replaced or the pointer is
+    /// on it: [`Self::hover_close_toast`] starts the time again when the pointer leaves).
+    fn time_close_toast(&mut self, rev: u64, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(TOAST_TIME).await;
             this.update(cx, |this, cx| {
-                if this.close_toast.as_ref().is_some_and(|t| t.rev == rev) {
+                if this.close_toast.as_ref().is_some_and(|t| t.rev == rev)
+                    && !this.close_toast_hovered
+                {
                     this.close_toast = None;
                     cx.notify();
                 }
@@ -470,12 +511,47 @@ impl Workbench {
             .ok();
         })
         .detach();
+    }
+
+    /// The pointer came onto the Undo toast or left it: the time pauses while it is on it and
+    /// starts over when it leaves.
+    fn hover_close_toast(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if self.close_toast_hovered == hovered {
+            return;
+        }
+        self.close_toast_hovered = hovered;
+        if !hovered && let Some(rev) = self.close_toast.as_ref().map(|t| t.rev) {
+            self.time_close_toast(rev, cx);
+        }
+    }
+
+    /// *Tab: Reopen Closed Tab*: the session this window closed last comes back, in the tab it
+    /// was in, whether or not the Undo toast is still there.
+    pub fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(closed) = self.recently_closed.pop() else {
+            self.set_notice("Nothing closed to reopen", cx);
+            return;
+        };
+        if self
+            .close_toast
+            .as_ref()
+            .is_some_and(|t| t.session == closed.session)
+        {
+            self.close_toast = None;
+        }
+        self.reopen_session_into(closed.session, closed.split, window, cx);
         cx.notify();
+    }
+
+    /// The sessions this window closed, newest last.
+    pub fn recently_closed(&self) -> &[ClosedSession] {
+        &self.recently_closed
     }
 
     /// Undo of the toast: reopens the session.
     pub fn undo_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(toast) = self.close_toast.take() {
+            self.recently_closed.retain(|c| c.session != toast.session);
             self.reopen_session_into(toast.session, toast.split, window, cx);
         }
         cx.notify();
@@ -488,6 +564,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.recently_closed.retain(|c| c.session != session);
         self.reopen_session_into(session, None, window, cx);
     }
 
@@ -543,6 +620,9 @@ impl Workbench {
                     .toast(&theme, &tokens)
                     .undo_toast(&tokens)
                     .max_w(px(UNDO_TOAST_MAX_WIDTH))
+                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                        this.hover_close_toast(*hovered, cx);
+                    }))
                     .px(px(tokens.spacing * 3.0))
                     .py(px(tokens.spacing * 2.0))
                     .child(

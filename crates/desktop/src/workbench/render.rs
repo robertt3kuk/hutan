@@ -145,6 +145,9 @@ pub(super) fn probe_width(
             let width = f32::from(bounds.size.width);
             if seen.replace(Some(width)) != Some(width) {
                 cx.notify(window.current_view());
+                // Asking for the frame wakes the platform: a redraw that is only marked is not drawn
+                // until the next input.
+                window.request_animation_frame();
             }
         },
     )
@@ -250,6 +253,7 @@ impl Render for Workbench {
         let fork_popover = self.render_fork_popover(window, cx);
         let recovery = self.render_recovery_summary(cx);
         let update_sheet = self.render_update_sheet(cx);
+        self.keep_sheet_focus(window, cx);
         let sheet = self.render_settings_sheet(cx);
         let setup = self.render_setup(window, cx);
         // A tooltip shown before a sheet, menu or palette opened must not stay over it.
@@ -1075,6 +1079,11 @@ impl Workbench {
         .on_action(
             cx.listener(|this, _: &actions::DismissAttentionToasts, _, cx| {
                 this.dismiss_attention_toasts(cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::ReopenClosedTab, window, cx| {
+                this.reopen_closed_tab(window, cx);
             }),
         )
         .on_action(cx.listener(|this, _: &actions::UndoLayoutChange, _, cx| {

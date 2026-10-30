@@ -9,8 +9,8 @@ use super::daemon::DaemonControl;
 use super::mac::MacControl;
 use super::modal::Modal;
 use super::model::{
-    DockMode, DockPosition, DropTarget, Edge, FocusTarget, ItemRef, ItemSource, LayoutPreset,
-    PaneId, PanelDest, PanelId, Responsive, WorkbenchState,
+    Axis, DockMode, DockPosition, DropTarget, Edge, FocusTarget, ItemRef, ItemSource, LayoutPreset,
+    ModelError, PaneId, PanelDest, PanelId, Responsive, WorkbenchState,
 };
 use super::palette::PaletteState;
 use super::panels::{AssistantPanel, builtin_panels, builtin_status_items};
@@ -1020,6 +1020,11 @@ pub struct Workbench {
     pub(crate) notice: Option<SharedString>,
     /// "Closed … · Undo" (`closing.rs`).
     pub(crate) close_toast: Option<super::closing::CloseToast>,
+    /// The sessions this window closed, newest last: what *Reopen Closed Tab* brings back
+    /// (`closing.rs`).
+    pub(crate) recently_closed: Vec<super::closing::ClosedSession>,
+    /// The pointer is on the Undo toast: its time does not run.
+    pub(crate) close_toast_hovered: bool,
     pub(crate) toast_rev: u64,
     /// "Shared one file with every agent · Undo" (`instructions.rs`) and the folders of the
     /// harnesses the Instructions panel lists user-level files of.
@@ -1688,6 +1693,8 @@ impl Workbench {
             pruned_previews: Vec::new(),
             notice: None,
             close_toast: None,
+            recently_closed: Vec::new(),
+            close_toast_hovered: false,
             toast_rev: 0,
             instructions: super::instructions::InstructionsState::default(),
             instructions_toast_exit: super::ui::motion::Ghost::default(),
@@ -2053,6 +2060,36 @@ impl Workbench {
         };
         self.after_change(cx);
         result
+    }
+
+    /// The narrowest a pane may be made by opening a split beside it (points): a file, a page or
+    /// a chat of this width is still read; below it the new split takes space from the other
+    /// panes instead.
+    pub const MIN_SPLIT_PANE_WIDTH: f32 = 340.0;
+
+    /// [`WorkbenchState::split_pane`] for a split the user asked for (a file or page to the
+    /// side, a session in a split): when the new pane and the one it was split from would be
+    /// narrower than [`Self::MIN_SPLIT_PANE_WIDTH`], the panes beside them give space.
+    pub(crate) fn split_pane_with_room(
+        &mut self,
+        pane: PaneId,
+        edge: Edge,
+        item: ItemRef,
+        cx: &mut Context<Self>,
+    ) -> Option<PaneId> {
+        let width = self
+            .region_bounds(Region::Center)
+            .map(|bounds| f32::from(bounds.size.width))
+            .filter(|width| *width > 0.0);
+        self.try_mutate(cx, |s| {
+            let new = s.split_pane(pane, edge, item)?;
+            if let Some(width) = width
+                && edge.axis() == Axis::Horizontal
+            {
+                s.make_room_beside(pane, new, width, Self::MIN_SPLIT_PANE_WIDTH);
+            }
+            Ok::<_, ModelError>(new)
+        })
     }
 
     pub(crate) fn after_change(&mut self, cx: &mut Context<Self>) {

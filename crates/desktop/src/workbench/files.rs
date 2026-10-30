@@ -297,7 +297,7 @@ impl Workbench {
                     None => into = Some(side),
                 },
                 None => {
-                    self.try_mutate(cx, |s| s.split_pane(from, Edge::Right, item.clone()));
+                    self.split_pane_with_room(from, Edge::Right, item.clone(), cx);
                     placed = true;
                 }
             }
@@ -951,7 +951,7 @@ impl Workbench {
             .file_view_of(pane, path)
             .map(|view| view.read(cx).code().clone());
         let item = ItemRef::file(path);
-        if let Some(split) = self.try_mutate(cx, |s| s.split_pane(pane, edge, item)) {
+        if let Some(split) = self.split_pane_with_room(pane, edge, item, cx) {
             let view = self.file_view(split, path, window, cx);
             if let Some(from) = from {
                 let code = view.read(cx).code().clone();

@@ -354,10 +354,8 @@ impl Workbench {
             });
         } else {
             self.ensure_buffer(path, true, None, cx);
-            self.try_mutate(cx, |s| {
-                s.split_pane(pane, Edge::Right, item.clone())?;
-                s.focus_pane(pane)
-            });
+            self.split_pane_with_room(pane, Edge::Right, item.clone(), cx);
+            self.try_mutate(cx, |s| s.focus_pane(pane));
         }
         self.focus_root(window, cx);
     }
