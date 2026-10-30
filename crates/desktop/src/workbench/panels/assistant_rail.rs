@@ -925,7 +925,7 @@ impl AssistantPanel {
                 this.memory.loading = false;
                 match entries {
                     Ok(mut entries) => {
-                        entries.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
+                        entries.sort_by_key(|entry| std::cmp::Reverse(entry.updated_ms));
                         entries.truncate(MEMORY_ENTRIES_SHOWN);
                         this.memory.entries = entries;
                         this.memory.loaded = !std::mem::take(&mut this.memory.again);
