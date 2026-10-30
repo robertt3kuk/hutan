@@ -412,6 +412,15 @@ impl Workbench {
                 .collect();
             return Some((options, None));
         }
+        if let Some(font) = self
+            .sheet
+            .as_ref()
+            .and_then(|s| s.field(tag))
+            .and_then(|f| super::settings_fonts::FontField::of(f.namespace, &f.dotted()))
+        {
+            // The families that fit the search; what the arrow keys move through.
+            return Some((self.font_options(font), self.font_explicit(font).or(Some(String::new()))));
+        }
         let FieldKind::Enum(values) = self.sheet_kind(tag)? else {
             return None;
         };
@@ -460,6 +469,7 @@ impl Workbench {
         }
         // A picker previews the pack the cursor moved to.
         self.sync_pack_preview();
+        self.font_follow_cursor();
         cx.notify();
     }
 
@@ -490,7 +500,14 @@ impl Workbench {
             cx.notify();
             return;
         };
-        if let Some(key) = tag.strip_prefix("add:daemon:") {
+        let font = self
+            .sheet
+            .as_ref()
+            .and_then(|s| s.field(&tag))
+            .and_then(|f| super::settings_fonts::FontField::of(f.namespace, &f.dotted()));
+        if let Some(font) = font {
+            self.font_apply(font, &value, cx);
+        } else if let Some(key) = tag.strip_prefix("add:daemon:") {
             self.daemon_list_add(key, &value, cx);
         } else if let Some(key) = tag.strip_prefix("daemon:") {
             self.daemon_choose(key, &value, cx);
@@ -527,7 +544,7 @@ impl Workbench {
         }
         if sheet.dropdown.is_some() {
             // A theme picker's search box takes the typed characters.
-            if self.pack_picker_key(event, cx) {
+            if self.pack_picker_key(event, cx) || self.font_picker_key(event, cx) {
                 return true;
             }
             match key {

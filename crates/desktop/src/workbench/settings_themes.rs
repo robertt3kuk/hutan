@@ -220,6 +220,23 @@ fn error_line(error: &hutan_settings::SettingsError) -> String {
     super::settings_sheet::problem_text(error)
 }
 
+/// What a key does to the text of a picker's search box: `None` when it is not for the box
+/// (a shortcut, Return, Tab, Escape, arrows), `Some(None)` for Backspace, `Some(Some(text))` for
+/// typed text.
+pub(super) fn search_edit(event: &gpui::KeyDownEvent) -> Option<Option<String>> {
+    let mods = event.keystroke.modifiers;
+    if mods.platform || mods.control || mods.alt {
+        return None;
+    }
+    let key = event.keystroke.key.as_str();
+    match (key, &event.keystroke.key_char) {
+        ("backspace", _) => Some(None),
+        ("enter" | "tab" | "escape", _) => None,
+        (_, Some(text)) if !text.chars().any(char::is_control) => Some(Some(text.clone())),
+        _ => None,
+    }
+}
+
 impl Workbench {
     // ---- reading ------------------------------------------------------------------------------
 
@@ -363,16 +380,8 @@ impl Workbench {
         let Some(field) = self.open_pack_picker() else {
             return false;
         };
-        let mods = event.keystroke.modifiers;
-        if mods.platform || mods.control || mods.alt {
+        let Some(typed) = search_edit(event) else {
             return false;
-        }
-        let key = event.keystroke.key.as_str();
-        let typed = match (key, &event.keystroke.key_char) {
-            ("backspace", _) => None,
-            ("enter" | "tab" | "escape", _) => return false,
-            (_, Some(text)) if !text.chars().any(char::is_control) => Some(text.clone()),
-            _ => return false,
         };
         let changed = match (&mut self.sheet, typed) {
             (Some(sheet), Some(text)) => {

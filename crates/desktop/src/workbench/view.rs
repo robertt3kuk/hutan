@@ -842,6 +842,8 @@ pub struct Workbench {
     pub(crate) mawas_grants: super::settings_assistant::MawasGrants,
     /// The Automation page: the user's hooks as the daemon last said.
     pub(crate) hooks_page: super::settings_hooks::HooksPage,
+    /// The installed font families the font pickers list (`settings_fonts.rs`).
+    pub(crate) fonts: super::settings_fonts::FontCatalog,
     pub(crate) agent_focus: FocusHandle,
     pub(crate) held: HashMap<SessionId, Entity<TerminalSession>>,
     /// Folded blocks per terminal, saved with the layout (see [`persistence::CollapsedBlocks`]).
@@ -1550,6 +1552,7 @@ impl Workbench {
             assistant_defaults: super::settings_assistant::AssistantDefaults::default(),
             mawas_grants: super::settings_assistant::MawasGrants::default(),
             hooks_page: super::settings_hooks::HooksPage::default(),
+            fonts: super::settings_fonts::FontCatalog::default(),
             agent_focus,
             held: HashMap::new(),
             collapsed_blocks: options

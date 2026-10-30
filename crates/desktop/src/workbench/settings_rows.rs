@@ -487,6 +487,9 @@ impl Workbench {
         if let Some(pack) = super::settings_themes::PackField::of(ns, &key) {
             return self.render_pack_row(pack, field, cx);
         }
+        if let Some(font) = super::settings_fonts::FontField::of(ns, &key) {
+            return self.render_font_row(font, field, cx);
+        }
         let current = sheet
             .entry_of(ns)
             .map_or(Json::Null, |e| e.current(&self.settings));

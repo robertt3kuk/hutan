@@ -107,6 +107,12 @@ pub struct SettingsSheet {
     pub(super) pack_filter: String,
     /// The open picker's preview: the pack its cursor is on, drawn in the picker only.
     pub(super) pack_preview: Option<super::settings_themes::PackPreview>,
+    /// The open font picker lists every family, not only the monospaced ones (*Show all*).
+    pub(super) font_all: bool,
+    /// The first line of the open font picker's list that is shown.
+    pub(super) font_top: usize,
+    /// Wheel movement of the open font picker's list not yet worth a line (pixels).
+    pub(super) font_wheel: f32,
     /// The scroll of the page's rows: an opened picker scrolls its row into view.
     pub(super) scroll: gpui::ScrollHandle,
     /// `editor.vim_mode` as it was when the sheet opened: its search and value fields keep the
@@ -217,6 +223,14 @@ impl SettingsSheet {
         self.cursor = None;
         self.pack_filter.clear();
         self.pack_preview = None;
+        self.font_top = 0;
+        self.font_wheel = 0.0;
+    }
+
+    /// The open font picker lists every installed family (*Show all*), not only the
+    /// monospaced ones.
+    pub fn font_show_all(&self) -> bool {
+        self.font_all
     }
 
     /// The catalog entry of the settings namespace `namespace`.
@@ -294,6 +308,9 @@ impl Workbench {
             cursor: None,
             pack_filter: String::new(),
             pack_preview: None,
+            font_all: false,
+            font_top: 0,
+            font_wheel: 0.0,
             scroll: gpui::ScrollHandle::new(),
             vim: self.vim_config().enabled,
             problems_open: false,
@@ -306,6 +323,7 @@ impl Workbench {
         self.edits.sheet_query.reset();
         self.edits.sheet_value.reset();
         self.settings_page_opened(selected, cx);
+        self.ensure_fonts(cx);
         if !super::settings_pages::page_has_daemon_settings(selected) {
             // The banner of a pending restart is on every page.
             self.refresh_daemon_settings(cx);
@@ -796,6 +814,11 @@ impl Workbench {
         let Some((_, f, value)) = self.sheet_field(field) else {
             return;
         };
+        // A font is picked from the installed families, not typed.
+        if let Some(font) = super::settings_fonts::FontField::of(f.namespace, &f.dotted()) {
+            self.toggle_font_picker(font, cx);
+            return;
+        }
         let (text, list_add) = match self.sheet_kind_of(&f) {
             FieldKind::Integer | FieldKind::Number | FieldKind::String => {
                 (display_value(&value), false)

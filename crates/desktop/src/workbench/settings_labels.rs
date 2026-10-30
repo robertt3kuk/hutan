@@ -420,7 +420,7 @@ const FIELDS: &[FieldText] = &[
         "terminal",
         "font_family",
         "Font",
-        "The font of terminal text. Use a monospaced font.",
+        "The font of terminal text, picked from the fonts installed on this Mac (monospaced ones unless you show all). Unset, the color theme's monospace font is used.",
     ),
     field(
         "terminal",
