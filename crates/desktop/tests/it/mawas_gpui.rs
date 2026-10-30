@@ -1784,6 +1784,35 @@ fn a_suggestion_of_mawas_on_an_approval_is_words_until_the_user_uses_it(cx: &mut
     // Mawas suggests (her own gate asks first: it is a change like the others).
     let first = suggest("The same rename you allowed last week.");
     wait_needs(&panel, cx, 2);
+    // Her card says what the suggestion is about and what it says — never an id — and says
+    // "Mawas asks" once, in its label.
+    let today = panel.read_with(cx, |p, cx| p.today(cx));
+    let asking = &today.requests[0];
+    assert!(
+        asking
+            .title
+            .starts_with("Mawas asks Hutan to suggest an answer to the waiting approval “")
+            && !asking.title.contains(&approval.to_string()),
+        "{}",
+        asking.title
+    );
+    match &asking.kind {
+        TodayKind::Approval {
+            mawas: true,
+            target: Some(about),
+            ..
+        } => {
+            assert_eq!(about.session_id, other.id);
+            let text = about.text.clone().unwrap_or_default();
+            assert!(
+                text.contains("Suggested answer: Allow once")
+                    && text.contains("Reason: The same rename you allowed last week."),
+                "{text}"
+            );
+        }
+        other => panic!("Mawas's card about a request expected: {other:?}"),
+    }
+    drawn(&view, cx, Region::AssistantItem("today-text", 0));
     click(&view, cx, Region::AssistantItem("today-option", 0));
     allow_her_suggestion_done(&first, cx);
     shown_on_the_card(&panel, cx);

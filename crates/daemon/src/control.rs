@@ -1137,6 +1137,14 @@ impl ControlService {
     ) {
         use hutan_protocol::suggest::SuggestedAnswer;
         let chats = self.registry.chats();
+        // The agent by its title: its id says nothing to the person who decides.
+        let session = |id: SessionId| {
+            let name = session(id);
+            match name.rsplit_once(" (") {
+                Some((titled, _id)) if name.ends_with(')') => titled.to_owned(),
+                _ => name,
+            }
+        };
         let (about, answer, of) = match suggest.target {
             AskTarget::Approval { id } => {
                 let Some(approval) = chats
@@ -1186,7 +1194,21 @@ impl ControlService {
                                 Value::String(text) => text.clone(),
                                 other => other.to_string(),
                             };
-                            Some(format!("{}: {text}", field.label))
+                            // A label that only repeats the question is not said again.
+                            let norm = |t: &str| {
+                                t.trim()
+                                    .trim_end_matches(|c: char| {
+                                        c.is_whitespace() || "?:.*".contains(c)
+                                    })
+                                    .to_lowercase()
+                            };
+                            let echoed = norm(&field.label) == norm(&question.spec.title)
+                                || norm(&field.label) == norm(&question.spec.prompt);
+                            Some(if echoed {
+                                text
+                            } else {
+                                format!("{}: {text}", field.label)
+                            })
                         })
                         .collect::<Vec<_>>()
                         .join("; "),
@@ -1212,7 +1234,14 @@ impl ControlService {
         );
         described.about = Some(ControlTarget {
             session_id: of.0,
-            title: clip(&of.1, 200),
+            // The agent's own title (`session “web client” (id)` → `web client`).
+            title: clip(
+                session(of.0)
+                    .split_once('“')
+                    .and_then(|(_, rest)| rest.rsplit_once('”'))
+                    .map_or(&of.1, |(title, _)| title),
+                200,
+            ),
             text: Some(described.detail.clone()),
         });
     }

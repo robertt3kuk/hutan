@@ -1984,8 +1984,10 @@ async fn mawas_suggests_an_answer_to_an_approval_and_only_the_user_answers() {
             && detail.contains("Reason: Same edit you allowed twice today."),
         "{detail}"
     );
+    assert!(!card.title.contains(&api.id.to_string()), "{}", card.title);
     let about = card.target.clone().expect("the agent the request is of");
     assert_eq!(about.session_id, api.id);
+    assert_eq!(about.title, api.title, "the agent, by its title");
     assert_eq!(about.text.as_deref(), Some(detail.as_str()));
     m.answer(card.id, "allow_chat").await;
     let given = first.await.unwrap().unwrap();
@@ -2120,7 +2122,7 @@ async fn mawas_suggests_values_or_a_decline_for_a_question_and_the_user_answers(
     );
     let detail = card.detail.clone().unwrap_or_default();
     assert!(
-        detail.contains(&format!("{}: SQLite", question.spec.fields[0].label))
+        detail.contains("Suggested answer: SQLite")
             && detail.contains("Reason: The project uses it."),
         "{detail}"
     );
