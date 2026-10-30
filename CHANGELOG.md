@@ -4,6 +4,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+### Changed
+- Right after a release is published GitHub may not serve its download for a minute: Hutan offers a release only once its archive can be downloaded, a manual *Check for Updates…* says "Hutan x.y.z was just published; it can be installed in a minute", and a download that isn't there yet says so instead of reporting a checksum mismatch.
+
 ## 0.3.3 — 2026-10-29
 
 ### Added
