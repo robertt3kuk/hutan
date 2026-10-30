@@ -243,6 +243,39 @@ fn the_notifications_page_lists_the_daemons_values_and_a_live_change_needs_no_re
 }
 
 #[gpui::test]
+fn the_state_log_is_a_row_of_the_history_page_and_turning_it_off_reaches_daemon_toml(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    open_page(&view, cx, "history");
+    wait_listed(&view, cx);
+    let rows = view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx));
+    assert!(
+        rows.contains(&"d:agents.state_log".to_owned()),
+        "the row is on the page: {rows:?}"
+    );
+    assert_eq!(
+        value(&view, cx, "agents.state_log"),
+        json!(true),
+        "on by default"
+    );
+    view.update(cx, |wb, cx| wb.daemon_toggle("agents.state_log", cx));
+    wait_value(&view, cx, "agents.state_log", json!(false));
+    assert!(
+        daemon_toml(daemon.home()).contains("state_log = false"),
+        "{}",
+        daemon_toml(daemon.home())
+    );
+    // It applies at once: no restart banner.
+    view.read_with(cx, |wb, _| {
+        assert!(!wb.daemon_settings().restart_pending());
+    });
+    view.update(cx, |wb, cx| wb.daemon_setting_reset("agents.state_log", cx));
+    wait_value(&view, cx, "agents.state_log", json!(true));
+}
+
+#[gpui::test]
 fn the_daemon_pages_are_searchable_and_every_key_has_wording(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start_with_config(
         "[mcp.docs]\ncommand = \"/bin/echo\"\nargs = [\"hi\"]\n\n[assistant.workspaces.proj]\nfiles = false\n",

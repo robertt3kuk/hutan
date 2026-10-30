@@ -1734,6 +1734,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "agents.state_log",
+        "Log the states agents report",
+        "Keeps, for 14 days, each change of the state an agent reports about itself (working, blocked, idle, done, error), who said it, what a blocked agent waits for and a short message with secrets removed (at most 120 characters, never output). It is the only way to tell how long a terminal agent waited for you, which Mawas's flow statistics use. Turning it off stops the log and deletes what it holds. Chats do not need it: their waits are in their own records.",
+    ),
+    field(
+        "daemon",
         "history.hutan",
         "Index Hutan sessions",
         "Include the conversations and terminals of Hutan itself in the index.",
@@ -2257,6 +2263,8 @@ pub mod words {
         SEC_AGENT_CONTROL = "What agents may do to Hutan";
         SEC_HISTORY = "What to index";
         SEC_HISTORY_FOLDERS = "Where the transcripts are";
+        SEC_STATE_LOG = "What agents report";
+        SEC_STATE_LOG_HELP = "Hutan keeps a short log of the states agents report, so waits and failures can be told over days. Nothing leaves this machine.";
         SEC_HISTORY_PANEL = "The History panel";
         EXPERIMENTAL_DOCS = "Read about remote hosts";
         SEC_OMP = "OMP";

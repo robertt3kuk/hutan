@@ -46,6 +46,8 @@ use hutan_agents_view::presentation::{AgentRecord, Group, ReasonKind, Role};
 /// The most events the Recent tab lists under one agent.
 const RECENT_EVENTS_PER_AGENT: usize = 3;
 /// The shortest pause between two reads of the Recent tab caused by the agents changing.
+/// How far back the Flow section of the Recent tab looks.
+const FLOW_WINDOW_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const RECENT_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
 /// How many memory entries the Memory tab lists.
 const MEMORY_ENTRIES_SHOWN: usize = 6;
@@ -1032,6 +1034,9 @@ impl AssistantPanel {
                         )
                         .into_any_element(),
                 );
+                if let Some(flow) = &self.recent.flow {
+                    sections.push(self.render_flow(flow, look, cx));
+                }
                 // Events by agent, newest agent first (the events are newest first).
                 let mut groups: Vec<(Option<SessionId>, String, String, Vec<&ActivityEvent>)> =
                     Vec::new();
@@ -1174,6 +1179,70 @@ impl AssistantPanel {
         cx.notify();
     }
 
+    /// The Flow section of the Recent tab: waits on the user, failures that came again and tokens
+    /// by project over the last seven days, from `agents.stats`, each line with how well it is
+    /// known. *Analyse with Mawas* prepares an ask; nothing is sent.
+    fn render_flow(
+        &self,
+        flow: &hutan_protocol::stats::AgentsStats,
+        look: &Look,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
+        let lines = flow_lines(flow);
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(tokens.spacing))
+            .child(
+                div()
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .child("Flow · the last 7 days"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .text_size(px(tokens.font_size))
+                    .children(lines.into_iter().map(SharedString::from)),
+            )
+            .child(
+                div().flex().child(
+                    Button::new("today-flow-analyse", "Analyse with Mawas", &theme, &tokens)
+                        .on_click(cx.listener(|this, _, _, cx| this.analyse_flow(cx)))
+                        .child(probe(
+                            &self.env.regions,
+                            Region::Assistant("today-flow-analyse"),
+                        )),
+                ),
+            )
+            .child(probe(&self.env.regions, Region::Assistant("today-flow")))
+            .into_any_element()
+    }
+
+    /// The flow statistics the Recent tab shows, once read.
+    pub fn recent_flow(&self) -> Option<&hutan_protocol::stats::AgentsStats> {
+        self.recent.flow.as_ref()
+    }
+
+    /// *Analyse with Mawas*: puts a prepared ask in Mawas's composer, for the user to read,
+    /// change and send; nothing is sent. The ask names the read-only tool, so the numbers in her
+    /// answer come from the records and carry their coverage.
+    pub fn analyse_flow(&mut self, cx: &mut Context<Self>) {
+        let note = "Analyse how my agents worked over the last 7 days (agents_stats with last_days 7, grouped by project and again by day). Tell me where the time went, what they waited for me on and for how long, which failures came again, and what the tokens were spent on. Say how well each number is known and what is not recorded; do not guess what the records do not hold.";
+        if let Some(model) = self
+            .session(cx)
+            .and_then(|session| self.chat_model(session))
+        {
+            model.update(cx, |model, cx| model.add_note(note, cx));
+        }
+        self.focus_wanted = true;
+        cx.notify();
+    }
+
     /// *Summarise with Mawas*: puts a prepared ask in Mawas's composer, for the user to read,
     /// change and send; nothing is sent. The ask names the window and the read-only tools that
     /// answer it, so the numbers in her answer come from the records and not from this tab.
@@ -1259,8 +1328,22 @@ impl AssistantPanel {
                     ..Default::default()
                 })
                 .await;
+            // The flow of the last week goes with the catch-up; a daemon without it shows none.
+            let flow = if connection.supports_agents_stats() {
+                connection
+                    .agents_stats(hutan_protocol::stats::AgentsStatsRequest {
+                        since_ms: Some(hutan_client::time::now_ms().saturating_sub(FLOW_WINDOW_MS)),
+                        ..Default::default()
+                    })
+                    .await
+                    .map_err(|error| tracing::warn!("cannot read the agents' flow: {error}"))
+                    .ok()
+            } else {
+                None
+            };
             this.update(cx, |this, cx| {
                 this.recent.loading = false;
+                this.recent.flow = flow;
                 this.recent.for_seen = Some(seen);
                 this.recent.revision = revision;
                 match answer {
@@ -1622,6 +1705,89 @@ fn recent_summary_lines(s: &ActivitySummary) -> Vec<String> {
     lines
 }
 
+/// The lines of the Flow section: waits on the user, failures that came again, tokens by project
+/// and what is worth a look — every line only from what was recorded, with its coverage.
+pub fn flow_lines(flow: &hutan_protocol::stats::AgentsStats) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(waits) = &flow.total.waits {
+        let open: usize = waits.by_source.iter().map(|side| side.open).sum();
+        let mut text = format!(
+            "Waiting for you: {} · {} in all · longest {}",
+            waits.count,
+            duration_text(waits.total_ms),
+            duration_text(waits.longest_ms)
+        );
+        if open > 0 {
+            text.push_str(&format!(" · {open} still going"));
+        }
+        lines.push(text);
+    } else {
+        lines.push("Waiting for you: none recorded".to_owned());
+    }
+    if !flow.coverage.state_log {
+        lines.push(
+            "The state log is off: how long terminal agents waited is not recorded.".to_owned(),
+        );
+    } else if flow.coverage.terminal_agents > 0
+        && let Some(from) = flow.coverage.state_log_from_ms
+        && from > flow.from_ms
+    {
+        lines.push(format!(
+            "Terminal agents' waits are counted from {}.",
+            hutan_client::time::local_time_text(from)
+        ));
+    }
+    for cluster in flow.failures.iter().take(2) {
+        lines.push(format!(
+            "Failed {}× the same way: {}",
+            cluster.count, cluster.pattern
+        ));
+    }
+    if let Some(turns) = &flow.total.turns
+        && turns.failed > 0
+        && flow.failures.is_empty()
+    {
+        lines.push(format!(
+            "{} failed turns, none came again the same way",
+            turns.failed
+        ));
+    }
+    let mut by_project: Vec<(&str, u64)> = flow
+        .groups
+        .iter()
+        .filter_map(|group| {
+            group
+                .tokens
+                .as_ref()
+                .map(|tokens| (group.label.as_str(), tokens.total))
+        })
+        .collect();
+    by_project.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+    if !by_project.is_empty() {
+        let top: Vec<String> = by_project
+            .iter()
+            .take(3)
+            .map(|(label, total)| format!("{label} {}", tokens_text(*total)))
+            .collect();
+        lines.push(format!("Tokens by project: {}", top.join(" · ")));
+    } else {
+        lines.push("Tokens: none reported".to_owned());
+    }
+    if !flow.flags.is_empty() {
+        lines.push(format!("{} agents worth a look", flow.flags.len()));
+    }
+    lines
+}
+
+/// `820`, `41.2k`, `3.1M`.
+fn tokens_text(tokens: u64) -> String {
+    match tokens {
+        0..=999 => tokens.to_string(),
+        1_000..=999_999 => format!("{:.1}k", tokens as f64 / 1_000.0),
+        _ => format!("{:.1}M", tokens as f64 / 1_000_000.0),
+    }
+}
+
 /// `3.9 s`, `3m 20s`, `2h 05m`.
 fn duration_text(ms: u64) -> String {
     let seconds = ms / 1_000;
@@ -1694,5 +1860,94 @@ fn recent_event_text(detail: &ActivityDetail) -> String {
             added,
             removed,
         } => format!("{files} files changed · +{added} −{removed}"),
+    }
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+    use hutan_protocol::stats::{
+        AgentsStats, FailureCluster, FailureSource, GroupCoverage, StatsBy, StatsCoverage,
+        StatsGroup, TokenStats,
+    };
+
+    fn group(label: &str, tokens: Option<u64>) -> StatsGroup {
+        StatsGroup {
+            key: label.into(),
+            label: label.into(),
+            coverage: GroupCoverage {
+                chats: 0,
+                terminal_agents: 0,
+            },
+            turns: None,
+            tasks: None,
+            waits: None,
+            retries: None,
+            tokens: tokens.map(|total| TokenStats {
+                turns_reported: 1,
+                input: total,
+                cached_input: 0,
+                output: 0,
+                total,
+                cost_usd_estimate: None,
+            }),
+        }
+    }
+
+    fn stats(state_log: bool) -> AgentsStats {
+        AgentsStats {
+            from_ms: 1_000,
+            to_ms: 2_000,
+            group_by: StatsBy::Project,
+            coverage: StatsCoverage {
+                state_log,
+                state_log_from_ms: None,
+                tokens_from_ms: None,
+                chats: 0,
+                terminal_agents: 0,
+            },
+            total: group("all", None),
+            groups: Vec::new(),
+            omitted_groups: 0,
+            failures: Vec::new(),
+            flags: Vec::new(),
+            not_recorded: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn nothing_recorded_is_said_so_and_a_log_that_is_off_is_named() {
+        let lines = flow_lines(&stats(false));
+        assert_eq!(lines[0], "Waiting for you: none recorded");
+        assert!(lines[1].starts_with("The state log is off"), "{lines:?}");
+        assert_eq!(lines.last().unwrap(), "Tokens: none reported");
+        let lines = flow_lines(&stats(true));
+        assert!(lines.iter().all(|l| !l.contains("state log")), "{lines:?}");
+    }
+
+    #[test]
+    fn tokens_are_listed_by_project_largest_first_and_failures_that_came_again_by_count() {
+        let mut s = stats(true);
+        s.groups = vec![
+            group("shop", Some(3_000)),
+            group("hutan", Some(41_200)),
+            group("quiet", None),
+        ];
+        s.failures = vec![FailureCluster {
+            pattern: "rate limited: retry in # s".into(),
+            count: 3,
+            sessions: 2,
+            last_ms: 1_500,
+            source: FailureSource::TurnError,
+        }];
+        let lines = flow_lines(&s);
+        assert!(
+            lines.contains(&"Tokens by project: hutan 41.2k · shop 3.0k".to_owned()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"Failed 3× the same way: rate limited: retry in # s".to_owned()),
+            "{lines:?}"
+        );
     }
 }

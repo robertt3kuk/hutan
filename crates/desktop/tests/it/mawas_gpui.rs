@@ -2159,3 +2159,94 @@ fn summarise_with_mawas_fills_the_composer_and_sends_nothing(cx: &mut TestAppCon
             .is_some_and(|c| c.turn_active)
     );
 }
+
+// ---- AGENTS-FLOW: the Flow section of the Recent tab ----------------------------------------------
+
+/// A terminal agent that reported `blocked` through a hook: the daemon's state log opens a wait.
+fn blocked_agent(env: &AssistantEnv) -> SessionInfo {
+    let session = reported_agent(env);
+    let applied: AgentApplied = env.daemon.call(Request::AgentReport(AgentReportRequest {
+        session_id: session.id,
+        source: "test-hooks".into(),
+        agent: "claude".into(),
+        state: Some(AgentState::Blocked),
+        message: None,
+        seq: 2,
+        agent_session_id: None,
+        resume_argv: None,
+        pid: None,
+        node: None,
+    }));
+    assert!(applied.applied);
+    session
+}
+
+#[gpui::test]
+fn the_flow_section_shows_the_waits_with_what_they_rest_on_and_analyse_fills_the_composer(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let _session = blocked_agent(&env);
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_until(cx, "Mawas's session", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.session(cx).is_some_and(|s| p.chat_model(s).is_some())
+        })
+    });
+    click_region(&view, cx, "today-tab-recent");
+    wait_until(cx, "the flow of the last week", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.recent_flow()
+                .and_then(|f| f.total.waits.as_ref())
+                .is_some_and(|w| w.count == 1)
+        })
+    });
+    assert!(painted(&view, cx, "today-flow"));
+    let flow = panel
+        .read_with(cx, |p, _| p.recent_flow().cloned())
+        .expect("flow");
+    // The wait is a terminal agent's: from the state log, still going, and the section says so.
+    let waits = flow.total.waits.as_ref().unwrap();
+    assert_eq!(waits.by_source.len(), 1);
+    assert_eq!(
+        waits.by_source[0].source,
+        hutan_protocol::stats::WaitSource::StateLog
+    );
+    assert_eq!(waits.by_source[0].open, 1);
+    assert!(flow.coverage.state_log);
+    let lines = hutan_desktop::workbench::panels::flow_lines(&flow);
+    assert!(lines[0].starts_with("Waiting for you: 1"), "{lines:?}");
+    assert!(lines[0].contains("1 still going"), "{lines:?}");
+    assert!(
+        lines.iter().any(|l| l.starts_with("Tokens: none reported")),
+        "nothing reported is not zero: {lines:?}"
+    );
+
+    // *Analyse with Mawas* prepares the ask and sends nothing.
+    let session = panel.read_with(cx, |p, cx| p.session(cx)).unwrap();
+    let model = panel.read_with(cx, |p, _| p.chat_model(session)).unwrap();
+    click_region(&view, cx, "today-flow-analyse");
+    wait_until(cx, "the prepared ask", |cx| {
+        model.read_with(cx, |m, _| m.draft_message().contains("agents_stats"))
+    });
+    let draft = model.read_with(cx, |m, _| m.draft_message());
+    assert!(
+        draft.starts_with("Analyse how my agents worked over the last 7 days"),
+        "{draft}"
+    );
+    assert!(draft.contains("what is not recorded"), "{draft}");
+    let history: hutan_protocol::chat::ChatHistory = env.daemon.call(Request::ChatHistory(
+        hutan_protocol::chat::ChatHistoryRequest {
+            session_id: session,
+            before_seq: None,
+            limit: 50,
+        },
+    ));
+    assert!(history.events.is_empty(), "{history:?}");
+    assert!(
+        !env.daemon
+            .session(session)
+            .chat
+            .is_some_and(|c| c.turn_active)
+    );
+}

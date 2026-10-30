@@ -46,7 +46,7 @@ pub use assistant::{
 };
 pub use assistant_rail::{
     RailOption, RailSuggestion, Section as TodaySection, Today, TodayKind, TodayRow, WorkingRow,
-    today,
+    flow_lines, today,
 };
 pub use changes::{
     ChangesPanel, Checkouts as ChangesCheckouts, Counts as ChangesCounts,

@@ -141,6 +141,11 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                 ],
             },
             Section {
+                title: words::SEC_STATE_LOG,
+                help: words::SEC_STATE_LOG_HELP,
+                keys: &["agents.state_log"],
+            },
+            Section {
                 title: words::SEC_HISTORY_FOLDERS,
                 help: "",
                 keys: &[
