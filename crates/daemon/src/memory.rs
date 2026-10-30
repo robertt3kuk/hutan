@@ -157,10 +157,12 @@ pub trait MemoryContext: Send + Sync + std::fmt::Debug {
     /// A private (0600) file under the data directory holding `content`, named by the snapshot:
     /// what an OMP assistant's `--append-system-prompt` is given instead of the memory in argv.
     fn prompt_file(&self, snapshot_id: &str, content: &str) -> std::io::Result<PathBuf>;
-    /// The block about the workspace's `AGENTS.md` a Mawas conversation starts with
-    /// (`crate::project_instructions`); `None` without such a file, or when the workspace does
-    /// not allow Mawas to read files.
-    fn project_instructions(&self, chat: SessionId) -> BoxFuture<'_, Option<String>>;
+    /// The block a Mawas conversation starts with about its job and project: the supervisor
+    /// playbook of a Global chat (only when `tools`: the backend can call Hutan's tools), the
+    /// Focus, and the workspace's `AGENTS.md` (`crate::project_instructions`); `None` when none
+    /// of them applies (a workspace chat without such a file, or whose workspace does not allow
+    /// Mawas to read files).
+    fn project_instructions(&self, chat: SessionId, tools: bool) -> BoxFuture<'_, Option<String>>;
 }
 
 /// What a conversation's memory and project line follow (protocol 0.61): the workspace of a
@@ -1937,10 +1939,10 @@ impl MemoryContext for MemoryService {
         })
     }
 
-    fn project_instructions(&self, chat: SessionId) -> BoxFuture<'_, Option<String>> {
+    fn project_instructions(&self, chat: SessionId, tools: bool) -> BoxFuture<'_, Option<String>> {
         Box::pin(async move {
             let settings = self.assistant.read().clone();
-            crate::project_instructions::for_chat(&self.registry, &settings, chat).await
+            crate::project_instructions::for_chat(&self.registry, &settings, chat, tools).await
         })
     }
 

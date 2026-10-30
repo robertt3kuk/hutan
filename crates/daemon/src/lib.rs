@@ -92,6 +92,7 @@ pub mod partial;
 pub mod paths;
 pub mod peer;
 pub mod placement;
+pub mod playbook;
 pub mod project_instructions;
 pub mod project_migration;
 pub mod projects;

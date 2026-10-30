@@ -1519,8 +1519,10 @@ impl ChatManager {
         lock(&self.asleep).remove(&live.id);
     }
 
-    /// The memory a Mawas conversation starts with, and the line about the project's
-    /// `AGENTS.md` (`None`: memory is off and the project has none, or there is nothing to give).
+    /// The memory a Mawas conversation starts with, what it is told of its job and project (the
+    /// supervisor playbook of a Global chat, its Focus, the line about the project's
+    /// `AGENTS.md`) — `None`: memory is off and there is nothing else to give. A direct
+    /// provider chat has no tools, so it gets no playbook.
     async fn start_memory(
         &self,
         id: SessionId,
@@ -1530,9 +1532,11 @@ impl ChatManager {
         let context = self.memory_context()?;
         let resumed = spec.thread_id.is_some();
         let memory = context.open(id, backend, resumed).await;
-        // The project's AGENTS.md rides with it (`crate::project_instructions`), also when
-        // memory is off.
-        let project = context.project_instructions(id).await;
+        // The playbook, the Focus and the project's AGENTS.md ride with it
+        // (`crate::project_instructions`), also when memory is off.
+        let project = context
+            .project_instructions(id, backend != "provider")
+            .await;
         crate::project_instructions::combine(memory, project, id, resumed)
     }
 

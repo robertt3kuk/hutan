@@ -234,14 +234,19 @@ pub fn combine(
     }
 }
 
-/// What a conversation is told about the project it works in and the Focus it was given: the
-/// workspace's own line, and — for a Global chat that has a Focus (`assistant.focus`) — the
-/// Focus block and the focused workspace's line. `None` when there is nothing to say: a
-/// workspace that does not allow reading files or has no `AGENTS.md`, and no Focus.
+/// What a conversation is told about the project it works in, the Focus it was given and, for a
+/// Global chat, its job: the supervisor playbook (`crate::playbook`), first. The workspace's own
+/// line, and — for a Global chat that has a Focus (`assistant.focus`) — the Focus block and the
+/// focused workspace's line follow. A workspace chat gets no playbook: its workspace is its
+/// scope and it supervises nothing. `tools` is whether the backend can call Hutan's tools; a
+/// chat that cannot (the direct provider backend) is not told to look at a board it cannot
+/// reach. `None` when there is nothing to say: a workspace that does not allow reading files
+/// or has no `AGENTS.md`, and no Focus.
 pub async fn for_chat(
     registry: &RegistryHandle,
     settings: &AssistantSettings,
     chat: SessionId,
+    tools: bool,
 ) -> Option<String> {
     let session = registry
         .list_sessions(SessionListFilter::default())
@@ -266,7 +271,9 @@ pub async fn for_chat(
         Some(focus) => Some(focus_text(settings, focus).await),
         None => None,
     };
-    join(own, focused)
+    let playbook = (tools && workspace.kind == WorkspaceKind::Home)
+        .then(|| crate::playbook::PLAYBOOK.to_owned());
+    join(playbook, join(own, focused))
 }
 
 /// `a`, then `b`, as one text.
