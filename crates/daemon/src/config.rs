@@ -96,7 +96,7 @@
 //! read_deny = ["~/.ssh"]         # folders no contained session may read (default: Keychains, ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh, ~/.netrc; Hutan's own folder always)
 //! bin = "/usr/bin/sandbox-exec"  # the Seatbelt tool
 //!
-//! [agents]                       # what the daemon records about agents (protocol 0.67, docs/assistant.md § Flow)
+//! [agents]                       # what the daemon records about agents (protocol 0.66, docs/assistant.md § Flow)
 //! state_log = true               # the log of states agents report, kept 14 days, for how long a terminal agent waited; false stops it and deletes what it holds
 //!
 //! [updates]                      # the check for a newer Hutan (protocol 0.60, docs/packaging.md § Updates)
@@ -214,7 +214,7 @@ pub struct DaemonSettings {
     pub worktrees: WorktreeSettings,
     /// `[updates]`: the check for a newer Hutan (protocol 0.60, ADR 0024).
     pub updates: UpdatesSettings,
-    /// `[agents]`: what the daemon records about agents (protocol 0.67, ADR 0025).
+    /// `[agents]`: what the daemon records about agents (protocol 0.66, ADR 0025).
     pub agents: AgentsSettings,
 }
 

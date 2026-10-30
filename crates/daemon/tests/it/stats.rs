@@ -1,4 +1,4 @@
-//! The log of agents' states and `agents.stats` (protocol 0.67) end to end: a real daemon on a
+//! The log of agents' states and `agents.stats` (protocol 0.66) end to end: a real daemon on a
 //! temporary `HUTAN_HOME`, terminals that speak OSC 7501 (`cat` echoes the bytes), a hook that
 //! reports, and a Codex chat that asks and finishes (`hutan-codex-fixture replay`). Nothing
 //! here starts a real harness or calls a model.
@@ -14,14 +14,15 @@ use base64::Engine as _;
 use common::{TestDaemon, WAIT, create_in, remote_code, sh, terminal_of, wait_event};
 use hutan_agents::CodexConfig;
 use hutan_client::Client;
-use hutan_core::{ApprovalPolicy, SandboxMode, WorkspaceId};
+use hutan_core::{ApprovalPolicy, SandboxMode, SessionId, WorkspaceId};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::{ApprovalInfo, ApprovalRespond, ChatCreate, ChatSend};
 use hutan_protocol::messages::{
     AgentApplied, AgentReportRequest, AgentState, Empty, Event, Request, SessionInfo,
-    SessionResult, WorkspaceCreate, WorkspaceInfo,
+    SessionResult, SessionSnapshot, TerminalAgentState, WorkspaceCreate, WorkspaceInfo,
 };
 use hutan_protocol::stats::{AgentsStats, AgentsStatsRequest, FailureSource, StatsBy, WaitSource};
+use hutan_storage::{AgentStateRow, Storage};
 use serde_json::json;
 use tokio::time::{sleep, timeout};
 
@@ -374,4 +375,158 @@ async fn chats_have_turns_waits_and_a_project_and_unknown_ids_are_not_found() {
         .await;
     assert_eq!(remote_code(missing), ErrorCode::NotFound);
     daemon.stop().await;
+}
+
+/// A terminal that says its state once through OSC 7501 and then waits (`exec sleep`): after a
+/// restart the respawned program says it again.
+fn says(osc: &str) -> hutan_protocol::messages::TerminalSpec {
+    sh(&format!(
+        "printf '\\033]7501;{osc}\\033\\\\'; exec sleep 600"
+    ))
+}
+
+async fn rows_of(t: &TestDaemon, session: SessionId) -> Vec<AgentStateRow> {
+    let storage = Storage::open(&t.paths.database).unwrap();
+    let rows = storage.agent_state_log().in_window(0, u64::MAX).unwrap();
+    storage.close();
+    rows.into_iter()
+        .filter(|r| r.session_id == session)
+        .collect()
+}
+
+async fn session_state(
+    client: &Client,
+    id: SessionId,
+) -> Option<hutan_protocol::messages::SessionInfo> {
+    let snapshot: SessionSnapshot = client
+        .call(Request::SessionSnapshot(Empty {}))
+        .await
+        .unwrap();
+    snapshot.sessions.into_iter().find(|s| s.id == id)
+}
+
+/// Regression: an agent that comes back after a daemon restart and says the state it was in
+/// before is the same wait and the same failure — not a second one. The state log goes on where
+/// the previous run left it, and `agents.stats` counts each agent once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_restart_does_not_count_an_agents_wait_or_failure_twice() {
+    let t = TestDaemon::start().await;
+    let client = t.connect().await;
+    let before = hutan_client::time::now_ms().saturating_sub(1_000);
+    let asks = create_in(&client, None, says("state=blocked:kind=permission:app=omp")).await;
+    let message = b64("Rate limited: retry in 9 s");
+    let fail_a = create_in(
+        &client,
+        None,
+        says(&format!("state=error:app=omp:msg={message}")),
+    )
+    .await;
+    let fail_b = create_in(
+        &client,
+        None,
+        says(&format!("state=error:app=omp:msg={message}")),
+    )
+    .await;
+
+    let first = stats_where(&client, since(before), "the wait and the cluster", |s| {
+        s.total.waits.as_ref().is_some_and(|w| w.count == 1)
+            && s.failures.iter().any(|f| f.count == 2)
+    })
+    .await;
+    let wait_before = first.total.waits.as_ref().unwrap().by_source[0];
+    assert_eq!(wait_before.open, 1);
+    for id in [asks.id, fail_a.id, fail_b.id] {
+        assert_eq!(rows_of(&t, id).await.len(), 1, "one change, one row");
+    }
+    drop(client);
+
+    let t = t.restart().await;
+    let client = t.connect().await;
+    // The respawned programs say it all again.
+    for (id, state) in [
+        (asks.id, TerminalAgentState::Blocked),
+        (fail_a.id, TerminalAgentState::Error),
+        (fail_b.id, TerminalAgentState::Error),
+    ] {
+        timeout(WAIT, async {
+            loop {
+                let info = session_state(&client, id).await;
+                if info
+                    .and_then(|s| s.terminal_agent)
+                    .is_some_and(|agent| agent.state == state)
+                {
+                    return;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("the respawned program said its state again");
+    }
+    // Everything the daemon queued for the database before this session is in it.
+    let fence = create_in(&client, None, sh("exec sleep 600")).await;
+    timeout(WAIT, async {
+        loop {
+            let storage = Storage::open(&t.paths.database).unwrap();
+            let there = storage
+                .sessions()
+                .list()
+                .unwrap()
+                .iter()
+                .any(|s| s.id == fence.id);
+            storage.close();
+            if there {
+                return;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the fence session reached the database");
+
+    for id in [asks.id, fail_a.id, fail_b.id] {
+        assert_eq!(
+            rows_of(&t, id).await.len(),
+            1,
+            "the same state said again after a restart is not logged again"
+        );
+    }
+    let after = stats(&client, since(before)).await;
+    let waits = after.total.waits.as_ref().unwrap();
+    assert_eq!(waits.count, 1, "{waits:?}");
+    assert_eq!(waits.by_source[0].open, 1);
+    assert_eq!(after.failures.len(), 1, "{:?}", after.failures);
+    assert_eq!(after.failures[0].count, 2);
+    t.stop().await;
+}
+
+/// A wait ends when the agent goes away: its process ends while it is blocked.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wait_ends_when_the_agent_is_gone() {
+    let t = TestDaemon::start().await;
+    let client = t.connect().await;
+    let before = hutan_client::time::now_ms().saturating_sub(1_000);
+    let asks = create_in(&client, None, says("state=blocked:kind=question:app=omp")).await;
+    stats_where(&client, since(before), "the open wait", |s| {
+        s.total
+            .waits
+            .as_ref()
+            .is_some_and(|w| w.by_source[0].open == 1)
+    })
+    .await;
+    common::stop(&client, asks.id).await.unwrap();
+    let after = stats_where(&client, since(before), "the wait ended", |s| {
+        s.total
+            .waits
+            .as_ref()
+            .is_some_and(|w| w.by_source[0].open == 0)
+    })
+    .await;
+    assert_eq!(after.total.waits.as_ref().unwrap().count, 1);
+    let rows = rows_of(&t, asks.id).await;
+    assert_eq!(
+        rows.iter().map(|r| r.state.as_str()).collect::<Vec<_>>(),
+        ["blocked", "gone"]
+    );
+    t.stop().await;
 }

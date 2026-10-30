@@ -371,7 +371,7 @@ pub(super) struct MemoryTab {
 pub(super) struct RecentTab {
     pub(super) activity: Option<hutan_protocol::activity::AgentsActivity>,
     /// The flow statistics of the last seven days (`agents.stats`), read with the catch-up; `None`
-    /// until read or when the daemon predates protocol 0.67.
+    /// until read or when the daemon predates protocol 0.66.
     pub(super) flow: Option<hutan_protocol::stats::AgentsStats>,
     /// The caught-up point the answer is for (`Some(None)`: never caught up).
     pub(super) for_seen: Option<Option<u64>>,

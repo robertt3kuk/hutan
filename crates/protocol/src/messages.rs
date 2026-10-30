@@ -283,7 +283,7 @@ pub enum Request {
     /// with `AgentsActivity`. Read-only; bounded (200 events, 24 KiB).
     #[serde(rename = "agents.activity")]
     AgentsActivity(AgentsActivityRequest),
-    /// Capability `agents.stats` (protocol 0.67): where the time goes across agents, what they
+    /// Capability `agents.stats` (protocol 0.66): where the time goes across agents, what they
     /// wait on and what fails again and again, with the coverage of every number; answered with
     /// `AgentsStats`. Read-only; bounded (50 groups, 24 KiB).
     #[serde(rename = "agents.stats")]

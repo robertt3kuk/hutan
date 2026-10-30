@@ -32,6 +32,9 @@ pub struct Facts {
     pub lost_questions: HashMap<SessionId, u32>,
     /// The command each terminal was running in the foreground, as last recorded.
     pub running_commands: HashMap<SessionId, String>,
+    /// The state each session's agent was last logged in (`(source, state)`): what this run
+    /// must not log again when the same agent reports the same state after the restart.
+    pub last_states: HashMap<SessionId, (String, String)>,
 }
 
 /// Blocking: reads the facts. `expired` are the approvals a crashed run left open, as
@@ -81,6 +84,12 @@ pub fn load(
         lost_approvals,
         lost_questions,
         running_commands: load_running_commands(storage),
+        last_states: storage
+            .agent_state_log()
+            .latest_before(u64::MAX)?
+            .into_iter()
+            .map(|row| (row.session_id, (row.source, row.state)))
+            .collect(),
     })
 }
 

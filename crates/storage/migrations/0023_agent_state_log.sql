@@ -1,4 +1,4 @@
--- Schema v23: the log of agents' states (slice AGENTS-FLOW, protocol 0.67, ADR 0025 decision 3,
+-- Schema v23: the log of agents' states (slice AGENTS-FLOW, protocol 0.66, ADR 0025 decision 3,
 -- `docs/assistant.md` § Flow).
 --
 -- One row each time the state an agent reports about itself changes: an `agent.report` of a hook

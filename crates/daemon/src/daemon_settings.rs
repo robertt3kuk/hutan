@@ -498,7 +498,7 @@ fn build_specs() -> Vec<Spec> {
         live("updates.skip_version", Kind::String, Group::Updates, |c| {
             json!(c.updates.skip_version)
         }),
-        // The log of agents' states (protocol 0.67, `docs/assistant.md` § Flow): turning it off
+        // The log of agents' states (protocol 0.66, `docs/assistant.md` § Flow): turning it off
         // stops the writing and deletes what the log holds.
         live("agents.state_log", Kind::Bool, Group::Agents, |c| {
             json!(c.agents.state_log)

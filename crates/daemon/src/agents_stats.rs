@@ -1,4 +1,4 @@
-//! `agents.stats` (protocol 0.67, capability `agents.stats`, ADR 0025): the daemon's answer to
+//! `agents.stats` (protocol 0.66, capability `agents.stats`, ADR 0025): the daemon's answer to
 //! "where does the time go, what do agents wait on, what fails again and again".
 //!
 //! A pure function over what the daemon records — the turn table, the approval and question
@@ -529,10 +529,16 @@ pub fn build_stats(
             .or_default()
             .push((row.at_ms, row));
     }
-    for (session, rows) in &rows_by_session {
+    for (session, rows) in &mut rows_by_session {
         let Some(meta) = metas.get(session).filter(|m| !m.chat) else {
             continue;
         };
+        // An agent that says the state it is already in (after a restart, or through another
+        // source) has not changed state: one wait, one failure (the same words, in a row).
+        rows.dedup_by(|next, prev| {
+            next.1.state == prev.1.state
+                && (next.1.state == "blocked" || next.1.message == prev.1.message)
+        });
         for (index, (start, row)) in rows.iter().enumerate() {
             match row.state.as_str() {
                 "blocked" => {
@@ -1169,6 +1175,27 @@ mod tests {
             stats.coverage.state_log && stats.coverage.state_log_from_ms == Some(T0 + 20 * MIN)
         );
         assert!(!stats.not_recorded.is_empty());
+    }
+
+    #[test]
+    fn the_same_state_said_again_is_one_wait_and_gone_ends_it() {
+        let hutan = workspace("hutan");
+        let terminal = session(&hutan, "terminal", SessionKind::Terminal);
+        let mut w = World {
+            log_on: true,
+            ..World::default()
+        };
+        w.log = vec![
+            state(&terminal, T0 + 10 * MIN, "blocked", Some("question"), None),
+            // Said again (another source, or after a restart): the same wait.
+            state(&terminal, T0 + 20 * MIN, "blocked", Some("question"), None),
+            state(&terminal, T0 + 30 * MIN, "gone", None, None),
+        ];
+        w.sessions = vec![terminal];
+        w.workspaces = vec![hutan];
+        let waits = w.stats(week()).unwrap().total.waits.unwrap();
+        assert_eq!((waits.count, waits.total_ms), (1, 20 * MIN), "{waits:?}");
+        assert_eq!(waits.by_source[0].open, 0);
     }
 
     #[test]

@@ -73,11 +73,11 @@ impl Ctx {
         }
     }
 
-    /// `--stats`: `agents.stats` (protocol 0.67), as text or `--json`.
+    /// `--stats`: `agents.stats` (protocol 0.66), as text or `--json`.
     async fn agents_stats(&self, client: &Client, args: &AgentsArgs) -> Result<(), CliError> {
         if !client.supports_agents_stats() {
             return Err(CliError::Failed(
-                "this daemon has no flow statistics (it predates protocol 0.67); restart it with \
+                "this daemon has no flow statistics (it predates protocol 0.66); restart it with \
                  `hutan daemon stop` and run the command again"
                     .to_owned(),
             ));

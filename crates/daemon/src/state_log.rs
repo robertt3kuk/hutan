@@ -1,4 +1,4 @@
-//! The log of agents' states (protocol 0.67, ADR 0025 decision 3, `docs/assistant.md` § Flow).
+//! The log of agents' states (protocol 0.66, ADR 0025 decision 3, `docs/assistant.md` § Flow).
 //!
 //! The registry says here, whenever the state an agent reports about itself changes, what it
 //! became and who said so. The log is the only way to tell afterwards how long a *terminal*

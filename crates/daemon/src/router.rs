@@ -1159,7 +1159,7 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentsBoard(_) => ("agents.board", Read),
         // What happened in a window (protocol 0.65): read-only, from what the daemon records.
         Request::AgentsActivity(_) => ("agents.activity", Read),
-        // Flow statistics (protocol 0.67): read-only, from what the daemon records.
+        // Flow statistics (protocol 0.66): read-only, from what the daemon records.
         Request::AgentsStats(_) => ("agents.stats", Read),
         Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),

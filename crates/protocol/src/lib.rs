@@ -1,7 +1,7 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
 //! - [`stats`]: `agents.stats` — where the time goes, what agents wait on and what fails again,
-//!   with the coverage of every number (protocol 0.67, capability `agents.stats`, ADR 0025).
+//!   with the coverage of every number (protocol 0.66, capability `agents.stats`, ADR 0025).
 //! - [`activity`]: `agents.activity` — what happened across agents in a window, from what the
 //!   daemon already records: turns, requests, checkpoints, tasks, sessions; bounded, read-only and
 //!   redacted (protocol 0.65, capability `agents.activity`, ADR 0025).
@@ -172,7 +172,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 67,
+    minor: 66,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

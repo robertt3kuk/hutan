@@ -1,4 +1,4 @@
-//! Flow statistics across agents (protocol 0.67, capability `agents.stats`, ADR 0025): DTOs of
+//! Flow statistics across agents (protocol 0.66, capability `agents.stats`, ADR 0025): DTOs of
 //! `agents.stats`, one bounded, read-only, redacted answer to "where does the time go, what do
 //! agents wait on, what fails again and again" (`docs/protocol.md` § Agents stats).
 //!

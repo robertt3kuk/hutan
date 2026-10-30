@@ -1,4 +1,4 @@
-//! `agents.stats` (protocol 0.67, capability `agents.stats`): flow statistics across agents,
+//! `agents.stats` (protocol 0.66, capability `agents.stats`): flow statistics across agents,
 //! from what the daemon records (`crate::agents_stats`).
 
 use std::collections::BTreeSet;

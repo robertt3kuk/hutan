@@ -2860,6 +2860,7 @@ impl SessionRegistry {
         session.keep_live = None;
         session.info.restored = false;
         // A new process is a new reporting epoch: nothing the old one said applies.
+        Self::log_agent_gone(&self.state_log, session);
         session.forget_agent(now_ms());
         session.tree.reset_seqs();
         session.osc_title = None;
@@ -3330,6 +3331,15 @@ impl SessionRegistry {
         }
     }
 
+    /// The agent of session `index` is gone (its process ended, or the shell prompts again):
+    /// the state log says it stopped reporting, so a wait it was in ends here.
+    fn log_agent_gone(state_log: &StateLog, session: &mut SessionEntry) {
+        if session.state_logged.is_some() {
+            state_log.record(session.info.id, now_ms(), "daemon", "gone", None, None);
+            session.state_logged = None;
+        }
+    }
+
     /// The word of a terminal agent's state in the state log.
     fn terminal_state_word(state: TerminalAgentState) -> &'static str {
         match state {
@@ -3513,6 +3523,7 @@ impl SessionRegistry {
                 }) =>
             {
                 if prev.is_some_and(|agent| agent.source == TerminalAgentSource::Osc) {
+                    Self::log_agent_gone(&self.state_log, session);
                     let resumable = session.forget_agent(now_ms());
                     session.tree.release(
                         term_agent::OSC_SOURCE,
@@ -3679,6 +3690,7 @@ impl SessionRegistry {
             TerminalMeta::PromptMark(PromptMark::A) => {
                 // The shell is prompting again: whatever agent was running in the foreground is
                 // gone, even if it never got to say so.
+                Self::log_agent_gone(&self.state_log, &mut self.sessions[index]);
                 let resumable = self.sessions[index].forget_agent(now_ms());
                 self.tree_changed(index);
                 if resumable {
@@ -3730,6 +3742,7 @@ impl SessionRegistry {
             session.agent_message = None;
             session.agent_session_id = None;
         } else {
+            Self::log_agent_gone(&self.state_log, session);
             session.forget_agent(now_ms());
         }
         session.resume_ref_json = resume;
@@ -5424,7 +5437,13 @@ impl SessionRegistry {
                 keep_live: None,
                 dirty: false,
                 agent_message: None,
-                state_logged: None,
+                // The state log goes on where the previous run left it: an agent that says the
+                // same again after the restart is the same wait, not a new one.
+                state_logged: facts
+                    .last_states
+                    .get(&row.id)
+                    .cloned()
+                    .filter(|_| state_is_live),
                 agent_session_id: None,
                 tree: TreeState::new(row.id),
                 chat: None,

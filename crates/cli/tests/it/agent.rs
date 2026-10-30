@@ -553,7 +553,7 @@ async fn the_activity_counts_sessions_and_says_what_is_not_recorded() {
     t.stop().await;
 }
 
-/// Flow (protocol 0.67): `hutan agents --stats` groups what the daemon recorded and says how well
+/// Flow (protocol 0.66): `hutan agents --stats` groups what the daemon recorded and says how well
 /// each number is known; a window or a grouping that is not one is a usage error.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_stats_say_how_well_each_number_is_known() {

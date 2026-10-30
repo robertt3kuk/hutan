@@ -1105,7 +1105,7 @@ async fn an_mcp_server_that_ends_withdraws_the_card_it_raised() {
     t.stop().await;
 }
 
-/// `agents_stats` (protocol 0.67): read-only, takes a window in days, says what it does not
+/// `agents_stats` (protocol 0.66): read-only, takes a window in days, says what it does not
 /// record, and its result is marked untrusted like the board's.
 #[tokio::test(flavor = "multi_thread")]
 async fn agents_stats_reads_a_window_and_is_marked_untrusted() {

@@ -250,7 +250,7 @@ pub(crate) const ASSISTANT_FOCUS_CAPABILITY: &str = "assistant.focus";
 pub(crate) const AGENTS_BOARD_CAPABILITY: &str = "agents.board";
 /// Capability for `agents.activity` (protocol 0.65).
 pub(crate) const AGENTS_ACTIVITY_CAPABILITY: &str = "agents.activity";
-/// Capability for `agents.stats` (protocol 0.67).
+/// Capability for `agents.stats` (protocol 0.66).
 pub(crate) const AGENTS_STATS_CAPABILITY: &str = "agents.stats";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
@@ -645,7 +645,7 @@ impl Client {
             .any(|capability| capability == AGENTS_ACTIVITY_CAPABILITY)
     }
 
-    /// True when the daemon advertised capability `agents.stats` (protocol 0.67).
+    /// True when the daemon advertised capability `agents.stats` (protocol 0.66).
     pub fn supports_agents_stats(&self) -> bool {
         self.welcome
             .capabilities
