@@ -4,6 +4,11 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+### Changed
+- **Closing a tab closes its session** (terminals, terminal agents, chats, splits): an idle one closes at once with *Undo*; when something runs Hutan asks — *Keep running in background* (default) or *Close*. `tabs.close_session = when_idle | always | never`; *Close Tab, Keep Running* in the tab menu; the old `terminal.tab_close` still works.
+- **Every file gets its own tab** again (`editor.preview_tabs` now off by default).
+- **Files open beside the agent**: with a chat or terminal agent in front, an opened file goes to a split on its right, reused for the next files (`editor.open_beside_agent`); ⌥-click, ⌥↩ in ⌘P and ⌘K *Files: Open to the Side* always open to the side.
+
 ## 0.3.4 — 2026-10-30
 
 ### Changed
