@@ -2129,7 +2129,7 @@ pub fn migrate_status_bar(store: &SettingsStore, user_file: &Path) -> Vec<String
 }
 
 /// The `assistant` namespace.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AssistantSettings {
     /// Whether Hutan has Mawas, the assistant, at all. On (the default; Mawas is a headline
@@ -2143,6 +2143,34 @@ pub struct AssistantSettings {
     /// of the first three). Empty (the default) turns it off. If another app already owns the shortcut,
     /// Hutan says so once and leaves the setting alone; the in-app keybinding is separate.
     pub global_shortcut: String,
+    /// How wide Mawas's conversation is, in rem (30 to 90, 46 by default); a value outside is
+    /// read as the nearest end. Drag either edge of the column, or use *Mawas: Wider Chat* and
+    /// *Narrower Chat*: the width is written when the drag ends. A page narrower than the
+    /// width keeps a small margin on each side instead.
+    pub chat_width_rem: f32,
+    /// Whether the Today column is shown beside the conversation (a page below 640 pt never
+    /// has room for it). Hiding it never loses a request: the header button counts the
+    /// sessions that wait for an answer.
+    pub rail_open: bool,
+}
+
+impl AssistantSettings {
+    /// The narrowest and widest conversation, in rem.
+    pub const MIN_CHAT_WIDTH_REM: f32 = 30.0;
+    pub const MAX_CHAT_WIDTH_REM: f32 = 90.0;
+    /// The width when nothing is set.
+    pub const DEFAULT_CHAT_WIDTH_REM: f32 = 46.0;
+
+    /// `chat_width_rem` as the page uses it: within 30 to 90; a value that is not a number is
+    /// the default.
+    pub fn chat_width(&self) -> f32 {
+        if self.chat_width_rem.is_finite() {
+            self.chat_width_rem
+                .clamp(Self::MIN_CHAT_WIDTH_REM, Self::MAX_CHAT_WIDTH_REM)
+        } else {
+            Self::DEFAULT_CHAT_WIDTH_REM
+        }
+    }
 }
 
 impl Default for AssistantSettings {
@@ -2150,6 +2178,8 @@ impl Default for AssistantSettings {
         Self {
             enabled: true,
             global_shortcut: String::new(),
+            chat_width_rem: Self::DEFAULT_CHAT_WIDTH_REM,
+            rail_open: true,
         }
     }
 }
@@ -2740,6 +2770,31 @@ mod tests {
         assert!(AssistantSettings::default().global_shortcut.is_empty());
         let off: AssistantSettings = toml::from_str("global_shortcut = \"\"").unwrap();
         assert!(off.global_shortcut.is_empty());
+    }
+
+    #[test]
+    fn mawas_layout_settings_default_load_from_an_old_file_and_clamp_when_read() {
+        let defaults = AssistantSettings::default();
+        assert_eq!(defaults.chat_width(), 46.0);
+        assert!(defaults.rail_open);
+        // A file from before the layout keys loads unchanged.
+        let old: AssistantSettings = toml::from_str("enabled = false").unwrap();
+        assert!(!old.enabled && old.rail_open);
+        assert_eq!(old.chat_width(), 46.0);
+        let read = |text: &str| {
+            toml::from_str::<AssistantSettings>(text)
+                .unwrap()
+                .chat_width()
+        };
+        assert_eq!(read("chat_width_rem = 12"), 30.0);
+        assert_eq!(read("chat_width_rem = 200.5"), 90.0);
+        assert_eq!(read("chat_width_rem = 52.5"), 52.5);
+        assert_eq!(read("chat_width_rem = nan"), 46.0);
+        assert!(
+            !toml::from_str::<AssistantSettings>("rail_open = false")
+                .unwrap()
+                .rail_open
+        );
     }
 
     fn migrated(text: &str) -> (bool, AppSettings, Vec<hutan_settings::SettingsError>) {

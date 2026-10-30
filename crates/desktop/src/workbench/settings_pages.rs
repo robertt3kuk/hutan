@@ -146,6 +146,11 @@ fn file_size(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.len())
 }
 
+/// The `assistant` keys that sit under Settings → Mawas → *Layout*.
+fn is_assistant_layout(key: &str) -> bool {
+    matches!(key, "chat_width_rem" | "rail_open")
+}
+
 /// A name for a preset: letters, digits, `-` and `_` (anything else becomes `-`).
 pub(super) fn preset_name(name: &str) -> String {
     name.trim()
@@ -397,7 +402,23 @@ impl Workbench {
             "assistant" if own => rows.push(self.section_heading(words::SEC_ASSISTANT_PANEL, "")),
             _ => {}
         }
-        rows.extend(fields.iter().map(|f| self.render_field_row(f, cx)));
+        // Mawas's own layout keys sit under a *Layout* heading, after the other settings.
+        let layout = |f: &&Field| section == "assistant" && own && is_assistant_layout(&f.dotted());
+        rows.extend(
+            fields
+                .iter()
+                .filter(|f| !layout(f))
+                .map(|f| self.render_field_row(f, cx)),
+        );
+        if fields.iter().any(|f| layout(&f)) {
+            rows.push(self.section_heading(words::SEC_ASSISTANT_LAYOUT, ""));
+            rows.extend(
+                fields
+                    .iter()
+                    .filter(|f| layout(f))
+                    .map(|f| self.render_field_row(f, cx)),
+            );
+        }
         match section {
             "integrations" if own => rows.push(self.render_integrations(cx)),
             "automation" if own => rows.extend(self.render_hooks(cx)),

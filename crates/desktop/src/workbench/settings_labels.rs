@@ -1252,6 +1252,18 @@ const FIELDS: &[FieldText] = &[
         "System-wide shortcut",
         "A shortcut that brings Hutan forward and opens Mawas from any app, for example alt-space or cmd-shift-space. It needs at least one of cmd, ctrl or alt. Leave it empty to turn it off. If another app already uses it, Hutan tells you once and leaves the setting alone.",
     ),
+    field(
+        "assistant",
+        "chat_width_rem",
+        "Chat width",
+        "How wide Mawas's conversation is, in rem (30 to 90; 46 by default). Drag either edge of the column to set it, or use Mawas: Wider Chat, Narrower Chat and Reset Chat Width. A page narrower than the width keeps a small margin on each side.",
+    ),
+    field(
+        "assistant",
+        "rail_open",
+        "Show Today",
+        "Shows the Today column beside the conversation: what waits for you, failed and finished work, and what is running. Hiding it never loses a request: the button in Mawas's header counts the sessions that wait for an answer. A page below 640 pt has no room for the column either way (Today is a page of its own in the ⋯ menu).",
+    ),
     // ---- agent integrations ----
     field(
         "integrations",
@@ -2209,6 +2221,7 @@ pub mod words {
         CHECKPOINT_PROJECTS = "A project can differ: [checkpoints.projects.<name or id>] in daemon.toml sets its mode and the four snapshot bounds.";
         CHECKPOINT_CHATS_NOT_ON = "Chats without checkpoints now:";
         SEC_ASSISTANT_PANEL = "Mawas";
+        SEC_ASSISTANT_LAYOUT = "Layout";
         SEC_ASSISTANT_ACT = "What Mawas may do";
         SEC_ASSISTANT_ACT_HELP = "Ask before acting: Mawas can change things, and every change asks you first (grants answer for what you allowed). Advisor: Mawas reads and advises, and cannot change anything. A change of mode applies from the next message.";
         SEC_ASSISTANT_GRANTS = "What you allowed Mawas to do without asking";
