@@ -38,6 +38,9 @@ pub struct Options<'a> {
     pub tables: &'a str,
     /// Index the synthetic transcripts of this environment.
     pub history: Option<&'a HistoryEnv>,
+    /// The `codex app-server` of the daemon (a replay of a recorded transcript): a Codex chat
+    /// next to the assistants.
+    pub codex: Option<hutan_agents::CodexConfig>,
 }
 
 pub struct AssistantEnv {
@@ -69,7 +72,7 @@ impl AssistantEnv {
         let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
         let daemon = TestDaemon::start_configured(
             Some(&toml),
-            None,
+            options.codex,
             hutan_daemon::GatewayConfig {
                 credentials: Some(store),
                 http: HttpConfig {

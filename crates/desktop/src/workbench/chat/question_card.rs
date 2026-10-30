@@ -108,6 +108,17 @@ impl ChatView {
         self.forms.get(&id)?.error.clone()
     }
 
+    /// What the form of question `id` holds now — what Submit would send — or why it would not
+    /// send (`None` while the question has no form).
+    pub fn question_values(
+        &self,
+        id: QuestionId,
+        cx: &gpui::App,
+    ) -> Option<Result<hutan_core::question::Values, String>> {
+        let spec = &self.model.read(cx).transcript().question(id)?.spec;
+        Some(self.forms.get(&id)?.values(spec))
+    }
+
     /// The oldest question that waits.
     fn first_pending_question(&self, cx: &gpui::App) -> Option<QuestionId> {
         self.model

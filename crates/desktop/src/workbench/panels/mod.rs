@@ -45,7 +45,8 @@ pub use assistant::{
     MawasMode, Opened, ScopeEntry, ScopeKey, reset_chat_width, write_chat_width,
 };
 pub use assistant_rail::{
-    RailOption, Section as TodaySection, Today, TodayKind, TodayRow, WorkingRow, today,
+    RailOption, RailSuggestion, Section as TodaySection, Today, TodayKind, TodayRow, WorkingRow,
+    today,
 };
 pub use changes::{
     ChangesPanel, Checkouts as ChangesCheckouts, Counts as ChangesCounts,

@@ -1686,3 +1686,365 @@ fn the_rail_width_is_held_within_17_5_and_32_5_rem(cx: &mut TestAppContext) {
     release(cx, edge - gpui::point(gpui::px(200.0), gpui::px(0.0)));
     assert_eq!(written_rail_width(&view, cx), Some(32.5));
 }
+
+/// Waits until Mawas's `ask.suggest` came back with the suggestion.
+fn allow_her_suggestion_done(
+    pending: &common::control::Pending<hutan_protocol::suggest::AskSuggested>,
+    cx: &mut VisualTestContext,
+) {
+    wait_until(cx, "her suggestion to be accepted", |_| {
+        pending.try_take().is_some_and(|result| result.is_ok())
+    });
+}
+
+/// Answers, as the user, the permission request Mawas's own `ask.suggest` raised (the gate asks
+/// for it like for any change), and waits for it to be gone.
+fn allow_her_suggestion(env: &AssistantEnv, cx: &mut VisualTestContext, mawas: SessionId) {
+    use hutan_protocol::chat::{ApprovalList, ApprovalListRequest, ApprovalRespond};
+
+    let mut card = None;
+    pump_until(cx, "Mawas's gate card", |_| {
+        let list: ApprovalList = env
+            .daemon
+            .call(Request::ApprovalList(ApprovalListRequest::default()));
+        card = list.approvals.into_iter().find(|a| a.session_id == mawas);
+        card.is_some()
+    });
+    let card = card.unwrap();
+    assert!(
+        card.title.contains("suggest an answer"),
+        "the gate says what she asks: {}",
+        card.title
+    );
+    let _: Empty = env.daemon.call(Request::ApprovalRespond(ApprovalRespond {
+        approval_id: card.id,
+        option_id: "allow_once".into(),
+    }));
+}
+
+#[gpui::test]
+fn a_suggestion_of_mawas_on_an_approval_is_words_until_the_user_uses_it(cx: &mut TestAppContext) {
+    use hutan_protocol::suggest::{AskSuggest, AskSuggested, AskTarget, SuggestedAnswer};
+
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    let panel = open_assistant(&view, cx);
+    let (mawas, _, _) = shown(&panel, cx);
+    let target = env.daemon.sh("sleep 600");
+    let other = reported_agent(&env);
+
+    // Another agent asks to rename a session; the request waits for the user.
+    let by_other = env
+        .daemon
+        .call_from_in_background::<SessionResult>(other.id, rename_request(target.id, "agent"));
+    wait_needs(&panel, cx, 1);
+    let today = panel.read_with(cx, |p, cx| p.today(cx));
+    let TodayKind::Approval {
+        approval,
+        suggestion: None,
+        ..
+    } = &today.requests[0].kind
+    else {
+        panic!("an approval without a suggestion expected: {today:?}");
+    };
+    let approval = *approval;
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Suggestion("today-box", 0))
+        })
+        .is_none(),
+        "no suggestion, no box"
+    );
+
+    let suggest = |reason: &str| {
+        env.daemon.call_from_in_background::<AskSuggested>(
+            mawas,
+            Request::AskSuggest(AskSuggest {
+                target: AskTarget::Approval { id: approval },
+                answer: SuggestedAnswer::Option {
+                    option_id: "allow_once".into(),
+                },
+                reason: reason.into(),
+            }),
+        )
+    };
+    let shown_on_the_card = |panel: &Entity<AssistantPanel>, cx: &mut VisualTestContext| {
+        pump_until(cx, "the suggestion on the card", |cx| {
+            panel.read_with(cx, |p, cx| {
+                matches!(
+                    p.today(cx).requests.first().map(|r| &r.kind),
+                    Some(TodayKind::Approval { suggestion: Some(s), .. })
+                        if s.option_id == "allow_once" && s.label == "Allow once"
+                )
+            })
+        });
+    };
+
+    // Mawas suggests (her own gate asks first: it is a change like the others).
+    let first = suggest("The same rename you allowed last week.");
+    wait_needs(&panel, cx, 2);
+    click(&view, cx, Region::AssistantItem("today-option", 0));
+    allow_her_suggestion_done(&first, cx);
+    shown_on_the_card(&panel, cx);
+    for part in ["today-box", "today-use", "today-dismiss"] {
+        drawn(&view, cx, Region::Suggestion(part, 0));
+    }
+    // It answers nothing: the request waits, and the options are the user's.
+    assert!(
+        by_other.try_take().is_none(),
+        "nothing answered the request"
+    );
+    assert_eq!(title_of(&env, target.id), target.title);
+    drawn(&view, cx, Region::AssistantItem("today-option", 0));
+
+    // Dismiss hides it; the request still waits.
+    click(&view, cx, Region::Suggestion("today-dismiss", 0));
+    pump_until(cx, "the suggestion to go", |cx| {
+        panel.read_with(cx, |p, cx| {
+            matches!(
+                p.today(cx).requests.first().map(|r| &r.kind),
+                Some(TodayKind::Approval {
+                    suggestion: None,
+                    ..
+                })
+            )
+        })
+    });
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Suggestion("today-box", 0))
+        })
+        .is_none()
+    );
+    assert!(by_other.try_take().is_none());
+
+    // A newer suggestion shows again; *Use* is the user's own click on the option: the request
+    // runs as if they had pressed Allow once.
+    let second = suggest("It is still the same rename.");
+    wait_needs(&panel, cx, 2);
+    click(&view, cx, Region::AssistantItem("today-option", 0));
+    allow_her_suggestion_done(&second, cx);
+    shown_on_the_card(&panel, cx);
+    click(&view, cx, Region::Suggestion("today-use", 0));
+    let mut result = None;
+    wait_until(cx, "the request to run", |cx| {
+        let _ = cx;
+        result = by_other.try_take();
+        result.is_some()
+    });
+    result.unwrap().expect("the rename ran");
+    assert_eq!(title_of(&env, target.id), "agent");
+    wait_needs(&panel, cx, 0);
+}
+
+#[gpui::test]
+fn a_suggested_answer_to_a_question_fills_its_card_and_the_user_sends_it(cx: &mut TestAppContext) {
+    use common::chat::ChatEnv;
+    use hutan_chat_view::QuestionState;
+    use hutan_desktop::workbench::chat::LoadStatus;
+    use hutan_protocol::chat::{ChatSend, ChatSent};
+    use hutan_protocol::suggest::{AskSuggest, AskSuggested, AskTarget, SuggestedAnswer};
+
+    let chat_env = ChatEnv::new();
+    let env = AssistantEnv::start(Options {
+        configured: true,
+        codex: Some(chat_env.fixture("question-elicitation")),
+        ..Options::default()
+    });
+    let chat = env.daemon.create_chat(&chat_env.cwd());
+    let (view, cx) = open(cx, &env.daemon);
+    let panel = open_assistant(&view, cx);
+    let (mawas, _, _) = shown(&panel, cx);
+    let _: ChatSent = env.daemon.call(Request::ChatSend(ChatSend {
+        session_id: chat.id,
+        text: "deploy".into(),
+        attachments: Vec::new(),
+    }));
+    // The agent's chat, with its question card, is what the center shows.
+    view.update_in(cx, |wb, window, cx| wb.open_session(chat.id, window, cx));
+    wait_until(cx, "the chat to load", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(chat.id)
+                .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+        })
+    });
+    let model = view
+        .read_with(cx, |wb, _| wb.chat_model_of(chat.id))
+        .unwrap();
+    let chat_view = view
+        .read_with(cx, |wb, _| wb.chat_view_of(chat.id))
+        .expect("the chat's view");
+    let mut question = None;
+    pump_until(cx, "the question", |cx| {
+        question = model.read_with(cx, |m, _| {
+            m.transcript().pending_questions().first().map(|q| q.id)
+        });
+        question.is_some()
+    });
+    let question = question.unwrap();
+    drawn(&view, cx, Region::ChatQuestion(0));
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Suggestion("question-box", 0))
+        })
+        .is_none(),
+        "no suggestion, no box"
+    );
+
+    let suggested = env.daemon.call_from_in_background::<AskSuggested>(
+        mawas,
+        Request::AskSuggest(AskSuggest {
+            target: AskTarget::Question { id: question },
+            answer: SuggestedAnswer::Values {
+                values: [("environment".to_owned(), json!("production"))].into(),
+            },
+            reason: "The release notes say production is next.".into(),
+        }),
+    );
+    allow_her_suggestion(&env, cx, mawas);
+    wait_until(cx, "the suggestion to be accepted", |cx| {
+        let _ = cx;
+        suggested.try_take().is_some_and(|r| r.is_ok())
+    });
+    for part in ["question-box", "question-use", "question-dismiss"] {
+        drawn(&view, cx, Region::Suggestion(part, 0));
+    }
+    let held = |cx: &mut VisualTestContext| {
+        chat_view.read_with(cx, |c, cx| c.question_values(question, cx))
+    };
+    // The form holds its own default until the user clicks *Use*.
+    assert_eq!(held(cx).unwrap().unwrap()["environment"], "staging");
+
+    // *Use* fills the field with the suggested option. Nothing is sent.
+    click(&view, cx, Region::Suggestion("question-use", 0));
+    pump_until(cx, "the field to be filled", |cx| {
+        held(cx).is_some_and(|v| v.is_ok_and(|v| v["environment"] == "production"))
+    });
+    assert_eq!(
+        model.read_with(cx, |m, _| m
+            .transcript()
+            .question(question)
+            .unwrap()
+            .state
+            .clone()),
+        QuestionState::Pending
+    );
+    assert!(
+        chat_env.received().iter().all(|(m, _)| m != "response"),
+        "nothing was sent to the agent"
+    );
+
+    // The user sends it, from their own Submit.
+    click(&view, cx, Region::ChatQuestion(0));
+    pump_until(cx, "the answer", |cx| {
+        model.read_with(cx, |m, _| {
+            matches!(
+                m.transcript().question(question).unwrap().state,
+                QuestionState::Answered { .. }
+            )
+        })
+    });
+    let response = chat_env
+        .received()
+        .into_iter()
+        .find(|(m, _)| m == "response")
+        .expect("the agent got the answer");
+    // A field the suggestion left out keeps its default (`notify`).
+    assert_eq!(
+        response.1["result"],
+        json!({"action": "accept", "content": {"environment": "production", "notify": true}})
+    );
+}
+
+#[gpui::test]
+fn a_suggestion_on_an_approval_card_of_a_chat_is_used_with_one_click_of_the_user(
+    cx: &mut TestAppContext,
+) {
+    use common::chat::ChatEnv;
+    use hutan_chat_view::ApprovalState;
+    use hutan_desktop::workbench::chat::LoadStatus;
+    use hutan_protocol::chat::{ChatSend, ChatSent};
+    use hutan_protocol::suggest::{AskSuggest, AskSuggested, AskTarget, SuggestedAnswer};
+
+    let chat_env = ChatEnv::new();
+    let env = AssistantEnv::start(Options {
+        configured: true,
+        codex: Some(chat_env.fixture("approval-touch")),
+        ..Options::default()
+    });
+    let chat = env.daemon.create_chat(&chat_env.cwd());
+    let (view, cx) = open(cx, &env.daemon);
+    let panel = open_assistant(&view, cx);
+    let (mawas, _, _) = shown(&panel, cx);
+    let _: ChatSent = env.daemon.call(Request::ChatSend(ChatSend {
+        session_id: chat.id,
+        text: "Run `touch hi.txt` in a shell, then reply with the word done.".into(),
+        attachments: Vec::new(),
+    }));
+    view.update_in(cx, |wb, window, cx| wb.open_session(chat.id, window, cx));
+    wait_until(cx, "the chat to load", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(chat.id)
+                .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+        })
+    });
+    let model = view
+        .read_with(cx, |wb, _| wb.chat_model_of(chat.id))
+        .unwrap();
+    let mut approval = None;
+    pump_until(cx, "the approval", |cx| {
+        approval = model.read_with(cx, |m, _| {
+            m.transcript().pending_approvals().first().map(|a| a.id)
+        });
+        approval.is_some()
+    });
+    let approval = approval.unwrap();
+
+    let suggested = env.daemon.call_from_in_background::<AskSuggested>(
+        mawas,
+        Request::AskSuggest(AskSuggest {
+            target: AskTarget::Approval { id: approval },
+            answer: SuggestedAnswer::Option {
+                option_id: "accept".into(),
+            },
+            reason: "A touch in the project folder is harmless.".into(),
+        }),
+    );
+    allow_her_suggestion(&env, cx, mawas);
+    allow_her_suggestion_done(&suggested, cx);
+    for part in ["chat-box", "chat-use", "chat-dismiss"] {
+        drawn(&view, cx, Region::Suggestion(part, 0));
+    }
+    assert!(
+        !chat_env.received().iter().any(|(m, _)| m == "response"),
+        "the suggestion answered nothing"
+    );
+
+    // *Use* is the user's click on that option.
+    click(&view, cx, Region::Suggestion("chat-use", 0));
+    pump_until(cx, "the request to resolve", |cx| {
+        model.read_with(cx, |m, _| {
+            m.transcript()
+                .approval(approval)
+                .is_some_and(|a| a.state != ApprovalState::Pending)
+        })
+    });
+    model.read_with(cx, |m, _| {
+        assert_eq!(
+            m.transcript().approval(approval).unwrap().state,
+            ApprovalState::Selected {
+                option_id: "accept".into()
+            }
+        );
+    });
+    let answers: Vec<_> = chat_env
+        .received()
+        .into_iter()
+        .filter(|(m, _)| m == "response")
+        .map(|(_, msg)| msg["result"].clone())
+        .collect();
+    assert_eq!(answers, [json!({"decision": "accept"})]);
+}
