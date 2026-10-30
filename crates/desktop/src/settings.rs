@@ -2195,7 +2195,8 @@ pub struct AssistantSettings {
     /// default rem); a value outside is read as the nearest end. Drag the column's left border
     /// (a double click puts it back): the width is written when the drag ends.
     pub rail_width_rem: f32,
-    /// The tab of the Today column that is open: `now` (the board of every agent) or `memory`.
+    /// The tab of the Today column that is open: `now` (the board of every agent), `recent` (what
+    /// happened since you last looked) or `memory`.
     /// It is the one you left open.
     pub rail_tab: RailTab,
     /// Which Mawas conversation Home opens (ADR 0025). `global` (the default) opens the Global
@@ -2213,6 +2214,8 @@ pub enum RailTab {
     /// The board: requests, failed, ready for review, working, idle.
     #[default]
     Now,
+    /// What happened since you last looked: turns, requests, files, tasks, sessions.
+    Recent,
     /// Mawas's memory: proposals that wait for you and the latest entries.
     Memory,
 }

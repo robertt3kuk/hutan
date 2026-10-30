@@ -3030,6 +3030,19 @@ impl SessionsStore {
         self.attention.marks()
     }
 
+    /// When the user last caught up with what the agents did, if they ever did (kept with the
+    /// marks, in `desktop-state.json`).
+    pub fn agents_seen(&self) -> Option<u64> {
+        self.attention.agents_seen()
+    }
+
+    /// The user caught up with the agents' activity at `ms` (the Recent tab's *Mark as seen*).
+    pub fn see_agents(&mut self, ms: u64, cx: &mut Context<Self>) {
+        if self.attention.see_agents(ms) {
+            self.changed(StoreChanged::ATTENTION, cx);
+        }
+    }
+
     /// Takes the marks of an earlier run back.
     pub fn restore_marks(&mut self, marks: &Marks, cx: &mut Context<Self>) {
         self.attention.restore(marks);

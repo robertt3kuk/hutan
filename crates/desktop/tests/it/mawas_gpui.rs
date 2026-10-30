@@ -2047,4 +2047,114 @@ fn a_suggestion_on_an_approval_card_of_a_chat_is_used_with_one_click_of_the_user
         .map(|(_, msg)| msg["result"].clone())
         .collect();
     assert_eq!(answers, [json!({"decision": "accept"})]);
+
+// ---- AGENTS-ACTIVITY: the rail's Recent tab -------------------------------------------------------
+
+fn seen_of(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<u64> {
+    view.read_with(cx, |wb, cx| wb.sessions().read(cx).agents_seen())
+}
+
+#[gpui::test]
+fn the_recent_tab_lists_what_happened_by_agent_and_mark_as_seen_empties_it(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    // Something that happened: a session began, and an agent reported in it.
+    let _session = reported_agent(&env);
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_until(cx, "the tabs", |cx| painted(&view, cx, "today-tab-recent"));
+    assert_eq!(seen_of(&view, cx), None, "nobody caught up yet");
+
+    click_region(&view, cx, "today-tab-recent");
+    assert_eq!(written_tab(&view, cx).as_deref(), Some("recent"));
+    // The daemon's catch-up, grouped by agent: the session that started, with its project.
+    wait_until(cx, "the first agent of the catch-up", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-recent-group", 0))
+        })
+        .is_some()
+    });
+    let activity = panel
+        .read_with(cx, |p, _| p.recent_activity().cloned())
+        .expect("the daemon answered");
+    assert!(activity.summary.sessions_started >= 1);
+    assert!(!activity.not_recorded.is_empty());
+    assert!(painted(&view, cx, "today-recent-not-recorded"));
+    assert!(painted(&view, cx, "today-recent-since"));
+    // The tab counts the events.
+    assert!(panel.read_with(cx, |p, _| {
+        p.recent_activity().is_some_and(|a| !a.events.is_empty())
+    }));
+
+    // Mark as seen: the point moves to the end of what was read, and what was read is behind it.
+    click_region(&view, cx, "today-recent-seen");
+    wait_until(cx, "the caught-up point", |cx| seen_of(&view, cx).is_some());
+    let seen = seen_of(&view, cx).unwrap();
+    assert!(seen >= activity.to_ms);
+    wait_until(cx, "an empty catch-up", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.recent_activity()
+                .is_some_and(|a| a.events.is_empty() && a.from_ms >= seen)
+        })
+    });
+    assert!(
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-recent-group", 0))
+        })
+        .is_none(),
+        "nothing is listed after the point"
+    );
+    // A later start shows up in it, once the tab reads again.
+    let later = env.daemon.sh("sleep 600");
+    // The tab reads again at most every two seconds when the agents change: the test's clock
+    // does not run by itself.
+    wait_until(cx, "the later session", |cx| {
+        cx.executor().advance_clock(Duration::from_millis(500));
+        panel.read_with(cx, |p, _| {
+            p.recent_activity()
+                .is_some_and(|a| a.events.iter().any(|e| e.session_id == Some(later.id)))
+        })
+    });
+}
+
+#[gpui::test]
+fn summarise_with_mawas_fills_the_composer_and_sends_nothing(cx: &mut TestAppContext) {
+    let env = started();
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_until(cx, "Mawas's session", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.session(cx).is_some_and(|s| p.chat_model(s).is_some())
+        })
+    });
+    click_region(&view, cx, "today-tab-recent");
+    wait_until(cx, "the catch-up", |cx| {
+        panel.read_with(cx, |p, _| p.recent_activity().is_some())
+    });
+    click_region(&view, cx, "today-recent-summarise");
+    let session = panel.read_with(cx, |p, cx| p.session(cx)).unwrap();
+    let model = panel.read_with(cx, |p, _| p.chat_model(session)).unwrap();
+    wait_until(cx, "the prepared ask", |cx| {
+        model.read_with(cx, |m, _| m.draft_message().contains("agents_activity"))
+    });
+    let draft = model.read_with(cx, |m, _| m.draft_message());
+    assert!(
+        draft.starts_with("Summarise what my agents did since"),
+        "{draft}"
+    );
+    assert!(draft.contains("agents_board"), "{draft}");
+    // The user sends it, or does not: nothing was sent, nothing is journaled.
+    let history: hutan_protocol::chat::ChatHistory = env.daemon.call(Request::ChatHistory(
+        hutan_protocol::chat::ChatHistoryRequest {
+            session_id: session,
+            before_seq: None,
+            limit: 50,
+        },
+    ));
+    assert!(history.events.is_empty(), "{history:?}");
+    assert!(
+        !env.daemon
+            .session(session)
+            .chat
+            .is_some_and(|c| c.turn_active)
+    );
 }

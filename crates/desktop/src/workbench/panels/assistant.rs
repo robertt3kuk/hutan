@@ -364,6 +364,27 @@ pub(super) struct MemoryTab {
     pub(super) unsupported: bool,
 }
 
+/// What the Recent tab of the Today column shows: the daemon's catch-up (`agents.activity`) since
+/// the point the user last caught up at, read when the tab is shown and again when that point or
+/// the agents moved.
+#[derive(Debug, Default)]
+pub(super) struct RecentTab {
+    pub(super) activity: Option<hutan_protocol::activity::AgentsActivity>,
+    /// The caught-up point the answer is for (`Some(None)`: never caught up).
+    pub(super) for_seen: Option<Option<u64>>,
+    /// What the store looked like when the answer was read (its revision, the number of sessions
+    /// and of requests).
+    pub(super) revision: (u64, usize, usize),
+    pub(super) loading: bool,
+    /// A read waits for the pause between two reads to end.
+    pub(super) retry: bool,
+    pub(super) last_load: Option<std::time::Instant>,
+    /// The daemon has no activity feed (it predates protocol 0.65).
+    pub(super) unsupported: bool,
+    /// The last failure, in the daemon's words.
+    pub(super) error: Option<String>,
+}
+
 struct Chat {
     model: Entity<ChatModel>,
     view: Entity<ChatView>,
@@ -377,7 +398,7 @@ pub struct AssistantPanel {
     /// Context to attach once a scope's assistant is open ("Send to assistant" of a block).
     waiting: Vec<(ScopeKey, ContextChip)>,
     /// Put the keyboard in the composer as soon as it is drawn.
-    focus_wanted: bool,
+    pub(super) focus_wanted: bool,
     /// The backend chooser, while it is open.
     switcher: Option<Switcher>,
     providers: Vec<ProviderInfo>,
@@ -402,6 +423,8 @@ pub struct AssistantPanel {
     pub(super) idle_open: bool,
     /// What the Today column's Memory tab lists.
     pub(super) memory: MemoryTab,
+    /// What the Today column's Recent tab shows.
+    pub(super) recent: RecentTab,
     /// `assistant.home_scope` as this page last saw it: a different value (Settings, another
     /// window) sends Home back to what the new value opens.
     home_seen: HomeScope,
@@ -475,6 +498,7 @@ impl AssistantPanel {
             rail_seen: rail_open,
             idle_open: false,
             memory: MemoryTab::default(),
+            recent: RecentTab::default(),
             home_seen: home_scope,
             edge_drag,
             folded: false,
@@ -2433,6 +2457,7 @@ impl Render for AssistantPanel {
         let today_page = self.folded && self.today_only && connected;
         let rem_px = f32::from(window.rem_size());
         self.ensure_memory(cx);
+        self.ensure_recent(cx);
         let rail = (!self.folded && self.rail_open && connected)
             .then(|| self.render_rail(&look, false, rem_px, cx));
         let asks = self.render_chat_asks(&look, cx);

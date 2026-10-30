@@ -102,6 +102,38 @@ fn a_session_marked_unread_is_still_unread_after_the_desktop_restarts(cx: &mut T
 }
 
 #[gpui::test]
+fn the_time_the_user_caught_up_with_the_agents_survives_a_restart(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let state = daemon.home().join("desktop-state.json");
+    {
+        let (view, cx) = open(cx, &daemon, Some(&state));
+        assert_eq!(store(&view, cx, |s| s.agents_seen()), None);
+        view.update(cx, |wb, cx| {
+            wb.sessions()
+                .update(cx, |store, cx| store.see_agents(1_791_894_000_000, cx));
+            // Time only moves forward.
+            wb.sessions()
+                .update(cx, |store, cx| store.see_agents(1_791_000_000_000, cx));
+        });
+        assert_eq!(
+            store(&view, cx, |s| s.agents_seen()),
+            Some(1_791_894_000_000)
+        );
+        view.update(cx, |wb, _| wb.flush_save());
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+        assert_eq!(
+            saved["attention"]["agents_seen_ms"], 1_791_894_000_000_u64,
+            "{saved}"
+        );
+    }
+    let (view, cx) = open(cx, &daemon, Some(&state));
+    wait_until(cx, "the point back", |cx| {
+        store(&view, cx, |s| s.agents_seen() == Some(1_791_894_000_000))
+    });
+}
+
+#[gpui::test]
 fn the_jump_goes_to_a_request_before_a_session_that_is_only_done(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon, None);

@@ -435,7 +435,7 @@ global_shortcut = ""          # system-wide shortcut that opens Mawas, e.g. "alt
 chat_width_rem = 46           # width of Mawas's conversation in rem (30 to 90); drag its edges, or ⌘K → Mawas: Wider Chat
 rail_open = true              # show the Today column beside Mawas's conversation
 rail_width_rem = 21.25        # width of the Today column in rem (17.5 to 32.5); drag its left border
-rail_tab = "now"              # the open tab of the Today column: now | memory
+rail_tab = "now"              # the open tab of the Today column: now | recent | memory
 home_scope = "global"         # global (Home opens the Global chat; a workspace is a Focus) | follow_workspace (Home follows the active workspace)
 
 [keymap]

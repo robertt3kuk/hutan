@@ -383,6 +383,8 @@ pub struct AttentionTracker {
     unread: BTreeMap<SessionId, Unread>,
     /// Sessions the user snoozed, with the attention they had (`Self::snooze`).
     snoozed: BTreeMap<SessionId, String>,
+    /// When the user last caught up with the agents' activity (`Marks::agents_seen_ms`).
+    agents_seen_ms: Option<u64>,
     /// Whether each known session was live in the last list; `None` until the first synchronised
     /// list of the current daemon epoch has been taken as the baseline.
     baseline: Option<HashMap<SessionId, bool>>,
@@ -596,12 +598,31 @@ impl AttentionTracker {
                 .iter()
                 .map(|(id, key)| (id.to_string(), key.clone()))
                 .collect(),
+            agents_seen_ms: self.agents_seen_ms,
         }
+    }
+
+    /// When the user last caught up with the agents' activity, if they ever did.
+    pub fn agents_seen(&self) -> Option<u64> {
+        self.agents_seen_ms
+    }
+
+    /// The user caught up at `ms`. Time only moves forward: an older value changes nothing.
+    /// Whether it changed.
+    pub fn see_agents(&mut self, ms: u64) -> bool {
+        if self.agents_seen_ms.is_some_and(|seen| seen >= ms) {
+            return false;
+        }
+        self.agents_seen_ms = Some(ms);
+        true
     }
 
     /// Takes the marks of an earlier run back (before the first list is observed; sessions that
     /// no longer exist are dropped by it).
     pub fn restore(&mut self, marks: &Marks) {
+        if let Some(seen) = marks.agents_seen_ms {
+            self.see_agents(seen);
+        }
         for id in marks.unread.iter().filter_map(|id| id.parse().ok()) {
             self.unread.entry(id).or_insert(Unread::Marked);
         }
@@ -685,11 +706,16 @@ pub struct Marks {
     pub unread: Vec<String>,
     /// Session id → the attention it was snoozed at.
     pub snoozed: BTreeMap<String, String>,
+    /// When the user last caught up with what the agents did (the Recent tab's *Mark as seen*),
+    /// ms since the epoch: what *since I was away* counts from. The daemon keeps no user
+    /// presence; the window does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents_seen_ms: Option<u64>,
 }
 
 impl Marks {
     pub fn is_empty(&self) -> bool {
-        self.unread.is_empty() && self.snoozed.is_empty()
+        self.unread.is_empty() && self.snoozed.is_empty() && self.agents_seen_ms.is_none()
     }
 }
 
@@ -1650,5 +1676,29 @@ mod tests {
         titled.title = "Fix the build".into();
         assert_eq!(agent_subtitle(&titled), None, "the name already says it");
         assert_eq!(agent_app(&titled), Some("omp"));
+    }
+
+    #[test]
+    fn the_time_the_user_caught_up_with_the_agents_only_moves_forward_and_is_kept() {
+        let mut tracker = AttentionTracker::new();
+        assert_eq!(tracker.agents_seen(), None);
+        assert!(
+            tracker.marks().is_empty(),
+            "nothing seen is nothing to keep"
+        );
+        assert!(tracker.see_agents(5_000));
+        assert!(!tracker.see_agents(4_000), "an older time changes nothing");
+        assert!(!tracker.see_agents(5_000));
+        assert_eq!(tracker.agents_seen(), Some(5_000));
+        let marks = tracker.marks();
+        assert!(!marks.is_empty());
+        let json = serde_json::to_string(&marks).unwrap();
+        let back: Marks = serde_json::from_str(&json).unwrap();
+        let mut again = AttentionTracker::new();
+        again.restore(&back);
+        assert_eq!(again.agents_seen(), Some(5_000));
+        // A file from before it loads unchanged.
+        let old: Marks = serde_json::from_str(r#"{"unread":[],"snoozed":{}}"#).unwrap();
+        assert_eq!(old.agents_seen_ms, None);
     }
 }

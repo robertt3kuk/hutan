@@ -22,6 +22,9 @@ use gpui::{
 };
 use hutan_core::agent::PermissionOptionKind;
 use hutan_core::{ApprovalId, QuestionId, SessionId};
+use hutan_protocol::activity::{
+    ActivityDetail, ActivityEvent, ActivitySummary, RequestKind, TurnOutcome,
+};
 use hutan_protocol::chat::ControlTarget;
 use hutan_protocol::suggest::{AskTarget, SuggestedAnswer};
 
@@ -40,6 +43,10 @@ use crate::workbench::view::Region;
 use hutan_agents_view::attention::Attention;
 use hutan_agents_view::presentation::{AgentRecord, Group, ReasonKind, Role};
 
+/// The most events the Recent tab lists under one agent.
+const RECENT_EVENTS_PER_AGENT: usize = 3;
+/// The shortest pause between two reads of the Recent tab caused by the agents changing.
+const RECENT_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
 /// How many memory entries the Memory tab lists.
 const MEMORY_ENTRIES_SHOWN: usize = 6;
 /// The first row index of the cards above the conversation (the rail's rows count from 0), so
@@ -455,6 +462,7 @@ impl AssistantPanel {
         let tab = self.env.settings.get::<AssistantSettings>().rail_tab;
         let body = match tab {
             RailTab::Now => self.render_now(&today, look, cx),
+            RailTab::Recent => self.render_recent(look, cx),
             RailTab::Memory => self.render_memory(&today, look, cx),
         };
         let width = self.rail_width_rem() * rem_px;
@@ -522,6 +530,12 @@ impl AssistantPanel {
                 today.request_sessions(),
             ))
             .child(tab(
+                "today-tab-recent",
+                RailTab::Recent,
+                "Recent",
+                self.recent_count(),
+            ))
+            .child(tab(
                 "today-tab-memory",
                 RailTab::Memory,
                 "Memory",
@@ -535,6 +549,7 @@ impl AssistantPanel {
     pub fn set_rail_tab(&mut self, tab: RailTab, cx: &mut Context<Self>) {
         let word = match tab {
             RailTab::Now => "now",
+            RailTab::Recent => "recent",
             RailTab::Memory => "memory",
         };
         if let Err(error) = self
@@ -921,6 +936,350 @@ impl AssistantPanel {
         .into_any_element()
     }
 
+    /// The catch-up the Recent tab shows, once the daemon answered.
+    pub fn recent_activity(&self) -> Option<&hutan_protocol::activity::AgentsActivity> {
+        self.recent.activity.as_ref()
+    }
+
+    /// How many events the Recent tab has since the user last caught up (zero until read).
+    fn recent_count(&self) -> usize {
+        self.recent
+            .activity
+            .as_ref()
+            .map_or(0, |activity| activity.events.len() + activity.omitted)
+    }
+
+    /// The Recent tab: what happened since the user last caught up, from the daemon's records
+    /// (`agents.activity`, no model call): the counts, the events grouped by agent, what is not
+    /// recorded, *Summarise with Mawas* (a prepared ask in the composer; nothing is sent) and
+    /// *Mark as seen*.
+    fn render_recent(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
+        let mut sections: Vec<AnyElement> = Vec::new();
+        let now = hutan_client::time::now_ms();
+        match (&self.recent.activity, self.recent.unsupported) {
+            (_, true) => sections.push(muted_line(
+                "This daemon keeps no activity feed (it predates protocol 0.65).",
+                look,
+            )),
+            (None, _) => sections.push(muted_line(
+                self.recent
+                    .error
+                    .as_deref()
+                    .unwrap_or("Reading what happened…"),
+                look,
+            )),
+            (Some(activity), _) => {
+                let since = match self.recent.for_seen {
+                    Some(Some(seen)) => format!(
+                        "Since you last looked: {} ({})",
+                        hutan_client::time::local_time_text(seen),
+                        hutan_client::time::relative_text(now, seen)
+                    ),
+                    _ => "The last 24 hours (nothing marked as seen yet)".to_owned(),
+                };
+                sections.push(
+                    div()
+                        .relative()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .child(SharedString::from(since))
+                        .child(probe(
+                            &self.env.regions,
+                            Region::Assistant("today-recent-since"),
+                        ))
+                        .into_any_element(),
+                );
+                let lines = recent_summary_lines(&activity.summary);
+                if lines.is_empty() {
+                    sections.push(muted_line("Nothing recorded in this window.", look));
+                } else {
+                    sections.push(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .text_size(px(tokens.font_size))
+                            .children(lines.into_iter().map(SharedString::from))
+                            .into_any_element(),
+                    );
+                }
+                sections.push(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(tokens.spacing))
+                        .child(
+                            Button::new(
+                                "today-recent-summarise",
+                                "Summarise with Mawas",
+                                &theme,
+                                &tokens,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.summarise_recent(cx)))
+                            .child(probe(
+                                &self.env.regions,
+                                Region::Assistant("today-recent-summarise"),
+                            )),
+                        )
+                        .child(
+                            Button::new("today-recent-seen", "Mark as seen", &theme, &tokens)
+                                .on_click(cx.listener(|this, _, _, cx| this.mark_recent_seen(cx)))
+                                .child(probe(
+                                    &self.env.regions,
+                                    Region::Assistant("today-recent-seen"),
+                                )),
+                        )
+                        .into_any_element(),
+                );
+                // Events by agent, newest agent first (the events are newest first).
+                let mut groups: Vec<(Option<SessionId>, String, String, Vec<&ActivityEvent>)> =
+                    Vec::new();
+                for event in &activity.events {
+                    match groups
+                        .iter_mut()
+                        .find(|g| g.0 == event.session_id && g.1 == event.title)
+                    {
+                        Some(group) => group.3.push(event),
+                        None => groups.push((
+                            event.session_id,
+                            event.title.clone(),
+                            event.project.clone(),
+                            vec![event],
+                        )),
+                    }
+                }
+                for (index, (session, title, project, events)) in groups.iter().enumerate() {
+                    let rows: Vec<AnyElement> = events
+                        .iter()
+                        .take(RECENT_EVENTS_PER_AGENT)
+                        .map(|event| {
+                            div()
+                                .flex()
+                                .gap(px(tokens.spacing))
+                                .text_size(px(tokens.secondary_font_size))
+                                .child(div().flex_none().w(px(64.0)).text_color(theme.muted).child(
+                                    SharedString::from(hutan_client::time::relative_text(
+                                        now,
+                                        event.at_ms,
+                                    )),
+                                ))
+                                .child(
+                                    div().flex_1().min_w_0().child(SharedString::from(
+                                        recent_event_text(&event.detail),
+                                    )),
+                                )
+                                .into_any_element()
+                        })
+                        .collect();
+                    let more = events.len().saturating_sub(RECENT_EVENTS_PER_AGENT);
+                    let open = *session;
+                    sections.push(
+                        div()
+                            .id(SharedString::from(format!("today-recent-group-{index}")))
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .when(open.is_some(), |s| {
+                                s.cursor_pointer().on_click(move |_, window, cx| {
+                                    if let Some(session) = open {
+                                        window.dispatch_action(
+                                            Box::new(OpenSession(session.to_string())),
+                                            cx,
+                                        );
+                                    }
+                                })
+                            })
+                            .child(
+                                div()
+                                    .text_size(px(tokens.font_size))
+                                    .truncate()
+                                    .child(SharedString::from(format!("{title} · {project}"))),
+                            )
+                            .children(rows)
+                            .children((more > 0).then(|| {
+                                div()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(format!("+{more} more")))
+                            }))
+                            .child(probe(
+                                &self.env.regions,
+                                Region::AssistantItem("today-recent-group", index),
+                            ))
+                            .into_any_element(),
+                    );
+                }
+                if activity.omitted > 0 {
+                    sections.push(muted_line(
+                        &format!(
+                            "{} older events are not listed; the counts above cover them.",
+                            activity.omitted
+                        ),
+                        look,
+                    ));
+                }
+                if activity
+                    .coverage_from_ms
+                    .is_some_and(|from| from > activity.from_ms)
+                {
+                    sections.push(muted_line(
+                        "Hutan's records begin after the start of this window.",
+                        look,
+                    ));
+                }
+                if !activity.not_recorded.is_empty() {
+                    sections.push(
+                        div()
+                            .relative()
+                            .child(muted_line(
+                                &format!("Not recorded: {}.", activity.not_recorded.join("; ")),
+                                look,
+                            ))
+                            .child(probe(
+                                &self.env.regions,
+                                Region::Assistant("today-recent-not-recorded"),
+                            ))
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+        hutan_ui::scroll_y(
+            "assistant-today-scroll",
+            div()
+                .id("assistant-today-recent")
+                .relative()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .gap(px(tokens.spacing * 3.0))
+                .p(px(tokens.spacing * 3.0))
+                .children(sections),
+        )
+        .into_any_element()
+    }
+
+    /// *Mark as seen*: the user is caught up with what the last read showed. What *since I was
+    /// away* counts from is kept in the state file, per window's user, never in the daemon.
+    pub fn mark_recent_seen(&mut self, cx: &mut Context<Self>) {
+        let Some(to_ms) = self.recent.activity.as_ref().map(|a| a.to_ms) else {
+            return;
+        };
+        self.env
+            .sessions
+            .update(cx, |store, cx| store.see_agents(to_ms, cx));
+        cx.notify();
+    }
+
+    /// *Summarise with Mawas*: puts a prepared ask in Mawas's composer, for the user to read,
+    /// change and send; nothing is sent. The ask names the window and the read-only tools that
+    /// answer it, so the numbers in her answer come from the records and not from this tab.
+    pub fn summarise_recent(&mut self, cx: &mut Context<Self>) {
+        let Some(activity) = self.recent.activity.as_ref() else {
+            return;
+        };
+        let note = format!(
+            "Summarise what my agents did since {} (agents_activity with since_ms {}, then agents_board for what is happening now). Tell me what finished, what failed and what waits for me, and say what is not recorded.",
+            hutan_client::time::local_time_text(activity.from_ms),
+            activity.from_ms
+        );
+        if let Some(model) = self
+            .session(cx)
+            .and_then(|session| self.chat_model(session))
+        {
+            model.update(cx, |model, cx| model.add_note(&note, cx));
+        }
+        self.focus_wanted = true;
+        cx.notify();
+    }
+
+    /// Reads the catch-up once the Recent tab is on screen, again when the point the user caught
+    /// up at moved, and again — at most every two seconds — when the agents' state changed. A
+    /// hidden rail and the other tabs do no work.
+    pub(super) fn ensure_recent(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.rail_open
+            && self.env.settings.get::<AssistantSettings>().rail_tab == RailTab::Recent;
+        if !wanted || self.recent.loading || self.recent.unsupported || !self.connected(cx) {
+            return;
+        }
+        let (seen, revision, connection) = {
+            let store = self.env.sessions.read(cx);
+            // What the catch-up is made of changing: the agents' state (the revision) and the
+            // number of sessions and of requests (a plain shell starting moves neither the
+            // revision nor an agent).
+            (
+                store.agents_seen(),
+                (
+                    store.revision(),
+                    store.sessions().len(),
+                    store.approvals().len() + store.questions().len(),
+                ),
+                store.connection().clone(),
+            )
+        };
+        if !connection.supports_agents_activity() {
+            self.recent.unsupported = true;
+            return;
+        }
+        let fresh = self.recent.activity.is_some()
+            && self.recent.for_seen == Some(seen)
+            && self.recent.revision == revision;
+        if fresh {
+            return;
+        }
+        if let Some(last) = self.recent.last_load
+            && self.recent.for_seen == Some(seen)
+            && last.elapsed() < RECENT_REFRESH
+        {
+            // Too soon after the last read: look again when the pause is over.
+            if !self.recent.retry {
+                self.recent.retry = true;
+                let wait = RECENT_REFRESH.saturating_sub(last.elapsed());
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(wait).await;
+                    this.update(cx, |this, cx| {
+                        this.recent.retry = false;
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            return;
+        }
+        self.recent.loading = true;
+        self.recent.last_load = Some(std::time::Instant::now());
+        cx.spawn(async move |this, cx| {
+            let answer = connection
+                .agents_activity(hutan_protocol::activity::AgentsActivityRequest {
+                    since_ms: seen,
+                    ..Default::default()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.recent.loading = false;
+                this.recent.for_seen = Some(seen);
+                this.recent.revision = revision;
+                match answer {
+                    Ok(activity) => {
+                        this.recent.error = None;
+                        this.recent.activity = Some(activity);
+                    }
+                    Err(error) => {
+                        tracing::warn!("cannot read the agents' activity: {error}");
+                        this.recent.error = Some(format!("Could not read what happened: {error}"));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Reads the latest memory entries once the Memory tab is on screen (and again after
     /// `memory.changed`). A hidden rail, and the Now tab, do no work.
     pub(super) fn ensure_memory(&mut self, cx: &mut Context<Self>) {
@@ -1199,5 +1558,141 @@ fn category_word(category: hutan_protocol::memory::MemoryCategory) -> &'static s
         MemoryCategory::Profile => "Profile",
         MemoryCategory::Fact => "Fact",
         MemoryCategory::Note => "Note",
+    }
+}
+
+/// The counts of the Recent tab, one line each, only what is not zero.
+fn recent_summary_lines(s: &ActivitySummary) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut turns = Vec::new();
+    if s.turns_finished > 0 {
+        turns.push(format!("{} finished", s.turns_finished));
+    }
+    if s.turns_failed > 0 {
+        turns.push(format!("{} failed", s.turns_failed));
+    }
+    if s.turns_cancelled > 0 {
+        turns.push(format!("{} cancelled", s.turns_cancelled));
+    }
+    if s.turns_running > 0 {
+        turns.push(format!("{} running", s.turns_running));
+    }
+    if !turns.is_empty() {
+        lines.push(format!("Turns: {}", turns.join(" · ")));
+    }
+    if s.requests_asked > 0 || s.requests_resolved > 0 {
+        let mut text = format!(
+            "Requests: {} asked · {} answered",
+            s.requests_asked, s.requests_resolved
+        );
+        if s.requests_open > 0 {
+            text.push_str(&format!(" · {} still waiting", s.requests_open));
+        }
+        if let Some(longest) = s.wait_longest_ms {
+            text.push_str(&format!(" · longest wait {}", duration_text(longest)));
+        }
+        lines.push(text);
+    }
+    if let (Some(files), Some(added), Some(removed)) =
+        (s.files_changed, s.lines_added, s.lines_removed)
+    {
+        lines.push(format!(
+            "Changes: {files} files · +{added} −{removed} lines"
+        ));
+    }
+    let mut tasks = Vec::new();
+    if s.tasks_done > 0 {
+        tasks.push(format!("{} done", s.tasks_done));
+    }
+    if s.tasks_failed > 0 {
+        tasks.push(format!("{} failed", s.tasks_failed));
+    }
+    if s.tasks_review > 0 {
+        tasks.push(format!("{} sent to review", s.tasks_review));
+    }
+    if !tasks.is_empty() {
+        lines.push(format!("Tasks: {}", tasks.join(" · ")));
+    }
+    if s.sessions_started > 0 || s.sessions_ended > 0 {
+        lines.push(format!(
+            "Sessions: {} started · {} ended",
+            s.sessions_started, s.sessions_ended
+        ));
+    }
+    lines
+}
+
+/// `3.9 s`, `3m 20s`, `2h 05m`.
+fn duration_text(ms: u64) -> String {
+    let seconds = ms / 1_000;
+    match seconds {
+        0 => format!("{ms} ms"),
+        1..=9 => format!("{:.1} s", ms as f64 / 1_000.0),
+        10..=59 => format!("{seconds} s"),
+        60..=3_599 => format!("{}m {:02}s", seconds / 60, seconds % 60),
+        _ => format!("{}h {:02}m", seconds / 3_600, (seconds % 3_600) / 60),
+    }
+}
+
+/// One event of the Recent tab, in words.
+fn recent_event_text(detail: &ActivityDetail) -> String {
+    match detail {
+        ActivityDetail::TurnEnded {
+            outcome,
+            duration_ms,
+            error,
+        } => {
+            let word = match outcome {
+                TurnOutcome::Completed => "turn finished",
+                TurnOutcome::Failed => "turn failed",
+                TurnOutcome::Cancelled => "turn cancelled",
+            };
+            let took = duration_ms
+                .map(|ms| format!(" after {}", duration_text(ms)))
+                .unwrap_or_default();
+            let why = error.as_ref().map(|e| format!(": {e}")).unwrap_or_default();
+            format!("{word}{took}{why}")
+        }
+        ActivityDetail::Request {
+            request,
+            text,
+            resolved_ms,
+            wait_ms,
+            outcome,
+            ..
+        } => {
+            let noun = match request {
+                RequestKind::Approval => "approval",
+                RequestKind::Question => "question",
+            };
+            match resolved_ms {
+                Some(_) => format!(
+                    "{noun} {} after {}: {text}",
+                    outcome.as_deref().unwrap_or("resolved"),
+                    duration_text(wait_ms.unwrap_or(0))
+                ),
+                None => format!("{noun} waiting: {text}"),
+            }
+        }
+        ActivityDetail::Task { state, run } => {
+            if *run {
+                format!("task {state}")
+            } else {
+                format!("task work {state}")
+            }
+        }
+        ActivityDetail::SessionStarted { chat } => {
+            if *chat {
+                "chat started".to_owned()
+            } else {
+                "terminal started".to_owned()
+            }
+        }
+        ActivityDetail::SessionEnded { state } => format!("ended: {state}"),
+        ActivityDetail::Checkpoint {
+            files,
+            added,
+            removed,
+        } => format!("{files} files changed · +{added} −{removed}"),
     }
 }
