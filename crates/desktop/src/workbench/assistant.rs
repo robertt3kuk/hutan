@@ -202,6 +202,59 @@ impl Workbench {
         });
     }
 
+    /// ⌘K "Mawas: Wider Chat" (`direction` `1.0`) and "Narrower Chat" (`-1.0`): the
+    /// conversation's width moves by 4 rem within 30 to 90, and `assistant.chat_width_rem` says
+    /// it.
+    pub fn step_mawas_chat_width(&mut self, direction: f32, cx: &mut Context<Self>) {
+        if !self.assistant_enabled() {
+            return;
+        }
+        let now = self
+            .settings
+            .get::<crate::settings::AssistantSettings>()
+            .chat_width();
+        super::panels::write_chat_width(
+            &self.settings,
+            now + direction * super::panels::CHAT_WIDTH_STEP_REM,
+        );
+        self.refresh_assistant_panel(cx);
+    }
+
+    /// ⌘K "Mawas: Reset Chat Width": the default width; the key leaves `settings.toml`.
+    pub fn reset_mawas_chat_width(&mut self, cx: &mut Context<Self>) {
+        if !self.assistant_enabled() {
+            return;
+        }
+        super::panels::reset_chat_width(&self.settings);
+        self.refresh_assistant_panel(cx);
+    }
+
+    /// ⌘K "Mawas: Toggle Today": shows or hides the Today column (`assistant.rail_open`).
+    pub fn toggle_mawas_today(&mut self, cx: &mut Context<Self>) {
+        if !self.assistant_enabled() {
+            return;
+        }
+        let open = self
+            .settings
+            .get::<crate::settings::AssistantSettings>()
+            .rail_open;
+        if let Err(error) = self
+            .settings
+            .write_user("assistant.rail_open", toml::Value::Boolean(!open))
+        {
+            tracing::warn!("cannot save assistant.rail_open: {error}");
+        }
+        self.refresh_assistant_panel(cx);
+    }
+
+    /// Draws Home again after a layout setting changed under it (the settings' own notice
+    /// follows, but the page need not wait for it).
+    fn refresh_assistant_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(panel) = self.panel::<AssistantPanel>("assistant") {
+            panel.update(cx, |_, cx| cx.notify());
+        }
+    }
+
     /// Opens the menu of Home's scope dropdown at `position`: Global and the workspace, the
     /// shown one checked.
     pub fn show_assistant_scope_menu(

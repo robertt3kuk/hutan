@@ -925,6 +925,20 @@ impl Workbench {
                 this.open_memory(window, cx);
             }),
         )
+        .on_action(cx.listener(|this, _: &actions::WiderMawasChat, _, cx| {
+            this.step_mawas_chat_width(1.0, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::NarrowerMawasChat, _, cx| {
+            this.step_mawas_chat_width(-1.0, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::ResetMawasChatWidth, _, cx| {
+                this.reset_mawas_chat_width(cx);
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::ToggleMawasToday, _, cx| {
+            this.toggle_mawas_today(cx);
+        }))
         .on_action(
             cx.listener(|this, a: &actions::EditMemoryProposal, window, cx| {
                 this.edit_memory_proposal(&a.0, window, cx);

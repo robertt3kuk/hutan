@@ -144,6 +144,14 @@ actions!(
         OpenAssistant,
         NewMawasChat,
         OpenMawasMemory,
+        /// Mawas's conversation 4 rem wider (`assistant.chat_width_rem`).
+        WiderMawasChat,
+        /// Mawas's conversation 4 rem narrower.
+        NarrowerMawasChat,
+        /// Mawas's conversation at its default width again (the key leaves `settings.toml`).
+        ResetMawasChatWidth,
+        /// Shows or hides Mawas's Today column (`assistant.rail_open`).
+        ToggleMawasToday,
         NewTerminalInWorktree,
         RemoveWorktree,
         /// List the worktrees the cleanup policy offers and remove the ones the user confirms.
@@ -1045,6 +1053,10 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         out.push(command("Mawas: Open", OpenAssistant));
         out.push(command("Mawas: New chat", NewMawasChat));
         out.push(command("Mawas: Memory", OpenMawasMemory));
+        out.push(command("Mawas: Wider Chat", WiderMawasChat));
+        out.push(command("Mawas: Narrower Chat", NarrowerMawasChat));
+        out.push(command("Mawas: Reset Chat Width", ResetMawasChatWidth));
+        out.push(command("Mawas: Toggle Today", ToggleMawasToday));
     }
     out.extend([
         command("Worktree: New Terminal in Worktree…", NewTerminalInWorktree),

@@ -25,6 +25,7 @@ use crate::icons::{Icon, icon};
 use crate::sessions::{
     AgentRecord, Attention, Group, ReasonKind, Role, SessionsStore, agents_text,
 };
+use crate::settings::AssistantSettings;
 use crate::workbench::actions::{
     EditMemoryProposal, JumpToNextAttention, OpenMawasMemory, OpenSession,
 };
@@ -118,6 +119,15 @@ pub enum Section {
 }
 
 impl Today {
+    /// How many sessions have a request: `requests` grouped by session (a session that asks
+    /// twice counts once).
+    pub fn request_sessions(&self) -> usize {
+        let mut sessions: Vec<SessionId> = self.requests.iter().map(|row| row.session).collect();
+        sessions.sort();
+        sessions.dedup();
+        sessions.len()
+    }
+
     /// The groups of attention in the order Today draws them, with their rows.
     pub fn groups(&self) -> [(Attention, &[TodayRow]); 3] {
         [
@@ -289,10 +299,38 @@ impl AssistantPanel {
         self.rail_open
     }
 
-    /// Shows or hides the rail.
+    /// Shows or hides the rail, and writes `assistant.rail_open`, so a new page and a new window
+    /// start the same way. A request that arrives never reopens it: the header's button counts
+    /// them ([`today_badge`](Self::today_badge)).
     pub fn toggle_rail(&mut self, cx: &mut Context<Self>) {
-        self.rail_open = !self.rail_open;
+        let open = !self.rail_open;
+        self.set_rail_open(open, cx);
+    }
+
+    /// Shows or hides the rail (see [`toggle_rail`](Self::toggle_rail)).
+    pub fn set_rail_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if let Err(error) = self
+            .env
+            .settings
+            .write_user("assistant.rail_open", toml::Value::Boolean(open))
+        {
+            tracing::warn!("cannot save assistant.rail_open: {error}");
+        }
+        // What the file says now is what this page has seen: only a later change by somebody
+        // else (another window, the file) moves the rail again.
+        self.rail_seen = self.env.settings.get::<AssistantSettings>().rail_open;
+        self.rail_open = self.rail_seen;
         cx.notify();
+    }
+
+    /// What the header's Today button counts while the rail is hidden: the sessions with a
+    /// request (`Today::requests`, grouped by session). Zero while the rail is shown, and on a
+    /// page below 640 pt, where the button is not drawn.
+    pub fn today_badge(&self, cx: &App) -> usize {
+        if self.rail_open || self.folded() {
+            return 0;
+        }
+        self.today(cx).request_sessions()
     }
 
     /// What Mawas's chat asks Hutan for (a tool of Hutan's own, which its harness cannot show in
