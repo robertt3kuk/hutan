@@ -19,7 +19,6 @@ use hutan_protocol::messages::{
     AgentApplied, AgentReportRequest, AgentState, Empty, Event, Request, SessionBusy, SessionClose,
     SessionInfo, SessionList, SessionListFilter, SessionRef, SessionResult, SessionSnapshot,
 };
-use hutan_protocol::recovery::RecoveryKind;
 use hutan_storage::Storage;
 use serde_json::Value;
 use tokio::time::{sleep, timeout};
@@ -333,10 +332,8 @@ async fn reopening_a_terminal_respawns_it_in_its_directory_with_the_same_identit
     assert_eq!(back.cwd.as_deref(), Some(root.as_path()));
     assert_eq!(back.state, SessionState::Running);
     assert_ne!(back.terminal_id, created.terminal_id, "a new terminal");
-    assert!(matches!(
-        back.recovery.as_ref().map(|r| &r.kind),
-        Some(RecoveryKind::ShellRespawned { cwd: Some(cwd), .. }) if *cwd == root
-    ));
+    // The user reopened it: the daemon did not restart, so no restart summary is owed.
+    assert_eq!(back.recovery, None);
     let again = listed(&client, created.id).await.expect("listed again");
     assert_eq!(again.id, created.id);
     let mut view = View::attach(&client, terminal_of(&back), None).await;
@@ -516,10 +513,9 @@ async fn a_closed_agent_terminal_comes_back_through_the_agents_resume_command() 
         .unwrap();
     close(&client, created.id, true).await.unwrap();
     let back = reopen(&client, created.id).await.unwrap();
-    assert_eq!(
-        back.recovery.as_ref().map(|r| &r.kind),
-        Some(&RecoveryKind::AgentResumed { resume_argv: argv })
-    );
+    // The agent starts again with its resume command (it is started below); that is the user's own
+    // reopen, not a restart of the daemon.
+    assert_eq!(back.recovery, None);
     timeout(WAIT, async {
         while !out.exists() {
             sleep(Duration::from_millis(25)).await;
@@ -643,14 +639,7 @@ async fn a_closed_chat_keeps_its_journal_and_reopening_resumes_the_conversation(
     let loads = received_of(work.path(), "session/load");
     assert_eq!(loads.len(), 1, "the agent resumed the conversation");
     assert_eq!(loads[0]["params"]["sessionId"], SESSION);
-    assert!(matches!(
-        listed(&client, created.id)
-            .await
-            .unwrap()
-            .recovery
-            .map(|r| r.kind),
-        Some(RecoveryKind::ChatResumed { .. })
-    ));
+    assert_eq!(listed(&client, created.id).await.unwrap().recovery, None);
     t.stop().await;
 }
 

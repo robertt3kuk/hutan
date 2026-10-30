@@ -3055,6 +3055,9 @@ impl SessionRegistry {
             "reopening a session",
         );
         let index = self.sessions.len() - 1;
+        // The user brought it back: the daemon did not restart, so no restart summary (a
+        // "hutand restarted just now" banner, chips on the row) is owed for it.
+        self.sessions[index].info.recovery = None;
         if self.muted.contains(&id) {
             self.sessions[index].info.muted = true;
         }
