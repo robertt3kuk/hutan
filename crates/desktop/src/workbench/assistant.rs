@@ -287,6 +287,69 @@ impl Workbench {
         self.open_menu(position, entries, window, cx);
     }
 
+    /// Opens the menu of Home's **Chats** button at `position`: the Global chats, then the chats
+    /// of workspaces from before (ADR 0025: nothing is migrated, every one stays reachable), the
+    /// shown one checked. Choosing one shows it as it was.
+    pub fn show_assistant_chats_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<AssistantPanel>("assistant") else {
+            return;
+        };
+        let entries = panel
+            .read(cx)
+            .chat_entries(cx)
+            .into_iter()
+            .map(|row| match row.session {
+                None => Self::disabled_entry(row.label),
+                Some(session) => {
+                    let panel = panel.clone();
+                    let mut entry = Self::entry(row.label, move |_, _, cx| {
+                        panel.update(cx, |panel, cx| {
+                            panel.show_session(session, cx);
+                            panel.focus_composer(cx);
+                        });
+                    });
+                    entry.checked = row.selected;
+                    entry
+                }
+            })
+            .collect();
+        self.open_menu(position, entries, window, cx);
+    }
+
+    /// Opens the picker of Home's **Focus** chip at `position`: *All workspaces*, then the
+    /// workspaces, the Focus of the shown chat checked. A Focus is a filter and a source of
+    /// notes and project instructions; it changes no permission.
+    pub fn show_assistant_focus_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<AssistantPanel>("assistant") else {
+            return;
+        };
+        let entries = panel
+            .read(cx)
+            .focus_entries(cx)
+            .into_iter()
+            .map(|row| {
+                let panel = panel.clone();
+                let workspace = row.workspace;
+                let mut entry = Self::entry(row.label, move |_, _, cx| {
+                    panel.update(cx, |panel, cx| panel.set_focus(workspace, cx));
+                });
+                entry.checked = row.selected;
+                entry
+            })
+            .collect();
+        self.open_menu(position, entries, window, cx);
+    }
+
     /// Opens the menu of Home's mode chip at `position`: Ask before acting and Advisor, the
     /// current one checked. Choosing one switches `assistant.mode`; it applies from the next
     /// message.
@@ -558,9 +621,20 @@ impl Workbench {
             let Some(terminal) = info.terminal_id else {
                 return;
             };
-            let key = store
-                .workspace(info.workspace_id)
-                .map_or(ScopeKey::Global, ScopeKey::of);
+            // With Home opening Global the block goes to the Global chat, which reads any
+            // terminal; `follow_workspace` keeps it with the terminal's workspace.
+            let key = if self
+                .settings
+                .get::<crate::settings::AssistantSettings>()
+                .home_scope
+                == crate::settings::HomeScope::Global
+            {
+                ScopeKey::Global
+            } else {
+                store
+                    .workspace(info.workspace_id)
+                    .map_or(ScopeKey::Global, ScopeKey::of)
+            };
             (terminal, info.title.clone(), key)
         };
         let (command, exit_code) = self.block_facts(session, block, cx);

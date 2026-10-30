@@ -121,17 +121,42 @@ pub fn reply(text: &str) -> Reply {
     ])
 }
 
-/// Opens a workbench on `daemon` and waits for the first synchronisation.
+/// Opens a workbench on `daemon` and waits for the first synchronisation. Home opens the Global
+/// chat (`assistant.home_scope = "global"`, the default).
 pub fn open<'a>(
     cx: &'a mut TestAppContext,
     daemon: &TestDaemon,
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
-    let (view, cx) = open_with(
+    open_settings(
         cx,
+        daemon,
         super::with_assistant(SettingsStore::new(SettingsPaths::in_dir(daemon.home()))),
-        daemon.connection(),
-        None,
-    );
+    )
+}
+
+/// Like [`open`], with `assistant.home_scope = "follow_workspace"`: Home follows the active
+/// workspace and the header has the scope dropdown, as before ADR 0025.
+pub fn open_following<'a>(
+    cx: &'a mut TestAppContext,
+    daemon: &TestDaemon,
+) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    let settings = super::with_assistant(SettingsStore::new(SettingsPaths::in_dir(daemon.home())));
+    settings
+        .write_user(
+            "assistant.home_scope",
+            toml::Value::String("follow_workspace".to_owned()),
+        )
+        .expect("follow the workspace");
+    open_settings(cx, daemon, settings)
+}
+
+/// Like [`open`] on a settings store the test keeps (clones share state).
+pub fn open_settings<'a>(
+    cx: &'a mut TestAppContext,
+    daemon: &TestDaemon,
+    settings: SettingsStore,
+) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    let (view, cx) = open_with(cx, settings, daemon.connection(), None);
     wait_until(cx, "the first synchronisation", |cx| {
         view.read_with(cx, |wb, cx| {
             wb.sessions().read(cx).synced() && wb.active_workspace().is_some()

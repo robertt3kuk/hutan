@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::assistant::{AssistantEnv, Options, open, open_assistant};
+use common::assistant::{AssistantEnv, Options, open, open_assistant, open_following};
 use common::chat::{ChatEnv, held_turns};
 use common::{TestDaemon, draw, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
@@ -217,7 +217,7 @@ fn files_follow_mawass_scope_while_mawas_home_is_the_focused_tab(cx: &mut TestAp
     let home_dir = home_folder(&env);
     let lab = env.project("lab");
     fs::write(lab.join("lab.txt"), "lab\n").unwrap();
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
     let lab_id = project(&view, cx, &lab);
     let scoped = Scoped::open(&view, cx);
     scoped.wait_root(cx, "call 2", &lab);
@@ -298,7 +298,7 @@ fn a_workspace_mawas_shows_the_workspaces_active_project(cx: &mut TestAppContext
         created_by: None,
     }));
     assert_eq!(shop.kind, WorkspaceKind::Workspace);
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
     cx.dispatch_action(actions::OpenWorkspace(shop.id.to_string()));
     wait_until(cx, "the workspace to be active", |cx| {
         view.read_with(cx, |wb, _| wb.active_workspace() == Some(shop.id))
@@ -374,7 +374,7 @@ fn mawas_more_menu_has_where_mawas_works_for_both_scopes(cx: &mut TestAppContext
     let env = started();
     let home_dir = home_folder(&env);
     let lab = env.project("lab");
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
     let revealed = std::rc::Rc::new(std::cell::RefCell::new(Vec::<PathBuf>::new()));
     let sink = revealed.clone();
     view.update(cx, |wb, _| {

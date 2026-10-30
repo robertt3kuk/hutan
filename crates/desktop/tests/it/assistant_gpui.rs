@@ -11,8 +11,8 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 
 use common::assistant::{
-    AssistantEnv, Options, PATH, eventually, last_prompt, open, open_assistant, panel, pump_until,
-    reply, shown, texts, wait_answer,
+    AssistantEnv, Options, PATH, eventually, last_prompt, open, open_assistant, open_following,
+    panel, pump_until, reply, shown, texts, wait_answer,
 };
 use common::history::{HistoryEnv, OMP_ID};
 use common::{TestDaemon, draw, wait_until};
@@ -168,7 +168,7 @@ fn the_global_assistant_streams_without_a_terminal_and_each_scope_keeps_its_conv
     env.mock.route("POST", PATH, reply("global again"));
     let root = env.project("project");
     let workspace = env.daemon.create_workspace("project", &[&root]);
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
     let sessions_before = session_infos(&view, cx).len();
 
     // The panel is registered, in ⌘K, and its action opens it.
@@ -384,7 +384,7 @@ fn every_kind_of_chip_adds_and_removes_and_only_the_selected_sources_reach_the_p
         status.enabled && status.sources.iter().map(|s| s.rows).sum::<u64>() >= 10
     });
 
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
     view.update_in(cx, |wb, window, cx| {
         wb.switch_workspace(workspace.id, window, cx);
     });
@@ -616,7 +616,7 @@ fn a_refused_attachment_is_named_marked_and_nothing_is_sent(cx: &mut TestAppCont
     fs::write(root.join("src/lib.rs"), "fn lib() {}\n").unwrap();
     let workspace = env.daemon.create_workspace("project", &[&root]);
     let (_, terminal) = terminal_with_blocks(&env.daemon, workspace.id);
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
     view.update_in(cx, |wb, window, cx| {
         wb.switch_workspace(workspace.id, window, cx);
     });
@@ -703,7 +703,7 @@ fn a_file_chip_cannot_escape_the_workspace_roots_and_the_desktop_never_opens_the
     symlink(env.base.join("outside.txt"), root.join("link-out.txt")).unwrap();
     symlink(&env.base, root.join("link-dir")).unwrap();
     let workspace = env.daemon.create_workspace("project", &[&root]);
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
     view.update_in(cx, |wb, window, cx| {
         wb.switch_workspace(workspace.id, window, cx);
     });
@@ -776,7 +776,7 @@ fn a_history_hit_of_an_assistant_conversation_opens_it_in_the_panel_and_continue
     env.mock.route("POST", PATH, reply("continued"));
     let root = env.project("project");
     let workspace = env.daemon.create_workspace("project", &[&root]);
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
 
     let panel = open_assistant(&view, cx);
     let (global, global_model, global_chat) = shown(&panel, cx);
@@ -993,6 +993,18 @@ fn an_unconfigured_assistant_opens_on_the_ready_provider_without_calling_it(
 
 #[gpui::test]
 fn a_terminal_block_goes_to_the_assistant_as_a_structured_attachment(cx: &mut TestAppContext) {
+    // Home opens Global, so the block goes to the Global chat, which reads any terminal.
+    block_goes_to_the_assistant(cx, false);
+}
+
+#[gpui::test]
+fn following_the_workspace_a_block_goes_to_the_chat_of_the_terminals_workspace(
+    cx: &mut TestAppContext,
+) {
+    block_goes_to_the_assistant(cx, true);
+}
+
+fn block_goes_to_the_assistant(cx: &mut TestAppContext, follow: bool) {
     let env = AssistantEnv::start(Options {
         configured: true,
         ..Options::default()
@@ -1002,7 +1014,11 @@ fn a_terminal_block_goes_to_the_assistant_as_a_structured_attachment(cx: &mut Te
     let workspace = env.daemon.create_workspace("project", &[&root]);
     let (info, terminal) = terminal_with_blocks(&env.daemon, workspace.id);
     let cmd1 = block_id(&env.daemon, terminal, "cmd1");
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = if follow {
+        open_following(cx, &env.daemon)
+    } else {
+        open(cx, &env.daemon)
+    };
     view.update_in(cx, |wb, window, cx| {
         wb.switch_workspace(workspace.id, window, cx);
     });
@@ -1027,7 +1043,11 @@ fn a_terminal_block_goes_to_the_assistant_as_a_structured_attachment(cx: &mut Te
     let (session, model, chat) = shown(&panel, cx);
     assert_eq!(
         panel.read_with(cx, |p, cx| p.key(cx)),
-        ScopeKey::Workspace(workspace.id)
+        if follow {
+            ScopeKey::Workspace(workspace.id)
+        } else {
+            ScopeKey::Global
+        }
     );
     assert_eq!(
         context_attachments(&model, cx),
@@ -1108,7 +1128,7 @@ fn the_send_menu_offers_the_assistant_when_no_chat_running_is_one(cx: &mut TestA
         entries,
         ["Send to first chat", "Send to second chat", "Send to Mawas"]
     );
-    // The assistant of the terminal's workspace is opened on demand and gets a block reference.
+    // Mawas (the Global chat) is opened on demand and gets a block reference.
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(2, window, cx));
     let panel = panel(&view, cx);
     wait_until(cx, "the block chip", |cx| {
@@ -1121,7 +1141,8 @@ fn the_send_menu_offers_the_assistant_when_no_chat_running_is_one(cx: &mut TestA
     let (_, model, _) = shown(&panel, cx);
     assert_eq!(
         panel.read_with(cx, |p, cx| p.key(cx)),
-        ScopeKey::Workspace(workspace.id)
+        ScopeKey::Global,
+        "Home opens Global, so Mawas is the Global chat"
     );
     assert_eq!(
         context_attachments(&model, cx),

@@ -41,8 +41,8 @@ use std::rc::Rc;
 pub use agents::{AgentsPanel, RowView, SectionView, TICK as AGENTS_TICK};
 pub use agents_page::{AgentsPage, AgentsRequest, TICK as AGENTS_PAGE_TICK};
 pub use assistant::{
-    AssistantPanel, CHAT_WIDTH_STEP_REM, Choice as AssistantChoice, Failure, MawasMode, Opened,
-    ScopeEntry, ScopeKey, reset_chat_width, write_chat_width,
+    AssistantPanel, CHAT_WIDTH_STEP_REM, ChatEntry, Choice as AssistantChoice, Failure, FocusEntry,
+    MawasMode, Opened, ScopeEntry, ScopeKey, reset_chat_width, write_chat_width,
 };
 pub use assistant_rail::{
     RailOption, Section as TodaySection, Today, TodayKind, TodayRow, WorkingRow, today,

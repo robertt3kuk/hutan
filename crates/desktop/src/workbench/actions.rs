@@ -571,6 +571,12 @@ data_actions! {
     /// Show the menu of the Assistant page's scope dropdown (Global / the workspace) at this
     /// position.
     ShowAssistantScopeMenu(gpui::Point<gpui::Pixels>);
+    /// Show the menu of Mawas Home's **Chats** button (the Global chats and the chats of
+    /// workspaces from before) at this position.
+    ShowAssistantChatsMenu(gpui::Point<gpui::Pixels>);
+    /// Show the picker of Mawas Home's **Focus** chip (All workspaces / a workspace) at this
+    /// position.
+    ShowAssistantFocusMenu(gpui::Point<gpui::Pixels>);
     /// Show the menu of the Assistant page's backend and model chip (Switch model…) at this
     /// position.
     ShowAssistantModelMenu(gpui::Point<gpui::Pixels>);

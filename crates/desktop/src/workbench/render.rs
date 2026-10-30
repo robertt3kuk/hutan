@@ -1576,6 +1576,16 @@ impl Workbench {
             }),
         )
         .on_action(
+            cx.listener(|this, a: &actions::ShowAssistantChatsMenu, window, cx| {
+                this.show_assistant_chats_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowAssistantFocusMenu, window, cx| {
+                this.show_assistant_focus_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
             cx.listener(|this, a: &actions::ShowAssistantModelMenu, window, cx| {
                 this.show_assistant_model_menu(a.0, window, cx);
             }),

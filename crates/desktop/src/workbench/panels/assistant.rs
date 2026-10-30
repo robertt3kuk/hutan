@@ -38,10 +38,10 @@ use serde_json::json;
 use super::common::state_dot;
 use crate::icons::{Icon, icon};
 use crate::sessions::models::picker_rows;
-use crate::settings::AssistantSettings;
+use crate::settings::{AssistantSettings, HomeScope};
 use crate::workbench::actions::{
-    ManageProviders, ShowAssistantModeMenu, ShowAssistantModelMenu, ShowAssistantMoreMenu,
-    ShowAssistantScopeMenu,
+    ManageProviders, ShowAssistantChatsMenu, ShowAssistantFocusMenu, ShowAssistantModeMenu,
+    ShowAssistantModelMenu, ShowAssistantMoreMenu, ShowAssistantScopeMenu,
 };
 use crate::workbench::agents::Models;
 use crate::workbench::chat::{ChatModel, ChatView, ContextChip, Look};
@@ -83,6 +83,17 @@ pub enum Choice {
     Pinned(WorkspaceId),
 }
 
+impl Choice {
+    /// What Mawas Home shows when it opens: the Global chat, or what follows the active workspace
+    /// (`assistant.home_scope`).
+    pub fn opened_by(scope: HomeScope) -> Self {
+        match scope {
+            HomeScope::Global => Self::Global,
+            HomeScope::FollowWorkspace => Self::Active,
+        }
+    }
+}
+
 /// Why a scope has no assistant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Failure {
@@ -110,6 +121,23 @@ pub struct ScopeEntry {
     pub selected: bool,
     pub enabled: bool,
     pub choose: Choice,
+}
+
+/// One row of the Chats menu (`Chats ▾`): a heading, or a Mawas conversation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatEntry {
+    pub label: String,
+    /// `None` for a heading.
+    pub session: Option<SessionId>,
+    pub selected: bool,
+}
+
+/// One row of the Focus picker: *All workspaces* (`None`) or a workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusEntry {
+    pub label: String,
+    pub workspace: Option<WorkspaceId>,
+    pub selected: bool,
 }
 
 /// What an assistant can run on: a harness, or a provider (`assistant.configure`).
@@ -301,6 +329,9 @@ pub struct AssistantPanel {
     /// `assistant.rail_open` as this page last saw it: a different value (another window, the
     /// file) is adopted.
     pub(super) rail_seen: bool,
+    /// `assistant.home_scope` as this page last saw it: a different value (Settings, another
+    /// window) sends Home back to what the new value opens.
+    home_seen: HomeScope,
     /// The column's resize in progress; shared with the listeners the frame registers.
     chat_drag: Rc<Cell<Option<ChatDrag>>>,
     /// A page below 640 pt: the header is folded into ⋯ and the rail leaves the page.
@@ -332,7 +363,8 @@ impl AssistantPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
         let subscription = cx.observe(&env.sessions, |this, _, cx| this.on_sessions(cx));
         let connected = env.sessions.read(cx).connection_state() == ConnectionState::Connected;
-        let rail_open = env.settings.get::<AssistantSettings>().rail_open;
+        let settings = env.settings.get::<AssistantSettings>();
+        let (rail_open, home_scope) = (settings.rail_open, settings.home_scope);
         let chat_drag: Rc<Cell<Option<ChatDrag>>> = Rc::default();
         let keys = {
             let drag = chat_drag.clone();
@@ -346,7 +378,7 @@ impl AssistantPanel {
         };
         Self {
             env,
-            choice: Choice::Active,
+            choice: Choice::opened_by(home_scope),
             scopes: HashMap::new(),
             chats: HashMap::new(),
             waiting: Vec::new(),
@@ -360,6 +392,7 @@ impl AssistantPanel {
             error: None,
             rail_open,
             rail_seen: rail_open,
+            home_seen: home_scope,
             chat_drag,
             folded: false,
             today_only: false,
@@ -381,6 +414,20 @@ impl AssistantPanel {
             .active_workspace()
             .filter(|w| w.kind != WorkspaceKind::Home)
             .cloned()
+    }
+
+    /// The choice that shows `key`: a workspace's Mawas follows the active workspace only in
+    /// `follow_workspace` mode and while it is the active one; otherwise the page stays on it.
+    fn choice_for(&self, key: ScopeKey, active: Option<WorkspaceId>) -> Choice {
+        match key {
+            ScopeKey::Global => Choice::Global,
+            ScopeKey::Workspace(id)
+                if self.home_seen == HomeScope::FollowWorkspace && active == Some(id) =>
+            {
+                Choice::Active
+            }
+            ScopeKey::Workspace(id) => Choice::Pinned(id),
+        }
     }
 
     /// The scope the panel shows now.
@@ -992,14 +1039,7 @@ impl AssistantPanel {
                 .and_then(|info| store.workspace(info.workspace_id))
                 .map(|workspace| {
                     let key = ScopeKey::of(workspace);
-                    let choice = match key {
-                        ScopeKey::Global => Choice::Global,
-                        ScopeKey::Workspace(id) if store.active_workspace_id() == Some(id) => {
-                            Choice::Active
-                        }
-                        ScopeKey::Workspace(id) => Choice::Pinned(id),
-                    };
-                    (key, choice)
+                    (key, self.choice_for(key, store.active_workspace_id()))
                 })
         };
         let Some((key, choice)) = found else {
@@ -1035,15 +1075,7 @@ impl AssistantPanel {
     /// Attaches `chip` to the composer of `key`'s assistant and shows it, opening the assistant
     /// first when need be. The chip waits for the answer of `assistant.open`.
     pub fn attach_to_scope(&mut self, key: ScopeKey, chip: ContextChip, cx: &mut Context<Self>) {
-        self.choice = match key {
-            ScopeKey::Global => Choice::Global,
-            ScopeKey::Workspace(id)
-                if self.env.sessions.read(cx).active_workspace_id() == Some(id) =>
-            {
-                Choice::Active
-            }
-            ScopeKey::Workspace(id) => Choice::Pinned(id),
-        };
+        self.choice = self.choice_for(key, self.env.sessions.read(cx).active_workspace_id());
         match self.state(key) {
             Opened::Ready(session) => {
                 if let Some(chat) = self.chats.get(&session) {
@@ -1279,6 +1311,174 @@ impl AssistantPanel {
         ]
     }
 
+    // ---- the Focus and the chats list (ADR 0025) -----------------------------------------------
+
+    /// What Home opens, as the page follows `assistant.home_scope`.
+    pub fn home_scope(&self) -> HomeScope {
+        self.home_seen
+    }
+
+    /// Whether the header shows the **Chats** menu and the **Focus** chip instead of the scope
+    /// dropdown: Home opens the Global chat (`home_scope = global`).
+    pub fn global_first(&self) -> bool {
+        self.home_seen == HomeScope::Global
+    }
+
+    /// Whether the Focus chip is a control: the shown chat is a Global one, on a daemon that has
+    /// Focus (capability `assistant.focus`). A workspace chat's focus is fixed by its workspace.
+    pub fn focus_chip_shown(&self, cx: &App) -> bool {
+        self.global_first()
+            && self.key(cx) == ScopeKey::Global
+            && self
+                .env
+                .sessions
+                .read(cx)
+                .connection()
+                .supports_assistant_focus()
+    }
+
+    /// The Focus of the shown chat (`ChatInfo.focus`); `None`: *All workspaces*.
+    pub fn focus(&self, cx: &App) -> Option<WorkspaceId> {
+        let session = self.session(cx)?;
+        self.env
+            .sessions
+            .read(cx)
+            .session(session)?
+            .chat
+            .as_ref()?
+            .focus
+    }
+
+    /// The Focus chip's words after `Focus: `: the workspace's name, or *All workspaces*.
+    pub fn focus_label(&self, cx: &App) -> String {
+        match self.focus(cx) {
+            Some(id) => self
+                .env
+                .sessions
+                .read(cx)
+                .workspace(id)
+                .map_or_else(|| "A workspace that is gone".to_owned(), |w| w.name.clone()),
+            None => "All workspaces".to_owned(),
+        }
+    }
+
+    /// The rows of the Focus picker: *All workspaces*, then every workspace and project (Home
+    /// is never a Focus), the Focus of the shown chat checked.
+    pub fn focus_entries(&self, cx: &App) -> Vec<FocusEntry> {
+        let store = self.env.sessions.read(cx);
+        let now = self.focus(cx);
+        let mut rows: Vec<FocusEntry> = store
+            .workspaces()
+            .iter()
+            .filter(|w| w.kind != WorkspaceKind::Home)
+            .map(|w| {
+                let parent = w
+                    .parent_id
+                    .and_then(|id| store.workspace(id))
+                    .map(|parent| parent.name.as_str());
+                FocusEntry {
+                    label: match parent {
+                        Some(parent) => format!("{parent} / {}", w.name),
+                        None => w.name.clone(),
+                    },
+                    workspace: Some(w.id),
+                    selected: now == Some(w.id),
+                }
+            })
+            .collect();
+        rows.sort_by_key(|row| row.label.to_lowercase());
+        rows.insert(
+            0,
+            FocusEntry {
+                label: "All workspaces".to_owned(),
+                workspace: None,
+                selected: now.is_none(),
+            },
+        );
+        rows
+    }
+
+    /// Sets the shown chat's Focus (`assistant.focus`, the user's choice: Mawas cannot make it);
+    /// `None` is *All workspaces*. The session's announcement redraws the chip.
+    pub fn set_focus(&mut self, workspace: Option<WorkspaceId>, cx: &mut Context<Self>) {
+        let Some(session) = self.session(cx) else {
+            return;
+        };
+        if !self.connected(cx) || self.focus(cx) == workspace {
+            return;
+        }
+        let connection = self.env.sessions.read(cx).connection().clone();
+        self.error = None;
+        cx.spawn(async move |this, cx| {
+            let result = connection.assistant_focus(session, workspace).await;
+            this.update(cx, |this, cx| {
+                if let Err(error) = result {
+                    this.error = Some(format!("Could not set the Focus: {error}"));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The rows of the Chats menu: the Global chats (oldest first, each with its Focus), then
+    /// the chats of workspaces that earlier versions made (opening one shows it as it was).
+    pub fn chat_entries(&self, cx: &App) -> Vec<ChatEntry> {
+        let store = self.env.sessions.read(cx);
+        let shown = self.session(cx);
+        let home = store.home_workspace().map(|w| w.id);
+        let mut chats: Vec<&hutan_protocol::messages::SessionInfo> = store
+            .sessions()
+            .iter()
+            .filter(|s| s.chat.as_ref().is_some_and(|chat| chat.is_assistant()))
+            .collect();
+        chats.sort_by_key(|s| s.created_at_ms);
+        let (global, workspace): (Vec<_>, Vec<_>) = chats
+            .into_iter()
+            .partition(|s| Some(s.workspace_id) == home);
+        let row = |s: &hutan_protocol::messages::SessionInfo, note: Option<String>| ChatEntry {
+            label: match note {
+                Some(note) if !s.title.contains(&note) => format!("{} · {note}", s.title),
+                _ => s.title.clone(),
+            },
+            session: Some(s.id),
+            selected: shown == Some(s.id),
+        };
+        let mut rows = vec![ChatEntry {
+            label: "Global chats".to_owned(),
+            session: None,
+            selected: false,
+        }];
+        rows.extend(global.into_iter().map(|s| {
+            let focus = s
+                .chat
+                .as_ref()
+                .and_then(|chat| chat.focus)
+                .and_then(|id| store.workspace(id))
+                .map(|w| format!("Focus {}", w.name));
+            ChatEntry {
+                label: match focus {
+                    Some(focus) => format!("{} · {focus}", s.title),
+                    None => s.title.clone(),
+                },
+                ..row(s, None)
+            }
+        }));
+        if !workspace.is_empty() {
+            rows.push(ChatEntry {
+                label: "Workspace chats".to_owned(),
+                session: None,
+                selected: false,
+            });
+            rows.extend(workspace.into_iter().map(|s| {
+                let name = store.workspace(s.workspace_id).map(|w| w.name.clone());
+                row(s, name)
+            }));
+        }
+        rows
+    }
+
     /// The session whose model the menu's Switch model… changes: the shown assistant when it
     /// runs on a harness or a provider and is between turns.
     pub fn switchable_session(&self, cx: &App) -> Option<SessionId> {
@@ -1323,16 +1523,31 @@ impl AssistantPanel {
                 .and_then(|session| store.session(session))
                 .map(|info| store.presentation(info))
         };
+        let global_first = self.global_first();
+        let (scope_label, scope_note, scope_region) = if global_first {
+            (
+                "Chats".to_owned(),
+                "Your Mawas chats: the Global ones, and the chats of workspaces from before. Global sees the Home folder only.".to_owned(),
+                "chats",
+            )
+        } else {
+            (scope_label, scope_note, "scope")
+        };
         let scope = Button::new("assistant-scope", scope_label, theme, tokens)
             .compact()
             .ghost()
             .max_width(112.0)
             .tooltip(scope_note)
             .child(icon(Icon::ActionExpand, 12.0, theme.muted))
-            .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
-                window.dispatch_action(Box::new(ShowAssistantScopeMenu(e.position())), cx);
+            .on_click(cx.listener(move |_, e: &gpui::ClickEvent, window, cx| {
+                if global_first {
+                    window.dispatch_action(Box::new(ShowAssistantChatsMenu(e.position())), cx);
+                } else {
+                    window.dispatch_action(Box::new(ShowAssistantScopeMenu(e.position())), cx);
+                }
             }))
-            .child(probe(&self.env.regions, Region::Assistant("scope")));
+            .child(probe(&self.env.regions, Region::Assistant(scope_region)));
+        let focus = self.focus_control(look, cx);
         let dot = state.map(|presentation| {
             let label = SharedString::from(presentation.label.clone());
             div()
@@ -1360,6 +1575,7 @@ impl AssistantPanel {
             .border_b_1()
             .border_color(theme.border)
             .child(scope)
+            .children(focus)
             .child(self.mode_chip(look, cx))
             .child(if folded {
                 div().flex_1().min_w_0().into_any_element()
@@ -1381,6 +1597,61 @@ impl AssistantPanel {
             .child(more)
             .child(probe(&self.env.regions, Region::Assistant("header")))
             .into_any_element()
+    }
+
+    /// The header's Focus control (Home opens Global): the chip that picks the workspace the
+    /// shown Global chat looks at, or — for a chat of a workspace from before — its fixed
+    /// workspace as muted text. Nothing on a daemon without Focus.
+    fn focus_control(&self, look: &Look, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (theme, tokens) = (&look.theme, &look.tokens);
+        if !self.global_first() {
+            return None;
+        }
+        if self.focus_chip_shown(cx) {
+            let label = format!("Focus: {}", self.focus_label(cx));
+            return Some(
+                Button::new("assistant-focus", label, theme, tokens)
+                    .compact()
+                    .ghost()
+                    .max_width(if self.folded { 124.0 } else { 188.0 })
+                    .tooltip(
+                        "Focus narrows what Mawas looks at to one workspace and adds its notes and project line. It changes no permission.",
+                    )
+                    .child(icon(Icon::ActionExpand, 12.0, theme.muted))
+                    .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
+                        window.dispatch_action(Box::new(ShowAssistantFocusMenu(e.position())), cx);
+                    }))
+                    .child(probe(&self.env.regions, Region::Assistant("focus")))
+                    .into_any_element(),
+            );
+        }
+        let ScopeKey::Workspace(id) = self.key(cx) else {
+            return None;
+        };
+        let name = self
+            .env
+            .sessions
+            .read(cx)
+            .workspace(id)
+            .map_or_else(|| "Workspace".to_owned(), |w| w.name.clone());
+        let tip = SharedString::from(
+            "This chat belongs to the workspace, so its focus is fixed. Choose a Global chat in Chats to look across workspaces.",
+        );
+        Some(
+            div()
+                .id("assistant-focus-fixed")
+                .relative()
+                .flex_none()
+                .max_w(px(188.0))
+                .px(px(tokens.spacing))
+                .truncate()
+                .text_color(theme.muted)
+                .text_size(px(tokens.secondary_font_size))
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip::new(tip.clone())).into())
+                .child(SharedString::from(format!("Workspace · {name}")))
+                .child(probe(&self.env.regions, Region::Assistant("focus")))
+                .into_any_element(),
+        )
     }
 
     /// The header's Today button (a page of 640 pt or more): *Hide Today* while the rail shows,
@@ -1935,6 +2206,13 @@ impl Render for AssistantPanel {
             self.focus_wanted = false;
             let handle = chat.view.focus_handle(cx);
             window.focus(&handle, cx);
+        }
+        // `assistant.home_scope` changed: Home opens what the new value says.
+        let home_setting = self.env.settings.get::<AssistantSettings>().home_scope;
+        if home_setting != self.home_seen {
+            self.home_seen = home_setting;
+            self.choice = Choice::opened_by(home_setting);
+            self.switcher = None;
         }
         // Another window (or the file) changed `assistant.rail_open`: this page follows.
         let rail_setting = self.env.settings.get::<AssistantSettings>().rail_open;

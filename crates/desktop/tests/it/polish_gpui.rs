@@ -236,16 +236,16 @@ fn mawas_homes_header_is_one_row_whose_controls_stay_inside_it(cx: &mut TestAppC
             "one row at {width}: {} px",
             header.size.height
         );
-        // The scope, the mode and ⋯ are always there; the backend and New chat only while the
-        // page is 640 pt wide or more (below it they are in ⋯), and Stop only while there is
-        // something to stop.
+        // Chats, the mode and ⋯ are always there (the Focus chip needs a daemon that has Focus,
+        // and there is none here); the backend and New chat only while the page is 640 pt wide
+        // or more (below it they are in ⋯), and Stop only while there is something to stop.
         let folded = view.read_with(cx, |wb, cx| {
             wb.panel::<hutan_desktop::workbench::panels::AssistantPanel>("assistant")
                 .expect("the assistant page")
                 .read(cx)
                 .folded()
         });
-        let mut regions = vec!["scope", "mode", "more"];
+        let mut regions = vec!["chats", "mode", "more"];
         if !folded {
             regions.extend(["backend", "new"]);
         }

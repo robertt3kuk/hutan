@@ -34,6 +34,10 @@ const MEMORY_MARKER: &str = "--- Hutan memory";
 /// (`crate::project_instructions::BLOCK_MARKER`).
 const PROJECT_MARKER: &str = "--- Hutan project instructions";
 
+/// What the daemon opens the block that names a Global chat's Focus with, at its start and when
+/// it changes (`crate::project_instructions::FOCUS_MARKER`, protocol 0.61).
+const FOCUS_MARKER: &str = "--- Hutan focus";
+
 /// Whether `agent` (`chat.agent`) is a gateway chat — a provider's chat API, no tools, no
 /// approvals: a direct chat or an assistant. Both switch models and report provider errors.
 pub fn is_gateway_chat(agent: &str) -> bool {
@@ -443,7 +447,7 @@ pub fn clamp_hits(hits: u32) -> u32 {
 /// additions to a Mawas turn (the memory the user approved, `--- Hutan memory …`), which the
 /// user did not type.
 pub fn split_context(message: &str) -> (&str, Option<&str>) {
-    let at = [APPENDIX_MARKER, MEMORY_MARKER, PROJECT_MARKER]
+    let at = [APPENDIX_MARKER, MEMORY_MARKER, PROJECT_MARKER, FOCUS_MARKER]
         .iter()
         .filter_map(|marker| message.find(&format!("\n\n{marker}")))
         .min();
@@ -476,6 +480,15 @@ mod tests {
                 .1
                 .unwrap()
                 .starts_with("--- Hutan project instructions")
+        );
+        // So is the Focus a Global chat was given.
+        let focus = "why?\n\n--- Hutan focus update (added by Hutan to this turn) ---\nFocus is now \"beta\".\n--- end of Hutan focus update ---";
+        assert_eq!(split_context(focus).0, "why?");
+        assert!(
+            split_context(focus)
+                .1
+                .unwrap()
+                .starts_with("--- Hutan focus update")
         );
     }
 

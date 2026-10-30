@@ -2854,6 +2854,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn home_scope_defaults_to_global_and_follow_workspace_is_the_old_behaviour() {
+        assert_eq!(AssistantSettings::default().home_scope, HomeScope::Global);
+        // A file from before it loads unchanged: Home opens Global.
+        let old: AssistantSettings = toml::from_str("rail_open = false").unwrap();
+        assert_eq!(old.home_scope, HomeScope::Global);
+        let follow: AssistantSettings =
+            toml::from_str("home_scope = \"follow_workspace\"").unwrap();
+        assert_eq!(follow.home_scope, HomeScope::FollowWorkspace);
+        let global: AssistantSettings = toml::from_str("home_scope = \"global\"").unwrap();
+        assert_eq!(global.home_scope, HomeScope::Global);
+        assert!(toml::from_str::<AssistantSettings>("home_scope = \"everywhere\"").is_err());
+    }
+
     fn migrated(text: &str) -> (bool, AppSettings, Vec<hutan_settings::SettingsError>) {
         let dir = tempfile::tempdir().unwrap();
         let paths = hutan_settings::SettingsPaths::in_dir(dir.path());

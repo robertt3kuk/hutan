@@ -5,7 +5,7 @@
 
 use crate::common;
 
-use common::assistant::{AssistantEnv, Options, open, open_assistant, shown};
+use common::assistant::{AssistantEnv, Options, open, open_assistant, open_following, shown};
 use common::wait_until;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_core::SessionId;
@@ -60,7 +60,7 @@ fn a_mawas_conversation_opens_on_home_from_every_surface_and_has_no_tab_of_its_o
     });
     let root = env.project("project");
     let workspace = env.daemon.create_workspace("project", &[&root]);
-    let (view, cx) = open(cx, &env.daemon);
+    let (view, cx) = open_following(cx, &env.daemon);
     view.update_in(cx, |wb, window, cx| {
         wb.switch_workspace(workspace.id, window, cx);
     });

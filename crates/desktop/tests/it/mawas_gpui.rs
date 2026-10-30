@@ -135,10 +135,10 @@ fn the_nav_row_opens_one_home_in_the_center_with_mawas_in_its_header(cx: &mut Te
     cx.dispatch_action(actions::OpenAssistant);
     assert_eq!(count(cx), 1);
 
-    // The header: scope, mode and ⋯, and on a page of 640 pt or more the backend and New chat.
-    // Stop is there only while there is something to stop; Today is in ⋯.
+    // The header: Chats, the Focus chip, mode and ⋯, and on a page of 640 pt or more the backend
+    // and New chat. Stop is there only while there is something to stop; Today is in ⋯.
     let folded = panel.read_with(cx, |p, _| p.folded());
-    let mut regions = vec!["scope", "mode", "more"];
+    let mut regions = vec!["chats", "focus", "mode", "more"];
     if !folded {
         regions.extend(["backend", "new"]);
     }
@@ -622,7 +622,7 @@ fn below_640_pt_the_header_folds_today_leaves_and_the_composer_keeps_its_width(
     wait_until(cx, "the folded page to be drawn", |cx| {
         !painted(cx, "backend") && !painted(cx, "new") && !painted(cx, "today")
     });
-    for what in ["scope", "mode", "more"] {
+    for what in ["chats", "focus", "mode", "more"] {
         assert!(painted(cx, what), "{what} stays in the folded header");
     }
     // What Mawas runs on still shows, as a line under the header.
