@@ -23,8 +23,9 @@ use hutan_index::{Role, SessionTextQuery, Source};
 use hutan_protocol::account::{HARNESS_CLAUDE, HARNESS_OMP};
 use hutan_protocol::assistant::{
     AGENT_ASSISTANT, ATTACHMENTS_MAX, AssistantBackend, AssistantConfig, AssistantConfigure,
-    AssistantEntry, AssistantList, AssistantListRequest, AssistantOpen, AssistantReset,
-    AssistantScope, Attachment, AttachmentKind, IMAGE_INLINE_MAX_BYTES, IMAGE_MAX_BYTES, LineRange,
+    AssistantEntry, AssistantFocus, AssistantList, AssistantListRequest, AssistantOpen,
+    AssistantReset, AssistantScope, Attachment, AttachmentKind, IMAGE_INLINE_MAX_BYTES,
+    IMAGE_MAX_BYTES, LineRange,
 };
 use hutan_protocol::blocks::{BlockPart, BlockState, TerminalBlockText, TerminalBlocks};
 use hutan_protocol::chat::ChatCreate;
@@ -540,6 +541,14 @@ impl AssistantService {
             .await
             .map_err(internal)?
             .map_err(internal)
+    }
+
+    /// `assistant.focus` (protocol 0.61): sets or clears the Focus of a Global Mawas chat. The
+    /// conversation hears of it at its next turn (`crate::memory`), without a restart.
+    pub async fn focus(&self, req: AssistantFocus) -> Result<SessionInfo, ErrorBody> {
+        self.registry
+            .set_focus(req.session_id, req.workspace_id)
+            .await
     }
 
     async fn create(

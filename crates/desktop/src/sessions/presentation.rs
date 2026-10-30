@@ -1339,6 +1339,7 @@ mod tests {
         ChatInfo {
             fork: None,
             dirs: Vec::new(),
+            focus: None,
             agent: agent.into(),
             model: String::new(),
             approval_policy: Default::default(),

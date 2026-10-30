@@ -1294,6 +1294,16 @@ const FIELDS: &[FieldText] = &[
         "Show Today",
         "Shows the Today column beside the conversation: what waits for you, failed and finished work, and what is running. Hiding it never loses a request: the button in Mawas's header counts the sessions that wait for an answer. A page below 640 pt has no room for the column either way (Today is a page of its own in the ⋯ menu).",
     ),
+    choice(
+        "assistant",
+        "home_scope",
+        "What Mawas Home opens",
+        "Global (the default) opens the Global Mawas, which looks at every workspace and agent; a workspace is a Focus you pick in the header, a filter that adds that workspace's notes and project line, never another assistant or another permission. Follow the workspace keeps how Home worked before: it shows the active workspace's own Mawas. Your earlier workspace conversations and memory are kept either way, under Chats in the header.",
+        &[
+            ("global", "The Global Mawas"),
+            ("follow_workspace", "Follow the active workspace"),
+        ],
+    ),
     // ---- agent integrations ----
     field(
         "integrations",

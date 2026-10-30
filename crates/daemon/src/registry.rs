@@ -258,6 +258,8 @@ enum Command {
     },
     /// `chat.set_model`: answered once the switch is journaled.
     SetChatModel(ChatSetModel, Reply<SessionInfo>),
+    /// `assistant.focus` (protocol 0.61): the Focus of a Global Mawas chat.
+    SetFocus(SessionId, Option<WorkspaceId>, Reply<SessionInfo>),
     /// From the task that switched the model of a harness chat: the agent's answer.
     ChatModelSwitched {
         session: SessionId,
@@ -809,6 +811,17 @@ impl RegistryHandle {
     /// turn uses it and the journal records the switch.
     pub async fn set_chat_model(&self, req: ChatSetModel) -> Result<SessionInfo, ErrorBody> {
         self.ask(|r| Command::SetChatModel(req, r)).await
+    }
+
+    /// `assistant.focus` (protocol 0.61, ADR 0025): sets or clears the Focus of a Global Mawas
+    /// chat, kept with the session and announced. The chat is told at its next turn
+    /// ([`crate::memory::MemoryContext::prepare_delta`]).
+    pub async fn set_focus(
+        &self,
+        session: SessionId,
+        workspace: Option<WorkspaceId>,
+    ) -> Result<SessionInfo, ErrorBody> {
+        self.ask(|r| Command::SetFocus(session, workspace, r)).await
     }
 
     /// `worktree.*` changed the checkouts on disk: forgets what is known of directories and
@@ -1616,6 +1629,9 @@ impl SessionRegistry {
                     let _ = reply.send(self.chat_target(id));
                 }
                 Command::SetChatModel(req, reply) => self.set_chat_model(req, reply),
+                Command::SetFocus(id, focus, reply) => {
+                    let _ = reply.send(self.set_focus(id, focus));
+                }
                 Command::ChatModelSwitched {
                     session,
                     model,
@@ -3967,6 +3983,7 @@ impl SessionRegistry {
                 contain: None,
                 dirs: Vec::new(),
                 dirs_managed: false,
+                focus: None,
             },
             None => ChatSpec {
                 fork: None,
@@ -3999,6 +4016,7 @@ impl SessionRegistry {
                 contain,
                 dirs_managed: !req.extra_dirs.is_empty(),
                 dirs: req.extra_dirs,
+                focus: None,
             },
         };
         let folder = req
@@ -4171,6 +4189,56 @@ impl SessionRegistry {
                 let _ = reply.send(Err(error));
             }
         }
+    }
+
+    /// `assistant.focus`: only a Global Mawas chat (an assistant of the Home workspace) has a
+    /// Focus, and only on a workspace or project that exists and is not Home.
+    fn set_focus(
+        &mut self,
+        id: SessionId,
+        focus: Option<WorkspaceId>,
+    ) -> Result<SessionInfo, ErrorBody> {
+        let index = self.session_index(id)?;
+        let home = self.workspaces.iter().any(|w| {
+            w.info.id == self.sessions[index].info.workspace_id
+                && w.info.kind == WorkspaceKind::Home
+        });
+        let assistant = self.sessions[index]
+            .info
+            .chat
+            .as_ref()
+            .is_some_and(ChatInfo::is_assistant);
+        if !assistant || !home {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                "only a Global Mawas chat has a Focus: a workspace chat's workspace is its scope",
+            ));
+        }
+        if let Some(workspace) = focus {
+            let target = self.workspaces[self.index_of(workspace)?].info.kind;
+            if target == WorkspaceKind::Home {
+                return Err(ErrorBody::new(
+                    ErrorCode::BadRequest,
+                    "the Home workspace cannot be a Focus: clear the Focus for All workspaces",
+                ));
+            }
+        }
+        let Some(spec) = self.sessions[index].chat.as_mut() else {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                "only a Global Mawas chat has a Focus",
+            ));
+        };
+        if spec.focus == focus {
+            return Ok(self.sessions[index].info.clone());
+        }
+        spec.focus = focus;
+        if let Some(chat) = &mut self.sessions[index].info.chat {
+            chat.focus = focus;
+        }
+        self.persist_session(index);
+        self.emit_session(index);
+        Ok(self.sessions[index].info.clone())
     }
 
     /// `chat.set_model` of a harness chat: the agent has to accept the model, so the session's
@@ -4977,6 +5045,7 @@ impl SessionRegistry {
                         contain: None,
                         dirs: Vec::new(),
                         dirs_managed: false,
+                        focus: None,
                     },
                     Some(format!("stored spec unreadable: {error}")),
                 )
@@ -5940,6 +6009,7 @@ fn chat_info(spec: &ChatSpec) -> ChatInfo {
     ChatInfo {
         fork: None,
         dirs: Vec::new(),
+        focus: spec.focus,
         agent: spec.agent.clone(),
         model: spec.model.clone().unwrap_or_default(),
         approval_policy: spec.approval_policy,

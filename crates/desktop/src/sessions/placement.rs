@@ -213,6 +213,7 @@ mod tests {
         hutan_protocol::chat::ChatInfo {
             fork: None,
             dirs: Vec::new(),
+            focus: None,
             agent: agent.to_owned(),
             model: String::new(),
             approval_policy: hutan_core::ApprovalPolicy::default(),

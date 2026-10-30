@@ -491,6 +491,9 @@ impl Router {
                 self.assistant.reset(req).await?;
                 ok(&Empty {})
             }
+            Request::AssistantFocus(req) => ok(&SessionResult {
+                session: self.assistant.focus(req).await?,
+            }),
             Request::DaemonSettingsGet(_) => ok(&self.settings.get().await?),
             Request::DaemonSettingsSet(req) => ok(&self.settings.set(req).await?),
             Request::ControlGrantsList(req) => ok(&ControlGrants {
@@ -1136,6 +1139,9 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AssistantConfigure(_) => ("assistant.configure", Mutate),
         // Forgetting a scope's choice changes what answers the user's assistant: the user's.
         Request::AssistantReset(_) => ("assistant.reset", UserOnly),
+        // A Focus tells Mawas which workspace to look at, and adds that workspace's notes and
+        // instructions to what she is given: the user's choice, never hers (ADR 0025).
+        Request::AssistantFocus(_) => ("assistant.focus", UserOnly),
         // Reading the settings is free; changing them is never an agent's, whatever
         // `[control] agents` says: an agent must not widen its own permissions (ADR 0016).
         Request::DaemonSettingsGet(_) => ("daemon.settings.get", Read),

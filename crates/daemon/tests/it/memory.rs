@@ -1870,3 +1870,476 @@ async fn without_the_files_permission_the_assistant_is_not_told_about_agents_md(
     );
     w.daemon.stop().await;
 }
+
+// Focus (protocol 0.61, ADR 0025): a Global Mawas chat looks at one workspace ----------------
+
+/// A daemon whose Mawas answers from the mock provider (`extra` goes into `[assistant]`).
+async fn provider_world(extra: &str) -> W {
+    let w = W::start(
+        &format!("provider = \"mock\"\nmodel = \"m-1\"\n{extra}"),
+        Scripts::default(),
+    )
+    .await;
+    w.user
+        .call::<ProviderResult>(Request::ProviderAdd(ProviderAdd {
+            kind: "openai-compatible".into(),
+            name: "mock".into(),
+            base_url: Some(format!("{}/v1", w.mock.url())),
+            default_model: Some("m-1".into()),
+        }))
+        .await
+        .unwrap();
+    w.user
+        .call::<ProviderResult>(Request::ProviderSetCredential(ProviderSetCredential {
+            provider_id: "mock".into(),
+            secret: "mock-key".into(),
+        }))
+        .await
+        .unwrap();
+    w.mock.route(
+        "POST",
+        "/v1/chat/completions",
+        Reply::sse([
+            format!(
+                "data: {}\n\n",
+                json!({"choices":[{"delta":{"content": "ok"}}]})
+            ),
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_owned(),
+            "data: [DONE]\n\n".to_owned(),
+        ]),
+    );
+    w
+}
+
+impl W {
+    /// The user's message of the newest provider request.
+    fn last_user_message(&self) -> String {
+        let requests = self.mock.requests_to("/v1/chat/completions");
+        let messages = requests.last().unwrap().json()["messages"].clone();
+        messages.as_array().unwrap().last().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    async fn focus(&self, chat: SessionId, workspace: Option<WorkspaceId>) -> SessionInfo {
+        self.user.assistant_focus(chat, workspace).await.unwrap()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_global_chat_has_a_focus_that_is_kept_and_announced_and_only_the_user_sets_it() {
+    let mut w = provider_world("").await;
+    let alpha = w.workspace("alpha").await;
+    let beta = w.workspace("beta").await;
+    let home = w.home_mawas().await;
+    let workspace_chat = w.mawas(alpha.id, false).await;
+    assert_eq!(home.chat.as_ref().unwrap().focus, None);
+
+    // Setting it answers with the session, announces it, and survives a daemon restart.
+    let set = w.focus(home.id, Some(alpha.id)).await;
+    assert_eq!(set.chat.as_ref().unwrap().focus, Some(alpha.id));
+    wait_event(
+        &mut w.events,
+        "the focus to be announced",
+        |event| match event {
+            Event::SessionUpdated { session }
+                if session.id == home.id
+                    && session
+                        .chat
+                        .as_ref()
+                        .is_some_and(|c| c.focus == Some(alpha.id)) =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+    )
+    .await;
+    // Setting what is set changes nothing; moving it and clearing it work.
+    assert_eq!(
+        w.focus(home.id, Some(alpha.id)).await.chat.unwrap().focus,
+        Some(alpha.id)
+    );
+    assert_eq!(
+        w.focus(home.id, Some(beta.id)).await.chat.unwrap().focus,
+        Some(beta.id)
+    );
+    let w = w.restarted().await;
+    let listed = w.home_mawas().await;
+    assert_eq!(listed.id, home.id);
+    assert_eq!(listed.chat.as_ref().unwrap().focus, Some(beta.id));
+    assert_eq!(w.focus(home.id, None).await.chat.unwrap().focus, None);
+
+    // Only a Global Mawas chat has one; Home is not a workspace to focus on; things that do
+    // not exist are not found.
+    let refused = |error: ClientError, code: ErrorCode| {
+        let body = remote(error);
+        assert_eq!(body.code, code, "{body:?}");
+        body
+    };
+    refused(
+        w.user
+            .assistant_focus(workspace_chat.id, Some(alpha.id))
+            .await
+            .unwrap_err(),
+        ErrorCode::BadRequest,
+    );
+    let home_id = w
+        .user
+        .call::<hutan_protocol::messages::WorkspaceList>(Request::WorkspaceList(Empty {}))
+        .await
+        .unwrap()
+        .workspaces
+        .iter()
+        .find(|w| w.kind == hutan_protocol::messages::WorkspaceKind::Home)
+        .unwrap()
+        .id;
+    refused(
+        w.user
+            .assistant_focus(home.id, Some(home_id))
+            .await
+            .unwrap_err(),
+        ErrorCode::BadRequest,
+    );
+    refused(
+        w.user
+            .assistant_focus(home.id, Some(WorkspaceId::new()))
+            .await
+            .unwrap_err(),
+        ErrorCode::NotFound,
+    );
+    refused(
+        w.user
+            .assistant_focus(SessionId::new(), None)
+            .await
+            .unwrap_err(),
+        ErrorCode::NotFound,
+    );
+    // User-only: Mawas learns her Focus from her prompt and can never move it.
+    let mawas = w.from(home.id).await;
+    let body = refused(
+        mawas
+            .assistant_focus(home.id, Some(alpha.id))
+            .await
+            .unwrap_err(),
+        ErrorCode::Forbidden,
+    );
+    assert!(body.message.contains("assistant.focus"), "{body:?}");
+    assert_eq!(w.home_mawas().await.chat.unwrap().focus, None);
+    w.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_focus_set_before_the_first_turn_is_told_at_the_start_with_its_notes_and_agents_md() {
+    // A Codex assistant is created asleep and starts with its first message, so the Focus the
+    // user chose by then is part of its developer instructions.
+    let mut w = W::start(
+        "backend = \"codex\"\nmodel = \"gpt-6.1-sol\"",
+        Scripts {
+            codex: &["plain-turn", "plain-turn"],
+            ..Scripts::default()
+        },
+    )
+    .await;
+    let alpha = w.workspace("alpha").await;
+    let beta = w.workspace("beta").await;
+    std::fs::write(
+        alpha.roots[0].join("AGENTS.md"),
+        "# Alpha guide\n\nA tiny service.\n",
+    )
+    .unwrap();
+    w.remember(
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Profile,
+        "Prefers short answers.",
+    )
+    .await;
+    w.remember(
+        MemoryScope::Workspace,
+        Some(alpha.id),
+        MemoryCategory::Note,
+        "Alpha deploys on friday.",
+    )
+    .await;
+    w.remember(
+        MemoryScope::Workspace,
+        Some(beta.id),
+        MemoryCategory::Note,
+        "Beta is frozen.",
+    )
+    .await;
+    let home = w.home_mawas().await;
+    w.focus(home.id, Some(alpha.id)).await;
+    w.send(home.id, "hello").await;
+    let starts = w.received_of("codex", "thread/start");
+    let system = starts[0]["params"]["developerInstructions"]
+        .as_str()
+        .expect("developerInstructions")
+        .to_owned();
+    assert!(system.contains("Prefers short answers."), "{system}");
+    assert!(system.contains("Alpha deploys on friday."), "{system}");
+    assert!(!system.contains("Beta is frozen."), "{system}");
+    assert!(
+        system.contains("--- Hutan focus") && system.contains("Focus: \"alpha\""),
+        "{system}"
+    );
+    assert!(
+        system.contains("the focused workspace alpha's AGENTS.md")
+            && system.contains("opens with: \"Alpha guide — A tiny service.\""),
+        "{system}"
+    );
+    assert!(
+        system.contains("not a permission") && system.contains("you cannot change it"),
+        "the block says what a Focus is not: {system}"
+    );
+    // Told at the start, so the first turn adds nothing.
+    assert!(
+        !w.notices(home.id).await.iter().any(|n| n.contains("focus")),
+        "{:?}",
+        w.notices(home.id).await
+    );
+    // A Global chat with no Focus is told nothing about one.
+    let plain = w.mawas_new_global().await;
+    w.send(plain.id, "hello").await;
+    let starts = w.received_of("codex", "thread/start");
+    assert_eq!(starts.len(), 2);
+    let system = starts[1]["params"]["developerInstructions"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(!system.contains("Hutan focus"), "{system}");
+    assert!(!system.contains("Alpha deploys"), "{system}");
+    w.daemon.stop().await;
+}
+
+impl W {
+    /// One more Global Mawas chat.
+    async fn mawas_new_global(&self) -> SessionInfo {
+        self.user
+            .call::<SessionResult>(Request::AssistantOpen(AssistantOpen {
+                scope: AssistantScope::Global,
+                workspace_id: None,
+                new: true,
+            }))
+            .await
+            .unwrap()
+            .session
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_the_focus_reaches_the_next_turn_as_a_delta_with_notes_and_project_line() {
+    let mut w = provider_world("").await;
+    let alpha = w.workspace("alpha").await;
+    let beta = w.workspace("beta").await;
+    std::fs::write(
+        beta.roots[0].join("AGENTS.md"),
+        "# Beta guide\n\nThe batch jobs.\n",
+    )
+    .unwrap();
+    w.remember(
+        MemoryScope::Workspace,
+        Some(alpha.id),
+        MemoryCategory::Note,
+        "Alpha deploys on friday.",
+    )
+    .await;
+    w.remember(
+        MemoryScope::Workspace,
+        Some(beta.id),
+        MemoryCategory::Note,
+        "Beta is frozen.",
+    )
+    .await;
+    let home = w.home_mawas().await;
+    w.send(home.id, "hello").await;
+    let at = w.snapshots(home.id).len();
+
+    // Nothing moved: nothing is added.
+    w.send(home.id, "again").await;
+    assert!(
+        !w.last_user_message().contains("--- Hutan"),
+        "{}",
+        w.last_user_message()
+    );
+    assert_eq!(w.snapshots(home.id).len(), at);
+
+    // A Focus on alpha: the next turn carries it, its note, and says so in the journal. Nothing
+    // restarts and no chat is created.
+    w.focus(home.id, Some(alpha.id)).await;
+    w.send(home.id, "now alpha").await;
+    let user = w.last_user_message();
+    assert!(user.starts_with("now alpha"), "{user}");
+    assert!(user.contains("--- Hutan focus update"), "{user}");
+    assert!(user.contains("Focus is now \"alpha\""), "{user}");
+    assert!(user.contains("was All workspaces"), "{user}");
+    assert!(
+        user.contains("--- Hutan memory update") && user.contains("Alpha deploys on friday."),
+        "{user}"
+    );
+    assert!(!user.contains("Beta is frozen."), "{user}");
+    assert!(
+        w.notices(home.id)
+            .await
+            .iter()
+            .any(|n| n.contains("Hutan focus update")
+                && n.contains("alpha")
+                && n.contains("1 added")),
+        "{:?}",
+        w.notices(home.id).await
+    );
+    // It is told once.
+    w.send(home.id, "still alpha").await;
+    assert!(
+        !w.last_user_message().contains("--- Hutan"),
+        "{}",
+        w.last_user_message()
+    );
+
+    // A note of the focused workspace changes meanwhile: the ordinary memory delta.
+    w.remember(
+        MemoryScope::Workspace,
+        Some(alpha.id),
+        MemoryCategory::Fact,
+        "Alpha uses sqlite.",
+    )
+    .await;
+    w.send(home.id, "a note").await;
+    let user = w.last_user_message();
+    assert!(
+        user.contains("Alpha uses sqlite.") && !user.contains("Hutan focus update"),
+        "{user}"
+    );
+
+    // A note of a workspace that is not focused does not reach the chat.
+    w.remember(
+        MemoryScope::Workspace,
+        Some(beta.id),
+        MemoryCategory::Fact,
+        "Beta is also frozen.",
+    )
+    .await;
+    w.send(home.id, "unrelated").await;
+    assert!(!w.last_user_message().contains("Beta is also frozen."));
+
+    // Moving it to beta: beta's note and project line arrive; alpha's entries are out of focus
+    // (still active in the memory, so never "archived").
+    w.focus(home.id, Some(beta.id)).await;
+    w.send(home.id, "now beta").await;
+    let user = w.last_user_message();
+    assert!(
+        user.contains("Focus is now \"beta\"") && user.contains("was \"alpha\""),
+        "{user}"
+    );
+    assert!(
+        user.contains("the focused workspace beta's AGENTS.md"),
+        "{user}"
+    );
+    assert!(user.contains("The batch jobs."), "{user}");
+    assert!(
+        user.contains("Beta is frozen.") && user.contains("Beta is also frozen."),
+        "{user}"
+    );
+    assert!(
+        user.contains("No longer in focus") && user.contains("Alpha deploys on friday."),
+        "{user}"
+    );
+    assert!(!user.contains("Archived (stop using these)"), "{user}");
+
+    // Clearing it: All workspaces; beta's entries leave the view.
+    w.focus(home.id, None).await;
+    w.send(home.id, "all").await;
+    let user = w.last_user_message();
+    assert!(
+        user.contains("Focus is cleared: All workspaces (was \"beta\")"),
+        "{user}"
+    );
+    assert!(
+        user.contains("No longer in focus") && user.contains("Beta is frozen."),
+        "{user}"
+    );
+    w.send(home.id, "quiet").await;
+    assert!(
+        !w.last_user_message().contains("--- Hutan"),
+        "{}",
+        w.last_user_message()
+    );
+
+    // The Focus the conversation knows is what its last snapshot was taken for.
+    let rows = w.snapshots(home.id);
+    let focus_of = |row: &hutan_storage::SnapshotRow| {
+        serde_json::from_str::<Value>(&row.manifest_json).unwrap()["workspace_id"].clone()
+    };
+    assert_eq!(focus_of(rows.last().unwrap()), Value::Null);
+    assert_eq!(focus_of(&rows[rows.len() - 2]), json!(beta.id.to_string()));
+    // A workspace chat is untouched by all of this: no focus, its own notes.
+    let workspace_chat = w.mawas(alpha.id, false).await;
+    assert_eq!(workspace_chat.chat.unwrap().focus, None);
+    w.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_memory_off_the_focus_is_still_told_and_only_the_focus() {
+    let mut w = provider_world("memory = false").await;
+    let alpha = w.workspace("alpha").await;
+    std::fs::write(
+        alpha.roots[0].join("AGENTS.md"),
+        "# Alpha guide\n\nA tiny service.\n",
+    )
+    .unwrap();
+    w.remember(
+        MemoryScope::Workspace,
+        Some(alpha.id),
+        MemoryCategory::Note,
+        "Alpha deploys on friday.",
+    )
+    .await;
+    let home = w.home_mawas().await;
+    w.send(home.id, "hello").await;
+    assert!(
+        !w.last_user_message().contains("--- Hutan"),
+        "memory is off"
+    );
+    w.focus(home.id, Some(alpha.id)).await;
+    w.send(home.id, "now alpha").await;
+    let user = w.last_user_message();
+    assert!(user.contains("Focus is now \"alpha\""), "{user}");
+    assert!(
+        user.contains("opens with: \"Alpha guide — A tiny service.\""),
+        "{user}"
+    );
+    assert!(
+        !user.contains("Alpha deploys on friday."),
+        "memory stays off: {user}"
+    );
+    assert!(!user.contains("--- Hutan memory"), "{user}");
+    w.send(home.id, "again").await;
+    assert!(
+        !w.last_user_message().contains("--- Hutan"),
+        "{}",
+        w.last_user_message()
+    );
+    w.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_focused_workspace_that_forbids_files_has_its_agents_md_left_out_but_the_focus_named() {
+    let mut w = provider_world("\n[assistant.workspaces.alpha]\nfiles = false").await;
+    let alpha = w.workspace("alpha").await;
+    std::fs::write(
+        alpha.roots[0].join("AGENTS.md"),
+        "# Alpha guide\n\nA tiny service.\n",
+    )
+    .unwrap();
+    let home = w.home_mawas().await;
+    w.send(home.id, "hello").await;
+    w.focus(home.id, Some(alpha.id)).await;
+    w.send(home.id, "now alpha").await;
+    let user = w.last_user_message();
+    assert!(user.contains("Focus is now \"alpha\""), "{user}");
+    assert!(!user.contains("Alpha guide"), "{user}");
+    // A Focus is no permission: Home's own context permissions are unchanged.
+    w.daemon.stop().await;
+}

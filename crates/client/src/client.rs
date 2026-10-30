@@ -16,8 +16,8 @@ use hutan_protocol::account::{
     AccountRemove, AccountRemoved, AccountSession, ManagedAccount,
 };
 use hutan_protocol::assistant::{
-    AssistantConfig, AssistantConfigure, AssistantEntry, AssistantList, AssistantListRequest,
-    AssistantOpen, AssistantReset, AssistantScope, Attachment,
+    AssistantConfig, AssistantConfigure, AssistantEntry, AssistantFocus, AssistantList,
+    AssistantListRequest, AssistantOpen, AssistantReset, AssistantScope, Attachment,
 };
 use hutan_protocol::blocks::{
     BlockPart, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks, TerminalBlocksResult,
@@ -244,6 +244,8 @@ pub(crate) const AGENT_INSIGHT_CAPABILITY: &str = "agent.insight";
 /// Capability for `update.status|check|install` and the `update.available` and `update.install`
 /// events (protocol 0.60).
 pub(crate) const UPDATE_CAPABILITY: &str = "update";
+/// Capability for `assistant.focus` and `ChatInfo.focus` (protocol 0.61).
+pub(crate) const ASSISTANT_FOCUS_CAPABILITY: &str = "assistant.focus";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -307,6 +309,7 @@ const CAPABILITIES: &[&str] = &[
     AGENT_INSIGHT_CAPABILITY,
     CHAT_FORK_WORKTREE_CAPABILITY,
     UPDATE_CAPABILITY,
+    ASSISTANT_FOCUS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -1111,6 +1114,28 @@ impl Client {
     /// The default assistant session of a scope (created on first use), or with `new` one more.
     pub async fn assistant_open(&self, req: AssistantOpen) -> Result<SessionInfo, ClientError> {
         let result: SessionResult = self.call(Request::AssistantOpen(req)).await?;
+        Ok(result.session)
+    }
+
+    /// True when the daemon advertised capability `assistant.focus` (protocol 0.61): a Global
+    /// Mawas chat can have a Focus.
+    pub fn supports_assistant_focus(&self) -> bool {
+        self.has_capability(ASSISTANT_FOCUS_CAPABILITY)
+    }
+
+    /// `assistant.focus` (user-only): sets, or with `None` clears, the Focus of a Global Mawas
+    /// chat; answers with the session as it is now (`ChatInfo.focus`).
+    pub async fn assistant_focus(
+        &self,
+        session_id: SessionId,
+        workspace_id: Option<WorkspaceId>,
+    ) -> Result<SessionInfo, ClientError> {
+        let result: SessionResult = self
+            .call(Request::AssistantFocus(AssistantFocus {
+                session_id,
+                workspace_id,
+            }))
+            .await?;
         Ok(result.session)
     }
 

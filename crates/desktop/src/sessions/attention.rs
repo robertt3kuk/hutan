@@ -1197,6 +1197,7 @@ mod tests {
         session.chat = Some(hutan_protocol::chat::ChatInfo {
             fork: None,
             dirs: Vec::new(),
+            focus: None,
             agent: "codex".into(),
             model: "gpt-6.1-sol".into(),
             approval_policy: hutan_core::ApprovalPolicy::OnRequest,

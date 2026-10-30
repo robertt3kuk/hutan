@@ -181,6 +181,11 @@ pub struct ChatSpec {
     /// that is empty now (a folder taken out while the agent was not running).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dirs_managed: bool,
+    /// A Global Mawas chat (protocol 0.61, capability `assistant.focus`): the workspace it is
+    /// focused on (`assistant.focus`); mirrored by `ChatInfo.focus`. Always `None` for any
+    /// other chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<hutan_core::WorkspaceId>,
 }
 
 /// What runs a session: an agent process, or the model gateway.

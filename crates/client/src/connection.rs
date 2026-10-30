@@ -941,6 +941,24 @@ impl Connection {
         client.assistant_open(req).await
     }
 
+    /// True while connected to a daemon that advertised capability `assistant.focus`
+    /// ([`Client::supports_assistant_focus`]); false when disconnected.
+    pub fn supports_assistant_focus(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_assistant_focus())
+    }
+
+    /// `assistant.focus`: sets or clears the Focus of a Global Mawas chat.
+    pub async fn assistant_focus(
+        &self,
+        session_id: SessionId,
+        workspace_id: Option<WorkspaceId>,
+    ) -> Result<SessionInfo, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.assistant_focus(session_id, workspace_id).await
+    }
+
     /// `assistant.list`: the assistant sessions, oldest first.
     pub async fn assistant_list(
         &self,

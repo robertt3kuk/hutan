@@ -2191,6 +2191,23 @@ pub struct AssistantSettings {
     /// has room for it). Hiding it never loses a request: the header button counts the
     /// sessions that wait for an answer.
     pub rail_open: bool,
+    /// Which Mawas conversation Home opens (ADR 0025). `global` (the default) opens the Global
+    /// chat whatever workspace is active; a workspace is then a *Focus* picked in the header.
+    /// `follow_workspace` keeps how Home worked before: it follows the active workspace
+    /// (the workspace's own Mawas, the Global one at Home) and the header's scope dropdown
+    /// chooses between them.
+    pub home_scope: HomeScope,
+}
+
+/// What Mawas Home opens (`assistant.home_scope`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HomeScope {
+    /// The Global chat; a workspace is a Focus of it.
+    #[default]
+    Global,
+    /// The Mawas of the active workspace (the Global one while Home is active).
+    FollowWorkspace,
 }
 
 impl AssistantSettings {
@@ -2219,6 +2236,7 @@ impl Default for AssistantSettings {
             global_shortcut: String::new(),
             chat_width_rem: Self::DEFAULT_CHAT_WIDTH_REM,
             rail_open: true,
+            home_scope: HomeScope::Global,
         }
     }
 }
