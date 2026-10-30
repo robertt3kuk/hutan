@@ -175,18 +175,31 @@ pub fn scope_sentence(
 /// The tooltip of option `number` (0-based) when it sets a standing rule: its key and label, then
 /// [`scope_sentence`] (`2 Always allow: beyond this one request, OMP stops asking about …`).
 pub fn scope_tooltip(
+    kind: PermissionKind,
     number: usize,
     option: &PermissionOption,
     title: &str,
     agent: Option<&str>,
 ) -> Option<String> {
+    if kind == PermissionKind::Control {
+        return None;
+    }
     scope_sentence(option, title, agent)
         .map(|sentence| format!("{} {}: {sentence}", number + 1, option.label))
 }
 
 /// The one muted sentence under the buttons while a standing ("Always") option is offered; the
 /// whole of what each one does is its button's tooltip.
-pub fn always_note(options: &[PermissionOption], title: &str) -> Option<String> {
+pub fn always_note(
+    kind: PermissionKind,
+    options: &[PermissionOption],
+    title: &str,
+) -> Option<String> {
+    // Hutan's own gate (a `control` request) keeps its grants in Settings → Mawas, where the
+    // user lists and revokes them: the sentence about rules nobody can see does not apply.
+    if kind == PermissionKind::Control {
+        return None;
+    }
     options
         .iter()
         .any(|o| {
@@ -366,11 +379,14 @@ mod tests {
             PermissionOptionKind::Other,
         ] {
             assert_eq!(scope_sentence(&option(kind, "x"), title, None), None);
-            assert_eq!(scope_tooltip(0, &option(kind, "x"), title, None), None);
+            assert_eq!(
+                scope_tooltip(PermissionKind::Command, 0, &option(kind, "x"), title, None),
+                None
+            );
         }
         // The tooltip is the line the card used to print under its buttons.
         assert_eq!(
-            scope_tooltip(1, &always, title, Some("OMP")).unwrap(),
+            scope_tooltip(PermissionKind::Command, 1, &always, title, Some("OMP")).unwrap(),
             format!(
                 "2 Always allow `cargo`: {}",
                 scope_sentence(&always, title, Some("OMP")).unwrap()
@@ -388,7 +404,29 @@ mod tests {
             option(PermissionOptionKind::AllowOnce, "Allow once"),
             option(PermissionOptionKind::RejectOnce, "Reject"),
         ];
-        assert_eq!(always_note(&once, "edit: src/lib.rs"), None);
+        assert_eq!(
+            always_note(PermissionKind::Command, &once, "edit: src/lib.rs"),
+            None
+        );
+        // Hutan's own gate lists and revokes what it stores (Settings → Mawas): no such sentence.
+        let control = [
+            option(PermissionOptionKind::AllowOnce, "Allow once"),
+            option(PermissionOptionKind::AllowAlways, "Allow for this chat"),
+        ];
+        assert_eq!(
+            always_note(PermissionKind::Control, &control, "rename a session"),
+            None
+        );
+        assert_eq!(
+            scope_tooltip(
+                PermissionKind::Control,
+                1,
+                &control[1],
+                "rename a session",
+                None
+            ),
+            None
+        );
         let all = [
             option(PermissionOptionKind::AllowOnce, "Allow once"),
             option(PermissionOptionKind::AllowAlways, "Always allow"),
@@ -396,7 +434,7 @@ mod tests {
             option(PermissionOptionKind::RejectAlways, "Always reject"),
         ];
         assert_eq!(
-            always_note(&all, "edit: src/lib.rs\nmore").as_deref(),
+            always_note(PermissionKind::Command, &all, "edit: src/lib.rs\nmore").as_deref(),
             Some(
                 "Always sets a standing rule for “edit: src/lib.rs” that Hutan cannot show or revoke."
             )

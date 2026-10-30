@@ -278,7 +278,13 @@ impl InspectorPanel {
                     SharedString::from(format!("inspector-approve-{id}-{number}")),
                     number,
                     option,
-                    chat::scope_tooltip(number, option, &approval.title, agent.as_deref()),
+                    chat::scope_tooltip(
+                        approval.kind,
+                        number,
+                        option,
+                        &approval.title,
+                        agent.as_deref(),
+                    ),
                     look,
                 )
                 // The cell's whole width, so the grid's columns line up.
@@ -302,20 +308,33 @@ impl InspectorPanel {
             })
             .collect();
         // The options are a 2 × 2 grid in the narrow column (`Always reject` never wraps to a
-        // second line of its own), in the agent's order.
-        let mut cells = buttons.into_iter();
+        // second line of its own), in the agent's order; an option whose words are too long for
+        // half the column (*Allow for this chat and this agent*) takes a row of its own.
+        let long = |index: usize| {
+            approval
+                .options
+                .get(index)
+                .is_some_and(|option| option.label.chars().count() > 18)
+        };
+        let mut cells = buttons.into_iter().enumerate().peekable();
         let mut grid = div()
             .w_full()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing * 2.0));
-        while let Some(first) = cells.next() {
+        while let Some((index, first)) = cells.next() {
+            let alone = long(index) || cells.peek().is_some_and(|(next, _)| long(*next));
+            let second = if alone {
+                None
+            } else {
+                cells.next().map(|(_, cell)| cell)
+            };
             grid = grid.child(
                 div()
                     .flex()
                     .gap(px(tokens.spacing * 2.0))
                     .child(div().flex_1().min_w_0().child(first))
-                    .child(div().flex_1().min_w_0().children(cells.next())),
+                    .children((!alone).then(|| div().flex_1().min_w_0().children(second))),
             );
         }
         let link = self.session_link(
@@ -337,7 +356,7 @@ impl InspectorPanel {
                 Some(&approval.title),
                 approval.detail.as_deref(),
                 vec![grid.into_any_element()],
-                chat::always_note(&approval.options, &approval.title),
+                chat::always_note(approval.kind, &approval.options, &approval.title),
                 look,
             ))
             .into_any_element()

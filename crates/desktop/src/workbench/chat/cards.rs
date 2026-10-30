@@ -962,7 +962,13 @@ impl ChatView {
             .iter()
             .enumerate()
             .filter_map(|(number, option)| {
-                scope_tooltip(number, option, &approval.title, agent.as_deref())
+                scope_tooltip(
+                    approval.kind,
+                    number,
+                    option,
+                    &approval.title,
+                    agent.as_deref(),
+                )
             })
             .collect()
     }
@@ -979,7 +985,7 @@ impl ChatView {
     pub fn always_note_text(&self, id: ApprovalId, cx: &App) -> Option<String> {
         let model = self.model.read(cx);
         let approval = model.transcript().approval(id)?;
-        always_note(&approval.options, &approval.title)
+        always_note(approval.kind, &approval.options, &approval.title)
     }
 
     /// The ids of the options of request `id` that its card draws as primary buttons.
@@ -1053,7 +1059,13 @@ impl ChatView {
                         SharedString::from(format!("approve-{}-{number}", approval.id)),
                         number,
                         option,
-                        scope_tooltip(number, option, &approval.title, agent.as_deref()),
+                        scope_tooltip(
+                            approval.kind,
+                            number,
+                            option,
+                            &approval.title,
+                            agent.as_deref(),
+                        ),
                         look,
                     );
                     if live {
@@ -1073,7 +1085,7 @@ impl ChatView {
                 standalone.then_some(approval.title.as_str()),
                 approval.detail.as_deref(),
                 buttons,
-                always_note(&approval.options, &approval.title),
+                always_note(approval.kind, &approval.options, &approval.title),
                 look,
             )
             .relative();
