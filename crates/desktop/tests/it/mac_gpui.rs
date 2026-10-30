@@ -1216,6 +1216,8 @@ fn the_new_namespaces_and_fields_are_in_the_settings_sheet(cx: &mut TestAppConte
             "global_shortcut",
             "chat_width_rem",
             "rail_open",
+            "rail_width_rem",
+            "rail_tab",
             "home_scope"
         ]
     );

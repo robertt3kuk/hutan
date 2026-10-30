@@ -2191,12 +2191,30 @@ pub struct AssistantSettings {
     /// has room for it). Hiding it never loses a request: the header button counts the
     /// sessions that wait for an answer.
     pub rail_open: bool,
+    /// How wide the Today column is, in rem (17.5 to 32.5, 21.25 by default: 340 pt at the
+    /// default rem); a value outside is read as the nearest end. Drag the column's left border
+    /// (a double click puts it back): the width is written when the drag ends.
+    pub rail_width_rem: f32,
+    /// The tab of the Today column that is open: `now` (the board of every agent) or `memory`.
+    /// It is the one you left open.
+    pub rail_tab: RailTab,
     /// Which Mawas conversation Home opens (ADR 0025). `global` (the default) opens the Global
     /// chat whatever workspace is active; a workspace is then a *Focus* picked in the header.
     /// `follow_workspace` keeps how Home worked before: it follows the active workspace
     /// (the workspace's own Mawas, the Global one at Home) and the header's scope dropdown
     /// chooses between them.
     pub home_scope: HomeScope,
+}
+
+/// The tabs of Mawas's Today column (`assistant.rail_tab`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RailTab {
+    /// The board: what needs you, failed, ready for review, working, idle.
+    #[default]
+    Now,
+    /// Mawas's memory: proposals that wait for you and the latest entries.
+    Memory,
 }
 
 /// What Mawas Home opens (`assistant.home_scope`).
@@ -2216,6 +2234,22 @@ impl AssistantSettings {
     pub const MAX_CHAT_WIDTH_REM: f32 = 90.0;
     /// The width when nothing is set.
     pub const DEFAULT_CHAT_WIDTH_REM: f32 = 46.0;
+    /// The narrowest and widest Today column, in rem (280 and 520 pt at the default rem).
+    pub const MIN_RAIL_WIDTH_REM: f32 = 17.5;
+    pub const MAX_RAIL_WIDTH_REM: f32 = 32.5;
+    /// The column's width when nothing is set (340 pt at the default rem).
+    pub const DEFAULT_RAIL_WIDTH_REM: f32 = 21.25;
+
+    /// `rail_width_rem` as the page uses it: within 17.5 to 32.5; a value that is not a number
+    /// is the default.
+    pub fn rail_width(&self) -> f32 {
+        if self.rail_width_rem.is_finite() {
+            self.rail_width_rem
+                .clamp(Self::MIN_RAIL_WIDTH_REM, Self::MAX_RAIL_WIDTH_REM)
+        } else {
+            Self::DEFAULT_RAIL_WIDTH_REM
+        }
+    }
 
     /// `chat_width_rem` as the page uses it: within 30 to 90; a value that is not a number is
     /// the default.
@@ -2236,6 +2270,8 @@ impl Default for AssistantSettings {
             global_shortcut: String::new(),
             chat_width_rem: Self::DEFAULT_CHAT_WIDTH_REM,
             rail_open: true,
+            rail_width_rem: Self::DEFAULT_RAIL_WIDTH_REM,
+            rail_tab: RailTab::Now,
             home_scope: HomeScope::Global,
         }
     }

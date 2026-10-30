@@ -227,17 +227,27 @@ const GUTTER: f32 = 12.0;
 /// The step of *Mawas: Wider Chat* and *Narrower Chat*, in rem.
 pub const CHAT_WIDTH_STEP_REM: f32 = 4.0;
 
-/// A drag of one of the column's edges: the column grows (or shrinks) by twice the pointer's
-/// travel, so that it stays centered and the other edge follows. Nothing is written while it
-/// runs; the release writes `assistant.chat_width_rem`, and Escape ends it without a write.
+/// Which edge a drag holds: one of the conversation column's, or the Today column's left border.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Chat,
+    Rail,
+}
+
+/// A drag of one of the column's edges: the conversation grows (or shrinks) by twice the
+/// pointer's travel, so that it stays centered and the other edge follows; the Today column
+/// grows by the travel of its left border. Nothing is written while it runs; the release writes
+/// `assistant.chat_width_rem` or `assistant.rail_width_rem`, and Escape ends it without a write.
 #[derive(Debug, Clone, Copy)]
-struct ChatDrag {
+struct EdgeDrag {
+    edge: Edge,
     /// Where the pointer was when it took hold (x, pt).
     from: f32,
     /// The column's width then, in rem.
     start_rem: f32,
-    /// `1.0` for the right edge, `-1.0` for the left one.
-    sign: f32,
+    /// How much a point of travel (to the right) adds, in points of width: `2.0` for the
+    /// conversation's right edge, `-2.0` for its left one, `-1.0` for the Today column's.
+    factor: f32,
     /// The width the column has now, in rem.
     live_rem: f32,
 }
@@ -260,6 +270,46 @@ fn clamp_chat_rem(rem: f32, area: f32, rem_px: f32) -> f32 {
 /// A width rounded to half a rem, the grain of what is written.
 fn round_half_rem(rem: f32) -> f32 {
     (rem * 2.0).round() / 2.0
+}
+
+/// The Today column's width in rem kept within 17.5 to 32.5 and leaving the conversation
+/// [`RAIL_LEAVES`] pt: `page` is the width both share (pt, `0.0` when it has not been measured).
+fn clamp_rail_rem(rem: f32, page: f32, rem_px: f32) -> f32 {
+    let (min, max) = (
+        AssistantSettings::MIN_RAIL_WIDTH_REM,
+        AssistantSettings::MAX_RAIL_WIDTH_REM,
+    );
+    let room = if page > 0.0 && rem_px > 0.0 {
+        ((page - RAIL_LEAVES) / rem_px).clamp(min, max)
+    } else {
+        max
+    };
+    rem.clamp(min, room)
+}
+
+/// What the conversation keeps of the page while the Today column is dragged wider, in pt.
+const RAIL_LEAVES: f32 = 360.0;
+
+/// Writes `assistant.rail_width_rem` (rounded to half a rem, within 17.5 to 32.5) to the user's
+/// settings.
+pub fn write_rail_width(settings: &SettingsStore, rem: f32) {
+    let rem = round_half_rem(rem).clamp(
+        AssistantSettings::MIN_RAIL_WIDTH_REM,
+        AssistantSettings::MAX_RAIL_WIDTH_REM,
+    );
+    if let Err(error) = settings.write_user(
+        "assistant.rail_width_rem",
+        toml::Value::Float(f64::from(rem)),
+    ) {
+        tracing::warn!("cannot save assistant.rail_width_rem: {error}");
+    }
+}
+
+/// Takes `assistant.rail_width_rem` out of the user's settings: the default width again.
+pub fn reset_rail_width(settings: &SettingsStore) {
+    if let Err(error) = settings.remove(SettingsLayer::User, "assistant", "rail_width_rem") {
+        tracing::warn!("cannot reset assistant.rail_width_rem: {error}");
+    }
 }
 
 /// Writes `assistant.chat_width_rem` (rounded to half a rem, within 30 to 90) to the user's
@@ -286,14 +336,32 @@ pub fn reset_chat_width(settings: &SettingsStore) {
 
 /// Ends the drag in `cell`, if there is one: a drag that moved the column writes its width.
 /// `true` when there was a drag.
-fn finish_chat_drag(cell: &Cell<Option<ChatDrag>>, settings: &SettingsStore) -> bool {
+fn finish_edge_drag(cell: &Cell<Option<EdgeDrag>>, settings: &SettingsStore) -> bool {
     let Some(drag) = cell.take() else {
         return false;
     };
     if (drag.live_rem - drag.start_rem).abs() > f32::EPSILON {
-        write_chat_width(settings, drag.live_rem);
+        match drag.edge {
+            Edge::Chat => write_chat_width(settings, drag.live_rem),
+            Edge::Rail => write_rail_width(settings, drag.live_rem),
+        }
     }
     true
+}
+
+/// What the Memory tab of the Today column shows besides the proposals (which are requests, and
+/// come from the sessions store): the latest entries Mawas keeps, read from the daemon when the
+/// tab is shown and again when `memory.changed` says they moved.
+#[derive(Debug, Default)]
+pub(super) struct MemoryTab {
+    pub(super) entries: Vec<hutan_protocol::memory::MemoryEntry>,
+    /// The daemon answered since the last change.
+    pub(super) loaded: bool,
+    pub(super) loading: bool,
+    /// A change arrived while a read was in flight.
+    pub(super) again: bool,
+    /// The daemon keeps no memory (it predates protocol 0.32).
+    pub(super) unsupported: bool,
 }
 
 struct Chat {
@@ -329,11 +397,16 @@ pub struct AssistantPanel {
     /// `assistant.rail_open` as this page last saw it: a different value (another window, the
     /// file) is adopted.
     pub(super) rail_seen: bool,
+    /// The *Idle* section of the Today column's Now tab is unfolded (it starts folded: idle
+    /// agents are not news).
+    pub(super) idle_open: bool,
+    /// What the Today column's Memory tab lists.
+    pub(super) memory: MemoryTab,
     /// `assistant.home_scope` as this page last saw it: a different value (Settings, another
     /// window) sends Home back to what the new value opens.
     home_seen: HomeScope,
     /// The column's resize in progress; shared with the listeners the frame registers.
-    chat_drag: Rc<Cell<Option<ChatDrag>>>,
+    edge_drag: Rc<Cell<Option<EdgeDrag>>>,
     /// A page below 640 pt: the header is folded into ⋯ and the rail leaves the page.
     folded: bool,
     /// Below 640 pt, Today replaces the conversation instead of sitting beside it (⋯ → Today).
@@ -346,6 +419,7 @@ pub struct AssistantPanel {
     /// How many times the page was drawn (tests).
     renders: usize,
     _subscription: Subscription,
+    _memory_changed: Subscription,
     /// Escape ends a resize of the column, whatever has the keyboard.
     _keys: Subscription,
 }
@@ -362,12 +436,19 @@ impl std::fmt::Debug for AssistantPanel {
 impl AssistantPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
         let subscription = cx.observe(&env.sessions, |this, _, cx| this.on_sessions(cx));
+        let memory_changed = cx.subscribe(
+            &env.sessions,
+            |this, _, _: &crate::sessions::MemoryChanged, cx| {
+                this.memory.loaded = false;
+                cx.notify();
+            },
+        );
         let connected = env.sessions.read(cx).connection_state() == ConnectionState::Connected;
         let settings = env.settings.get::<AssistantSettings>();
         let (rail_open, home_scope) = (settings.rail_open, settings.home_scope);
-        let chat_drag: Rc<Cell<Option<ChatDrag>>> = Rc::default();
+        let edge_drag: Rc<Cell<Option<EdgeDrag>>> = Rc::default();
         let keys = {
-            let drag = chat_drag.clone();
+            let drag = edge_drag.clone();
             let page = cx.weak_entity();
             cx.intercept_keystrokes(move |event, _, cx| {
                 if event.keystroke.key == "escape" && drag.take().is_some() {
@@ -392,14 +473,17 @@ impl AssistantPanel {
             error: None,
             rail_open,
             rail_seen: rail_open,
+            idle_open: false,
+            memory: MemoryTab::default(),
             home_seen: home_scope,
-            chat_drag,
+            edge_drag,
             folded: false,
             today_only: false,
             width: Rc::new(Cell::new(0.0)),
             visible: false,
             renders: 0,
             _subscription: subscription,
+            _memory_changed: memory_changed,
             _keys: keys,
         }
     }
@@ -476,7 +560,7 @@ impl AssistantPanel {
         self.chats.get(&session).map(|chat| chat.model.clone())
     }
 
-    fn connected(&self, cx: &App) -> bool {
+    pub(super) fn connected(&self, cx: &App) -> bool {
         self.env.sessions.read(cx).connection_state() == ConnectionState::Connected
     }
 
@@ -542,20 +626,82 @@ impl AssistantPanel {
     /// The width of the conversation column now, in rem: the live one while an edge is dragged,
     /// else `assistant.chat_width_rem` (kept within 30 to 90).
     pub fn chat_width_rem(&self) -> f32 {
-        self.chat_drag.get().map_or_else(
-            || self.env.settings.get::<AssistantSettings>().chat_width(),
-            |drag| drag.live_rem,
-        )
+        self.edge_drag
+            .get()
+            .filter(|drag| drag.edge == Edge::Chat)
+            .map_or_else(
+                || self.env.settings.get::<AssistantSettings>().chat_width(),
+                |drag| drag.live_rem,
+            )
     }
 
     /// Whether an edge of the column is being dragged.
     pub fn resizing_chat(&self) -> bool {
-        self.chat_drag.get().is_some()
+        self.edge_drag
+            .get()
+            .is_some_and(|drag| drag.edge == Edge::Chat)
+    }
+
+    /// The width of the Today column now, in rem: the live one while its left border is dragged,
+    /// else `assistant.rail_width_rem` (kept within 17.5 to 32.5).
+    pub fn rail_width_rem(&self) -> f32 {
+        self.edge_drag
+            .get()
+            .filter(|drag| drag.edge == Edge::Rail)
+            .map_or_else(
+                || self.env.settings.get::<AssistantSettings>().rail_width(),
+                |drag| drag.live_rem,
+            )
+    }
+
+    /// Whether the Today column's left border is being dragged.
+    pub fn resizing_rail(&self) -> bool {
+        self.edge_drag
+            .get()
+            .is_some_and(|drag| drag.edge == Edge::Rail)
+    }
+
+    /// Double click on the Today column's border: the default width again.
+    pub fn reset_rail_width(&mut self, cx: &mut Context<Self>) {
+        self.edge_drag.set(None);
+        reset_rail_width(&self.env.settings);
+        cx.notify();
+    }
+
+    /// A press on the Today column's left border: a drag begins from the width the column has
+    /// on screen; a double click resets instead.
+    pub(super) fn start_rail_drag(
+        &mut self,
+        event: &gpui::MouseDownEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.click_count >= 2 {
+            self.reset_rail_width(cx);
+            return;
+        }
+        let rem_px = f32::from(window.rem_size());
+        let start_rem = self
+            .env
+            .regions
+            .get(Region::Assistant("today"))
+            .map_or_else(
+                || self.rail_width_rem(),
+                |bounds| f32::from(bounds.size.width) / rem_px,
+            );
+        self.edge_drag.set(Some(EdgeDrag {
+            edge: Edge::Rail,
+            from: f32::from(event.position.x),
+            start_rem,
+            factor: -1.0,
+            live_rem: start_rem,
+        }));
+        cx.notify();
     }
 
     /// Double click on an edge: the default width again (the key leaves the file).
     pub fn reset_chat_width(&mut self, cx: &mut Context<Self>) {
-        self.chat_drag.set(None);
+        self.edge_drag.set(None);
         reset_chat_width(&self.env.settings);
         cx.notify();
     }
@@ -582,10 +728,11 @@ impl AssistantPanel {
                 || self.chat_width_rem(),
                 |bounds| f32::from(bounds.size.width) / rem_px,
             );
-        self.chat_drag.set(Some(ChatDrag {
+        self.edge_drag.set(Some(EdgeDrag {
+            edge: Edge::Chat,
             from: f32::from(event.position.x),
             start_rem,
-            sign,
+            factor: 2.0 * sign,
             live_rem: start_rem,
         }));
         cx.notify();
@@ -641,8 +788,8 @@ impl AssistantPanel {
     /// Registers, every frame, the listeners that follow the pointer while an edge is dragged
     /// (wherever it goes) and end the drag when it is released. The width is written once, on
     /// the release.
-    fn chat_drag_listeners(&self) -> AnyElement {
-        let drag = self.chat_drag.clone();
+    fn edge_drag_listeners(&self) -> AnyElement {
+        let drag = self.edge_drag.clone();
         let regions = self.env.regions.clone();
         let settings = self.env.settings.clone();
         canvas(
@@ -663,7 +810,7 @@ impl AssistantPanel {
                         };
                         if event.pressed_button != Some(gpui::MouseButton::Left) {
                             // The release happened where nobody saw it: it ends the drag here.
-                            finish_chat_drag(&moving, &store);
+                            finish_edge_drag(&moving, &store);
                             cx.notify(view);
                             return;
                         }
@@ -672,11 +819,21 @@ impl AssistantPanel {
                             .get(Region::Assistant("conversation"))
                             .map_or(0.0, |bounds| f32::from(bounds.size.width));
                         let travel = f32::from(event.position.x) - state.from;
-                        state.live_rem = clamp_chat_rem(
-                            state.start_rem + 2.0 * state.sign * travel / rem_px,
-                            area,
-                            rem_px,
-                        );
+                        let wanted = state.start_rem + state.factor * travel / rem_px;
+                        state.live_rem = match state.edge {
+                            Edge::Chat => clamp_chat_rem(wanted, area, rem_px),
+                            // The conversation and the column share the page: the column may
+                            // take what the conversation can spare.
+                            Edge::Rail => clamp_rail_rem(
+                                wanted,
+                                if area > 0.0 {
+                                    area + state.live_rem * rem_px
+                                } else {
+                                    0.0
+                                },
+                                rem_px,
+                            ),
+                        };
                         moving.set(Some(state));
                         cx.notify(view);
                         cx.stop_propagation();
@@ -690,7 +847,7 @@ impl AssistantPanel {
                           cx: &mut App| {
                         if phase == gpui::DispatchPhase::Capture
                             && event.button == gpui::MouseButton::Left
-                            && finish_chat_drag(&up, &store)
+                            && finish_edge_drag(&up, &store)
                         {
                             cx.notify(view);
                         }
@@ -2274,8 +2431,10 @@ impl Render for AssistantPanel {
         });
         let connected = self.connected(cx);
         let today_page = self.folded && self.today_only && connected;
+        let rem_px = f32::from(window.rem_size());
+        self.ensure_memory(cx);
         let rail = (!self.folded && self.rail_open && connected)
-            .then(|| self.render_rail(&look, false, cx));
+            .then(|| self.render_rail(&look, false, rem_px, cx));
         let asks = self.render_chat_asks(&look, cx);
         let width_cell = self.width.clone();
         let folded_for_paint = self.folded;
@@ -2287,8 +2446,8 @@ impl Render for AssistantPanel {
                 self.chat_handle(1.0, "chat-edge-right", &look, cx),
             ]
         });
-        let listeners = (!self.folded).then(|| self.chat_drag_listeners());
-        let resizing = self.resizing_chat();
+        let listeners = (!self.folded).then(|| self.edge_drag_listeners());
+        let resizing = self.resizing_chat() || self.resizing_rail();
         let conversation = div()
             .relative()
             .flex()
@@ -2336,7 +2495,9 @@ impl Render for AssistantPanel {
                     // Below 640 pt Today is a page of its own (⋯ → Today), never a column that
                     // leaves the composer a few pixels.
                     .when(!today_page, |s| s.child(conversation))
-                    .when(today_page, |s| s.child(self.render_rail(&look, true, cx)))
+                    .when(today_page, |s| {
+                        s.child(self.render_rail(&look, true, rem_px, cx))
+                    })
                     .children(rail),
             )
             .child(

@@ -312,9 +312,17 @@ fn every_entry_point_opens_memory_in_the_sidebar_and_never_as_a_center_tab(
     cx.dispatch_action(actions::OpenMawasMemory);
     assert!(in_sidebar(&view, cx));
 
-    // Mawas Home links to it from the Today rail.
+    // Mawas Home links to it from the Memory tab of the Today rail.
     click(&view, cx, Region::Nav("projects"));
     let _home = open_assistant(&view, cx);
+    click(&view, cx, Region::Assistant("today-tab-memory"));
+    wait_until(cx, "the Memory tab", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Assistant("today-memory"))
+                .is_some()
+        })
+    });
     click(&view, cx, Region::Assistant("today-memory"));
     wait_until(cx, "the Memory page to open", |cx| {
         draw(cx);
@@ -719,6 +727,83 @@ fn the_page_lists_adds_edits_archives_confirms_and_shows_history(cx: &mut TestAp
 
 fn home_panel(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<AssistantPanel> {
     open_assistant(view, cx)
+}
+
+#[gpui::test]
+fn the_rails_memory_tab_counts_what_waits_and_lists_the_latest_entries(cx: &mut TestAppContext) {
+    let env = started();
+    remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Fact,
+        "Staging is called kite.",
+    );
+    remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Profile,
+        "Prefers short answers.\nAnd no emoji.",
+    );
+    let (view, cx) = open(cx, &env.daemon);
+    let home = home_panel(&view, cx);
+    let mawas = home.read_with(cx, |p, cx| p.session(cx).unwrap());
+    let proposal = propose(&env, mawas, "tab", "Deploys go out on Tuesdays.");
+    let is_memory_proposal = |p: &AssistantPanel, cx: &gpui::App| {
+        p.today(cx)
+            .requests
+            .iter()
+            .any(|r| matches!(r.kind, TodayKind::Approval { memory: true, .. }))
+    };
+    wait_until(cx, "the proposal under Requests", |cx| {
+        home.read_with(cx, |p, cx| is_memory_proposal(p, cx))
+    });
+    assert_eq!(
+        home.read_with(cx, |p, cx| p.today(cx).memory_proposals()),
+        1
+    );
+
+    click(&view, cx, Region::Assistant("today-tab-memory"));
+    // The entries come from the daemon: one row each, the first line of the entry.
+    wait_until(cx, "the latest entries", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-memory-entry", 1))
+                .is_some()
+        })
+    });
+    assert!(
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-memory-entry", 2))
+        })
+        .is_none(),
+        "two entries are stored"
+    );
+    // What waits is on the tab too, with Edit & approve, and is answered from it.
+    assert!(
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-edit-approve", 0))
+        })
+        .is_some(),
+        "the proposal card is on the Memory tab"
+    );
+    click(&view, cx, Region::AssistantItem("today-option", 0));
+    wait_until(cx, "the proposal applied", |cx| {
+        let _ = cx;
+        stored(&env, false)
+            .iter()
+            .any(|e| e.body == "Deploys go out on Tuesdays.")
+    });
+    // A change of the memory moves the list without anybody asking.
+    wait_until(cx, "the new entry listed", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-memory-entry", 2))
+                .is_some()
+        })
+    });
+    let _ = proposal;
 }
 
 #[gpui::test]

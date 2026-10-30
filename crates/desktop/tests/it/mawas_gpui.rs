@@ -1450,3 +1450,239 @@ fn the_card_for_a_message_shows_the_agent_and_every_word_and_the_message_arrives
         "the user's own message is not labelled"
     );
 }
+
+// ---- AGENTS-BOARD-B: the rail's tabs (Now, Memory) and its width --------------------------------
+
+fn rail_width(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> f32 {
+    f32::from(bounds_of(view, cx, "today").size.width)
+}
+
+/// `assistant.rail_width_rem` as `settings.toml` holds it.
+fn written_rail_width(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<f64> {
+    view.read_with(cx, |wb, _| {
+        wb.settings_store().layer_value(
+            hutan_settings::SettingsLayer::User,
+            "assistant.rail_width_rem",
+        )
+    })
+    .map(|value| {
+        value
+            .as_float()
+            .or_else(|| value.as_integer().map(|i| i as f64))
+            .expect("a number")
+    })
+}
+
+fn written_tab(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<String> {
+    view.read_with(cx, |wb, _| {
+        wb.settings_store()
+            .layer_value(hutan_settings::SettingsLayer::User, "assistant.rail_tab")
+    })
+    .and_then(|value| value.as_str().map(str::to_owned))
+}
+
+fn click_region(view: &Entity<Workbench>, cx: &mut VisualTestContext, name: &'static str) {
+    let at = bounds_of(view, cx, name).center();
+    cx.simulate_click(at, Modifiers::none());
+}
+
+#[gpui::test]
+fn the_rail_has_a_now_and_a_memory_tab_and_remembers_the_one_left_open(cx: &mut TestAppContext) {
+    let env = started();
+    let (view, cx, _panel) = open_wide(cx, &env);
+    // It opens on Now: the board's own section, not the memory's.
+    wait_until(cx, "the tabs", |cx| {
+        painted(&view, cx, "today-tab-now") && painted(&view, cx, "today-tab-memory")
+    });
+    assert!(
+        !painted(&view, cx, "today-memory"),
+        "the link to the Memory page is on the Memory tab"
+    );
+    assert_eq!(
+        written_tab(&view, cx),
+        None,
+        "nothing is written by looking"
+    );
+
+    click_region(&view, cx, "today-tab-memory");
+    wait_until(cx, "the Memory tab", |cx| {
+        painted(&view, cx, "today-memory")
+    });
+    assert_eq!(written_tab(&view, cx).as_deref(), Some("memory"));
+
+    // Another page (or window) starts where this one left it.
+    click_region(&view, cx, "today-tab-now");
+    wait_until(cx, "the Now tab again", |cx| {
+        !painted(&view, cx, "today-memory")
+    });
+    assert_eq!(written_tab(&view, cx).as_deref(), Some("now"));
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user("assistant.rail_tab", toml::Value::String("memory".into()))
+        .unwrap();
+    wait_until(cx, "the file's tab", |cx| {
+        painted(&view, cx, "today-memory")
+    });
+}
+
+#[gpui::test]
+fn idle_agents_sit_under_one_folded_line_with_what_their_state_is_worth(cx: &mut TestAppContext) {
+    let env = started();
+    let session = env.daemon.sh("sleep 600");
+    let applied: AgentApplied = env.daemon.call(Request::AgentReport(AgentReportRequest {
+        session_id: session.id,
+        source: "test-hooks".into(),
+        agent: "claude".into(),
+        state: Some(AgentState::Idle),
+        message: None,
+        seq: 1,
+        agent_session_id: None,
+        resume_argv: None,
+        pid: None,
+        node: None,
+    }));
+    assert!(applied.applied);
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_until(cx, "the idle agent", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.today(cx).idle.iter().any(|row| row.session == session.id)
+        })
+    });
+    // One line, folded: Idle agents are not news.
+    wait_until(cx, "the Idle line", |cx| painted(&view, cx, "today-idle"));
+    assert!(
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-idle-row", 0))
+        })
+        .is_none(),
+        "the rows are folded"
+    );
+    click_region(&view, cx, "today-idle");
+    wait_until(cx, "the idle row", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-idle-row", 0))
+        })
+        .is_some()
+    });
+    // A terminal agent's own report: its state, not a journal.
+    let row = panel.read_with(cx, |p, cx| p.today(cx).idle[0].record.managed);
+    assert!(!row);
+    click_region(&view, cx, "today-idle");
+    wait_until(cx, "the rows folded again", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::AssistantItem("today-idle-row", 0))
+        })
+        .is_none()
+    });
+}
+
+#[gpui::test]
+fn the_rail_is_340_pt_wide_and_dragging_its_border_writes_once_on_release(cx: &mut TestAppContext) {
+    let env = started();
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_until(cx, "the rail's border", |cx| {
+        painted(&view, cx, "rail-edge")
+    });
+    assert_close(rail_width(&view, cx), 340.0, "the default rail");
+    assert_eq!(written_rail_width(&view, cx), None);
+
+    // Start from a whole number of rem so that the grain of what is written is not in the way.
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user("assistant.rail_width_rem", toml::Value::Float(22.0))
+        .unwrap();
+    wait_until(cx, "352 pt", |cx| {
+        (rail_width(&view, cx) - 352.0).abs() < 1.0
+    });
+
+    // 32 pt to the left: the column is 32 pt wider, live, and nothing is written.
+    let edge = bounds_of(&view, cx, "rail-edge").center();
+    press(cx, edge);
+    drag_to(cx, edge, edge - gpui::point(gpui::px(32.0), gpui::px(0.0)));
+    assert!(panel.read_with(cx, |p, _| p.resizing_rail()));
+    assert!(!panel.read_with(cx, |p, _| p.resizing_chat()));
+    assert_close(rail_width(&view, cx), 384.0, "the rail while dragged");
+    assert_eq!(
+        written_rail_width(&view, cx),
+        Some(22.0),
+        "the old value mid-drag"
+    );
+    release(cx, edge - gpui::point(gpui::px(32.0), gpui::px(0.0)));
+    draw(cx);
+    assert!(!panel.read_with(cx, |p, _| p.resizing_rail()));
+    assert_eq!(
+        written_rail_width(&view, cx),
+        Some(24.0),
+        "written on release, in rem"
+    );
+    assert_close(rail_width(&view, cx), 384.0, "the rail after");
+    assert_eq!(
+        written_width(&view, cx),
+        None,
+        "the conversation's width is untouched"
+    );
+}
+
+#[gpui::test]
+fn escape_cancels_a_rail_drag_and_a_double_click_on_its_border_removes_the_key(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_until(cx, "the rail's border", |cx| {
+        painted(&view, cx, "rail-edge")
+    });
+    let edge = bounds_of(&view, cx, "rail-edge").center();
+    press(cx, edge);
+    drag_to(cx, edge, edge - gpui::point(gpui::px(40.0), gpui::px(0.0)));
+    assert_close(rail_width(&view, cx), 380.0, "widened while dragged");
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(!panel.read_with(cx, |p, _| p.resizing_rail()));
+    assert_close(rail_width(&view, cx), 340.0, "back to what it was");
+    release(cx, edge - gpui::point(gpui::px(40.0), gpui::px(0.0)));
+    draw(cx);
+    assert_eq!(written_rail_width(&view, cx), None);
+
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user("assistant.rail_width_rem", toml::Value::Float(28.0))
+        .unwrap();
+    wait_until(cx, "448 pt", |cx| {
+        (rail_width(&view, cx) - 448.0).abs() < 1.0
+    });
+    let edge = bounds_of(&view, cx, "rail-edge").center();
+    double_click_at(cx, edge);
+    assert_eq!(written_rail_width(&view, cx), None, "the key is gone");
+    assert_close(rail_width(&view, cx), 340.0, "the default width again");
+}
+
+#[gpui::test]
+fn the_rail_width_is_held_within_17_5_and_32_5_rem(cx: &mut TestAppContext) {
+    let env = started();
+    let (view, cx, _panel) = open_wide(cx, &env);
+    let store = view.read_with(cx, |wb, _| wb.settings_store().clone());
+    store
+        .write_user("assistant.rail_width_rem", toml::Value::Float(200.0))
+        .unwrap();
+    wait_until(cx, "520 pt", |cx| {
+        (rail_width(&view, cx) - 520.0).abs() < 1.0
+    });
+    store
+        .write_user("assistant.rail_width_rem", toml::Value::Integer(2))
+        .unwrap();
+    wait_until(cx, "280 pt", |cx| {
+        (rail_width(&view, cx) - 280.0).abs() < 1.0
+    });
+
+    // A drag does not go past the end either.
+    store
+        .write_user("assistant.rail_width_rem", toml::Value::Float(32.0))
+        .unwrap();
+    wait_until(cx, "512 pt", |cx| {
+        (rail_width(&view, cx) - 512.0).abs() < 1.0
+    });
+    let edge = bounds_of(&view, cx, "rail-edge").center();
+    press(cx, edge);
+    drag_to(cx, edge, edge - gpui::point(gpui::px(200.0), gpui::px(0.0)));
+    assert_close(rail_width(&view, cx), 520.0, "held at the widest");
+    release(cx, edge - gpui::point(gpui::px(200.0), gpui::px(0.0)));
+    assert_eq!(written_rail_width(&view, cx), Some(32.5));
+}

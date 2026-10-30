@@ -148,7 +148,10 @@ fn file_size(path: &Path) -> Option<u64> {
 
 /// The `assistant` keys that sit under Settings → Mawas → *Layout*.
 fn is_assistant_layout(key: &str) -> bool {
-    matches!(key, "chat_width_rem" | "rail_open" | "home_scope")
+    matches!(
+        key,
+        "chat_width_rem" | "rail_open" | "rail_width_rem" | "rail_tab" | "home_scope"
+    )
 }
 
 /// A name for a preset: letters, digits, `-` and `_` (anything else becomes `-`).

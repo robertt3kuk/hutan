@@ -255,6 +255,10 @@ pub fn number_range(namespace: &str, key: &str) -> Option<(f64, f64)> {
             f64::from(crate::settings::AssistantSettings::MIN_CHAT_WIDTH_REM),
             f64::from(crate::settings::AssistantSettings::MAX_CHAT_WIDTH_REM),
         )),
+        ("assistant", "rail_width_rem") => Some((
+            f64::from(crate::settings::AssistantSettings::MIN_RAIL_WIDTH_REM),
+            f64::from(crate::settings::AssistantSettings::MAX_RAIL_WIDTH_REM),
+        )),
         ("terminal", "quick_height") => Some((
             TerminalSettings::MIN_QUICK_HEIGHT,
             TerminalSettings::MAX_QUICK_HEIGHT,

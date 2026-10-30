@@ -1294,6 +1294,19 @@ const FIELDS: &[FieldText] = &[
         "Show Today",
         "Shows the Today column beside the conversation: what waits for you, failed and finished work, and what is running. Hiding it never loses a request: the button in Mawas's header counts the sessions that wait for an answer. A page below 640 pt has no room for the column either way (Today is a page of its own in the ⋯ menu).",
     ),
+    field(
+        "assistant",
+        "rail_width_rem",
+        "Today width",
+        "How wide the Today column is, in rem (17.5 to 32.5; 21.25 by default). Drag the column's left border to set it; a double click puts it back. A page below 640 pt has no column.",
+    ),
+    choice(
+        "assistant",
+        "rail_tab",
+        "Today tab",
+        "The tab of the Today column that is open: Now (the board of every agent: what needs you, failed, ready for review, working, idle) or Memory (what waits for you in Mawas's memory and its latest entries). The column opens on the one you left.",
+        &[("now", "Now"), ("memory", "Memory")],
+    ),
     choice(
         "assistant",
         "home_scope",

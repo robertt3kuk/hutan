@@ -9,8 +9,12 @@
 //! session that is blocked without saying on what. *Failed* and *Ready for review* list the
 //! sessions of those groups (one row each): a finished turn is never a request. *Working* lists
 //! the agents that are running — never Mawas itself; a memory proposal is a card with its own
-//! *Edit & approve*. *Memory* links to the Memory page; *Upcoming* says there are no schedules
-//! yet: Skills, Schedules and Traces have no link here until those services exist.
+//! *Edit & approve*. *Idle* lists the agents that wait for a message, folded until opened.
+//!
+//! The rail has two tabs (`assistant.rail_tab`, remembered): **Now**, the board of every agent
+//! as above, and **Memory**, what waits for the user in Mawas's memory (the proposals), its latest
+//! entries and the link to the Memory page. Its width is `assistant.rail_width_rem`, dragged on
+//! its left border and written on release.
 
 use gpui::{
     AnyElement, App, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
@@ -24,7 +28,7 @@ use super::assistant::AssistantPanel;
 use super::common::{agent_lead_glyph, agent_state_word, agent_title_line};
 use crate::icons::{Icon, icon};
 use crate::sessions::{SessionsStore, agents_text};
-use crate::settings::AssistantSettings;
+use crate::settings::{AssistantSettings, RailTab};
 use crate::workbench::actions::{
     EditMemoryProposal, JumpToNextAttention, OpenMawasMemory, OpenSession,
 };
@@ -35,8 +39,8 @@ use crate::workbench::view::Region;
 use hutan_agents_view::attention::Attention;
 use hutan_agents_view::presentation::{AgentRecord, Group, ReasonKind, Role};
 
-/// The width of the rail.
-pub const RAIL_WIDTH: f32 = 300.0;
+/// How many memory entries the Memory tab lists.
+const MEMORY_ENTRIES_SHOWN: usize = 6;
 /// The first row index of the cards above the conversation (the rail's rows count from 0), so
 /// that the regions of the two do not meet.
 pub const CHAT_ASK_BASE: usize = 100;
@@ -112,6 +116,8 @@ pub struct Today {
     pub working: Vec<WorkingRow>,
     /// Agent sessions whose state is unavailable: never counted as working or idle.
     pub unconfirmed: usize,
+    /// Agent sessions confirmed idle (the Agents page's *Idle* group): waiting for a message.
+    pub idle: Vec<WorkingRow>,
 }
 
 /// A section of Today that has something in it.
@@ -120,6 +126,8 @@ pub enum Section {
     /// One of the three groups of attention.
     Attention(Attention),
     Working,
+    /// Idle agents, folded until opened.
+    Idle,
 }
 
 impl Today {
@@ -141,6 +149,15 @@ impl Today {
         ]
     }
 
+    /// How many memory proposals wait (the Memory tab's count): requests of the
+    /// `memory.propose` tool, whose card carries *Edit & approve*.
+    pub fn memory_proposals(&self) -> usize {
+        self.requests
+            .iter()
+            .filter(|row| matches!(row.kind, TodayKind::Approval { memory: true, .. }))
+            .count()
+    }
+
     /// The sections Today draws, in order: only those with content. With none, Today says so in
     /// one muted line instead of four empty sections.
     pub fn sections(&self) -> Vec<Section> {
@@ -152,6 +169,9 @@ impl Today {
             .collect();
         if !self.working.is_empty() || self.unconfirmed > 0 {
             sections.push(Section::Working);
+        }
+        if !self.idle.is_empty() {
+            sections.push(Section::Idle);
         }
         sections
     }
@@ -265,12 +285,20 @@ pub fn today(store: &SessionsStore) -> Today {
     let unconfirmed = agents()
         .filter(|record| record.group == Group::Unconfirmed)
         .count();
+    let idle = agents()
+        .filter(|record| record.group == Group::Idle)
+        .map(|record| WorkingRow {
+            session: record.session,
+            record: record.clone(),
+        })
+        .collect();
     Today {
         requests,
         failed,
         review,
         working,
         unconfirmed,
+        idle,
     }
 }
 
@@ -382,20 +410,223 @@ impl AssistantPanel {
         )
     }
 
-    /// Today: only the sections that have something in them — *Requests* (each request with
-    /// the options the daemon offered, and *Review requests*), *Failed*, *Ready for review*,
-    /// *Working* (the Agents page's rows) — or, with nothing at all, one muted line; and a
-    /// `Memory ›` link row.
-    /// `full` is the page below 640 pt, where Today is the whole body instead of a column.
+    /// Today, with its two tabs: **Now** (only the sections that have something in them —
+    /// *Requests* (each request with the options the daemon offered, and *Review requests*),
+    /// *Failed*, *Ready for review*, *Working* (the Agents page's rows), *Idle* (folded) — or,
+    /// with nothing at all, one muted line) and **Memory** (what waits in Mawas's memory).
+    /// `full` is the page below 640 pt, where Today is the whole body instead of a column;
+    /// `rem_px` is the size of a rem, which the column's width is written in.
     pub(super) fn render_rail(
         &self,
         look: &Look,
         full: bool,
+        rem_px: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = look.theme;
+        let today = self.today(cx);
+        let tab = self.env.settings.get::<AssistantSettings>().rail_tab;
+        let body = match tab {
+            RailTab::Now => self.render_now(&today, look, cx),
+            RailTab::Memory => self.render_memory(&today, look, cx),
+        };
+        let width = self.rail_width_rem() * rem_px;
+        div()
+            .id("assistant-today")
+            .relative()
+            .flex()
+            .flex_col()
+            .h_full()
+            // The rail is a card: a `surface` fill and no hairline. As a page of its own it is
+            // the page's background.
+            .when(!full, |s| s.flex_none().w(px(width)).bg(theme.surface))
+            .when(full, |s| s.flex_1().min_w_0())
+            .child(self.render_rail_tabs(tab, &today, look, cx))
+            .child(body)
+            .when(!full, |s| s.child(self.rail_handle(look, cx)))
+            .child(probe(&self.env.regions, Region::Assistant("today")))
+            .into_any_element()
+    }
+
+    /// The tab strip: **Now** with the number of sessions that need you, **Memory** with the
+    /// number of proposals that wait.
+    fn render_rail_tabs(
+        &self,
+        current: RailTab,
+        today: &Today,
+        look: &Look,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
-        let today = self.today(cx);
+        let tab = |id: &'static str, which: RailTab, label: &str, count: usize| {
+            let selected = current == which;
+            let text = if count > 0 {
+                format!("{label} · {count}")
+            } else {
+                label.to_owned()
+            };
+            div()
+                .id(id)
+                .relative()
+                .px(px(tokens.spacing * 2.0))
+                .py(px(tokens.spacing))
+                .rounded(px(tokens.radius))
+                .cursor_pointer()
+                .text_size(px(tokens.font_size))
+                .text_color(if selected { theme.fg } else { theme.muted })
+                .when(selected, |s| s.bg(theme.surface_hover))
+                .hover(move |s| s.bg(theme.surface_hover))
+                .child(SharedString::from(text))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_rail_tab(which, cx)))
+                .child(probe(&self.env.regions, Region::Assistant(id)))
+        };
+        div()
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .px(px(tokens.spacing * 3.0))
+            .pt(px(tokens.spacing * 2.0))
+            .child(tab(
+                "today-tab-now",
+                RailTab::Now,
+                "Now",
+                today.request_sessions(),
+            ))
+            .child(tab(
+                "today-tab-memory",
+                RailTab::Memory,
+                "Memory",
+                today.memory_proposals(),
+            ))
+            .child(probe(&self.env.regions, Region::Assistant("today-tabs")))
+            .into_any_element()
+    }
+
+    /// Opens a tab of the rail and writes `assistant.rail_tab`, so the next page starts there.
+    pub fn set_rail_tab(&mut self, tab: RailTab, cx: &mut Context<Self>) {
+        let word = match tab {
+            RailTab::Now => "now",
+            RailTab::Memory => "memory",
+        };
+        if let Err(error) = self
+            .env
+            .settings
+            .write_user("assistant.rail_tab", toml::Value::String(word.to_owned()))
+        {
+            tracing::warn!("cannot save assistant.rail_tab: {error}");
+        }
+        cx.notify();
+    }
+
+    /// The rail's left border: a strip that takes the drag of its width (a double click puts the
+    /// width back).
+    fn rail_handle(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let theme = look.theme;
+        let (hover, held) = (theme.accent.opacity(0.45), theme.accent.opacity(0.8));
+        let dragging = self.resizing_rail();
+        div()
+            .id("rail-edge")
+            .group("rail-edge")
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_0()
+            .w(px(6.0))
+            .cursor_col_resize()
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                    this.start_rail_drag(event, window, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left_0()
+                    .w(px(2.0))
+                    .group_hover("rail-edge", move |s| s.bg(hover))
+                    .when(dragging, move |s| s.bg(held)),
+            )
+            .child(probe(&self.env.regions, Region::Assistant("rail-edge")))
+            .into_any_element()
+    }
+
+    /// One agent of *Working* or *Idle*: the Agents page's row, with what its state is worth
+    /// (`exact`: a chat the daemon runs; `state only`: a terminal agent's own report).
+    fn render_agent_row(
+        &self,
+        id: &'static str,
+        index: usize,
+        row: &WorkingRow,
+        look: &Look,
+    ) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
         let hover = theme.surface_hover;
+        let session = row.session;
+        let worth = if row.record.managed {
+            "exact"
+        } else {
+            "state only"
+        };
+        div()
+            .id(SharedString::from(format!("{id}-{index}")))
+            .relative()
+            .flex()
+            .items_start()
+            .gap(px(tokens.spacing * 1.5))
+            .px(px(tokens.spacing * 2.0))
+            .py(px(tokens.spacing))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(Box::new(OpenSession(session.to_string())), cx);
+            })
+            .child(
+                div()
+                    .pt(px(1.0))
+                    .child(agent_lead_glyph(&row.record, &theme)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.0))
+                    .child(agent_title_line(&row.record, &theme, &tokens))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .h(px(16.0))
+                            .child(agent_state_word(&row.record, false, &theme, &tokens))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(format!(
+                                        "· {} · {worth}",
+                                        agents_text::harness_text(&row.record)
+                                    ))),
+                            ),
+                    ),
+            )
+            .child(probe(&self.env.regions, Region::AssistantItem(id, index)))
+            .into_any_element()
+    }
+
+    /// The Now tab: the board.
+    fn render_now(&self, today: &Today, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
         let link = |id: &'static str, text: SharedString| {
             ui::Button::new(id, text, &theme, &tokens)
                 .compact()
@@ -439,64 +670,12 @@ impl AssistantPanel {
                 items,
             ));
         }
-        let mut working: Vec<AnyElement> = Vec::new();
-        for (index, row) in today.working.iter().enumerate() {
-            let session = row.session;
-            working.push(
-                div()
-                    .id(SharedString::from(format!("today-working-{index}")))
-                    .relative()
-                    .flex()
-                    .items_start()
-                    .gap(px(tokens.spacing * 1.5))
-                    .px(px(tokens.spacing * 2.0))
-                    .py(px(tokens.spacing))
-                    .rounded(px(tokens.radius))
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(Box::new(OpenSession(session.to_string())), cx);
-                    })
-                    .child(
-                        div()
-                            .pt(px(1.0))
-                            .child(agent_lead_glyph(&row.record, &theme)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .gap(px(2.0))
-                            .child(agent_title_line(&row.record, &theme, &tokens))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.0))
-                                    .h(px(16.0))
-                                    .child(agent_state_word(&row.record, false, &theme, &tokens))
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(tokens.secondary_font_size))
-                                            .text_color(theme.muted)
-                                            .child(SharedString::from(format!(
-                                                "· {}",
-                                                agents_text::harness_text(&row.record)
-                                            ))),
-                                    ),
-                            ),
-                    )
-                    .child(probe(
-                        &self.env.regions,
-                        Region::AssistantItem("today-working", index),
-                    ))
-                    .into_any_element(),
-            );
-        }
+        let mut working: Vec<AnyElement> = today
+            .working
+            .iter()
+            .enumerate()
+            .map(|(index, row)| self.render_agent_row("today-working", index, row, look))
+            .collect();
         if today.unconfirmed > 0 {
             // Not "No agents are running": their state is not known.
             working.push(
@@ -532,6 +711,42 @@ impl AssistantPanel {
                 working,
             ));
         }
+        if listed.contains(&Section::Idle) {
+            // Idle agents are not news: one folded line, the rows when it is opened.
+            let open = self.idle_open;
+            let mut items: Vec<AnyElement> = vec![
+                link(
+                    "today-idle",
+                    format!(
+                        "Idle · {}{}",
+                        today.idle.len(),
+                        if open { "" } else { " (hidden)" }
+                    )
+                    .into(),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.idle_open = !this.idle_open;
+                    cx.notify();
+                }))
+                .child(probe(&self.env.regions, Region::Assistant("today-idle")))
+                .into_any_element(),
+            ];
+            if open {
+                items.extend(
+                    today.idle.iter().enumerate().map(|(index, row)| {
+                        self.render_agent_row("today-idle-row", index, row, look)
+                    }),
+                );
+            }
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(tokens.spacing))
+                    .children(items)
+                    .into_any_element(),
+            );
+        }
         if listed.is_empty() {
             sections.push(
                 div()
@@ -544,28 +759,187 @@ impl AssistantPanel {
         hutan_ui::scroll_y(
             "assistant-today-scroll",
             div()
-                .id("assistant-today")
+                .id("assistant-today-now")
                 .relative()
                 .flex()
                 .flex_col()
-                .h_full()
+                .flex_1()
+                .min_h_0()
                 .gap(px(tokens.spacing * 3.0))
                 .p(px(tokens.spacing * 3.0))
-                // The rail is a card: a `surface` fill and no hairline. As a page of its own it
-                // is the page's background.
-                .when(!full, |s| s.flex_none().w(px(RAIL_WIDTH)).bg(theme.surface))
-                .when(full, |s| s.flex_1().min_w_0())
-                .children(sections)
-                .child(
-                    link("today-memory", "Memory".into())
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(OpenMawasMemory), cx);
-                        })
-                        .child(probe(&self.env.regions, Region::Assistant("today-memory"))),
-                )
-                .child(probe(&self.env.regions, Region::Assistant("today"))),
+                .children(sections),
         )
         .into_any_element()
+    }
+
+    /// The Memory tab: the proposals that wait for the user (answered in place; *Edit &
+    /// approve* opens the Memory page on one), the latest entries Mawas keeps, and the link to
+    /// the page.
+    fn render_memory(&self, today: &Today, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
+        let mut sections: Vec<AnyElement> = Vec::new();
+        let proposals: Vec<(usize, &TodayRow)> = today
+            .requests
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row.kind, TodayKind::Approval { memory: true, .. }))
+            .collect();
+        if !proposals.is_empty() {
+            let cards: Vec<AnyElement> = proposals
+                .iter()
+                .map(|(index, row)| self.render_needs_row(*index, row, true, look, cx))
+                .collect();
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(tokens.spacing))
+                    .child(ui::section_label(
+                        format!("Waiting for you · {}", proposals.len()),
+                        &theme,
+                        &tokens,
+                    ))
+                    .children(cards)
+                    .into_any_element(),
+            );
+        }
+        let entries: Vec<AnyElement> = if self.memory.unsupported {
+            vec![muted_line(
+                "This daemon keeps no memory (it predates protocol 0.32).",
+                look,
+            )]
+        } else if !self.memory.loaded && self.memory.entries.is_empty() {
+            vec![muted_line("Reading Mawas's memory…", look)]
+        } else if self.memory.entries.is_empty() {
+            vec![muted_line("Nothing remembered yet.", look)]
+        } else {
+            self.memory
+                .entries
+                .iter()
+                .take(MEMORY_ENTRIES_SHOWN)
+                .enumerate()
+                .map(|(index, entry)| {
+                    let first = entry.body.lines().next().unwrap_or("").trim().to_owned();
+                    div()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .px(px(tokens.spacing * 2.0))
+                        .child(
+                            div()
+                                .text_size(px(tokens.font_size))
+                                .truncate()
+                                .child(SharedString::from(first)),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(tokens.secondary_font_size))
+                                .text_color(theme.muted)
+                                .child(SharedString::from(format!(
+                                    "{}{}",
+                                    category_word(entry.category),
+                                    if entry.inferred {
+                                        " · written by Mawas"
+                                    } else {
+                                        ""
+                                    }
+                                ))),
+                        )
+                        .child(probe(
+                            &self.env.regions,
+                            Region::AssistantItem("today-memory-entry", index),
+                        ))
+                        .into_any_element()
+                })
+                .collect()
+        };
+        sections.push(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing))
+                .child(ui::section_label(
+                    "Latest entries".to_owned(),
+                    &theme,
+                    &tokens,
+                ))
+                .children(entries)
+                .into_any_element(),
+        );
+        sections.push(
+            ui::Button::new("today-memory", "Open Memory", &theme, &tokens)
+                .compact()
+                .ghost()
+                .child(icon(Icon::ActionDisclose, 12.0, theme.muted))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(OpenMawasMemory), cx);
+                })
+                .child(probe(&self.env.regions, Region::Assistant("today-memory")))
+                .into_any_element(),
+        );
+        hutan_ui::scroll_y(
+            "assistant-today-scroll",
+            div()
+                .id("assistant-today-memory")
+                .relative()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .gap(px(tokens.spacing * 3.0))
+                .p(px(tokens.spacing * 3.0))
+                .children(sections),
+        )
+        .into_any_element()
+    }
+
+    /// Reads the latest memory entries once the Memory tab is on screen (and again after
+    /// `memory.changed`). A hidden rail, and the Now tab, do no work.
+    pub(super) fn ensure_memory(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.rail_open
+            && self.env.settings.get::<AssistantSettings>().rail_tab == RailTab::Memory;
+        if !wanted || self.memory.loaded || !self.connected(cx) {
+            return;
+        }
+        if self.memory.loading {
+            self.memory.again = true;
+            return;
+        }
+        let connection = self.env.sessions.read(cx).connection().clone();
+        if !connection.supports_memory() {
+            self.memory.unsupported = true;
+            self.memory.loaded = true;
+            return;
+        }
+        self.memory.loading = true;
+        let workspace = self.env.sessions.read(cx).active_workspace().map(|w| w.id);
+        cx.spawn(async move |this, cx| {
+            let entries = connection
+                .memory_list(hutan_protocol::memory::MemoryList {
+                    workspace_id: workspace,
+                    ..Default::default()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.memory.loading = false;
+                match entries {
+                    Ok(mut entries) => {
+                        entries.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
+                        entries.truncate(MEMORY_ENTRIES_SHOWN);
+                        this.memory.entries = entries;
+                        this.memory.loaded = !std::mem::take(&mut this.memory.again);
+                    }
+                    Err(error) => {
+                        tracing::warn!("cannot read Mawas's memory: {error}");
+                        this.memory.loaded = true;
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_needs_row(
@@ -742,5 +1116,24 @@ impl AssistantPanel {
             Region::AssistantItem("today-row", row_index),
         ))
         .into_any_element()
+    }
+}
+
+/// One muted line of a tab.
+fn muted_line(text: &str, look: &Look) -> AnyElement {
+    div()
+        .text_color(look.theme.muted)
+        .text_size(px(look.tokens.secondary_font_size))
+        .child(SharedString::from(text.to_owned()))
+        .into_any_element()
+}
+
+/// What an entry is, as the Memory page words it.
+fn category_word(category: hutan_protocol::memory::MemoryCategory) -> &'static str {
+    use hutan_protocol::memory::MemoryCategory;
+    match category {
+        MemoryCategory::Profile => "Profile",
+        MemoryCategory::Fact => "Fact",
+        MemoryCategory::Note => "Note",
     }
 }
