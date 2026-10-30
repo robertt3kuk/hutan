@@ -665,3 +665,59 @@ fn a_pages_code_follows_the_code_font_live_and_in_a_page_opened_later(cx: &mut T
         "{coloured:?}"
     );
 }
+
+#[gpui::test]
+fn strikethrough_details_and_images_read_as_a_reader_expects(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon, "");
+    let (_keep, root) = repo();
+    std::fs::write(
+        root.join("img/wide.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 400 100\"><rect width=\"400\" height=\"100\" fill=\"#c33\"/></svg>",
+    )
+    .unwrap();
+    let text = "A ~~gone~~ word.\n\n<details>\n<summary>More</summary>\n\nThe hidden body.\n\n\
+                </details>\n\n![missing](img/none.png)\n\n![wide](img/wide.svg)\n";
+    let tab = open_text(&view, cx, &root, "html.md", text);
+    view.update_in(cx, |wb, window, cx| wb.toggle_markdown_preview(window, cx));
+    let page = tab_page(&tab, cx);
+    draw(cx);
+    draw(cx);
+    // The tags are not text, the summary is a bold line, the closing tag is no block.
+    assert_eq!(
+        kinds(&page, cx),
+        [
+            "paragraph",
+            "paragraph",
+            "paragraph",
+            "paragraph",
+            "paragraph"
+        ]
+    );
+    let blocks = page.read_with(cx, |p, _| p.parsed().blocks.clone());
+    let inlines = |at: usize| match &blocks[at].block {
+        Block::Paragraph(inlines) => inlines.clone(),
+        other => panic!("a paragraph, not {other:?}"),
+    };
+    assert!(
+        inlines(0)
+            .iter()
+            .any(|n| matches!(n, Inline::Strike(inner) if hutan_chat_view::markdown::plain_text(inner) == "gone"))
+    );
+    assert!(
+        matches!(inlines(1).as_slice(), [Inline::Strong(s)] if hutan_chat_view::markdown::plain_text(s) == "More")
+    );
+    assert_eq!(
+        hutan_chat_view::markdown::plain_text(&inlines(2)),
+        "The hidden body."
+    );
+    // The missing image is asked about and not found (its box says so); the SVG is found.
+    let resolved = page.read_with(cx, |p, _| p.resolved_images());
+    assert_eq!(
+        resolved,
+        vec![
+            ("img/none.png".to_owned(), None),
+            ("img/wide.svg".to_owned(), Some(root.join("img/wide.svg"))),
+        ]
+    );
+}

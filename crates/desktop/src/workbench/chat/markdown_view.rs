@@ -391,37 +391,191 @@ fn has_text(content: &[Inline]) -> bool {
     })
 }
 
-fn picture(item: &Picture<'_>, look: &Look, ids: &mut Ids) -> AnyElement {
-    let label = |alt: &str, url: &str| {
-        let shown = if alt.is_empty() { url } else { alt };
-        vec![Inline::Text(shown.to_owned())]
+/// Why an image is not drawn, in words: the web is never fetched, anything else is a file that
+/// is not there (or not an image, or too large, or on another computer).
+fn missing_reason(url: &str) -> &'static str {
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        "Web images are not loaded"
+    } else {
+        "Image not found"
+    }
+}
+
+/// What stands where an image cannot be drawn: a bordered box with the alt text (or the url
+/// when it has none) and why, linked when the image was.
+fn placeholder(
+    alt: &str,
+    url: &str,
+    reason: &str,
+    link: Option<&str>,
+    look: &Look,
+    ids: &mut Ids,
+) -> AnyElement {
+    let (theme, tokens) = (look.theme, look.tokens);
+    let headline = if alt.is_empty() { url } else { alt };
+    let boxed = div()
+        .flex()
+        .flex_col()
+        .gap(px(tokens.spacing / 2.0))
+        .px(px(tokens.spacing * 2.0))
+        .py(px(tokens.spacing * 1.5))
+        .max_w_full()
+        .border_1()
+        .border_color(theme.border)
+        .rounded(px(tokens.radius))
+        .text_size(px(tokens.secondary_font_size))
+        .child(
+            div()
+                .text_color(theme.fg)
+                .child(SharedString::from(headline.to_owned())),
+        )
+        .child(
+            div()
+                .text_color(theme.muted)
+                .child(SharedString::from(format!("{reason}: {url}"))),
+        );
+    match (link, &look.doc) {
+        (Some(target), Some(doc)) => {
+            let (target, doc) = (target.to_owned(), doc.clone());
+            div()
+                .id(ids.next("img"))
+                .on_click(move |_, window, cx| (doc.open)(&target, window, cx))
+                .child(boxed)
+                .into_any_element()
+        }
+        _ => boxed.into_any_element(),
+    }
+}
+
+/// The natural size of an SVG file in pixels, from its `width` and `height` or else its
+/// `viewBox`; `None` when it says neither (or is no SVG). Read once per file version.
+fn svg_size(file: &std::path::Path) -> Option<(f32, f32)> {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::time::SystemTime;
+    thread_local! {
+        static SIZES: RefCell<HashMap<PathBuf, (Option<SystemTime>, Option<(f32, f32)>)>> =
+            RefCell::new(HashMap::new());
+    }
+    let stamp = std::fs::metadata(file).ok()?.modified().ok();
+    SIZES.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((seen, size)) = cache.get(file)
+            && *seen == stamp
+        {
+            return *size;
+        }
+        let size = read_svg_size(file);
+        cache.insert(file.to_path_buf(), (stamp, size));
+        size
+    })
+}
+
+fn read_svg_size(file: &std::path::Path) -> Option<(f32, f32)> {
+    use std::io::Read as _;
+    let mut head = Vec::new();
+    std::fs::File::open(file)
+        .ok()?
+        .take(64 * 1024)
+        .read_to_end(&mut head)
+        .ok()?;
+    svg_size_of(&String::from_utf8_lossy(&head))
+}
+
+/// [`svg_size`] of the text of an SVG file.
+pub fn svg_size_of(text: &str) -> Option<(f32, f32)> {
+    let start = text.find("<svg")?;
+    let tag = &text[start..start + text[start..].find('>')?];
+    let attr = |name: &str| -> Option<String> {
+        let mut from = 0;
+        while let Some(found) = tag[from..].find(name) {
+            let at = from + found;
+            from = at + name.len();
+            if !tag[..at].ends_with(char::is_whitespace) {
+                continue;
+            }
+            let rest = tag[from..].trim_start().strip_prefix('=')?.trim_start();
+            let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+            let inner = &rest[1..];
+            return Some(inner[..inner.find(quote)?].to_owned());
+        }
+        None
     };
+    // A length in pixels (`120`, `120px`); a percentage or another unit says nothing here.
+    let length = |value: String| -> Option<f32> {
+        let number = value.trim().trim_end_matches("px").trim();
+        number.parse::<f32>().ok().filter(|v| *v > 0.0)
+    };
+    let (width, height) = (
+        attr("width").and_then(length),
+        attr("height").and_then(length),
+    );
+    let view_box = attr("viewBox").and_then(|v| {
+        let parts: Vec<f32> = v
+            .split([' ', ','])
+            .filter(|p| !p.is_empty())
+            .filter_map(|p| p.parse().ok())
+            .collect();
+        match parts.as_slice() {
+            [_, _, w, h] if *w > 0.0 && *h > 0.0 => Some((*w, *h)),
+            _ => None,
+        }
+    });
+    match (width, height, view_box) {
+        (Some(w), Some(h), _) => Some((w, h)),
+        (Some(w), None, Some((vw, vh))) => Some((w, w * vh / vw)),
+        (None, Some(h), Some((vw, vh))) => Some((h * vw / vh, h)),
+        (None, None, Some(size)) => Some(size),
+        _ => None,
+    }
+}
+
+fn picture(item: &Picture<'_>, look: &Look, ids: &mut Ids) -> AnyElement {
     let file = look.doc.as_ref().and_then(|doc| (doc.image)(item.url));
     let Some(file) = file else {
-        // Not a file this preview may draw (the web, another computer, not an image): the
-        // alt text, linked when the image was.
-        let text = label(item.alt, item.url);
-        let content = match item.link {
-            Some(url) => vec![Inline::Link {
-                content: text,
-                url: url.to_owned(),
-            }],
-            None => text,
-        };
-        return inline_text(&content, look, false, ids.next("alt"));
+        // Not a file this preview may draw (the web, another computer, not an image).
+        return placeholder(
+            item.alt,
+            item.url,
+            missing_reason(item.url),
+            item.link,
+            look,
+            ids,
+        );
     };
-    let alt = item.alt.to_owned();
+    let (alt, url) = (item.alt.to_owned(), item.url.to_owned());
     let (theme, tokens) = (look.theme, look.tokens);
+    let svg = file
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+        .then(|| svg_size(&file))
+        .flatten();
     let drawn = img(file)
         .max_w_full()
         .max_h(px(IMAGE_MAX_HEIGHT))
         .rounded(px(tokens.radius))
         .object_fit(ObjectFit::Contain)
+        // An SVG has no pixels to ask: the box takes the shape of its viewBox, so that
+        // `contain` leaves no blank band above and below.
+        .when_some(svg, |image, (w, h)| image.w(px(w)).aspect_ratio(w / h))
         .with_fallback(move || {
             div()
+                .px(px(tokens.spacing * 2.0))
+                .py(px(tokens.spacing * 1.5))
+                .border_1()
+                .border_color(theme.border)
+                .rounded(px(tokens.radius))
                 .text_color(theme.muted)
                 .text_size(px(tokens.secondary_font_size))
-                .child(SharedString::from(format!("[{alt}]")))
+                .child(SharedString::from(format!(
+                    "{}: {url}",
+                    if alt.is_empty() {
+                        "Image could not be drawn"
+                    } else {
+                        &alt
+                    }
+                )))
                 .into_any_element()
         });
     match (item.link, &look.doc) {
@@ -667,7 +821,7 @@ pub fn block_element(block: &Block, look: &Look, ids: &mut Ids) -> AnyElement {
 mod tests {
     use hutan_chat_view::markdown::{Block, parse};
 
-    use super::{has_text, is_task, pictures};
+    use super::{has_text, is_task, missing_reason, pictures, svg_size_of};
 
     fn paragraph(text: &str) -> Vec<hutan_chat_view::markdown::Inline> {
         match parse(text).into_iter().next() {
@@ -705,5 +859,48 @@ mod tests {
         };
         assert!(is_task(&items[0]));
         assert!(!is_task(&items[1]));
+    }
+
+    #[test]
+    fn an_svg_is_as_big_as_it_says_and_else_as_its_view_box() {
+        assert_eq!(
+            svg_size_of("<svg xmlns=\"x\" width=\"120\" height=\"40px\" viewBox=\"0 0 10 10\">"),
+            Some((120.0, 40.0))
+        );
+        assert_eq!(
+            svg_size_of("<?xml version=\"1.0\"?>\n<svg viewBox=\"0 0 400 100\" xmlns=\"x\">"),
+            Some((400.0, 100.0))
+        );
+        // One side and a view box: the other follows the shape.
+        assert_eq!(
+            svg_size_of("<svg width='200' viewBox='0,0,400,100'>"),
+            Some((200.0, 50.0))
+        );
+        assert_eq!(
+            svg_size_of("<svg height=\"50\" viewBox=\"0 0 400 100\">"),
+            Some((200.0, 50.0))
+        );
+        // Nothing to go by: a percentage, no size at all, not an SVG.
+        assert_eq!(svg_size_of("<svg width=\"100%\" height=\"100%\">"), None);
+        assert_eq!(svg_size_of("<svg>"), None);
+        assert_eq!(svg_size_of("<html></html>"), None);
+        // `data-width` is not `width`.
+        assert_eq!(
+            svg_size_of("<svg data-width=\"9\" viewBox=\"0 0 4 2\">"),
+            Some((4.0, 2.0))
+        );
+    }
+
+    #[test]
+    fn a_missing_image_says_why() {
+        assert_eq!(missing_reason("img/gone.png"), "Image not found");
+        assert_eq!(
+            missing_reason("https://x.y/a.png"),
+            "Web images are not loaded"
+        );
+        assert_eq!(
+            missing_reason("HTTP://x.y/a.png"),
+            "Web images are not loaded"
+        );
     }
 }
