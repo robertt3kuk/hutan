@@ -58,6 +58,7 @@ use hutan_protocol::provider::*;
 use hutan_protocol::recovery::*;
 use hutan_protocol::render::*;
 use hutan_protocol::resources::*;
+use hutan_protocol::stats::*;
 use hutan_protocol::suggest::*;
 use hutan_protocol::task::*;
 use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch, TerminalSearchResult};
@@ -3952,6 +3953,20 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AgentMeasureContext(AgentMeasureContext { session_id: sid() }),
         ),
         (
+            "agents_stats",
+            Request::AgentsStats(AgentsStatsRequest::default()),
+        ),
+        (
+            "agents_stats_window",
+            Request::AgentsStats(AgentsStatsRequest {
+                since_ms: Some(1_791_290_000_000),
+                until_ms: Some(1_791_894_200_000),
+                group_by: StatsBy::Day,
+                workspace_id: Some(ws()),
+                limit: Some(10),
+            }),
+        ),
+        (
             "agents_activity",
             Request::AgentsActivity(AgentsActivityRequest::default()),
         ),
@@ -5683,6 +5698,115 @@ fn update_status_fixture() -> UpdateStatus {
             message: None,
         }),
         install: None,
+    }
+}
+
+/// Flow statistics with every part present: a project group with chats and a terminal agent,
+/// waits from both sources, an inferred retry, tokens with an estimated cost, a failure that
+/// came again and an agent that looks stuck.
+fn stats_fixture() -> AgentsStats {
+    let group = StatsGroup {
+        key: ws().to_string(),
+        label: "hutan".into(),
+        coverage: GroupCoverage {
+            chats: 2,
+            terminal_agents: 1,
+        },
+        turns: Some(TurnStats {
+            count: 6,
+            failed: 1,
+            cancelled: 0,
+            wall_ms_total: 180_000,
+            wall_ms_longest: 90_000,
+            wall_ms_mean: 30_000,
+            active_ms_total: None,
+        }),
+        tasks: Some(TaskStats {
+            done: 1,
+            failed: 0,
+            cancelled: 0,
+            wall_ms_total: 600_000,
+            wall_ms_longest: 600_000,
+        }),
+        waits: Some(WaitStats {
+            count: 4,
+            total_ms: 420_000,
+            longest_ms: 300_000,
+            by_source: vec![
+                WaitSide {
+                    source: WaitSource::Audit,
+                    count: 3,
+                    total_ms: 120_000,
+                    longest_ms: 80_000,
+                    open: 0,
+                },
+                WaitSide {
+                    source: WaitSource::StateLog,
+                    count: 1,
+                    total_ms: 300_000,
+                    longest_ms: 300_000,
+                    open: 1,
+                },
+            ],
+            by_kind: vec![
+                WaitKind {
+                    kind: "command".into(),
+                    count: 2,
+                    total_ms: 70_000,
+                },
+                WaitKind {
+                    kind: "permission".into(),
+                    count: 1,
+                    total_ms: 300_000,
+                },
+            ],
+        }),
+        retries: Some(RetryStats {
+            count: 1,
+            inferred: true,
+        }),
+        tokens: Some(TokenStats {
+            turns_reported: 5,
+            input: 41_000,
+            cached_input: 30_000,
+            output: 2_100,
+            total: 43_100,
+            cost_usd_estimate: Some(0.12),
+        }),
+    };
+    AgentsStats {
+        from_ms: 1_791_290_000_000,
+        to_ms: 1_791_894_200_000,
+        group_by: StatsBy::Project,
+        coverage: StatsCoverage {
+            state_log: true,
+            state_log_from_ms: Some(1_791_700_000_000),
+            tokens_from_ms: Some(1_791_290_000_000),
+            chats: 2,
+            terminal_agents: 1,
+        },
+        total: StatsGroup {
+            key: "all".into(),
+            label: "Everything".into(),
+            ..group.clone()
+        },
+        groups: vec![group],
+        omitted_groups: 2,
+        failures: vec![FailureCluster {
+            pattern: "rate limited: retry in # s".into(),
+            count: 3,
+            sessions: 2,
+            last_ms: 1_791_894_000_000,
+            source: FailureSource::TurnError,
+        }],
+        flags: vec![StatsFlag {
+            session_id: sid(),
+            title: "Refactor auth".into(),
+            kind: FlagKind::UnconfirmedWorking,
+            since_ms: 1_791_880_000_000,
+            detail: "says it works since 4 h ago; nothing else is known".into(),
+        }],
+        not_recorded: vec!["active time per turn".into()],
     }
 }
 
@@ -9191,6 +9315,47 @@ fn responses_match_fixtures() {
         (
             "agents_board",
             ControlMessage::ok(92, &board_fixture()).unwrap(),
+        ),
+        (
+            "agents_stats",
+            ControlMessage::ok(96, &stats_fixture()).unwrap(),
+        ),
+        (
+            "agents_stats_empty",
+            ControlMessage::ok(
+                97,
+                &AgentsStats {
+                    from_ms: 1_791_290_000_000,
+                    to_ms: 1_791_894_200_000,
+                    group_by: StatsBy::Project,
+                    coverage: StatsCoverage {
+                        state_log: false,
+                        state_log_from_ms: None,
+                        tokens_from_ms: None,
+                        chats: 0,
+                        terminal_agents: 0,
+                    },
+                    total: StatsGroup {
+                        key: "all".into(),
+                        label: "Everything".into(),
+                        coverage: GroupCoverage {
+                            chats: 0,
+                            terminal_agents: 0,
+                        },
+                        turns: None,
+                        tasks: None,
+                        waits: None,
+                        retries: None,
+                        tokens: None,
+                    },
+                    groups: Vec::new(),
+                    omitted_groups: 0,
+                    failures: Vec::new(),
+                    flags: Vec::new(),
+                    not_recorded: Vec::new(),
+                },
+            )
+            .unwrap(),
         ),
         (
             "agents_activity",
