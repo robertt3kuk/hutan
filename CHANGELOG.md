@@ -30,6 +30,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - A failed terminal agent's own error text reaches the board, the sidebar and Mawas (not just "The main agent failed"); the board shows a chat's current model after *Switch model*; `hutan reopen` no longer makes the window say the daemon restarted; Recent speaks in words ("1 file", "task work waits for review"), and a terminal agent waiting on a question is no longer labelled *Approval*.
 - Closing a tab no longer opens some other agent's session; the *Undo* note stays 12 s (and while the pointer is on it), and ⌘K *Tab: Reopen Closed Tab* brings back the last closed sessions after it's gone. Tab menu: *Close Tab*, *Close Tab, Keep Running*, *Close session…*.
 - A side preview or split next to an agent never squeezes a pane below a readable width, and panes keep their widths when a neighbour closes. Esc closes Settings instead of reaching the terminal behind it. Showing or hiding the right panel redraws at once. The font picker says *System font*.
+- Markdown preview: code follows the code font live, `~~strikethrough~~` is drawn (in chat too), a README's `<details>`/`<summary>`, `<br>` and `<img>` are read and other HTML tags drop to their text, SVG images take their own size without blank bands, and a missing or web image is a box that says why.
 
 ## 0.3.4 — 2026-10-30
 
