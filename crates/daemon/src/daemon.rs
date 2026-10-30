@@ -540,11 +540,12 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             ui.clone(),
         )
     });
-    registry.chats().set_mcp_wiring(McpWiring {
-        enabled: settings.control.mcp,
+    registry.chats().set_mcp_wiring(McpWiring::new(
+        settings.control.mcp,
         hutan_bin,
-        socket: paths.socket.clone(),
-    });
+        paths.socket.clone(),
+        paths.base.join("mcp"),
+    ));
     let updates = UpdateService::new(UpdateInputs {
         settings: settings.updates.clone(),
         tuning: config.updates.clone(),

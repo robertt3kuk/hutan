@@ -920,3 +920,36 @@ async fn agents_activity_reads_a_window_and_is_marked_untrusted() {
     assert!(is_error(&mcp.answer(call).await));
     t.stop().await;
 }
+
+/// `hutan mcp --read-only-tools` is how the daemon learns which tools a Mawas harness may run
+/// without asking (MAWAS-READS): it prints the table's reads, needs no daemon and starts no
+/// server.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_read_only_tools_are_listed_without_a_daemon() {
+    let home = tempfile::tempdir().unwrap();
+    let output = tokio::process::Command::new(HUTAN)
+        .args(["mcp", "--read-only-tools"])
+        .env("HUTAN_HOME", home.path())
+        .env_remove("HUTAN_SOCKET")
+        .env_remove("HUTAN_SESSION_ID")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    let names: Vec<&str> = text.lines().collect();
+    for read in [
+        "agents_board",
+        "agents_activity",
+        "question_list",
+        "history_sessions",
+    ] {
+        assert!(names.contains(&read), "{read} in {names:?}");
+    }
+    assert!(!names.contains(&"chat_send") && !names.contains(&"chat_queue_add"));
+    assert!(
+        std::fs::read_dir(home.path()).unwrap().next().is_none(),
+        "it never started a daemon"
+    );
+}

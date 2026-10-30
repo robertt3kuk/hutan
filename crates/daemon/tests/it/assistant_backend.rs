@@ -156,6 +156,11 @@ struct Setup {
     /// The body of a fake `omp` CLI (`[harness.omp] cli`), which answers `omp models --json`
     /// for the readiness check of the automatic backend.
     omp_cli: Option<String>,
+    /// The body of a fake `hutan` (`DaemonConfig::hutan_bin`) that answers
+    /// `hutan mcp --read-only-tools`; `None`: the daemon finds no CLI that can.
+    reads: Option<&'static str>,
+    /// Codex runs through a wrapper that logs its arguments to `codex-argv.log`.
+    codex_argv: bool,
 }
 
 impl Default for Setup {
@@ -168,6 +173,8 @@ impl Default for Setup {
             missing_omp: false,
             missing_codex: false,
             omp_cli: None,
+            reads: None,
+            codex_argv: false,
         }
     }
 }
@@ -176,7 +183,12 @@ impl B {
     async fn start(setup: Setup) -> Self {
         let logs = tempfile::tempdir().unwrap();
         let toml = Self::toml(logs.path(), &setup);
-        let daemon = TestDaemon::start_with(&toml, |config| config.gateway = gateway()).await;
+        let hutan_bin = setup.reads.map(|body| fake_cli("hutan", body));
+        let daemon = TestDaemon::start_with(&toml, |config| {
+            config.gateway = gateway();
+            config.hutan_bin = hutan_bin;
+        })
+        .await;
         Self::around(daemon, logs).await
     }
 
@@ -225,8 +237,19 @@ impl B {
         let codex_table = if setup.missing_codex {
             format!("[codex]\nbin = {:?}\n\n", logs.join("no-such-codex"))
         } else {
+            let bin = if setup.codex_argv {
+                fake_cli(
+                    "codex-argv",
+                    &format!(
+                        "printf '%s\\n' \"$@\" >> {:?}\nexec {codex:?} \"$@\"",
+                        logs.join("codex-argv.log")
+                    ),
+                )
+            } else {
+                codex.clone()
+            };
             format!(
-                "[codex]\nbin = {codex:?}\nargs = [\"replay\", \"--received\", {codex_received:?}, {codex_transcript:?}, \"app-server\"]\n\n",
+                "[codex]\nbin = {bin:?}\nargs = [\"replay\", \"--received\", {codex_received:?}, {codex_transcript:?}, \"app-server\"]\n\n",
                 codex_received = logs.join("codex-received.jsonl"),
                 codex_transcript = codex_fixtures().join(format!("{}.jsonl", setup.codex)),
             )
@@ -1292,5 +1315,179 @@ async fn a_harness_that_cannot_start_fails_its_first_message_and_another_backend
     let error = t.client.chat_send(omp.id, "again").await.unwrap_err();
     assert_eq!(remote_code(Err::<(), _>(error)), ErrorCode::ProviderError);
     assert_eq!(t.session(omp.id).await.state, SessionState::Idle);
+    t.stop().await;
+}
+
+// ---- reads are free (MAWAS-READS, ADR 0025 R1) ---------------------------------------------------
+
+/// A fake `hutan` that names two read-only tools, as `hutan mcp --read-only-tools` does.
+const READS_CLI: &str = "printf 'agents_board\\nquestion_list\\n'";
+
+fn plain_chat(agent: &str, project: &WorkspaceInfo, cwd: &Path) -> Request {
+    Request::ChatCreate(hutan_protocol::chat::ChatCreate {
+        extra_dirs: Vec::new(),
+        contain: None,
+        workspace_id: Some(project.id),
+        cwd: cwd.to_owned(),
+        agent: agent.into(),
+        model: None,
+        approval_policy: None,
+        sandbox: None,
+        title: None,
+        mode: None,
+        provider_id: None,
+        system_prompt: None,
+        account: None,
+        safety: None,
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_omp_assistant_runs_the_read_only_hutan_tools_without_asking_through_a_private_overlay()
+{
+    use hutan_daemon::mcp_wiring::omp_overlay;
+    let t = B::start(Setup {
+        assistant: OMP_ASSISTANT,
+        reads: Some(READS_CLI),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let argv = t.argv("omp");
+    let at = argv
+        .iter()
+        .position(|a| a == "--config")
+        .unwrap_or_else(|| panic!("no --config: {argv:?}"));
+    let overlay = PathBuf::from(&argv[at + 1]);
+    // Under the daemon's own data directory, private, and made of the CLI's list alone.
+    assert!(
+        overlay.starts_with(t.daemon.paths.base.join("mcp")),
+        "{overlay:?}"
+    );
+    let mode = std::fs::metadata(&overlay).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "{mode:o}");
+    let names = ["agents_board".to_owned(), "question_list".to_owned()];
+    assert_eq!(
+        std::fs::read_to_string(&overlay).unwrap(),
+        omp_overlay(&names)
+    );
+    let text = std::fs::read_to_string(&overlay).unwrap();
+    assert!(text.contains("mcp__hutan_agents_board: allow"), "{text}");
+    assert!(
+        !text.contains("chat_send"),
+        "a tool that writes is not in it: {text}"
+    );
+    // The mode is still the one that asks for everything else.
+    let mode = argv.iter().position(|a| a == "--approval-mode").unwrap();
+    assert_eq!(argv[mode + 1], "always-ask");
+
+    // An ordinary OMP chat gets none of it: its user's own settings decide.
+    let project = t.workspace("proj").await;
+    let before = t.argv("omp").len();
+    let plain = t
+        .client
+        .call::<SessionResult>(plain_chat("omp", &project, &t.project))
+        .await
+        .unwrap();
+    assert!(!plain.session.chat.as_ref().unwrap().assistant);
+    // The plain chat starts its own OMP (`start_agent` waits until it has).
+    t.start_agent(plain.session.id).await;
+    let after = t.argv("omp");
+    assert!(after.len() > before, "the plain chat started its own OMP");
+    assert!(
+        !after[before..].iter().any(|a| a == "--config"),
+        "{:?}",
+        &after[before..]
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_an_answer_from_the_cli_the_assistant_starts_and_the_harness_keeps_asking() {
+    for cli in ["exit 3", "printf 'chat send\\n'", "true"] {
+        let t = B::start(Setup {
+            assistant: OMP_ASSISTANT,
+            reads: Some(cli),
+            ..Setup::default()
+        })
+        .await;
+        let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+        t.start_agent(session.id).await;
+        let argv = t.argv("omp");
+        assert!(!argv.iter().any(|a| a == "--config"), "{cli}: {argv:?}");
+        assert!(
+            argv.iter().any(|a| a == "--approval-mode"),
+            "{cli}: {argv:?}"
+        );
+        assert!(!t.daemon.paths.base.join("mcp").exists(), "{cli}");
+        t.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claude_assistant_gets_the_read_only_tools_as_allowed_tools_on_session_new() {
+    let t = B::start(Setup {
+        assistant: CLAUDE_ASSISTANT,
+        reads: Some(READS_CLI),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let new = t.received_of("claude", "session/new");
+    let allowed = &new[0]["params"]["_meta"]["claudeCode"]["options"]["allowedTools"];
+    assert_eq!(
+        allowed,
+        &serde_json::json!(["mcp__hutan__agents_board", "mcp__hutan__question_list"]),
+        "{new:?}"
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_codex_assistant_approves_the_read_only_tools_and_a_plain_chat_does_not() {
+    let t = B::start(Setup {
+        assistant: "backend = \"codex\"",
+        reads: Some(READS_CLI),
+        codex_argv: true,
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let log = |t: &B| {
+        std::fs::read_to_string(t.logs.path().join("codex-argv.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let argv = log(&t);
+    for name in ["agents_board", "question_list"] {
+        let wanted = format!("mcp_servers.hutan.tools.{name}.approval_mode=\"approve\"");
+        assert!(argv.contains(&wanted), "{wanted}: {argv:?}");
+    }
+    assert!(
+        argv.iter()
+            .any(|a| a.starts_with("mcp_servers.hutan.command=")),
+        "Hutan's own server is still registered: {argv:?}"
+    );
+    let project = t.workspace("proj").await;
+    let before = log(&t).len();
+    let plain = t
+        .client
+        .call::<SessionResult>(plain_chat("codex", &project, &t.project))
+        .await
+        .unwrap();
+    // The plain chat starts its own Codex (`start_agent` waits until it has).
+    t.start_agent(plain.session.id).await;
+    let after = log(&t);
+    assert!(after.len() > before);
+    assert!(
+        !after[before..].iter().any(|a| a.contains("approval_mode")),
+        "{:?}",
+        &after[before..]
+    );
     t.stop().await;
 }

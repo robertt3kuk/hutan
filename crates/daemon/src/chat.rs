@@ -66,7 +66,9 @@ use crate::harness::{
     AGENT_CLAUDE, AGENT_OMP, Harnesses, assistant_profile, is_harness_agent, omp_assistant_prompt,
 };
 use crate::insight::{InsightHub, InsightTarget};
-use crate::mcp_wiring::{McpServerSpec, McpWiring};
+use crate::mcp_wiring::{
+    McpServerSpec, McpWiring, claude_allowed_tools, codex_read_overrides, omp_overlay,
+};
 use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
 use crate::providers::ProviderService;
@@ -866,15 +868,33 @@ impl ChatManager {
         self.mcp.get().and_then(|wiring| wiring.server_for(session))
     }
 
-    /// The Codex command line for the agent of `session`, with `hutan mcp` registered.
+    /// The tools of `hutan mcp` that only read, for a Mawas harness to run without asking the
+    /// user (`docs/control.md` § Mawas › Reads are free): the CLI's own table is the list. Empty
+    /// for any other chat, under `[control] mcp = false`, and when the CLI cannot be asked (the
+    /// harness then keeps its own prompts). What is told is logged, per session.
+    async fn mawas_reads(&self, session: SessionId, assistant: bool) -> Vec<String> {
+        let Some(wiring) = self.mcp.get().filter(|wiring| assistant && wiring.enabled) else {
+            return Vec::new();
+        };
+        let names = wiring.read_only_tools().await;
+        if !names.is_empty() {
+            info!(%session, tools = %names.join(","), "Mawas's harness is told not to ask before these read-only Hutan tools");
+        }
+        names
+    }
+
+    /// The Codex command line for the agent of `session`, with `hutan mcp` registered and the
+    /// read-only tools in `reads` approved without asking.
     async fn codex_for(
         &self,
         session: SessionId,
         account: Option<&str>,
+        reads: &[String],
     ) -> Result<CodexConfig, ErrorBody> {
         let mut codex = self.resolved_codex(account).await?;
         if let Some(server) = self.mcp_server(session) {
             codex.args.extend(server.codex_overrides());
+            codex.args.extend(codex_read_overrides(reads));
         }
         Ok(codex)
     }
@@ -1341,7 +1361,8 @@ impl ChatManager {
             dirs: crate::session_dirs::existing(&spec.dirs),
             dirs_managed: spec.dirs_managed,
         };
-        let codex = self.codex_for(id, spec.account.as_deref()).await?;
+        let reads = self.mawas_reads(id, spec.assistant).await;
+        let codex = self.codex_for(id, spec.account.as_deref(), &reads).await?;
         let CodexSession {
             adapter,
             started,
@@ -1387,6 +1408,18 @@ impl ChatManager {
         let account = spec.account.clone();
         let safety = spec.safety;
         let mode = spec.assistant.then(|| self.assistant_policy().mode);
+        // Mawas's harness does not ask the user before Hutan's read-only tools (R1: reads are
+        // free): OMP through a private overlay file, Claude Code through `allowedTools` below.
+        let reads = self.mawas_reads(id, spec.assistant).await;
+        let overlay = (spec.agent == AGENT_OMP && !reads.is_empty())
+            .then(|| {
+                let wiring = self.mcp.get()?;
+                wiring
+                    .write_private("omp-reads.yml", &omp_overlay(&reads))
+                    .map_err(|error| warn!(%error, "could not write the OMP overlay; OMP keeps asking before Hutan's read-only tools"))
+                    .ok()
+            })
+            .flatten();
         // Mawas's memory: OMP gets it in a private prompt file named on its command line (never
         // in argv itself), Claude Code on its first turn, below.
         let memory = if spec.assistant {
@@ -1408,6 +1441,7 @@ impl ChatManager {
                 prompt_file.as_deref(),
                 account.as_deref(),
                 safety,
+                overlay.as_deref(),
             )
         })
         .await
@@ -1452,9 +1486,14 @@ impl ChatManager {
             resume_thread_id: spec.thread_id.clone(),
             developer_instructions: None,
             fork: fork_from(spec),
-            session_meta: spec
-                .safety
-                .and_then(|preset| crate::safety::claude_session_meta(&spec.agent, preset)),
+            session_meta: if spec.assistant && spec.agent == AGENT_CLAUDE && !reads.is_empty() {
+                Some(serde_json::json!({
+                    "claudeCode": {"options": {"allowedTools": claude_allowed_tools(&reads)}}
+                }))
+            } else {
+                spec.safety
+                    .and_then(|preset| crate::safety::claude_session_meta(&spec.agent, preset))
+            },
             dirs: launch_dirs,
             dirs_managed: spec.dirs_managed,
         };

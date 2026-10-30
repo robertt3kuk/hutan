@@ -155,6 +155,16 @@ pub fn tools() -> &'static [Tool] {
     TOOLS
 }
 
+/// The names of the tools that only read (`readOnlyHint`), in the table's order: the one list
+/// `hutan mcp --read-only-tools` prints and the daemon tells a Mawas harness not to ask the
+/// user about (`docs/control.md` § Mawas › Reads are free).
+pub fn read_only_names() -> impl Iterator<Item = &'static str> {
+    TOOLS
+        .iter()
+        .filter(|tool| tool.read_only)
+        .map(|tool| tool.name)
+}
+
 pub fn find(name: &str) -> Option<&'static Tool> {
     TOOLS.iter().find(|tool| tool.name == name)
 }
@@ -1901,5 +1911,44 @@ mod tests {
         );
         let list = find("chat_queue_list").unwrap();
         assert!(list.read_only && list.description.contains("20"));
+    }
+
+    /// The list a Mawas harness is told not to ask about (`hutan mcp --read-only-tools`) is the
+    /// table's own `readOnlyHint`: every tool that only reads, none that writes, and only plain
+    /// names (the daemon puts them into a harness's configuration as keys).
+    #[test]
+    fn the_read_only_names_are_the_tables_reads_and_only_those() {
+        let names: Vec<&str> = read_only_names().collect();
+        for tool in tools() {
+            assert_eq!(names.contains(&tool.name), tool.read_only, "{}", tool.name);
+        }
+        for read in [
+            "agents_board",
+            "question_list",
+            "history_sessions",
+            "chat_queue_list",
+        ] {
+            assert!(names.contains(&read), "{read}");
+        }
+        for write in [
+            "chat_send",
+            "chat_queue_add",
+            "ask_suggest",
+            "session_stop",
+            "ui_run",
+        ] {
+            assert!(!names.contains(&write), "{write} writes");
+        }
+        for name in &names {
+            assert!(
+                name.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+                "{name}"
+            );
+        }
+        let mut out = Vec::new();
+        crate::mcp::print_read_only_tools(&mut out).unwrap();
+        let printed = String::from_utf8(out).unwrap();
+        assert_eq!(printed.lines().collect::<Vec<_>>(), names);
     }
 }

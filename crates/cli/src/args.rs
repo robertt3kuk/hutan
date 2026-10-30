@@ -204,7 +204,7 @@ pub enum Command {
     Setup,
     /// Serve Hutan's control tools to an agent as an MCP server on stdio (started by the agent;
     /// see `hutan help agent`)
-    Mcp,
+    Mcp(McpArgs),
     /// Help for a command; `hutan help agent` prints the compact guide for coding agents
     Help(HelpArgs),
 }
@@ -213,6 +213,14 @@ pub enum Command {
 pub struct HelpArgs {
     /// `agent` for the agent guide, or the command to explain
     pub topic: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct McpArgs {
+    /// Print the names of the tools that only read, one per line, and exit: what the daemon
+    /// tells a Mawas harness not to ask the user about (it needs no daemon and starts no server)
+    #[arg(long)]
+    pub read_only_tools: bool,
 }
 
 /// What the desktop window offers, and how to drive it. Needs a running desktop; anything an

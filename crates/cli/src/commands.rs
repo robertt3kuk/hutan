@@ -85,7 +85,11 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Help(args) => help::run(&args.topic),
         Command::Host(command) => host::run(cli.json, command).await,
         Command::Proxy => ctx?.proxy().await,
-        Command::Mcp => crate::mcp::run(ctx?.socket_arg).await,
+        Command::Mcp(args) if args.read_only_tools => {
+            crate::mcp::print_read_only_tools(&mut std::io::stdout().lock())?;
+            Ok(())
+        }
+        Command::Mcp(_) => crate::mcp::run(ctx?.socket_arg).await,
         Command::Ui(command) => ctx?.ui(command).await,
         Command::Setup => ctx?.setup().await,
         Command::Daemon(DaemonCommand::Start) => ctx?.daemon_start().await,
@@ -787,7 +791,7 @@ fn refused_for_host(command: &Command) -> Option<&'static str> {
         }
         Command::Host(_) => Some("host commands manage the list on this machine; drop `--host`"),
         Command::Proxy => Some("`hutan proxy` is what ssh runs on the host; drop `--host`"),
-        Command::Mcp => Some(
+        Command::Mcp(_) => Some(
             "an MCP server belongs to the agent that starts it; configure the agent to run \
              `ssh HOST hutan mcp`",
         ),

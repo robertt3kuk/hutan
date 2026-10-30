@@ -299,7 +299,7 @@ impl Harnesses {
         agent: &str,
         assistant: Option<AssistantMode>,
     ) -> Result<AcpConfig, ErrorBody> {
-        self.acp_config_with(agent, assistant, None, None, None)
+        self.acp_config_with(agent, assistant, None, None, None, None)
     }
 
     /// [`acp_config`](Self::acp_config) with the append-system-prompt of an OMP assistant given
@@ -315,6 +315,11 @@ impl Harnesses {
     /// (`--approval-mode`, `--tools`: [`crate::safety::omp_args`]); Claude Code's preset goes
     /// through the session's metadata and its session mode, which the chat manager sets. An
     /// assistant keeps its own profile: it never has a preset.
+    ///
+    /// `config_overlay` (an OMP assistant only) is a private `config.yml`-style file passed as
+    /// `--config`: it overrides the user's own settings for this process alone, so Hutan can say
+    /// which of its tools run without asking without touching the user's configuration
+    /// ([`crate::mcp_wiring::omp_overlay`]).
     pub fn acp_config_with(
         &self,
         agent: &str,
@@ -322,6 +327,7 @@ impl Harnesses {
         prompt_file: Option<&Path>,
         account: Option<&str>,
         safety: Option<SafetyPreset>,
+        config_overlay: Option<&Path>,
     ) -> Result<AcpConfig, ErrorBody> {
         let def = def(agent)
             .filter(|_| is_harness_agent(agent))
@@ -360,6 +366,12 @@ impl Harnesses {
                     "--approval-mode".to_owned(),
                     OMP_ASK_APPROVAL_MODE.to_owned(),
                 ]),
+            }
+            if let Some(overlay) = config_overlay {
+                args.extend([
+                    "--config".to_owned(),
+                    overlay.to_string_lossy().into_owned(),
+                ]);
             }
             args.extend(["--append-system-prompt".to_owned(), prompt]);
         }

@@ -22,3 +22,11 @@ pub async fn run(socket: Option<PathBuf>) -> Result<(), CliError> {
     .await?;
     Ok(())
 }
+
+/// `hutan mcp --read-only-tools`: the names of the tools that only read, one per line.
+pub fn print_read_only_tools(out: &mut impl std::io::Write) -> std::io::Result<()> {
+    for name in table::read_only_names() {
+        writeln!(out, "{name}")?;
+    }
+    Ok(())
+}
