@@ -250,7 +250,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "chat.fork.worktree",
             "agent.insight",
             "update",
-            "assistant.focus"
+            "assistant.focus",
+            "control.grants.target"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);
