@@ -2047,6 +2047,7 @@ fn a_suggestion_on_an_approval_card_of_a_chat_is_used_with_one_click_of_the_user
         .map(|(_, msg)| msg["result"].clone())
         .collect();
     assert_eq!(answers, [json!({"decision": "accept"})]);
+}
 
 // ---- AGENTS-ACTIVITY: the rail's Recent tab -------------------------------------------------------
 
