@@ -454,9 +454,10 @@ fn svg_size(file: &std::path::Path) -> Option<(f32, f32)> {
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::time::SystemTime;
+    /// A file's size as read, with the time of the file it was read from.
+    type Read = (Option<SystemTime>, Option<(f32, f32)>);
     thread_local! {
-        static SIZES: RefCell<HashMap<PathBuf, (Option<SystemTime>, Option<(f32, f32)>)>> =
-            RefCell::new(HashMap::new());
+        static SIZES: RefCell<HashMap<PathBuf, Read>> = RefCell::new(HashMap::new());
     }
     let stamp = std::fs::metadata(file).ok()?.modified().ok();
     SIZES.with(|cache| {
