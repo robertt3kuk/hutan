@@ -634,7 +634,12 @@ async fn daemon_toml_backend_omp_creates_a_read_only_omp_assistant_in_advisor_mo
         .iter()
         .position(|a| a == "--append-system-prompt")
         .expect("--append-system-prompt");
-    assert!(argv[prompt + 1].contains("cannot run commands"), "{argv:?}");
+    // A Global chat is given the supervisor playbook beside the prompt, so the value is the
+    // daemon's private prompt file rather than the prompt itself.
+    let text =
+        std::fs::read_to_string(&argv[prompt + 1]).unwrap_or_else(|_| argv[prompt + 1].clone());
+    assert!(text.contains("cannot run commands"), "{text}");
+    assert!(text.contains("--- Hutan supervisor playbook"), "{text}");
     // The default is that session, found again by a second open.
     let again = t.open(AssistantScope::Global, None, false).await.unwrap();
     assert_eq!(again.id, session.id);
@@ -675,7 +680,10 @@ async fn an_ask_before_acting_omp_assistant_has_every_tool_and_routes_its_approv
         .iter()
         .position(|a| a == "--append-system-prompt")
         .expect("--append-system-prompt");
-    assert!(argv[prompt + 1].contains("can act"), "{argv:?}");
+    let text =
+        std::fs::read_to_string(&argv[prompt + 1]).unwrap_or_else(|_| argv[prompt + 1].clone());
+    assert!(text.contains("can act"), "{text}");
+    assert!(text.contains("--- Hutan supervisor playbook"), "{text}");
     t.stop().await;
 }
 
