@@ -1262,6 +1262,10 @@ static TOOLS: &[Tool] = &[
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 100},
                 }),
                 &[],
+            )
+        },
+    },
+    Tool {
         name: "agent_review",
         description: "What an agent did in one turn, from what Hutan recorded: the first 400 \
                       characters of the prompt and the agent's final message (its own words, \

@@ -5931,6 +5931,9 @@ fn activity_fixture() -> AgentsActivity {
             "turns and durations of terminal agents".into(),
             "terminal agents' states over time (only the current one exists)".into(),
         ],
+    }
+}
+
 /// The review of a finished turn of a chat: commands with and without exit codes, files from a
 /// checkpoint, diagnostics, a request that waits, two signals and what is not recorded.
 fn review_fixture() -> TurnReview {
