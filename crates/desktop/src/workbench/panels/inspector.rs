@@ -308,13 +308,16 @@ impl InspectorPanel {
             })
             .collect();
         // The options are a 2 × 2 grid in the narrow column (`Always reject` never wraps to a
-        // second line of its own), in the agent's order; an option whose words are too long for
-        // half the column (*Allow for this chat and this agent*) takes a row of its own.
+        // second line of its own), in the agent's order. Hutan's own requests (`control`) have
+        // words of ours: one too long for half the column (*Allow for this chat and this
+        // agent*) takes a row of its own.
+        let control = approval.kind == hutan_core::agent::PermissionKind::Control;
         let long = |index: usize| {
-            approval
-                .options
-                .get(index)
-                .is_some_and(|option| option.label.chars().count() > 18)
+            control
+                && approval
+                    .options
+                    .get(index)
+                    .is_some_and(|option| option.label.chars().count() > 18)
         };
         let mut cells = buttons.into_iter().enumerate().peekable();
         let mut grid = div()
