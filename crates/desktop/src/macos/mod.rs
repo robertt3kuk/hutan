@@ -16,6 +16,7 @@
 pub mod accessibility;
 pub mod dock;
 pub mod focus;
+pub mod fonts;
 pub mod hotkey;
 pub mod login_item;
 pub mod notifications;
@@ -27,12 +28,14 @@ pub mod status_item;
 
 use std::fmt;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use hutan_core::SessionId;
 use tokio::sync::mpsc;
 
 pub use dock::{DockBadge, FakeDock};
+pub use fonts::{FakeFonts, FontFamily, FontSource};
 pub use hotkey::{FakeHotkey, GlobalHotkey, HotkeyError, Shortcut};
 pub use login_item::{FAKE_BUNDLE, FakeLoginItem, LoginItem, LoginItemCall, LoginItemStatus};
 pub use notifications::{FakeNotifications, NotificationAnswer, NotificationPermission};
@@ -95,6 +98,8 @@ pub struct MacServices {
     pub presence: Rc<dyn Presence>,
     /// The Open panel of *File: Open File…*.
     pub open_panel: Rc<dyn OpenPanel>,
+    /// The installed font families, for the font pickers of Settings (read off the main thread).
+    pub fonts: Arc<dyn FontSource>,
     /// What the system asked for; the workbench takes it when it is built.
     pub events: Option<EventReceiver>,
     /// The daemon is expected to be started by launchd (start at login is on and approved): the
@@ -127,6 +132,7 @@ impl MacServices {
             quick_panel: Rc::new(quick_panel::Nothing),
             presence: Rc::new(presence::Nothing),
             open_panel: Rc::new(open_panel::GpuiPrompt),
+            fonts: Arc::new(fonts::Nothing),
             events: None,
             launchd_daemon: false,
             launchd_grace: LAUNCHD_GRACE,
@@ -163,6 +169,7 @@ impl MacServices {
                 quick_panel: Rc::new(quick_panel::SystemQuickPanel::new()),
                 presence: Rc::new(presence::SystemPresence),
                 open_panel: Rc::new(open_panel::SystemOpenPanel),
+                fonts: Arc::new(fonts::SystemFonts),
                 events: Some(receiver),
                 launchd_daemon: false,
                 launchd_grace: LAUNCHD_GRACE,

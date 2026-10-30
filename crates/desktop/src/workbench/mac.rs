@@ -35,6 +35,8 @@ pub(crate) struct MacControl {
     presence: Rc<dyn Presence>,
     /// The Open panel of *File: Open File…* (`files.rs`).
     pub(crate) open_panel: Rc<dyn crate::macos::OpenPanel>,
+    /// The installed font families and Install font… (`settings_fonts.rs`).
+    pub(crate) fonts: std::sync::Arc<dyn crate::macos::FontSource>,
     /// The window is hidden and the app is an accessory: it lives in the menu bar.
     in_menu_bar: bool,
     /// The status of the login item the last time it was read.
@@ -73,6 +75,7 @@ impl MacControl {
             quick_panel,
             presence,
             open_panel,
+            fonts,
             events,
             launchd_daemon,
             launchd_grace,
@@ -89,6 +92,7 @@ impl MacControl {
                 quick_panel,
                 presence,
                 open_panel,
+                fonts,
                 in_menu_bar: false,
                 login_status,
                 refused: None,
