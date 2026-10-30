@@ -1,1 +1,1 @@
-{"id":281,"method":"worktree.discard","params":{"checkout":"/work/repo-wt/feature-login","hunks":[{"hunk_id":"5f0c3a9d1e7b2a46","path":"src/login.rs"}]}}
+{"id":283,"method":"worktree.discard","params":{"checkout":"/work/repo-wt/feature-login","hunks":[{"hunk_id":"5f0c3a9d1e7b2a46","path":"src/login.rs"}]}}

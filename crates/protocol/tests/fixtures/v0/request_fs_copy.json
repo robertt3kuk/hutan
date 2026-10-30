@@ -1,1 +1,1 @@
-{"id":287,"method":"fs.copy","params":{"items":[{"from":"/repo/src","to":"/repo/src copy"},{"from":"/Users/me/Downloads/logo.png","picked_from":true,"to":"/repo/assets/logo.png"}]}}
+{"id":289,"method":"fs.copy","params":{"items":[{"from":"/repo/src","to":"/repo/src copy"},{"from":"/Users/me/Downloads/logo.png","picked_from":true,"to":"/repo/assets/logo.png"}]}}

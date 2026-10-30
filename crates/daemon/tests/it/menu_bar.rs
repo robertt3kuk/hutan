@@ -612,6 +612,7 @@ async fn a_session_entry_launches_the_app_and_asks_the_desktop_once_its_window_i
             session_id,
             workspace_id,
             at_ms,
+            ..
         } => Some((*session_id, *workspace_id, *at_ms)),
         _ => None,
     })

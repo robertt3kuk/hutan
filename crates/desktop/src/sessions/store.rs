@@ -278,6 +278,8 @@ impl std::ops::BitOrAssign for StoreChanged {
 pub struct UiOpenRequested {
     pub session_id: SessionId,
     pub workspace_id: Option<WorkspaceId>,
+    /// What the page should show once it is open (a digest's *Open*: Mawas's Recent tab).
+    pub view: Option<hutan_protocol::notify::UiView>,
 }
 
 /// Emitted by [`SessionsStore`] when a session was closed (`session.closed`), by this window
@@ -1199,11 +1201,13 @@ impl SessionsStore {
                 session,
                 workspace,
                 at_ms,
+                view,
             } => {
                 if ui_open_is_fresh(*at_ms, unix_ms()) {
                     cx.emit(UiOpenRequested {
                         session_id: *session,
                         workspace_id: *workspace,
+                        view: *view,
                     });
                 }
             }

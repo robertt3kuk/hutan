@@ -54,7 +54,7 @@ use crate::memory::{
     MemoryProposalResolve, MemoryProposalsList, MemoryPropose, MemoryScope, MemoryTransition,
     MemoryUpdate, MemoryWrite,
 };
-use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyMute};
+use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyMute, UiView};
 use crate::project::{ProjectGitInit, ProjectInfo, WorkspaceAssign, WorkspaceDelete};
 use crate::provider::{
     ChatSetModel, ProviderAdd, ProviderRef, ProviderSetCredential, ProviderUpdate,
@@ -1622,13 +1622,17 @@ pub enum Event {
     NotifyIntent { intent: NotificationIntent },
     /// Capability `notify.intents`: the user asked (a notification's "Open") to see a session;
     /// the desktop focuses it. Not a state change: a client that was disconnected when it
-    /// went out finds it replayed with an old `at_ms` and ignores it.
+    /// went out finds it replayed with an old `at_ms` and ignores it. Protocol 0.68 (capability
+    /// `notify.digest`): `view` also asks for a view of the page the session opens in (a digest
+    /// notification opens Mawas Home with its Recent tab).
     #[serde(rename = "ui.open")]
     UiOpen {
         session_id: SessionId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace_id: Option<WorkspaceId>,
         at_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        view: Option<UiView>,
     },
     /// Capability `worktree` (protocol 0.14): worktrees were created or removed in a workspace's
     /// repositories; clients list them again.

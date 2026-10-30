@@ -1,1 +1,1 @@
-{"id":100,"method":"chat.create","params":{"agent":"omp","cwd":"/repo","mode":"plan","model":"anthropic/claude-sonnet-4-5"}}
+{"id":102,"method":"chat.create","params":{"agent":"omp","cwd":"/repo","mode":"plan","model":"anthropic/claude-sonnet-4-5"}}

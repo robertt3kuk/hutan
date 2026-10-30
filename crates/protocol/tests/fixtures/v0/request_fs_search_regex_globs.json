@@ -1,1 +1,1 @@
-{"id":199,"method":"fs.search","params":{"case_sensitive":true,"globs":["*.rs","!target/**"],"limit":1000,"pattern":"TODO\\(\\w+\\)","regex":true,"root":"/repo","search_id":"s2"}}
+{"id":201,"method":"fs.search","params":{"case_sensitive":true,"globs":["*.rs","!target/**"],"limit":1000,"pattern":"TODO\\(\\w+\\)","regex":true,"root":"/repo","search_id":"s2"}}

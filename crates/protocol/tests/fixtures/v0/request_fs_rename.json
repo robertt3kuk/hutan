@@ -1,1 +1,1 @@
-{"id":285,"method":"fs.rename","params":{"from":"/repo/src/old.rs","to":"/repo/src/new.rs"}}
+{"id":287,"method":"fs.rename","params":{"from":"/repo/src/old.rs","to":"/repo/src/new.rs"}}

@@ -2130,6 +2130,21 @@ fn requests() -> Vec<(&'static str, Request)> {
             "client_focus",
             Request::ClientFocus(ClientFocus {
                 session_id: Some(sid()),
+                window_active: None,
+            }),
+        ),
+        (
+            "client_focus_window_active",
+            Request::ClientFocus(ClientFocus {
+                session_id: None,
+                window_active: Some(true),
+            }),
+        ),
+        (
+            "client_focus_window_inactive",
+            Request::ClientFocus(ClientFocus {
+                session_id: None,
+                window_active: Some(false),
             }),
         ),
         (
@@ -4619,6 +4634,7 @@ fn events() -> Vec<(&'static str, Event)> {
                 session_id: sid(),
                 workspace_id: Some(ws()),
                 at_ms: 1_791_894_180_000,
+                view: None,
             },
         ),
         (
@@ -4627,6 +4643,35 @@ fn events() -> Vec<(&'static str, Event)> {
                 session_id: sid(),
                 workspace_id: None,
                 at_ms: 1_791_894_180_000,
+                view: None,
+            },
+        ),
+        (
+            "ui_open_mawas_recent",
+            Event::UiOpen {
+                session_id: sid(),
+                workspace_id: Some(ws()),
+                at_ms: 1_791_894_180_000,
+                view: Some(hutan_protocol::notify::UiView::MawasRecent),
+            },
+        ),
+        (
+            "notify_intent_digest",
+            Event::NotifyIntent {
+                intent: NotificationIntent {
+                    id: "01K7F3B5N2Q9W8E4R6T1Y0V3NV".into(),
+                    kind: IntentKind::Digest,
+                    session_id: sid(),
+                    workspace_id: Some(ws()),
+                    title: "While you were away".into(),
+                    body: "2 requests wait for you · 1 turn failed".into(),
+                    actions: vec![IntentAction {
+                        id: hutan_protocol::notify::ACTION_OPEN.into(),
+                        label: "Open".into(),
+                    }],
+                    created_at_ms: 1_791_894_170_000,
+                    expires_at_ms: Some(1_791_897_770_000),
+                },
             },
         ),
         (

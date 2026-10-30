@@ -1,1 +1,1 @@
-{"id":118,"method":"session.create","params":{"command":[],"contain":{"network":false},"cwd":"/work/repo","kind":"terminal"}}
+{"id":120,"method":"session.create","params":{"command":[],"contain":{"network":false},"cwd":"/work/repo","kind":"terminal"}}

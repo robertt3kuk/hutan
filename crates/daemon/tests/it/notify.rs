@@ -775,6 +775,7 @@ async fn acting_open_tells_the_desktops_to_show_the_session() {
                 session_id,
                 workspace_id,
                 at_ms,
+                ..
             } => Some((*session_id, *workspace_id, *at_ms)),
             _ => None,
         })

@@ -1,1 +1,1 @@
-{"id":276,"method":"worktree.stage","params":{"checkout":"/work/repo-wt/feature-login","paths":["src/login.rs","README.md"]}}
+{"id":278,"method":"worktree.stage","params":{"checkout":"/work/repo-wt/feature-login","paths":["src/login.rs","README.md"]}}

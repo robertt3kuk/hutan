@@ -739,6 +739,7 @@ impl Service {
                     session_id: session,
                     workspace_id: workspace,
                     at_ms: now_ms(),
+                    view: None,
                 }) {
                     warn!(%error, "could not ask the desktop to open a session");
                 }

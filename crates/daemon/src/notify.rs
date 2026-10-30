@@ -82,9 +82,10 @@ impl Urgency {
             | IntentKind::QuestionRequired
             | IntentKind::AgentBlocked => Self::Request,
             IntentKind::SessionExitedWithError | IntentKind::TaskFailed => Self::Failure,
-            IntentKind::AgentFinished | IntentKind::ChatTurnFinished | IntentKind::TaskDone => {
-                Self::Finished
-            }
+            IntentKind::AgentFinished
+            | IntentKind::ChatTurnFinished
+            | IntentKind::TaskDone
+            | IntentKind::Digest => Self::Finished,
         }
     }
 }
@@ -960,6 +961,9 @@ impl NotifyService {
                 session_id: entry.intent.session_id,
                 workspace_id: entry.intent.workspace_id,
                 at_ms: now_ms(),
+                // A digest's *Open* shows what happened, not just the chat.
+                view: (entry.intent.kind == IntentKind::Digest)
+                    .then_some(hutan_protocol::notify::UiView::MawasRecent),
             })
             .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
         Ok(u32::try_from(reached).unwrap_or(u32::MAX))

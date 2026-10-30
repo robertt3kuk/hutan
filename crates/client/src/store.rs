@@ -113,6 +113,9 @@ pub enum Notice {
         session: SessionId,
         workspace: Option<WorkspaceId>,
         at_ms: u64,
+        /// What the page it opens in should show (protocol 0.68): a digest's *Open* asks for
+        /// Mawas Home's Recent tab.
+        view: Option<hutan_protocol::notify::UiView>,
     },
     /// Worktrees of a workspace's repositories were created or removed (`worktree.changed`,
     /// protocol 0.14): list them again.
@@ -513,10 +516,12 @@ impl StoreState {
                 session_id,
                 workspace_id,
                 at_ms,
+                view,
             } => effects.notices.push(Notice::UiOpen {
                 session: session_id,
                 workspace: workspace_id,
                 at_ms,
+                view,
             }),
             Event::WorktreeChanged { workspace_id } => {
                 effects.notices.push(Notice::WorktreesChanged {
@@ -941,6 +946,7 @@ mod tests {
             session_id: session,
             workspace_id: Some(workspace),
             at_ms: 7,
+            view: None,
         }));
         assert_eq!(
             effects.notices,
@@ -951,7 +957,8 @@ mod tests {
                 Notice::UiOpen {
                     session,
                     workspace: Some(workspace),
-                    at_ms: 7
+                    at_ms: 7,
+                    view: None
                 },
             ]
         );

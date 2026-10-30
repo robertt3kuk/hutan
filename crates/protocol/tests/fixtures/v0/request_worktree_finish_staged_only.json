@@ -1,1 +1,1 @@
-{"id":282,"method":"worktree.finish","params":{"checkout":"/work/repo","message":"Fix the login form","push":false,"staged_only":true,"strategy":"merge"}}
+{"id":284,"method":"worktree.finish","params":{"checkout":"/work/repo","message":"Fix the login form","push":false,"staged_only":true,"strategy":"merge"}}

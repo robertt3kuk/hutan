@@ -176,6 +176,12 @@ impl Workbench {
             Some(true) => {
                 self.bring_forward(window, cx);
                 self.open_session(event.session_id, window, cx);
+                // A digest's *Open*: Mawas Home with what happened, not just the chat.
+                if event.view == Some(hutan_protocol::notify::UiView::MawasRecent)
+                    && let Some(panel) = self.panel::<AssistantPanel>("assistant")
+                {
+                    panel.update(cx, |panel, cx| panel.open_recent(cx));
+                }
             }
             Some(false) => {
                 self.bring_forward(window, cx);

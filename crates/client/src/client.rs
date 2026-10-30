@@ -254,6 +254,9 @@ pub(crate) const AGENTS_ACTIVITY_CAPABILITY: &str = "agents.activity";
 pub(crate) const AGENTS_STATS_CAPABILITY: &str = "agents.stats";
 /// Capability for `agents.review` and the `turn_review` attachment (protocol 0.67).
 pub(crate) const AGENTS_REVIEW_CAPABILITY: &str = "agents.review";
+/// Capability for `ClientFocus.window_active`, `IntentKind::Digest` and `ui.open`'s `view`
+/// (protocol 0.68).
+pub(crate) const NOTIFY_DIGEST_CAPABILITY: &str = "notify.digest";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -322,6 +325,7 @@ const CAPABILITIES: &[&str] = &[
     AGENTS_ACTIVITY_CAPABILITY,
     AGENTS_STATS_CAPABILITY,
     AGENTS_REVIEW_CAPABILITY,
+    NOTIFY_DIGEST_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -1279,9 +1283,36 @@ impl Client {
 
     /// Reports the session this connection's user is looking at (none: nothing).
     pub async fn client_focus(&self, session_id: Option<SessionId>) -> Result<(), ClientError> {
-        self.call::<Empty>(Request::ClientFocus(ClientFocus { session_id }))
-            .await
-            .map(|_| ())
+        self.call::<Empty>(Request::ClientFocus(ClientFocus {
+            session_id,
+            window_active: None,
+        }))
+        .await
+        .map(|_| ())
+    }
+
+    /// [`client_focus`](Self::client_focus) that also says whether this window is the active one
+    /// (protocol 0.68, capability `notify.digest`): what the daemon's digest counts as the user
+    /// being here.
+    pub async fn client_focus_in_window(
+        &self,
+        session_id: Option<SessionId>,
+        window_active: bool,
+    ) -> Result<(), ClientError> {
+        self.call::<Empty>(Request::ClientFocus(ClientFocus {
+            session_id,
+            window_active: Some(window_active),
+        }))
+        .await
+        .map(|_| ())
+    }
+
+    /// True when the daemon advertised capability `notify.digest` (protocol 0.68).
+    pub fn supports_notify_digest(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == NOTIFY_DIGEST_CAPABILITY)
     }
 
     /// True when the daemon advertised capability `notify.mute` (protocol 0.34).

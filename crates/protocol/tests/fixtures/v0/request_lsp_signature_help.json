@@ -1,1 +1,1 @@
-{"id":246,"method":"lsp.signature_help","params":{"path":"/Users/me/repo/src/main.rs","position":{"character":14,"line":3},"trigger":"("}}
+{"id":248,"method":"lsp.signature_help","params":{"path":"/Users/me/repo/src/main.rs","position":{"character":14,"line":3},"trigger":"("}}

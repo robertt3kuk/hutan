@@ -731,6 +731,14 @@ impl Connection {
             .is_some_and(|client| client.supports_notify_mute())
     }
 
+    /// True while connected to a daemon that advertised capability `notify.digest`
+    /// ([`Client::supports_notify_digest`]); false when disconnected.
+    pub fn supports_notify_digest(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_notify_digest())
+    }
+
     /// True while connected to a daemon that advertised capability `worktree`
     /// ([`Client::supports_worktrees`]); false when disconnected.
     pub fn supports_worktrees(&self) -> bool {
@@ -843,6 +851,23 @@ impl Connection {
             .client_generation()
             .ok_or(ClientError::Disconnected)?;
         client.client_focus(session).await?;
+        Ok(generation)
+    }
+
+    /// [`client_focus`](Self::client_focus) with whether the window is the active one (protocol
+    /// 0.68, [`Connection::supports_notify_digest`]).
+    pub async fn client_focus_in_window(
+        &self,
+        session: Option<SessionId>,
+        window_active: bool,
+    ) -> Result<u64, ClientError> {
+        let (generation, client) = self
+            .shared
+            .client_generation()
+            .ok_or(ClientError::Disconnected)?;
+        client
+            .client_focus_in_window(session, window_active)
+            .await?;
         Ok(generation)
     }
 

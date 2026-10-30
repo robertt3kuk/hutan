@@ -41,10 +41,16 @@ pub enum IntentKind {
     /// An agent asks the user a question (protocol 0.24, `question.required`). The one action
     /// is [`ACTION_OPEN`]: a question is answered in the chat, never from a notification.
     QuestionRequired,
+    /// The daemon's digest (protocol 0.68, capability `notify.digest`): the user has been away
+    /// from every Hutan window for hours and something needs them. One per away period, never
+    /// one per agent; `session_id` is the Global Mawas chat, `body` the one summary line
+    /// (`ActivitySummary::line`). The one action is [`ACTION_OPEN`], which publishes `ui.open`
+    /// with [`UiView::MawasRecent`].
+    Digest,
 }
 
 impl IntentKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::ApprovalRequired,
         Self::AgentBlocked,
         Self::AgentFinished,
@@ -53,6 +59,7 @@ impl IntentKind {
         Self::TaskDone,
         Self::TaskFailed,
         Self::QuestionRequired,
+        Self::Digest,
     ];
 
     /// The wire (and `daemon.toml`) name.
@@ -66,6 +73,7 @@ impl IntentKind {
             Self::TaskDone => "task_done",
             Self::TaskFailed => "task_failed",
             Self::QuestionRequired => "question_required",
+            Self::Digest => "digest",
         }
     }
 }
@@ -154,10 +162,26 @@ pub struct NotifyActed {
 /// Protocol 0.34 (capability `notify.mute`): a session some client has focused raises no intent
 /// of any kind (its card is on screen), and reporting a session withdraws every intent it has
 /// pending (the user is looking at it), approvals and questions included.
+///
+/// Protocol 0.68 (capability `notify.digest`): `window_active` says whether the window of this
+/// connection is the active one. A desktop sends it with every change of its window's activation
+/// (also while the session it shows does not change); the daemon's digest counts a window the
+/// user used within the last N hours as *the user is here*. Absent (an older client): a
+/// connection that reports a session is taken as active, one that reports none as not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ClientFocus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_active: Option<bool>,
+}
+
+/// What a `ui.open` also asks the window to show (protocol 0.68, capability `notify.digest`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiView {
+    /// Mawas Home with the rail on its Recent tab (a digest notification's *Open*).
+    MawasRecent,
 }
 
 /// `notify.mute` (protocol 0.34, capability `notify.mute`): `muted: true` silences the session:
