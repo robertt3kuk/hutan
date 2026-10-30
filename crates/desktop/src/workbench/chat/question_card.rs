@@ -15,11 +15,12 @@ use super::input::TextInput;
 use super::markdown_view::{Ids, Look, blocks};
 use super::question::{Input, QuestionForm};
 use super::view::ChatView;
-use super::widgets::approval_outcome;
+use super::widgets::{approval_outcome, suggestion_box, suggestion_buttons};
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{EditableText, FieldMut, FieldRef, FieldState, edit_keys};
 use crate::workbench::ui::{Button, FocusRingExt as _, StyledExt as _};
 use crate::workbench::view::Region;
+use hutan_protocol::suggest::{AskTarget, SuggestedAnswer};
 
 /// Space between the groups of the card, and between a field's label and its control (px).
 const GROUP_GAP: f32 = 16.0;
@@ -340,6 +341,90 @@ impl ChatView {
 
     // ---- the card --------------------------------------------------------------------------
 
+    /// What Mawas suggests for the question (protocol 0.64): her answer in words — each field's
+    /// label and the option's label — her reason, *Use* and *Dismiss*. *Use* fills the fields
+    /// (nothing is sent: the user reads, changes and submits), or, for *decline*, is the user's
+    /// own click on Decline. `None` without a suggestion or once it was dismissed.
+    fn question_suggestion(
+        &self,
+        question: &Question,
+        look: &Look,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let id = question.id;
+        let suggestion = self.sessions.read(cx).question_suggestion(id)?.clone();
+        let what = match &suggestion.answer {
+            SuggestedAnswer::Values { values } => question
+                .spec
+                .fields
+                .iter()
+                .filter_map(|field| {
+                    let value = values.get(&field.id)?;
+                    let shown = |one: &str| match &field.kind {
+                        FieldKind::Choice { options, .. } => options
+                            .iter()
+                            .find(|o| o.value == one)
+                            .map_or_else(|| one.to_owned(), |o| o.label.clone()),
+                        _ => one.to_owned(),
+                    };
+                    let text = match value {
+                        serde_json::Value::String(one) => shown(one),
+                        serde_json::Value::Array(many) => many
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(shown)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        other => other.to_string(),
+                    };
+                    Some(format!("{}: {text}", field.label))
+                })
+                .collect::<Vec<_>>()
+                .join(" · "),
+            SuggestedAnswer::Decline => "Decline".to_owned(),
+            SuggestedAnswer::Option { .. } => return None,
+        };
+        let answer = suggestion.answer.clone();
+        let (use_button, dismiss) = suggestion_buttons(&format!("question-{id}"), look);
+        let buttons = vec![
+            use_button
+                .on_click(cx.listener(move |this, _, _, cx| match &answer {
+                    SuggestedAnswer::Values { values } => {
+                        let fields = this
+                            .model
+                            .read(cx)
+                            .transcript()
+                            .question(id)
+                            .map(|q| q.spec.fields.clone());
+                        if let (Some(fields), Some(form)) = (fields, this.forms.get_mut(&id)) {
+                            form.fill(&fields, values);
+                            cx.notify();
+                        }
+                    }
+                    SuggestedAnswer::Decline => this.decline_question(id, cx),
+                    SuggestedAnswer::Option { .. } => {}
+                }))
+                .child(probe(&self.regions, Region::Suggestion("question-use", 0)))
+                .into_any_element(),
+            dismiss
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.sessions.update(cx, |store, cx| {
+                        store.dismiss_suggestion(AskTarget::Question { id }, cx);
+                    });
+                }))
+                .child(probe(
+                    &self.regions,
+                    Region::Suggestion("question-dismiss", 0),
+                ))
+                .into_any_element(),
+        ];
+        Some(
+            suggestion_box(&what, &suggestion.reason, buttons, look)
+                .child(probe(&self.regions, Region::Suggestion("question-box", 0)))
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn question_card(
         &self,
         question: &Question,
@@ -450,6 +535,11 @@ impl ChatView {
         let ended = self.ended_answers(id, cx);
         let sending = form.as_ref().is_some_and(|f| f.sending);
         let error = form.as_ref().and_then(|f| f.error.clone());
+        let suggestion = if pending {
+            self.question_suggestion(question, look, cx)
+        } else {
+            None
+        };
         // 16 px between the groups of the card (the question, each field, the buttons), 8 px
         // between a field's label and its control.
         div()
@@ -484,6 +574,7 @@ impl ChatView {
                     .children(prompt),
             )
             .children(raw)
+            .children(suggestion)
             .children(fields)
             .children(error.map(|message| {
                 div()

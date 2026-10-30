@@ -199,6 +199,56 @@ impl QuestionForm {
         lines
     }
 
+    /// Puts what Mawas suggested in the fields, for the user to read, change and send: nothing
+    /// is sent, a secret field is never filled, and a field the suggestion leaves out keeps what
+    /// it held. An answer that is not one of a choice's options goes in its free answer when the
+    /// field takes one.
+    pub fn fill(&mut self, fields: &[QuestionField], values: &Values) {
+        for (field, input) in fields.iter().zip(&mut self.inputs) {
+            let Some(value) = values.get(&field.id) else {
+                continue;
+            };
+            match (&field.kind, input) {
+                (FieldKind::Secret, _) => {}
+                (FieldKind::Boolean, Input::Boolean(on)) => {
+                    if let Some(given) = value.as_bool() {
+                        *on = given;
+                    }
+                }
+                (
+                    FieldKind::Choice {
+                        options,
+                        multi,
+                        allow_other,
+                    },
+                    Input::Choice { chosen, other },
+                ) => {
+                    chosen.clear();
+                    other.clear();
+                    let given: Vec<&str> = match value {
+                        Value::String(one) => vec![one.as_str()],
+                        Value::Array(many) => many.iter().filter_map(Value::as_str).collect(),
+                        _ => Vec::new(),
+                    };
+                    for one in given {
+                        if options.iter().any(|o| o.value == one) {
+                            if *multi || chosen.is_empty() {
+                                chosen.insert(one.to_owned());
+                            }
+                        } else if *allow_other && !*multi {
+                            chosen.clear();
+                            other.set(one);
+                        }
+                    }
+                }
+                (_, Input::Text(text)) => text.set(&text_of(value)),
+                _ => {}
+            }
+        }
+        self.error = None;
+        self.focus = None;
+    }
+
     /// Empties every secret field: nothing typed into one outlives the question it was for.
     pub fn scrub_secrets(&mut self, spec: &QuestionSpec) {
         for (field, input) in spec.fields.iter().zip(&mut self.inputs) {
@@ -314,6 +364,47 @@ mod tests {
                 description: None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_suggestion_fills_the_fields_and_sends_nothing() {
+        let choice = field(
+            "db",
+            FieldKind::Choice {
+                options: options(&["postgres", "sqlite"]),
+                multi: false,
+                allow_other: true,
+            },
+            true,
+        );
+        let spec = spec(vec![
+            choice,
+            field("why", FieldKind::Multiline, false),
+            field("flag", FieldKind::Boolean, false),
+            field("token", FieldKind::Secret, false),
+        ]);
+        let mut form = QuestionForm::new(&spec);
+        let suggested: Values = [
+            ("db".to_owned(), json!("sqlite")),
+            ("why".to_owned(), json!("the project uses it")),
+            ("flag".to_owned(), json!(true)),
+            ("token".to_owned(), json!("must not be filled")),
+        ]
+        .into();
+        form.fill(&spec.fields, &suggested);
+        let values = form.values(&spec).unwrap();
+        assert_eq!(values["db"], "sqlite");
+        assert_eq!(values["why"], "the project uses it");
+        assert_eq!(values["flag"], true);
+        assert!(
+            !values.contains_key("token"),
+            "a secret is only ever typed by the user"
+        );
+        assert!(!form.sending, "filling sends nothing");
+        // An answer that is not one of the options goes in the free answer when it is allowed.
+        let other: Values = [("db".to_owned(), json!("duckdb"))].into();
+        form.fill(&spec.fields, &other);
+        assert_eq!(form.values(&spec).unwrap()["db"], "duckdb");
     }
 
     #[test]

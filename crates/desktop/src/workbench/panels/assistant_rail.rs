@@ -23,6 +23,7 @@ use gpui::{
 use hutan_core::agent::PermissionOptionKind;
 use hutan_core::{ApprovalId, QuestionId, SessionId};
 use hutan_protocol::chat::ControlTarget;
+use hutan_protocol::suggest::{AskTarget, SuggestedAnswer};
 
 use super::assistant::AssistantPanel;
 use super::common::{agent_lead_glyph, agent_state_word, agent_title_line};
@@ -32,7 +33,7 @@ use crate::settings::{AssistantSettings, RailTab};
 use crate::workbench::actions::{
     EditMemoryProposal, JumpToNextAttention, OpenMawasMemory, OpenSession,
 };
-use crate::workbench::chat::Look;
+use crate::workbench::chat::{self, Look};
 use crate::workbench::render::probe;
 use crate::workbench::ui::{self, Button, StyledExt as _};
 use crate::workbench::view::Region;
@@ -53,6 +54,16 @@ pub struct RailOption {
     pub kind: PermissionOptionKind,
 }
 
+/// What Mawas suggests for an approval, as a row of Today shows it (protocol 0.64).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RailSuggestion {
+    /// The option she would choose.
+    pub option_id: String,
+    /// Its label.
+    pub label: String,
+    pub reason: String,
+}
+
 /// What a row of Today is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TodayKind {
@@ -63,6 +74,9 @@ pub enum TodayKind {
         /// Protocol 0.62: the agent a request of Mawas acts on, and the whole text it would
         /// send; absent for every other approval.
         target: Option<ControlTarget>,
+        /// Protocol 0.64: what Mawas suggests for this request, when she did and the user has
+        /// not dismissed it; advice only.
+        suggestion: Option<RailSuggestion>,
         options: Vec<RailOption>,
         /// The request is Mawas's.
         mawas: bool,
@@ -200,6 +214,19 @@ pub fn today(store: &SessionsStore) -> Today {
                 title: request.title.clone(),
                 detail: record.title.clone(),
                 kind: TodayKind::Approval {
+                    suggestion: store
+                        .approval_suggestion(request.id)
+                        .and_then(|suggestion| {
+                            let SuggestedAnswer::Option { option_id } = &suggestion.answer else {
+                                return None;
+                            };
+                            let option = request.options.iter().find(|o| o.id == *option_id)?;
+                            Some(RailSuggestion {
+                                option_id: option_id.clone(),
+                                label: option.label.clone(),
+                                reason: suggestion.reason.clone(),
+                            })
+                        }),
                     target: store
                         .approvals()
                         .iter()
@@ -998,6 +1025,7 @@ impl AssistantPanel {
                 options,
                 memory,
                 target,
+                suggestion,
                 ..
             } => {
                 // What Mawas asks to do to another agent: who it is, and every word it would
@@ -1037,6 +1065,42 @@ impl AssistantPanel {
                                 )),
                         );
                     }
+                }
+                // What Mawas suggests, apart from the options and visibly hers; *Use* is the
+                // user's own click on that option.
+                if let Some(suggestion) = suggestion {
+                    let (id, use_id) = (*approval, suggestion.option_id.clone());
+                    let (use_button, dismiss) =
+                        chat::suggestion_buttons(&format!("today-{row_index}"), look);
+                    let buttons = vec![
+                        use_button
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.answer_from_today(id, use_id.clone(), cx);
+                            }))
+                            .child(probe(
+                                &self.env.regions,
+                                Region::Suggestion("today-use", row_index),
+                            ))
+                            .into_any_element(),
+                        dismiss
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.env.sessions.update(cx, |store, cx| {
+                                    store.dismiss_suggestion(AskTarget::Approval { id }, cx);
+                                });
+                            }))
+                            .child(probe(
+                                &self.env.regions,
+                                Region::Suggestion("today-dismiss", row_index),
+                            ))
+                            .into_any_element(),
+                    ];
+                    card = card.child(
+                        chat::suggestion_box(&suggestion.label, &suggestion.reason, buttons, look)
+                            .child(probe(
+                                &self.env.regions,
+                                Region::Suggestion("today-box", row_index),
+                            )),
+                    );
                 }
                 let (approval, memory) = (*approval, *memory);
                 let buttons: Vec<AnyElement> = options

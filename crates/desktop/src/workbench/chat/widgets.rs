@@ -243,6 +243,7 @@ pub fn approval_group(
     detail: Option<&str>,
     buttons: Vec<AnyElement>,
     note: Option<String>,
+    suggestion: Option<AnyElement>,
     look: &Look,
 ) -> gpui::Div {
     let (theme, tokens) = (&look.theme, &look.tokens);
@@ -275,6 +276,7 @@ pub fn approval_group(
                         .child(SharedString::from(detail.to_owned()))
                 })),
         )
+        .children(suggestion)
         .child(
             div()
                 .flex()
@@ -288,6 +290,79 @@ pub fn approval_group(
                 .text_color(theme.muted)
                 .child(SharedString::from(note))
         }))
+}
+
+/// What Mawas suggests for a request that waits (protocol 0.64, `ask.suggest`): the answer she
+/// would give, why, and *Use* / *Dismiss* (`buttons`). A tinted box with her name on it, so it
+/// is never mistaken for the agent's own words or for the user's options; it answers nothing
+/// until the user clicks *Use*, which is the user's own answer.
+pub fn suggestion_box(
+    answer: &str,
+    reason: &str,
+    buttons: Vec<AnyElement>,
+    look: &Look,
+) -> gpui::Div {
+    let (theme, tokens) = (&look.theme, &look.tokens);
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .gap(px(tokens.spacing))
+        .p(px(tokens.spacing * 2.0))
+        .rounded(px(tokens.radius - 2.0))
+        .bg(theme.accent_soft)
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(tokens.spacing))
+                .text_size(px(tokens.secondary_font_size))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.accent)
+                        .child("Mawas suggests:"),
+                )
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.fg)
+                        .child(SharedString::from(answer.to_owned())),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .child(SharedString::from(reason.to_owned())),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(tokens.spacing * 2.0))
+                .children(buttons),
+        )
+}
+
+/// *Use* and *Dismiss* of a suggestion of Mawas: plain buttons (the accent is spent on *Allow
+/// once*, never on advice). `key` tells the card apart; the caller adds the handlers and probes.
+pub fn suggestion_buttons(key: &str, look: &Look) -> (Button, Button) {
+    (
+        Button::new(
+            SharedString::from(format!("suggest-use-{key}")),
+            "Use",
+            &look.theme,
+            &look.tokens,
+        ),
+        Button::new(
+            SharedString::from(format!("suggest-dismiss-{key}")),
+            "Dismiss",
+            &look.theme,
+            &look.tokens,
+        )
+        .ghost(),
+    )
 }
 
 /// The glyph and color of a decision: allowed in `success`, denied in `danger`, anything else

@@ -8,7 +8,7 @@ use super::markdown_view::{Ids, Look, blocks, code_block};
 use super::view::ChatView;
 use super::widgets::{
     ButtonKind, always_note, approval_group, approval_option, approval_outcome, decision_mark,
-    duration, pill, scope_tooltip, tail_lines, tokens,
+    duration, pill, scope_tooltip, suggestion_box, suggestion_buttons, tail_lines, tokens,
 };
 use crate::workbench::harnesses::harness_name;
 use crate::workbench::render::probe;
@@ -27,6 +27,7 @@ use hutan_chat_view::{
 };
 use hutan_core::ApprovalId;
 use hutan_core::agent::{FileChangeKind, NoticeLevel, PlanStepStatus, ToolKind, ToolStatus};
+use hutan_protocol::suggest::{AskTarget, SuggestedAnswer};
 
 /// The default open/closed part of a card (a command's output, a tool's arguments, reasoning).
 pub(super) const PART_BODY: u32 = 0;
@@ -980,6 +981,52 @@ impl ChatView {
         Some(self.scope_lines(model.transcript().approval(id)?, cx))
     }
 
+    /// The *Mawas suggests* box of approval `id` (protocol 0.64): her answer by the label of
+    /// the option, her reason, *Use* (the user's own click on that option) and *Dismiss*.
+    /// `None` without a suggestion, after it was dismissed, or when it names an option the
+    /// request does not offer.
+    pub(crate) fn approval_suggestion(
+        &self,
+        id: ApprovalId,
+        options: &[hutan_core::agent::PermissionOption],
+        ordinal: Option<usize>,
+        look: &Look,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let suggestion = self.sessions.read(cx).approval_suggestion(id)?.clone();
+        let SuggestedAnswer::Option { option_id } = &suggestion.answer else {
+            return None;
+        };
+        let option = options.iter().find(|o| o.id == *option_id)?;
+        let index = ordinal.unwrap_or(0);
+        let (use_button, dismiss) = suggestion_buttons(&format!("chat-{id}"), look);
+        let use_id = option_id.clone();
+        let buttons = vec![
+            use_button
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.answer(id, use_id.clone(), cx);
+                }))
+                .child(probe(&self.regions, Region::Suggestion("chat-use", index)))
+                .into_any_element(),
+            dismiss
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.sessions.update(cx, |store, cx| {
+                        store.dismiss_suggestion(AskTarget::Approval { id }, cx);
+                    });
+                }))
+                .child(probe(
+                    &self.regions,
+                    Region::Suggestion("chat-dismiss", index),
+                ))
+                .into_any_element(),
+        ];
+        Some(
+            suggestion_box(&option.label, &suggestion.reason, buttons, look)
+                .child(probe(&self.regions, Region::Suggestion("chat-box", index)))
+                .into_any_element(),
+        )
+    }
+
     /// The one sentence under the buttons of request `id` while it waits (`None` when it offers
     /// no standing option or is not in this transcript).
     pub fn always_note_text(&self, id: ApprovalId, cx: &App) -> Option<String> {
@@ -1080,12 +1127,20 @@ impl ChatView {
                     }
                 })
                 .collect();
+            // What Mawas suggests, if she did and the user has not dismissed it: words on the
+            // card, never an answer.
+            let suggestion = if live {
+                self.approval_suggestion(approval_id, &approval.options, ordinal, look, cx)
+            } else {
+                None
+            };
             let group = approval_group(
                 approval.kind,
                 standalone.then_some(approval.title.as_str()),
                 approval.detail.as_deref(),
                 buttons,
                 always_note(approval.kind, &approval.options, &approval.title),
+                suggestion,
                 look,
             )
             .relative();

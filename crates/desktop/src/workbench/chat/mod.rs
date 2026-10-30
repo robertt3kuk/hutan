@@ -45,4 +45,6 @@ pub use view::{
 };
 pub use vim::Vim;
 pub use widgets::ButtonKind;
-pub(crate) use widgets::{always_note, approval_group, approval_option, scope_tooltip};
+pub(crate) use widgets::{
+    always_note, approval_group, approval_option, scope_tooltip, suggestion_box, suggestion_buttons,
+};

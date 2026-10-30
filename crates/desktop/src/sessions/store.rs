@@ -31,6 +31,7 @@ use hutan_protocol::notify::NotificationIntent;
 use hutan_protocol::project::{WorkspaceAssign, WorkspaceDelete};
 use hutan_protocol::recovery::{RecoveryAck, RecoveryAcked};
 use hutan_protocol::resources::{ResourceSample, ResourcesListRequest};
+use hutan_protocol::suggest::AskTarget;
 use hutan_protocol::task::{
     TaskCreate, TaskDelete, TaskDeleted, TaskList, TaskListRequest, TaskRef, TaskResult,
     TaskReview, TaskReviewed, TaskStarted, TaskUpdate,
@@ -596,6 +597,9 @@ pub struct SessionsStore {
     answered: HashMap<ApprovalId, String>,
     /// Questions this window answered (to say "from this window").
     answered_questions: std::collections::HashSet<hutan_core::QuestionId>,
+    /// The suggestions of Mawas this window's user dismissed (the request and when the
+    /// suggestion was made).
+    dismissed_suggestions: std::collections::HashSet<(AskTarget, u64)>,
     /// The blocked nodes of each session as of the last synchronised state, once the first
     /// state of the daemon epoch has been taken as the baseline (what was already blocked when
     /// the desktop arrived is not news).
@@ -779,6 +783,7 @@ impl SessionsStore {
             stopped_epoch: None,
             answered: HashMap::new(),
             answered_questions: std::collections::HashSet::new(),
+            dismissed_suggestions: std::collections::HashSet::new(),
             blocked_seen: None,
             blocked_epoch: None,
             focus_sent: None,
@@ -2555,6 +2560,63 @@ impl SessionsStore {
     /// Questions of every agent chat waiting for an answer, oldest first (protocol 0.24).
     pub fn questions(&self) -> &[hutan_protocol::chat::QuestionInfo] {
         &self.state.questions
+    }
+
+    /// The suggestion Mawas attached to approval `id` that the user has not dismissed here
+    /// (protocol 0.64). It is words on a card: nothing was answered.
+    pub fn approval_suggestion(
+        &self,
+        id: ApprovalId,
+    ) -> Option<&hutan_protocol::suggest::Suggestion> {
+        let approval = self.state.approvals.iter().find(|a| a.id == id)?;
+        let suggestion = approval.suggestion.as_ref()?;
+        self.suggestion_shown(AskTarget::Approval { id }, suggestion)
+    }
+
+    /// [`approval_suggestion`](Self::approval_suggestion) for a question.
+    pub fn question_suggestion(
+        &self,
+        id: hutan_core::QuestionId,
+    ) -> Option<&hutan_protocol::suggest::Suggestion> {
+        let question = self.state.questions.iter().find(|q| q.id == id)?;
+        let suggestion = question.suggestion.as_ref()?;
+        self.suggestion_shown(AskTarget::Question { id }, suggestion)
+    }
+
+    fn suggestion_shown<'a>(
+        &self,
+        target: AskTarget,
+        suggestion: &'a hutan_protocol::suggest::Suggestion,
+    ) -> Option<&'a hutan_protocol::suggest::Suggestion> {
+        (!self
+            .dismissed_suggestions
+            .contains(&(target, suggestion.suggested_at_ms)))
+        .then_some(suggestion)
+    }
+
+    /// *Dismiss* on a suggestion: this window stops showing that one (a newer suggestion for
+    /// the same request shows again). The daemon is not told: a suggestion is advice, and
+    /// dismissing it changes nothing for anyone else.
+    pub fn dismiss_suggestion(&mut self, target: AskTarget, cx: &mut Context<Self>) {
+        let at = match target {
+            AskTarget::Approval { id } => self
+                .state
+                .approvals
+                .iter()
+                .find(|a| a.id == id)
+                .and_then(|a| a.suggestion.as_ref()),
+            AskTarget::Question { id } => self
+                .state
+                .questions
+                .iter()
+                .find(|q| q.id == id)
+                .and_then(|q| q.suggestion.as_ref()),
+        }
+        .map(|s| s.suggested_at_ms);
+        if let Some(at) = at {
+            self.dismissed_suggestions.insert((target, at));
+            self.changed(StoreChanged::OTHER, cx);
+        }
     }
 
     /// Whether this window answered `question`.

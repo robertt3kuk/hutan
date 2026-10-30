@@ -9,6 +9,7 @@ use gpui::{
 use hutan_core::SessionKind;
 use hutan_protocol::blocks::BlockState;
 use hutan_protocol::messages::SessionInfo;
+use hutan_protocol::suggest::{AskTarget, SuggestedAnswer};
 use hutan_terminal_view::blocks::{self as block_ui, Tone};
 
 use super::common::{panel_toolbar, state_dot, tone_color};
@@ -347,6 +348,60 @@ impl InspectorPanel {
             theme,
             cx,
         );
+        // What Mawas suggests, if she did and it was not dismissed: her words on the card; the
+        // user's click on *Use* is the user's own answer.
+        let suggestion = self
+            .env
+            .sessions
+            .read(cx)
+            .approval_suggestion(approval.id)
+            .cloned();
+        let suggestion = suggestion.and_then(|suggestion| {
+            let SuggestedAnswer::Option { option_id } = &suggestion.answer else {
+                return None;
+            };
+            let option = approval.options.iter().find(|o| o.id == *option_id)?;
+            let (id, use_id) = (approval.id, option_id.clone());
+            let (use_button, dismiss) = chat::suggestion_buttons(&format!("inspector-{id}"), look);
+            let buttons = vec![
+                use_button
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let task = this.env.sessions.update(cx, |store, cx| {
+                            store.respond_approval(id, use_id.clone(), cx)
+                        });
+                        cx.spawn(async move |_, _| {
+                            if let Err(error) = task.await {
+                                tracing::warn!("could not answer a permission request: {error}");
+                            }
+                        })
+                        .detach();
+                    }))
+                    .child(probe(
+                        &regions,
+                        Region::Suggestion("inspector-use", ordinal),
+                    ))
+                    .into_any_element(),
+                dismiss
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.env.sessions.update(cx, |store, cx| {
+                            store.dismiss_suggestion(AskTarget::Approval { id }, cx);
+                        });
+                    }))
+                    .child(probe(
+                        &regions,
+                        Region::Suggestion("inspector-dismiss", ordinal),
+                    ))
+                    .into_any_element(),
+            ];
+            Some(
+                chat::suggestion_box(&option.label, &suggestion.reason, buttons, look)
+                    .child(probe(
+                        &regions,
+                        Region::Suggestion("inspector-box", ordinal),
+                    ))
+                    .into_any_element(),
+            )
+        });
         div()
             .flex()
             .flex_col()
@@ -360,6 +415,7 @@ impl InspectorPanel {
                 approval.detail.as_deref(),
                 vec![grid.into_any_element()],
                 chat::always_note(approval.kind, &approval.options, &approval.title),
+                suggestion,
                 look,
             ))
             .into_any_element()

@@ -310,6 +310,10 @@ pub enum Region {
     /// A control of queued message `index` above the composer (protocol 0.36): `chip`, `edit`,
     /// `now`, `remove`.
     ChatQueue(&'static str, usize),
+    /// A part of a suggestion of Mawas on a card (protocol 0.64): the surface and the part —
+    /// `chat`, `inspector`, `today`, `question` — suffixed `-box`, `-use`, `-dismiss` — and the
+    /// request's index on that surface.
+    Suggestion(&'static str, usize),
     /// A control of the attach form of an assistant chat, by name (`button`, `close`, `field`,
     /// `confirm`, `mention`, `shell`, `agent`, `file`, `search`, …).
     Attach(&'static str),
