@@ -6,6 +6,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ### Added
 - **Markdown preview**, no language server needed: a Markdown tab switches between *Source* and *Preview* (⇧⌘V), or *Open Preview to the Side* keeps a live page next to the text that follows your typing and scrolling — headings, lists with task boxes, tables, coloured code, quotes, local images, links that open files, headings or the browser. `editor.markdown_preview`, `editor.markdown_open`. The `marksman` server is now opt-in, so a README no longer asks for trust.
+- **Pick fonts from a list**: the terminal font in Settings is a searchable list of the fonts on this Mac, each drawn in its own face (monospaced first, *Show all* for the rest, *System default*, a preview line); it follows fonts you add or remove, warns about a typed name that isn't installed, and *Install font…* adds a `.ttf`/`.otf` for your account.
 
 ### Changed
 - **Closing a tab closes its session** (terminals, terminal agents, chats, splits): an idle one closes at once with *Undo*; when something runs Hutan asks — *Keep running in background* (default) or *Close*. `tabs.close_session = when_idle | always | never`; *Close Tab, Keep Running* in the tab menu; the old `terminal.tab_close` still works.
