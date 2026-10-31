@@ -1947,7 +1947,8 @@ fn workspace_permission(key: &str) -> Option<&str> {
 pub fn digest_note(status: &hutan_protocol::notify::DigestStatus, now_ms: u64) -> Vec<String> {
     use crate::sessions::agents_text::age_text;
     use crate::workbench::chat::widgets::compact_tokens;
-    let mut lines = Vec::new();
+    let mut lines =
+        vec!["Runs on OMP only, with no web access and only Hutan's read tools.".to_owned()];
     if let Some(reason) = &status.reason {
         lines.push(format!("Cannot run now: {reason}."));
     } else {
@@ -3058,10 +3059,14 @@ mod tests {
             avg_tokens: None,
         };
         let note = digest_note(&status, now);
-        assert_eq!(note[0], "Ready: OMP 18.13.3 (checked on 18.13.3).");
-        assert_eq!(note[1], "Cost per run: shown after the first run.");
-        assert_eq!(note[2], "Next run: in 2h.");
-        assert_eq!(note.len(), 3);
+        assert_eq!(
+            note[0],
+            "Runs on OMP only, with no web access and only Hutan's read tools."
+        );
+        assert_eq!(note[1], "Ready: OMP 18.13.3 (checked on 18.13.3).");
+        assert_eq!(note[2], "Cost per run: shown after the first run.");
+        assert_eq!(note[3], "Next run: in 2h.");
+        assert_eq!(note.len(), 4);
         status.avg_tokens = Some(18_400);
         status.runs = 3;
         status.last_run = Some(DigestRunInfo {
@@ -3073,15 +3078,15 @@ mod tests {
             tokens: None,
         });
         let note = digest_note(&status, now);
-        assert_eq!(note[1], "A run uses about 18k tokens (average of 3 runs).");
+        assert_eq!(note[2], "A run uses about 18k tokens (average of 3 runs).");
         assert_eq!(
-            note[3],
+            note[4],
             "Last run: skipped 1h ago: its launch has the tool `read`."
         );
         status.runnable = false;
         status.reason = Some("the digest runs on OMP only".into());
         assert_eq!(
-            digest_note(&status, now)[0],
+            digest_note(&status, now)[1],
             "Cannot run now: the digest runs on OMP only."
         );
         status.schedule = "off".into();

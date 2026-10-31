@@ -687,6 +687,8 @@ impl Workbench {
         out.extend(self.render_mawas_grants(cx));
         // What Mawas remembers: on or off, and how much.
         out.extend(self.render_daemon_section(&all[5], Filters::default(), cx));
+        // Catching up: the digest notification and the digest a model writes on a schedule.
+        out.extend(self.render_daemon_section(&all[6], Filters::default(), cx));
         // When nothing is chosen: the file's own backend, provider and model.
         out.extend(self.render_daemon_section(&all[1], Filters::default(), cx));
         out.extend(self.render_daemon_section(&all[2], Filters::default(), cx));

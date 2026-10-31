@@ -240,8 +240,8 @@ pub fn parse_version(output: &str) -> Option<String> {
     (version.chars().next()?.is_ascii_digit()).then(|| version.to_owned())
 }
 
-/// The notification's body from the answer: its first two lines of words, without the marks
-/// of headings and bullets.
+/// The notification's body from the answer: its first line of words, without the marks of
+/// headings and bullets (the prompt asks for one sentence there).
 pub fn headline(answer: &str) -> String {
     let lines: Vec<String> = answer
         .lines()
@@ -252,7 +252,7 @@ pub fn headline(answer: &str) -> String {
                 .to_owned()
         })
         .filter(|l| !l.is_empty())
-        .take(2)
+        .take(1)
         .collect();
     lines.join(" · ")
 }
@@ -1012,17 +1012,17 @@ mod tests {
     }
 
     #[test]
-    fn the_notification_says_the_first_two_lines_without_their_marks() {
+    fn the_notification_says_the_first_line_without_its_marks() {
         assert_eq!(
-            headline("## Needs you\n\n- 2 requests wait: build server, docs\nThen the rest.\n"),
-            "Needs you · 2 requests wait: build server, docs"
+            headline("## Needs you: 2 requests wait\n\n- build server, docs\nThen the rest.\n"),
+            "Needs you: 2 requests wait"
         );
         assert_eq!(headline("  \n"), "");
         assert_eq!(
             headline(
                 "**Digest, last hour (coverage starts 5 minutes ago)**\n\n**Needs you first**\n"
             ),
-            "Digest, last hour (coverage starts 5 minutes ago) · Needs you first"
+            "Digest, last hour (coverage starts 5 minutes ago)"
         );
     }
 }
