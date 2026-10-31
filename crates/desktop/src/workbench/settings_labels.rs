@@ -3042,6 +3042,61 @@ mod tests {
     }
 
     #[test]
+    fn the_digest_note_says_whether_it_can_run_what_it_costs_and_how_the_last_run_went() {
+        use hutan_protocol::notify::{DigestRunInfo, DigestStatus};
+        let now = 10_000_000;
+        let mut status = DigestStatus {
+            schedule: "every 6 h".into(),
+            harness: Some("omp".into()),
+            runnable: true,
+            reason: None,
+            verified_omp: "18.13.3".into(),
+            omp_version: Some("18.13.3".into()),
+            next_run_ms: Some(now + 2 * 3_600_000),
+            last_run: None,
+            runs: 0,
+            avg_tokens: None,
+        };
+        let note = digest_note(&status, now);
+        assert_eq!(note[0], "Ready: OMP 18.13.3 (checked on 18.13.3).");
+        assert_eq!(note[1], "Cost per run: shown after the first run.");
+        assert_eq!(note[2], "Next run: in 2h.");
+        assert_eq!(note.len(), 3);
+        status.avg_tokens = Some(18_400);
+        status.runs = 3;
+        status.last_run = Some(DigestRunInfo {
+            started_ms: now - 3_700_000,
+            ended_ms: now - 3_600_000,
+            outcome: "skipped".into(),
+            reason: Some("its launch has the tool `read`".into()),
+            session_id: None,
+            tokens: None,
+        });
+        let note = digest_note(&status, now);
+        assert!(note[1].starts_with("A run reads about 18k tokens of context (average of 3 runs)"));
+        assert_eq!(
+            note[3],
+            "Last run: skipped 1h ago: its launch has the tool `read`."
+        );
+        status.runnable = false;
+        status.reason = Some("the digest runs on OMP only".into());
+        assert_eq!(
+            digest_note(&status, now)[0],
+            "Cannot run now: the digest runs on OMP only."
+        );
+        status.schedule = "off".into();
+        assert!(
+            !digest_note(&status, now)
+                .iter()
+                .any(|l| l.starts_with("Next run"))
+        );
+        // The words obey the same rules as every other string of the window.
+        for line in digest_note(&status, now) {
+            assert!(!line.contains("needs you"), "{line}");
+        }
+    }
+
+    #[test]
     fn every_daemon_key_has_user_facing_wording() {
         let keys = daemon_wording_keys();
         for key in &keys {
