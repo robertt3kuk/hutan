@@ -811,6 +811,118 @@ pub fn day_key(ms: u64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
+/// The statistics of `req`, read from the daemon's records: the tables are read once each for
+/// the window, on a blocking thread (they are SQLite reads), and the answer is built from those
+/// rows alone. What `agents.stats` answers, and what the scheduled digest attaches.
+pub async fn read_stats(
+    storage: &hutan_storage::Storage,
+    tasks: &crate::tasks::TaskService,
+    registry: &crate::registry::RegistryHandle,
+    state_log_enabled: bool,
+    req: &AgentsStatsRequest,
+) -> Result<AgentsStats, ErrorBody> {
+    use crate::registry::now_ms;
+    use hutan_protocol::messages::SessionListFilter;
+    use hutan_protocol::task::TaskListRequest;
+    let now = now_ms();
+    let (since, until) = window(req, now);
+    let infos = registry
+        .list_sessions(SessionListFilter::default())
+        .await?
+        .sessions;
+    let storage = storage.clone();
+    let rows = tokio::task::spawn_blocking(move || -> Result<_, ErrorBody> {
+        let failed = |error: hutan_storage::StorageError| {
+            ErrorBody::new(ErrorCode::Internal, error.to_string())
+        };
+        let mut sessions = storage.sessions().list().map_err(failed)?;
+        sessions.extend(
+            storage
+                .sessions()
+                .list_closed()
+                .map_err(failed)?
+                .into_iter()
+                .map(|closed| closed.session),
+        );
+        let mut approvals = storage
+            .approvals()
+            .in_window(since, until)
+            .map_err(failed)?;
+        let known: BTreeSet<String> = approvals.iter().map(|a| a.id.to_string()).collect();
+        approvals.extend(
+            storage
+                .approvals()
+                .unresolved()
+                .map_err(failed)?
+                .into_iter()
+                .filter(|a| !known.contains(&a.id.to_string())),
+        );
+        let mut questions = storage
+            .questions()
+            .in_window(since, until)
+            .map_err(failed)?;
+        let known: BTreeSet<String> = questions.iter().map(|q| q.id.to_string()).collect();
+        questions.extend(
+            storage
+                .questions()
+                .unresolved()
+                .map_err(failed)?
+                .into_iter()
+                .filter(|q| !known.contains(&q.id.to_string())),
+        );
+        let log = storage.agent_state_log();
+        Ok((
+            storage.workspaces().list().map_err(failed)?,
+            sessions,
+            storage
+                .chat()
+                .turns_in_window(since, until)
+                .map_err(failed)?,
+            approvals,
+            questions,
+            storage
+                .usage()
+                .turns_in_window(since, until)
+                .map_err(failed)?,
+            log.latest_before(since).map_err(failed)?,
+            log.in_window(since, until).map_err(failed)?,
+            log.oldest_ms().map_err(failed)?,
+        ))
+    })
+    .await
+    .map_err(|error| ErrorBody::new(ErrorCode::Internal, error.to_string()))??;
+    let (
+        workspaces,
+        sessions,
+        turns,
+        approvals,
+        questions,
+        usage,
+        state_before,
+        state_window,
+        state_log_from_ms,
+    ) = rows;
+    let tasks = tasks.list(TaskListRequest::default()).tasks;
+    build_stats(
+        &StatsInputs {
+            now_ms: now,
+            workspaces: &workspaces,
+            sessions: &sessions,
+            infos: &infos,
+            turns: &turns,
+            approvals: &approvals,
+            questions: &questions,
+            usage: &usage,
+            state_before: &state_before,
+            state_window: &state_window,
+            state_log_enabled,
+            state_log_from_ms,
+            tasks: &tasks,
+        },
+        req,
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)] // a world is filled in as a test needs it
 mod tests {

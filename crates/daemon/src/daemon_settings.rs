@@ -467,6 +467,15 @@ fn build_specs() -> Vec<Spec> {
             Group::Notify,
             |c| int_value(c.notify.digest_hours),
         ),
+        live("notify.digest_model", Kind::String, Group::Notify, |c| {
+            json!(c.notify.digest_model.text())
+        }),
+        live(
+            "notify.digest_model_unverified_omp",
+            Kind::Bool,
+            Group::Notify,
+            |c| json!(c.notify.digest_model_unverified_omp),
+        ),
         restart("notify.native", Kind::Bool, |c| json!(c.notify.native)),
         restart(
             "terminal.env_inherit",
@@ -1785,6 +1794,8 @@ mod tests {
             sound: _,
             finished: _,
             digest_hours: _,
+            digest_model: _,
+            digest_model_unverified_omp: _,
         } = notify;
         let config::TerminalSettings { env_inherit: _ } = terminal;
         let config::TasksSettings { max_parallel: _ } = tasks;
@@ -1867,6 +1878,8 @@ mod tests {
             "notify.sound",
             "notify.finished",
             "notify.digest_hours",
+            "notify.digest_model",
+            "notify.digest_model_unverified_omp",
             "terminal.env_inherit",
             "tasks.max_parallel",
             "projects.auto",

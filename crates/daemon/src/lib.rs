@@ -77,6 +77,7 @@ pub mod control;
 pub mod daemon;
 pub mod daemon_settings;
 pub mod digest;
+pub mod digest_model;
 pub mod direct;
 pub mod error;
 pub mod files;

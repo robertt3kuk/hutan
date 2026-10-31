@@ -1647,8 +1647,12 @@ impl AssistantPanel {
                 .and_then(|chat| chat.focus)
                 .and_then(|id| store.workspace(id))
                 .map(|w| format!("Focus {}", w.name));
+            // The scheduled digest's own chat (`ChatInfo.digest`) is named for what it is, whatever
+            // its title says.
+            let digest = s.chat.as_ref().is_some_and(|chat| chat.digest);
             ChatEntry {
                 label: match focus {
+                    _ if digest => "Digest".to_owned(),
                     Some(focus) => format!("{} · {focus}", s.title),
                     None => s.title.clone(),
                 },

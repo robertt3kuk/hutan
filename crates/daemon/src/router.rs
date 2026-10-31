@@ -61,6 +61,7 @@ pub struct Services {
     pub assistant: Arc<AssistantService>,
     pub notify: Arc<NotifyService>,
     pub digest: Arc<crate::digest::DigestService>,
+    pub digest_model: Arc<crate::digest_model::DigestModelService>,
     pub worktrees: Arc<WorktreeService>,
     pub tasks: Arc<TaskService>,
     pub accounts: Arc<AccountService>,
@@ -88,6 +89,7 @@ pub struct Router {
     assistant: Arc<AssistantService>,
     notify: Arc<NotifyService>,
     digest: Arc<crate::digest::DigestService>,
+    digest_model: Arc<crate::digest_model::DigestModelService>,
     worktrees: Arc<WorktreeService>,
     tasks: Arc<TaskService>,
     accounts: Arc<AccountService>,
@@ -129,6 +131,7 @@ impl Router {
             assistant: services.assistant,
             notify: services.notify,
             digest: services.digest,
+            digest_model: services.digest_model,
             worktrees: services.worktrees,
             tasks: services.tasks,
             accounts: services.accounts,
@@ -587,6 +590,7 @@ impl Router {
             Request::NotifyList(_) => ok(&NotifyList {
                 intents: self.notify.list(),
             }),
+            Request::DigestStatus(_) => ok(&self.digest_model.status().await?),
             Request::NotifyAck(req) => {
                 self.notify.ack(&req.id)?;
                 ok(&Empty {})
@@ -1257,6 +1261,7 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::UpdateInstall(_) => ("update.install", UserOnly),
         Request::HooksTest(_) => ("hooks.test", UserOnly),
         Request::NotifyList(_) => ("notify.list", Read),
+        Request::DigestStatus(_) => ("digest.status", Read),
         Request::NotifyAck(_) => ("notify.ack", Mutate),
         // Acting on an intent can answer an approval.
         Request::NotifyAct(_) => ("notify.act", UserOnly),

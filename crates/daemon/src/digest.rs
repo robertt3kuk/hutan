@@ -56,12 +56,18 @@ pub const HOUR_MS: u64 = 3_600_000;
 /// How often the daemon looks (the decision is cheap; the records are read only when it says to).
 pub const TICK: Duration = Duration::from_secs(300);
 
-/// What a test changes of the digest's timing: the length of an "hour" and how often the daemon
-/// looks.
+/// What a test changes of the digest's timing: the length of an "hour", how often the daemon
+/// looks, and the model digest's limits.
 #[derive(Debug, Clone)]
 pub struct DigestTuning {
     pub tick: Duration,
     pub hour_ms: u64,
+    /// The scheduled model digest's longest run (`crate::digest_model`); then it is stopped.
+    pub run_limit: Duration,
+    /// How often the model digest looks at the journal for the end of a turn.
+    pub poll: Duration,
+    /// The seconds local time is ahead of UTC, when a test fixes it (else the system's).
+    pub utc_offset_secs: Option<i64>,
 }
 
 impl Default for DigestTuning {
@@ -69,6 +75,9 @@ impl Default for DigestTuning {
         Self {
             tick: TICK,
             hour_ms: HOUR_MS,
+            run_limit: Duration::from_secs(5 * 60),
+            poll: Duration::from_millis(250),
+            utc_offset_secs: None,
         }
     }
 }
@@ -319,10 +328,13 @@ impl DigestService {
         else {
             return Ok(Outcome::NoMawas);
         };
-        if !self
-            .notify
-            .raise_digest(home.session.id, Some(home.workspace_id), TITLE, &line)
-        {
+        if !self.notify.raise_digest(
+            home.session.id,
+            Some(home.workspace_id),
+            TITLE,
+            &line,
+            Some(hutan_protocol::notify::UiView::MawasRecent),
+        ) {
             return Ok(Outcome::Disabled);
         }
         let now = now_ms();

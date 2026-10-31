@@ -59,6 +59,7 @@ impl Env {
             c.digest = DigestTuning {
                 tick: TICK,
                 hour_ms: HOUR,
+                ..Default::default()
             };
             c.gateway = GatewayConfig {
                 credentials: Some(for_config as Arc<dyn CredentialStore>),

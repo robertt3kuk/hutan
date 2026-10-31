@@ -44,7 +44,7 @@ fn codex_fixtures() -> PathBuf {
 }
 
 /// A fixture binary, next to the test binaries (`just test` builds them first).
-fn fixture_bin(name: &str) -> PathBuf {
+pub(crate) fn fixture_bin(name: &str) -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     let bin = exe.parent().and_then(Path::parent).unwrap().join(name);
     assert!(
@@ -56,7 +56,7 @@ fn fixture_bin(name: &str) -> PathBuf {
 
 /// A fake harness CLI (`omp models --json`, `claude auth status`…): a shell script of fixed
 /// content at a path named by its content, written once for the same reason as the wrapper.
-fn fake_cli(name: &str, body: &str) -> PathBuf {
+pub(crate) fn fake_cli(name: &str, body: &str) -> PathBuf {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let text = format!("#!/bin/sh\n{body}\n");
     let mut hasher = DefaultHasher::new();
@@ -103,7 +103,7 @@ const CLAUDE_ADVISOR: &str =
 /// A wrapper standing in for `omp` / the Claude Code adapter: it records the arguments it was
 /// started with in `$ARGV_LOG` and becomes the fake agent (`$FIXTURE`). One file of fixed
 /// content in the system temp directory, so the system vets it once, not once per test.
-fn argv_logging_wrapper() -> PathBuf {
+pub(crate) fn argv_logging_wrapper() -> PathBuf {
     static WRAPPER: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
         let text = "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$ARGV_LOG\"\nenv | grep '^OMP_MCP_TIMEOUT_MS=' >> \"$ARGV_LOG.env\"\nexec \"$FIXTURE\" \"$@\"\n";
         let dir = std::env::temp_dir().join("hutan-test-fake-clis");
@@ -124,7 +124,7 @@ fn argv_logging_wrapper() -> PathBuf {
     WRAPPER.clone()
 }
 
-fn gateway() -> GatewayConfig {
+pub(crate) fn gateway() -> GatewayConfig {
     GatewayConfig {
         credentials: Some(Arc::new(MemoryStore::new()) as Arc<dyn CredentialStore>),
         http: HttpConfig {

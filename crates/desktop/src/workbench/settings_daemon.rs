@@ -26,11 +26,13 @@ use hutan_client::{ClientError, ConnectionState};
 use hutan_core::Epoch;
 use hutan_protocol::control::ErrorCode;
 use hutan_protocol::daemon_settings::{Applies, DaemonSetting, DaemonSettingKind, DaemonSettings};
+use hutan_protocol::notify::DigestStatus;
 use serde_json::{Value as Json, json};
 
 use super::render::probe;
 use super::settings_labels::{
-    daemon_field_help, daemon_field_search_text, daemon_field_title, daemon_value_label, words,
+    daemon_field_help, daemon_field_search_text, daemon_field_title, daemon_value_label,
+    digest_note, words,
 };
 use super::settings_mcp::McpForm;
 use super::settings_pages::{DataTarget, valid_env_name};
@@ -269,7 +271,11 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
             Section {
                 title: words::SEC_ASSISTANT_CATCH_UP,
                 help: words::SEC_ASSISTANT_CATCH_UP_HELP,
-                keys: &["notify.digest_hours"],
+                keys: &[
+                    "notify.digest_hours",
+                    "notify.digest_model",
+                    "notify.digest_model_unverified_omp",
+                ],
             },
         ],
         _ => &[],
@@ -347,11 +353,20 @@ pub struct DaemonSettingsState {
     pub(super) account_form: Option<super::settings_accounts::AccountForm>,
     requested: u64,
     applied: u64,
+    /// Where the scheduled model digest stands (`digest.status`, protocol 0.69); `None` before
+    /// it was asked and from a daemon without the capability.
+    pub(super) digest: Option<DigestStatus>,
     /// The daemon run the list was asked of.
     epoch: Option<Epoch>,
 }
 
 impl DaemonSettingsState {
+    /// Where the scheduled model digest stands, as `digest.status` last said; `None` before it
+    /// was asked and from a daemon without the capability.
+    pub fn digest(&self) -> Option<&DigestStatus> {
+        self.digest.as_ref()
+    }
+
     /// The last answer; `None` before the daemon was asked, or while `daemon.toml` is broken
     /// and nothing was known before.
     pub fn settings(&self) -> Option<&DaemonSettings> {
@@ -536,6 +551,7 @@ impl Workbench {
             return;
         }
         self.daemon_settings.unsupported = false;
+        self.refresh_digest_status(cx);
         let seq = self.daemon_settings.next_request();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -544,6 +560,34 @@ impl Workbench {
                 .await;
             this.update(cx, |this, cx| {
                 this.daemon_settings_arrived(seq, None, result, cx)
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `digest.status`, for the note under the schedule: asked with the settings, and again when
+    /// a setting that changes its answer (the schedule, Mawas's backend) was changed. A daemon
+    /// without the capability has no digest row to annotate.
+    pub fn refresh_digest_status(&mut self, cx: &mut Context<Self>) {
+        let store = self.sessions.read(cx);
+        let connection = store.connection().clone();
+        if store.connection_state() != ConnectionState::Connected
+            || !connection.supports_digest_model()
+        {
+            self.daemon_settings.digest = None;
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { connection.digest_status().await })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Ok(status) = result {
+                    this.daemon_settings.digest = Some(status);
+                    cx.notify();
+                }
             })
             .ok();
         })
@@ -673,6 +717,9 @@ impl Workbench {
 
     /// What a change of `key` touches outside the list.
     fn after_daemon_change(&mut self, key: &str, cx: &mut Context<Self>) {
+        if key.starts_with("notify.digest_model") || key.starts_with("assistant.") {
+            self.refresh_digest_status(cx);
+        }
         if key.starts_with("history.") {
             self.refresh_history_index(cx);
             self.refresh_history_panel(cx);
@@ -1412,6 +1459,22 @@ impl Workbench {
             e.kind,
             DaemonSettingKind::StringMap | DaemonSettingKind::StringList { .. }
         );
+        if key == "notify.digest_model"
+            && let Some(status) = &self.daemon_settings.digest
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            for line in digest_note(status, now) {
+                let warn = line.starts_with("Cannot");
+                let row = note(line, &theme, &tokens);
+                under.push(if warn {
+                    row.text_color(theme.warning).into_any_element()
+                } else {
+                    row.into_any_element()
+                });
+            }
+        }
         if e.kind == DaemonSettingKind::StringMap {
             under.push(
                 note(words::ENV_WARNING_DAEMON, &theme, &tokens)

@@ -226,8 +226,9 @@ pub struct DigestStatus {
     pub last_run: Option<DigestRunInfo>,
     /// How many runs the daemon remembers (the newest 50).
     pub runs: u32,
-    /// The average tokens of the runs that answered and reported usage: what the next one will
-    /// cost, about. Absent before the first.
+    /// The average context (tokens) the runs that answered ended with, as OMP reports it: about
+    /// what the next one reads. Every model call re-reads its context, so what is billed is
+    /// more, not less. Absent before the first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avg_tokens: Option<u64>,
 }
@@ -245,7 +246,7 @@ pub struct DigestRunInfo {
     /// The digest chat the answer (or the reason) is in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
-    /// Tokens of the turn, when the harness reported them.
+    /// The context the turn ended with, in tokens, when the harness reported it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<u64>,
 }

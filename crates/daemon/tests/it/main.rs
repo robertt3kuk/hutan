@@ -18,6 +18,7 @@ mod control;
 mod daemon;
 mod daemon_settings;
 mod digest;
+mod digest_model;
 mod direct;
 mod files;
 mod finish;

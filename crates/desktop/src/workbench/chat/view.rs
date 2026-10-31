@@ -2314,6 +2314,7 @@ mod safety_chip_tests {
                 network,
                 note: note.map(str::to_owned),
             }),
+            digest: false,
         }
     }
 
@@ -2532,6 +2533,7 @@ mod mode_chip_tests {
             checkpoints: None,
             account: None,
             safety: None,
+            digest: false,
         }
     }
 

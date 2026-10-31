@@ -6,6 +6,9 @@
 
 use crate::common;
 
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use common::assistant::{
@@ -2572,6 +2575,7 @@ fn digest_env(hours: u64) -> AssistantEnv {
             config.digest = hutan_daemon::digest::DigestTuning {
                 tick: Duration::from_millis(20),
                 hour_ms: 150,
+                ..Default::default()
             };
         }),
         ..Options::default()
@@ -2881,5 +2885,185 @@ fn a_focus_filters_the_rail_and_the_catch_up_to_its_workspace_and_counts_the_res
     assert_eq!(panel.read_with(cx, |p, cx| p.today(cx).elsewhere), 0);
     wait_until(cx, "the row to go", |cx| {
         !painted(&view, cx, "today-elsewhere")
+    });
+}
+
+// ---- MAWAS-DIGEST-B: the scheduled model digest ---------------------------------------------------
+
+/// The fake `hutan` of the digest daemon (it lists the unattended tools), set before the daemon
+/// starts: the daemon's tweak is a plain function.
+static DIGEST_HUTAN: OnceLock<PathBuf> = OnceLock::new();
+
+fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// A daemon whose Mawas runs on OMP (`hutan-acp-fixture replay` of the digest transcript, a fake
+/// `omp --version`, a fake `hutan`), and whose model digest counts a long "hour".
+fn digest_model_env(scripts: &Path) -> AssistantEnv {
+    let exe = std::env::current_exe().unwrap();
+    let fixture = exe
+        .parent()
+        .and_then(Path::parent)
+        .unwrap()
+        .join("hutan-acp-fixture");
+    assert!(
+        fixture.is_file(),
+        "run `cargo build -p hutan-agents --bins`"
+    );
+    let transcript = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../daemon/tests/fixtures/digest-model/pass.jsonl");
+    let omp = script(scripts, "omp", "echo omp/18.13.3");
+    let acp = script(scripts, "omp-acp", &format!("exec {fixture:?} \"$@\""));
+    let hutan = script(
+        scripts,
+        "hutan",
+        "case \"$2\" in\n--unattended-tools|--read-only-tools) printf 'agents_board\\nagents_activity\\nagents_stats\\n';;\n--gated-tools) printf 'task_add\\n';;\nesac",
+    );
+    let _ = DIGEST_HUTAN.set(hutan);
+    let tables = Box::leak(
+        format!(
+            "[terminal]\nenv_inherit = \"daemon\"\n\n[harness.omp]\nbin = {acp:?}\nargs = [\"replay\", {transcript:?}, \"acp\"]\ncli = {omp:?}\n"
+        )
+        .into_boxed_str(),
+    );
+    AssistantEnv::start(Options {
+        assistant: "backend = \"omp\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"",
+        tables,
+        tweak: Some(|config| {
+            config.hutan_bin = DIGEST_HUTAN.get().cloned();
+            config.digest = hutan_daemon::digest::DigestTuning {
+                tick: Duration::from_millis(20),
+                hour_ms: 600_000,
+                poll: Duration::from_millis(10),
+                utc_offset_secs: Some(0),
+                ..Default::default()
+            };
+        }),
+        ..Options::default()
+    })
+}
+
+#[gpui::test]
+fn the_model_digest_is_a_row_with_its_cost_and_status_and_its_chat_is_labelled_digest(
+    cx: &mut TestAppContext,
+) {
+    let scripts = tempfile::tempdir().unwrap();
+    let env = digest_model_env(scripts.path());
+    let target = env.daemon.sh("sleep 600");
+    let other = reported_agent(&env);
+    let (view, cx, panel) = open_wide(cx, &env);
+
+    // The row, with the harness requirement in its help and what the daemon says about it.
+    cx.dispatch_action(actions::OpenSettingsFor("assistant".into()));
+    draw(cx);
+    wait_until(cx, "the digest status", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.daemon_settings().digest().is_some())
+    });
+    let rows = view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx));
+    let place = |key: &str| rows.iter().position(|row| row == key);
+    assert!(
+        place("d:notify.digest_model") > place("d:notify.digest_hours")
+            && place("d:notify.digest_model_unverified_omp") > place("d:notify.digest_model"),
+        "{rows:?}"
+    );
+    let labels =
+        hutan_desktop::workbench::settings_labels::daemon_field_help("notify.digest_model");
+    assert!(
+        labels.contains("OMP only") && labels.contains("tokens"),
+        "{labels}"
+    );
+    assert_eq!(
+        hutan_desktop::workbench::settings_labels::daemon_field_title("notify.digest_model"),
+        "Digest written by a model"
+    );
+    let status = view.read_with(cx, |wb, _| wb.daemon_settings().digest().cloned().unwrap());
+    assert!(status.runnable, "{status:?}");
+    assert_eq!(
+        (status.schedule.as_str(), status.verified_omp.as_str()),
+        ("off", "18.13.3")
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb
+            .daemon_settings()
+            .value("notify.digest_model")
+            .cloned()),
+        Some(json!("off"))
+    );
+
+    // Something waits; the schedule goes on (a live setting) and the daemon runs the digest.
+    let _asked = env
+        .daemon
+        .call_from_in_background::<SessionResult>(other.id, rename_request(target.id, "x"));
+    wait_needs(&panel, cx, 1);
+    view.update(cx, |wb, cx| {
+        wb.daemon_setting_set("notify.digest_model", Some(json!("every 1 h")), cx);
+    });
+    wait_until(cx, "the Digest chat in the Chats menu", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.chat_entries(cx).iter().any(|row| row.label == "Digest")
+        })
+    });
+    let rows = panel.read_with(cx, |p, cx| p.chat_entries(cx));
+    let digest_chat = rows
+        .iter()
+        .find(|row| row.label == "Digest")
+        .and_then(|row| row.session)
+        .unwrap();
+    assert!(
+        rows[1].label != "Digest",
+        "the default Mawas stays first: {rows:?}"
+    );
+
+    // The note under the row now says how the run went and what it cost.
+    wait_until(cx, "the finished run in the status", |cx| {
+        view.update(cx, |wb, cx| wb.refresh_digest_status(cx));
+        view.read_with(cx, |wb, _| {
+            wb.daemon_settings()
+                .digest()
+                .and_then(|s| s.last_run.as_ref())
+                .is_some_and(|run| run.outcome == "done")
+        })
+    });
+    let status = view.read_with(cx, |wb, _| wb.daemon_settings().digest().cloned().unwrap());
+    assert_eq!(status.schedule, "every 1 h");
+    assert_eq!(status.avg_tokens, Some(12345));
+    let note = hutan_desktop::workbench::settings_labels::digest_note(
+        &status,
+        status.last_run.as_ref().unwrap().ended_ms,
+    );
+    assert!(
+        note.iter().any(|l| l.starts_with("Ready: OMP 18.13.3")),
+        "{note:?}"
+    );
+    assert!(
+        note.iter().any(|l| l.contains("about 12k tokens")),
+        "{note:?}"
+    );
+    assert!(
+        note.iter().any(|l| l.starts_with("Last run: finished")),
+        "{note:?}"
+    );
+
+    // The notification's *Open* shows the Digest chat.
+    let list: hutan_protocol::notify::NotifyList = env.daemon.call(Request::NotifyList(Empty {}));
+    let digest = list
+        .intents
+        .into_iter()
+        .find(|i| i.kind == hutan_protocol::notify::IntentKind::Digest)
+        .expect("the digest notification");
+    assert_eq!(digest.session_id, digest_chat);
+    let _: hutan_protocol::notify::NotifyActed =
+        env.daemon
+            .call(Request::NotifyAct(hutan_protocol::notify::NotifyAct {
+                id: digest.id.clone(),
+                action_id: hutan_protocol::notify::ACTION_OPEN.into(),
+            }));
+    wait_until(cx, "the Digest chat shown", |cx| {
+        panel.read_with(cx, |p, cx| p.session(cx) == Some(digest_chat))
     });
 }

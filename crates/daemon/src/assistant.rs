@@ -97,6 +97,12 @@ impl Backend {
     }
 }
 
+/// Whether `session` is the scheduled model digest's chat (`ChatInfo.digest`): listed with the
+/// others, never anyone's default.
+fn is_digest(session: &SessionInfo) -> bool {
+    session.chat.as_ref().is_some_and(|chat| chat.digest)
+}
+
 /// The backend an assistant session runs on.
 fn backend_of(session: &SessionInfo) -> AssistantBackend {
     match session.chat.as_ref().map(|chat| chat.agent.as_str()) {
@@ -247,7 +253,7 @@ impl AssistantService {
             .assistants()
             .await?
             .into_iter()
-            .filter(|s| s.workspace_id == workspace.id)
+            .filter(|s| s.workspace_id == workspace.id && !is_digest(s))
             .collect();
         if !req.new {
             let default = configured
@@ -264,7 +270,8 @@ impl AssistantService {
             Some(backend) => backend,
             None => self.automatic().await?,
         };
-        self.create(workspace, existing.len(), &backend).await
+        self.create(workspace, existing.len(), &backend, false)
+            .await
     }
 
     /// The workspace an `assistant.open` / `assistant.configure` names.
@@ -567,6 +574,7 @@ impl AssistantService {
         workspace: &WorkspaceInfo,
         existing: usize,
         backend: &Backend,
+        digest: bool,
     ) -> Result<SessionInfo, ErrorBody> {
         // A stored or configured model always wins; the pick only fills a gap. A harness's
         // gap is filled when its agent first starts, not now: opening starts nothing.
@@ -584,7 +592,9 @@ impl AssistantService {
             AssistantScope::Global => "Mawas".to_owned(),
             AssistantScope::Workspace => format!("Mawas · {}", workspace.name),
         };
-        if existing > 0 {
+        if digest {
+            title = "Digest".to_owned();
+        } else if existing > 0 {
             title.push_str(&format!(" {}", existing + 1));
         }
         let mut request = ChatCreate {
@@ -643,6 +653,72 @@ impl AssistantService {
         }
     }
 
+    /// What the scheduled model digest would run on (MAWAS-DIGEST-B, ADR 0017 amendment
+    /// 2026-10-31): the harness of Global Mawas, which must be OMP — Claude Code, Codex and a
+    /// provider are refused with the reason (no spike has shown their launch has no network
+    /// tool). `Ok(model)` is the model Global Mawas names, if any.
+    ///
+    /// `Err((harness, reason))`: `harness` is the one Mawas runs on, when there is one.
+    pub async fn digest_backend(&self) -> Result<Option<String>, (Option<&'static str>, String)> {
+        let failed = |e: ErrorBody| (None, e.message);
+        let workspaces = self.workspaces().await.map_err(failed)?;
+        let home = Self::target(&workspaces, AssistantScope::Global, None).map_err(failed)?;
+        let backend = match self.configured(home).await.map_err(failed)? {
+            Some(backend) => backend,
+            None => self.automatic().await.map_err(failed)?,
+        };
+        match backend.kind {
+            AssistantBackend::Omp => Ok(backend.model),
+            other => {
+                let (name, label) = match other {
+                    AssistantBackend::Claude => ("claude", "Claude Code"),
+                    AssistantBackend::Codex => ("codex", "Codex"),
+                    _ => ("provider", "a model provider (Chat only)"),
+                };
+                Err((
+                    Some(name),
+                    format!(
+                        "the digest runs on OMP only, and Mawas runs on {label} here: no launch of it \
+                         has been shown to have no network tool \
+                         (docs/spikes/2026-10-31-advisor-network.md). Choose OMP for Mawas in \
+                         Settings → Mawas to use the digest"
+                    ),
+                ))
+            }
+        }
+    }
+
+    /// The chat the scheduled digest runs in, made on first use: a Global assistant on OMP,
+    /// titled *Digest*, marked so that it starts with the digest's own launch and is never
+    /// anyone's default. A stopped one is started again.
+    pub async fn digest_chat(&self, model: Option<String>) -> Result<SessionInfo, ErrorBody> {
+        let _one_at_a_time = self.open_lock.lock().await;
+        let workspaces = self.workspaces().await?;
+        let home = Self::target(&workspaces, AssistantScope::Global, None)?;
+        let existing: Vec<SessionInfo> = self
+            .assistants()
+            .await?
+            .into_iter()
+            .filter(|s| s.workspace_id == home.id)
+            .collect();
+        let found = existing
+            .iter()
+            .find(|s| is_digest(s) && backend_of(s) == AssistantBackend::Omp);
+        if let Some(chat) = found {
+            if chat.state.is_live() {
+                return Ok(chat.clone());
+            }
+            return self.registry.restart_session(chat.id).await;
+        }
+        let backend = Backend {
+            kind: AssistantBackend::Omp,
+            model,
+            provider: None,
+        };
+        let created = self.create(home, existing.len(), &backend, true).await?;
+        self.registry.mark_digest(created.id).await
+    }
+
     /// The assistant sessions, oldest first, with the scope and backend of each and which is
     /// the default.
     pub async fn list(&self, req: AssistantListRequest) -> Result<AssistantList, ErrorBody> {
@@ -654,7 +730,8 @@ impl AssistantService {
                 continue;
             };
             let backend = self.configured(workspace).await?;
-            let default = !seen.contains(&workspace.id)
+            let default = !is_digest(&session)
+                && !seen.contains(&workspace.id)
                 && backend
                     .as_ref()
                     .is_none_or(|backend| backend.runs(&session));

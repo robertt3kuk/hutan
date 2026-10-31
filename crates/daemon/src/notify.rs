@@ -140,6 +140,8 @@ struct Entry {
     approval: Option<ApprovalId>,
     question: Option<QuestionId>,
     destructive: Vec<String>,
+    /// What the page the intent's *Open* shows should show (`ui.open`'s `view`).
+    open_view: Option<hutan_protocol::notify::UiView>,
 }
 
 /// What is remembered of an agent tree node between two `agent.tree_updated` events.
@@ -518,6 +520,7 @@ impl Core {
             approval: candidate.approval,
             question: candidate.question,
             destructive: candidate.destructive,
+            open_view: None,
         };
         self.pending.push_back(entry.clone());
         while self.pending.len() > MAX_PENDING {
@@ -540,12 +543,14 @@ impl Core {
         workspace_id: Option<WorkspaceId>,
         title: &str,
         body: &str,
+        open_view: Option<hutan_protocol::notify::UiView>,
         now_ms: u64,
     ) -> Option<Entry> {
         if !self.settings.enabled {
             return None;
         }
         self.expire(now_ms);
+        // One digest at a time, of either kind: the newest replaces what is still pending.
         self.withdraw_where(|e| e.intent.kind == IntentKind::Digest);
         let entry = Entry {
             intent: NotificationIntent {
@@ -568,6 +573,7 @@ impl Core {
             approval: None,
             question: None,
             destructive: Vec::new(),
+            open_view,
         };
         self.pending.push_back(entry.clone());
         while self.pending.len() > MAX_PENDING {
@@ -939,9 +945,10 @@ impl NotifyService {
         workspace: Option<WorkspaceId>,
         title: &str,
         body: &str,
+        open_view: Option<hutan_protocol::notify::UiView>,
     ) -> bool {
         let raised = self.with_core(|core| {
-            let entry = core.raise_digest(session, workspace, title, body, now_ms())?;
+            let entry = core.raise_digest(session, workspace, title, body, open_view, now_ms())?;
             // Quiet by its kind (`Urgency::Finished`): a banner, no sound.
             let silent = !core.plays_sound(IntentKind::Digest);
             self.native_send(NativeOp::Post(
@@ -1039,8 +1046,7 @@ impl NotifyService {
                 workspace_id: entry.intent.workspace_id,
                 at_ms: now_ms(),
                 // A digest's *Open* shows what happened, not just the chat.
-                view: (entry.intent.kind == IntentKind::Digest)
-                    .then_some(hutan_protocol::notify::UiView::MawasRecent),
+                view: entry.open_view,
             })
             .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
         Ok(u32::try_from(reached).unwrap_or(u32::MAX))

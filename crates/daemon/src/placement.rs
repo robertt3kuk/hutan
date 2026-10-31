@@ -522,6 +522,7 @@ mod tests {
             checkpoints: None,
             account: None,
             safety: None,
+            digest: false,
         }
     }
 

@@ -61,6 +61,8 @@ pub struct McpWiring {
     reads: Arc<OnceCell<Vec<String>>>,
     /// The tools that change something, likewise.
     writes: Arc<OnceCell<Vec<String>>>,
+    /// The tools the scheduled digest may call (`hutan mcp --unattended-tools`), likewise.
+    unattended: Arc<OnceCell<Vec<String>>>,
 }
 
 /// Whether `name` is a tool name as the table writes them: it goes into a harness's
@@ -130,6 +132,7 @@ impl McpWiring {
             private_dir,
             reads: Arc::default(),
             writes: Arc::default(),
+            unattended: Arc::default(),
         }
     }
 
@@ -153,6 +156,22 @@ impl McpWiring {
                 .await,
             writes: self.listed(&self.writes, "--gated-tools", "gated").await,
         }
+    }
+
+    /// The tools of `hutan mcp --unattended` (the scheduled digest's launch), as the CLI lists
+    /// them; empty when it cannot (the digest then does not run).
+    pub async fn unattended_tools(&self) -> Vec<String> {
+        self.listed(&self.unattended, "--unattended-tools", "unattended")
+            .await
+    }
+
+    /// The digest chat's own server: `hutan mcp --unattended`, which serves only
+    /// [`Self::unattended_tools`]. `None` under `[control] mcp = false`.
+    pub fn digest_server_for(&self, session: SessionId) -> Option<McpServerSpec> {
+        self.server_for(session).map(|mut server| {
+            server.args.push("--unattended".to_owned());
+            server
+        })
     }
 
     /// Writes `content` to `file` in [`Self::private_dir`] (0700; the file 0600, replaced
@@ -259,6 +278,14 @@ pub fn omp_overlay(names: &[String], web: bool) -> String {
             out.push_str(&format!("    mcp__{SERVER_NAME}_{name}: allow\n"));
         }
     }
+    out
+}
+
+/// The OMP overlay of the scheduled digest's launch: [`omp_overlay`] with the web off, the
+/// tools of its server approved, and the project's MCP configuration (`.mcp.json`) ignored.
+pub fn omp_digest_overlay(names: &[String]) -> String {
+    let mut out = omp_overlay(names, false);
+    out.push_str("# No MCP server of the project's folder either (the digest has Hutan's alone).\nmcp:\n  enableProjectConfig: false\n");
     out
 }
 

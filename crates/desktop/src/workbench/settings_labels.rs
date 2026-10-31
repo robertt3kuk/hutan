@@ -1575,6 +1575,18 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "notify.digest_model",
+        "Digest written by a model",
+        "Off by default. On a schedule, a model writes the digest of what your agents did, and Hutan shows it as one notification; Open shows the Digest chat. Write off, daily 08:30 (your local time) or every 6 h. It runs on OMP only, with no web access and no tools of its own: only Hutan's read tools, and Hutan checks before every run that nothing else is loaded. Claude Code and Codex are not used for it until they are shown to be safe. It reads titles, questions and errors of your agents, so every run costs model tokens (shown below).",
+    ),
+    field(
+        "daemon",
+        "notify.digest_model_unverified_omp",
+        "Run the digest on another OMP version",
+        "The digest's launch was checked on one OMP version and runs only on that one: another version is skipped, with a notice, until it is checked again. Turn this on to run it anyway. Hutan still checks the tools and servers before every run.",
+    ),
+    field(
+        "daemon",
         "assistant.context.shell",
         "Projects: terminal output",
         "Lets the assistant of a project read the commands and output of terminals you attach to a message.",
@@ -1928,6 +1940,53 @@ fn permission_text(name: &str) -> Option<(&'static str, &'static str)> {
 fn workspace_permission(key: &str) -> Option<&str> {
     let rest = key.strip_prefix("assistant.workspaces.")?;
     rest.rsplit_once('.').map(|(_, permission)| permission)
+}
+
+/// What Settings says under the digest schedule from `digest.status`: whether it can run (and
+/// if not, why), what a run costs, when it runs next and how the last one went.
+pub fn digest_note(status: &hutan_protocol::notify::DigestStatus, now_ms: u64) -> Vec<String> {
+    use crate::sessions::agents_text::age_text;
+    use crate::workbench::chat::widgets::compact_tokens;
+    let mut lines = Vec::new();
+    if let Some(reason) = &status.reason {
+        lines.push(format!("Cannot run now: {reason}."));
+    } else {
+        lines.push(format!(
+            "Ready: OMP {} (checked on {}).",
+            status.omp_version.as_deref().unwrap_or("unknown"),
+            status.verified_omp
+        ));
+    }
+    lines.push(match status.avg_tokens {
+        Some(tokens) => format!(
+            "A run reads about {} tokens of context (average of {} {}); every model call reads it again, so the bill is at least that.",
+            compact_tokens(tokens),
+            status.runs,
+            if status.runs == 1 { "run" } else { "runs" }
+        ),
+        None => "Cost per run: shown after the first run.".to_owned(),
+    });
+    if let Some(next) = status.next_run_ms
+        && status.schedule != "off"
+    {
+        lines.push(if next <= now_ms {
+            "Next run: at the next look.".to_owned()
+        } else {
+            format!(
+                "Next run: in {}.",
+                age_text(next, now_ms).trim_end_matches(" ago")
+            )
+        });
+    }
+    if let Some(last) = &status.last_run {
+        let when = age_text(now_ms, last.ended_ms);
+        lines.push(match (&*last.outcome, &last.reason) {
+            ("done", _) => format!("Last run: finished {when}."),
+            (outcome, Some(reason)) => format!("Last run: {outcome} {when}: {reason}."),
+            (outcome, None) => format!("Last run: {outcome} {when}."),
+        });
+    }
+    lines
 }
 
 /// The title of a daemon setting.
@@ -2327,7 +2386,7 @@ pub mod words {
         SEC_ASSISTANT_MEMORY = "Memory";
         SEC_ASSISTANT_MEMORY_HELP = "What Mawas remembers because you approved it: see and edit it on the Memory page (Mawas: Memory). A model's proposals are never saved until you approve them. Archived entries are no longer given to new conversations; text already sent to a provider or kept in a transcript cannot be taken back.";
         SEC_ASSISTANT_CATCH_UP = "Catching up";
-        SEC_ASSISTANT_CATCH_UP_HELP = "Mawas Home's Catch up chip and the Recent tab are always there. This is the one notification for when you were away; it uses no model.";
+        SEC_ASSISTANT_CATCH_UP_HELP = "Mawas Home's Catch up chip and the Recent tab are always there. This is the one notification for when you were away; it uses no model. A digest written by a model on a schedule is a separate, optional setting.";
         SCOPE_GLOBAL = "Global (Home)";
         INHERIT = "Inherit";
         ALLOW = "Allow";

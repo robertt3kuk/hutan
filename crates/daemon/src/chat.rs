@@ -63,13 +63,14 @@ use crate::contain::{Fragment, Sandbox};
 use crate::context::Attached;
 use crate::direct::{DirectSession, Target};
 use crate::harness::{
-    AGENT_CLAUDE, AGENT_OMP, Harnesses, assistant_profile, is_harness_agent, omp_assistant_prompt,
+    AGENT_CLAUDE, AGENT_OMP, DIGEST_PROMPT, Harnesses, assistant_profile, is_harness_agent,
+    omp_assistant_prompt,
 };
 use crate::insight::{InsightHub, InsightTarget};
 use crate::mcp_wiring::{
     ApprovedTools, CLAUDE_WEB_TOOLS, McpServerSpec, McpWiring, claude_allowed_tools,
-    codex_approval_overrides, codex_web_override, codex_window_override, omp_overlay,
-    omp_window_env,
+    codex_approval_overrides, codex_web_override, codex_window_override, omp_digest_overlay,
+    omp_overlay, omp_window_env,
 };
 use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
@@ -194,6 +195,10 @@ pub struct ChatSpec {
     /// other chat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<hutan_core::WorkspaceId>,
+    /// The Global Mawas chat the scheduled model digest runs in (protocol 0.69, MAWAS-DIGEST-B):
+    /// it starts with the digest's own launch, never the user's Mawas.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub digest: bool,
 }
 
 /// What runs a session: an agent process, or the model gateway.
@@ -872,6 +877,16 @@ impl ChatManager {
         self.mcp.get().and_then(|wiring| wiring.server_for(session))
     }
 
+    /// The tools the scheduled digest's launch serves (`hutan mcp --unattended-tools`): what
+    /// its pre-flight expects the harness to list. Empty under `[control] mcp = false` and when
+    /// the CLI cannot be asked.
+    pub(crate) async fn unattended_tools(&self) -> Vec<String> {
+        match self.mcp.get().filter(|wiring| wiring.enabled) {
+            Some(wiring) => wiring.unattended_tools().await,
+            None => Vec::new(),
+        }
+    }
+
     /// The tools of `hutan mcp` a Mawas harness runs without asking the user itself
     /// (`docs/control.md` § Mawas › Reads are free, One prompt per write): the ones that only
     /// read, and the ones that change something, whose question is Hutan's own gate card. The
@@ -1112,6 +1127,46 @@ impl ChatManager {
                 adapter.shutdown().await;
             }
         });
+    }
+
+    /// Ends the agent of the scheduled digest's chat the way the idle sleeper does (the session
+    /// stays what it is for its clients; the next message wakes it), after a run that is over
+    /// or refused. `false` when it has no running agent.
+    pub(crate) async fn digest_sleep(&self, id: SessionId) -> bool {
+        let Some(live) = lock(&self.live).get(&id).cloned() else {
+            return false;
+        };
+        // As the idle sleeper does it: `sleeping` before the claim, so that a message that finds
+        // `busy` taken knows it is the sleeper's; a turn that still runs is not put to sleep.
+        live.sleeping.store(true, Ordering::Release);
+        let claimed = live
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if !claimed {
+            live.sleeping.store(false, Ordering::Release);
+            return false;
+        }
+        lock(&self.asleep).insert(id);
+        if let Backend::Agent(adapter) = &live.backend {
+            adapter.shutdown().await;
+        }
+        true
+    }
+
+    /// Journals a notice of Hutan's in the digest's chat while its agent runs (why a run was
+    /// skipped). `false` when it is not running.
+    pub(crate) async fn digest_notice(
+        &self,
+        id: SessionId,
+        level: NoticeLevel,
+        message: &str,
+    ) -> bool {
+        let Some(live) = lock(&self.live).get(&id).cloned() else {
+            return false;
+        };
+        self.notice(&live, level, message).await;
+        true
     }
 
     /// The session's running backend. A sleeping assistant is woken first (its agent starts
@@ -1433,6 +1488,19 @@ impl ChatManager {
         cwd: PathBuf,
         spec: &ChatSpec,
     ) -> Result<Started, StartFailure> {
+        // Each run of the scheduled digest is a conversation of its own (the chat keeps the
+        // journal): a resumed one would carry every earlier digest in its context and cost more
+        // each day.
+        let fresh;
+        let spec = if spec.digest && spec.thread_id.is_some() {
+            fresh = ChatSpec {
+                thread_id: None,
+                ..spec.clone()
+            };
+            &fresh
+        } else {
+            spec
+        };
         let harnesses = self.harnesses.clone();
         let agent = spec.agent.clone();
         let account = spec.account.clone();
@@ -1442,13 +1510,42 @@ impl ChatManager {
         // (R1), and a change asks once, on Hutan's own card. OMP gets a private overlay file
         // (which also switches its web access off unless `assistant.web`), Claude Code
         // `allowedTools` (and `disallowedTools` for the web) below.
-        let tools = self.mawas_tools(id, spec.assistant).await;
-        let web = self.assistant_policy().web;
+        let digest = spec.digest && spec.assistant && spec.agent == AGENT_OMP;
+        let tools = if digest {
+            // The scheduled digest has Hutan's unattended tools and nothing else; with none
+            // (the CLI could not list them, or `[control] mcp = false`) it does not start.
+            let unattended = match self.mcp.get().filter(|wiring| wiring.enabled) {
+                Some(wiring) => wiring.unattended_tools().await,
+                None => Vec::new(),
+            };
+            if unattended.is_empty() {
+                return Err(ErrorBody::new(
+                    ErrorCode::InvalidState,
+                    "the scheduled digest has no tool to read with: Hutan's own MCP server is off \
+                     (`[control] mcp = false`) or `hutan mcp --unattended-tools` did not answer",
+                )
+                .into());
+            }
+            ApprovedTools {
+                reads: unattended,
+                writes: Vec::new(),
+            }
+        } else {
+            self.mawas_tools(id, spec.assistant).await
+        };
+        let web = !digest && self.assistant_policy().web;
         const OVERLAY_FILE: &str = "omp-approvals.yml";
-        let overlay = if spec.assistant && spec.agent == AGENT_OMP && (!tools.is_empty() || !web) {
-            let content = omp_overlay(&tools.all(), web);
+        let overlay = if spec.assistant
+            && spec.agent == AGENT_OMP
+            && (digest || !tools.is_empty() || !web)
+        {
+            let (file, content) = if digest {
+                ("omp-digest.yml", omp_digest_overlay(&tools.all()))
+            } else {
+                (OVERLAY_FILE, omp_overlay(&tools.all(), web))
+            };
             match self.mcp.get() {
-                Some(wiring) => match wiring.write_private(OVERLAY_FILE, &content) {
+                Some(wiring) => match wiring.write_private(file, &content) {
                     Ok(path) => Some(path),
                     // Only the approvals are at stake: OMP keeps asking, as it always could.
                     Err(error) if web => {
@@ -1458,13 +1555,13 @@ impl ChatManager {
                     // The web is off by default and only this file switches it off in OMP: no
                     // file, no Mawas (never a harness that has the web without being told so).
                     Err(error) => {
-                        let path = wiring.private_dir.join(OVERLAY_FILE);
+                        let path = wiring.private_dir.join(file);
                         warn!(%error, path = %path.display(), "could not write Mawas's launch settings; she is not started");
                         return Err(ErrorBody::new(
                             ErrorCode::Internal,
                             format!(
-                                "Hutan couldn't write Mawas's launch settings ({}: {error}), so she wasn't started: \\
-                                 with web access off, her harness must not start without them. Make that folder \\
+                                "Hutan couldn't write Mawas's launch settings ({}: {error}), so she wasn't started: \
+                                 with web access off, her harness must not start without them. Make that folder \
                                  writable and send again, or set [assistant] web = true in daemon.toml to let her read the web.",
                                 path.display()
                             ),
@@ -1494,19 +1591,36 @@ impl ChatManager {
         };
         let prompt_file = match (&memory, mode) {
             (Some(memory), Some(mode)) if spec.agent == AGENT_OMP => {
-                self.omp_prompt_file(memory, mode)
+                let prompt = if digest {
+                    DIGEST_PROMPT
+                } else {
+                    omp_assistant_prompt(mode)
+                };
+                self.omp_prompt_file(memory, prompt)
             }
             _ => None,
         };
         let mut config = tokio::task::spawn_blocking(move || {
-            harnesses.acp_config_with(
-                &agent,
-                mode,
-                prompt_file.as_deref(),
-                account.as_deref(),
-                safety,
-                overlay.as_deref(),
-            )
+            if digest {
+                // The recipe's launch: no OMP tool, no extension, only Hutan's server.
+                let overlay = overlay.ok_or_else(|| {
+                    ErrorBody::new(ErrorCode::Internal, "the digest has no launch settings")
+                })?;
+                let prompt = prompt_file.map_or_else(
+                    || DIGEST_PROMPT.to_owned(),
+                    |file| file.to_string_lossy().into_owned(),
+                );
+                harnesses.digest_config(&prompt, account.as_deref(), &overlay)
+            } else {
+                harnesses.acp_config_with(
+                    &agent,
+                    mode,
+                    prompt_file.as_deref(),
+                    account.as_deref(),
+                    safety,
+                    overlay.as_deref(),
+                )
+            }
         })
         .await
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}")))??;
@@ -1586,8 +1700,22 @@ impl ChatManager {
         };
         // The user's `[mcp.*]` servers, and Hutan's own (`[control] mcp`), which carries this
         // session's id so that its requests are attributed to it.
-        let mut servers = self.harnesses.mcp_servers().to_vec();
-        servers.extend(self.mcp_server(id).map(|server| server.acp_server()));
+        // The digest has Hutan's unattended server alone, never the user's.
+        let mut servers = if digest {
+            Vec::new()
+        } else {
+            self.harnesses.mcp_servers().to_vec()
+        };
+        servers.extend(
+            if digest {
+                self.mcp
+                    .get()
+                    .and_then(|wiring| wiring.digest_server_for(id))
+            } else {
+                self.mcp_server(id)
+            }
+            .map(|server| server.acp_server()),
+        );
         let AcpSession {
             adapter,
             started,
@@ -1669,9 +1797,9 @@ impl ChatManager {
     /// The prompt file of an OMP assistant: its Mawas prompt for `mode` and the memory, private
     /// to the daemon. `None` (the plain prompt on the command line) when it cannot be written:
     /// the assistant still starts, without memory.
-    fn omp_prompt_file(&self, memory: &StartContext, mode: AssistantMode) -> Option<PathBuf> {
+    fn omp_prompt_file(&self, memory: &StartContext, prompt: &str) -> Option<PathBuf> {
         let context = self.memory_context()?;
-        let content = format!("{}\n\n{}\n", omp_assistant_prompt(mode), memory.text);
+        let content = format!("{prompt}\n\n{}\n", memory.text);
         match context.prompt_file(&memory.snapshot_id, &content) {
             Ok(path) => Some(path),
             Err(error) => {

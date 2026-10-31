@@ -261,6 +261,8 @@ enum Command {
     SetChatModel(ChatSetModel, Reply<SessionInfo>),
     /// `assistant.focus` (protocol 0.61): the Focus of a Global Mawas chat.
     SetFocus(SessionId, Option<WorkspaceId>, Reply<SessionInfo>),
+    /// Marks a Global Mawas chat as the one the scheduled digest runs in (MAWAS-DIGEST-B).
+    MarkDigest(SessionId, Reply<SessionInfo>),
     /// From the task that switched the model of a harness chat: the agent's answer.
     ChatModelSwitched {
         session: SessionId,
@@ -823,6 +825,12 @@ impl RegistryHandle {
         workspace: Option<WorkspaceId>,
     ) -> Result<SessionInfo, ErrorBody> {
         self.ask(|r| Command::SetFocus(session, workspace, r)).await
+    }
+
+    /// Marks `session`, an assistant chat of the Home workspace that has not started, as the
+    /// scheduled model digest's chat (`ChatInfo.digest`): it starts with the digest's launch.
+    pub async fn mark_digest(&self, session: SessionId) -> Result<SessionInfo, ErrorBody> {
+        self.ask(|r| Command::MarkDigest(session, r)).await
     }
 
     /// `worktree.*` changed the checkouts on disk: forgets what is known of directories and
@@ -1641,6 +1649,9 @@ impl SessionRegistry {
                 Command::SetChatModel(req, reply) => self.set_chat_model(req, reply),
                 Command::SetFocus(id, focus, reply) => {
                     let _ = reply.send(self.set_focus(id, focus));
+                }
+                Command::MarkDigest(id, reply) => {
+                    let _ = reply.send(self.mark_digest(id));
                 }
                 Command::ChatModelSwitched {
                     session,
@@ -4052,6 +4063,7 @@ impl SessionRegistry {
                 dirs: Vec::new(),
                 dirs_managed: false,
                 focus: None,
+                digest: false,
             },
             None => ChatSpec {
                 fork: None,
@@ -4085,6 +4097,7 @@ impl SessionRegistry {
                 dirs_managed: !req.extra_dirs.is_empty(),
                 dirs: req.extra_dirs,
                 focus: None,
+                digest: false,
             },
         };
         let folder = req
@@ -4258,6 +4271,41 @@ impl SessionRegistry {
                 let _ = reply.send(Err(error));
             }
         }
+    }
+
+    /// Marks an assistant chat of Home as the digest's (see [`RegistryHandle::mark_digest`]).
+    fn mark_digest(&mut self, id: SessionId) -> Result<SessionInfo, ErrorBody> {
+        let index = self.session_index(id)?;
+        let home = self.workspaces.iter().any(|w| {
+            w.info.id == self.sessions[index].info.workspace_id
+                && w.info.kind == WorkspaceKind::Home
+        });
+        let assistant = self.sessions[index]
+            .info
+            .chat
+            .as_ref()
+            .is_some_and(ChatInfo::is_assistant);
+        if !assistant || !home {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                "only a Global Mawas chat can be the digest's",
+            ));
+        }
+        let Some(spec) = self.sessions[index].chat.as_mut() else {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                "only a Global Mawas chat can be the digest's",
+            ));
+        };
+        if !spec.digest {
+            spec.digest = true;
+            if let Some(chat) = &mut self.sessions[index].info.chat {
+                chat.digest = true;
+            }
+            self.persist_session(index);
+            self.emit_session(index);
+        }
+        Ok(self.sessions[index].info.clone())
     }
 
     /// `assistant.focus`: only a Global Mawas chat (an assistant of the Home workspace) has a
@@ -5115,6 +5163,7 @@ impl SessionRegistry {
                         dirs: Vec::new(),
                         dirs_managed: false,
                         focus: None,
+                        digest: false,
                     },
                     Some(format!("stored spec unreadable: {error}")),
                 )
@@ -6107,6 +6156,7 @@ fn chat_info(spec: &ChatSpec) -> ChatInfo {
         fork: None,
         dirs: Vec::new(),
         focus: spec.focus,
+        digest: spec.digest,
         agent: spec.agent.clone(),
         model: spec.model.clone().unwrap_or_default(),
         approval_policy: spec.approval_policy,

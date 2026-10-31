@@ -31,6 +31,7 @@ use crate::conn::{self, ConnContext};
 use crate::control::ControlService;
 use crate::daemon_settings::{SettingsService, Targets};
 use crate::digest::{DigestInputs, DigestService, DigestTuning, STATE_FILE as DIGEST_STATE_FILE};
+use crate::digest_model::{DigestModelInputs, DigestModelService};
 use crate::error::{DaemonError, MAX_SOCKET_PATH_BYTES};
 use crate::files::FileService;
 use crate::harness::Harnesses;
@@ -576,6 +577,16 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
     });
     // Looks until shutdown; nothing needs its handle.
     drop(digest.start(shutdown.clone()));
+    let digest_model = DigestModelService::new(DigestModelInputs {
+        notify: notify.clone(),
+        assistant: assistant.clone(),
+        registry: registry.clone(),
+        storage: storage.clone(),
+        tasks: tasks.clone(),
+        state_log: state_log.clone(),
+        tuning: config.digest.clone(),
+    });
+    drop(digest_model.start(shutdown.clone()));
     let settings_service = SettingsService::new(
         paths.config_file.clone(),
         paths.user_home.clone(),
@@ -601,6 +612,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             assistant,
             notify,
             digest,
+            digest_model,
             worktrees,
             tasks,
             accounts,

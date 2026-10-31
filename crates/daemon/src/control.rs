@@ -145,6 +145,8 @@ struct TurnCount {
 struct MawasOrigin {
     chat: SessionId,
     workspace: WorkspaceId,
+    /// The chat is the scheduled digest's (MAWAS-DIGEST-B): nothing may change, in any mode.
+    digest: bool,
 }
 
 /// The policy gate and the `control` approvals.
@@ -377,6 +379,19 @@ impl ControlService {
         let chats = self.registry.chats();
         let policy = chats.assistant_policy();
         let origin = mawas.chat;
+        // The digest runs unattended (ADR 0017, amendment 2026-10-31): its server does not even
+        // list a tool that changes something, and the daemon refuses one in every mode.
+        if mawas.digest {
+            self.audit_auto(origin, &describe, "deny_digest");
+            self.audit_line(&mawas, method, "deny_digest", "policy", None, None);
+            return Err(forbidden(
+                format!(
+                    "the scheduled digest only reads: `{method}` was refused (nothing may change \
+                     in a run nobody started)"
+                ),
+                "digest",
+            ));
+        }
         if policy.mode == AssistantMode::Advisor {
             self.audit_auto(origin, &describe, "deny_advisor");
             self.audit_line(&mawas, method, "deny_advisor", "policy", None, None);
@@ -734,6 +749,7 @@ impl ControlService {
             .then_some(MawasOrigin {
                 chat: info.id,
                 workspace: info.workspace_id,
+                digest: info.chat.as_ref().is_some_and(|chat| chat.digest),
             })
     }
 

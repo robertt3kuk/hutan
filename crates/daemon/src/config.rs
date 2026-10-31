@@ -76,6 +76,8 @@
 //! native = true                  # also post intents to the system's notification centre (only from Hutan.app)
 //! sound = "default"              # "default": requests and failures play the system's sound; "none": no sound
 //! finished = true                # finished work (a turn, a task) raises an intent too, quietly and at most once per 90 s per session
+//! digest_model = "off"           # "off", "daily 08:30" (local time) or "every 6h": one model run in a chat of its own, no web, only Hutan's read tools; OMP only (docs/assistant.md § Catching up)
+//! digest_model_unverified_omp = false # run it on an OMP version its launch was not verified on
 //! digest_hours = 0               # 0 = off. Else: away from every Hutan window this many hours with something that needs you, one quiet notification (docs/assistant.md § Catching up)
 //!
 //! [tasks]                        # tasks with dependencies (protocol 0.16, docs/orchestration.md)
@@ -616,6 +618,85 @@ pub struct NotifySettings {
     /// notification says so. At most one per this many hours, never one per agent; no model is
     /// asked. `0` (the default) is off.
     pub digest_hours: u64,
+    /// The scheduled model digest (protocol 0.69, MAWAS-DIGEST-B, ADR 0017 amendment
+    /// 2026-10-31): `off` (the default), `daily 08:30` (local time) or `every 6h`. A run asks
+    /// a model once, in a chat of its own, with a launch that has no web and no tool but
+    /// Hutan's read tools (`docs/assistant.md` § Catching up).
+    pub digest_model: DigestSchedule,
+    /// Lets the model digest run on an OMP version other than the one its launch was verified
+    /// on. Off: another version skips the run and says to re-verify.
+    pub digest_model_unverified_omp: bool,
+}
+
+/// `notify.digest_model`: when the scheduled model digest runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DigestSchedule {
+    #[default]
+    Off,
+    /// Every day at this time, local time (minutes since midnight).
+    Daily { minute_of_day: u16 },
+    /// Every this many hours (1 to 168).
+    Every { hours: u16 },
+}
+
+impl DigestSchedule {
+    /// The setting's text, as `FromStr` reads it.
+    pub fn text(self) -> String {
+        match self {
+            Self::Off => "off".to_owned(),
+            Self::Daily { minute_of_day } => {
+                format!("daily {:02}:{:02}", minute_of_day / 60, minute_of_day % 60)
+            }
+            Self::Every { hours } => format!("every {hours} h"),
+        }
+    }
+}
+
+impl std::str::FromStr for DigestSchedule {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        let text = text.trim().to_ascii_lowercase();
+        let wrong = || {
+            format!(
+                "notify.digest_model must be `off`, `daily HH:MM` (local time) or `every N h` \
+                 with N from 1 to 168, not `{text}`"
+            )
+        };
+        if text.is_empty() || text == "off" {
+            return Ok(Self::Off);
+        }
+        if let Some(time) = text.strip_prefix("daily") {
+            let (h, m) = time.trim().split_once(':').ok_or_else(wrong)?;
+            let (h, m): (u16, u16) = (
+                h.trim().parse().map_err(|_| wrong())?,
+                m.trim().parse().map_err(|_| wrong())?,
+            );
+            if h > 23 || m > 59 {
+                return Err(wrong());
+            }
+            return Ok(Self::Daily {
+                minute_of_day: h * 60 + m,
+            });
+        }
+        if let Some(every) = text.strip_prefix("every") {
+            let hours = every.trim().trim_end_matches('h').trim();
+            let hours: u16 = hours.parse().map_err(|_| wrong())?;
+            if !(1..=168).contains(&hours) {
+                return Err(wrong());
+            }
+            return Ok(Self::Every { hours });
+        }
+        Err(wrong())
+    }
+}
+
+impl<'de> Deserialize<'de> for DigestSchedule {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 /// `notify.sound`: what a posted notification sounds like.
@@ -654,6 +735,8 @@ impl Default for NotifySettings {
             sound: NotifySound::Default,
             finished: true,
             digest_hours: 0,
+            digest_model: DigestSchedule::Off,
+            digest_model_unverified_omp: false,
         }
     }
 }

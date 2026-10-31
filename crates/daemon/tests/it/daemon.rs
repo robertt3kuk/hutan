@@ -257,7 +257,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "agents.activity",
             "agents.stats",
             "agents.review",
-            "notify.digest"
+            "notify.digest",
+            "digest.model"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);
