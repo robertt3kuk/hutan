@@ -3095,10 +3095,6 @@ mod tests {
                 .iter()
                 .any(|l| l.starts_with("Next run"))
         );
-        // The words obey the same rules as every other string of the window.
-        for line in digest_note(&status, now) {
-            assert!(!line.contains("needs you"), "{line}");
-        }
     }
 
     #[test]

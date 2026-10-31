@@ -551,7 +551,10 @@ impl Workbench {
             return;
         }
         self.daemon_settings.unsupported = false;
-        self.refresh_digest_status(cx);
+        // `digest.status` asks the harness for its version: only while Settings is open to show it.
+        if self.sheet.is_some() {
+            self.refresh_digest_status(cx);
+        }
         let seq = self.daemon_settings.next_request();
         cx.spawn(async move |this, cx| {
             let result = cx
