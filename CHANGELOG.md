@@ -4,6 +4,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+## 0.3.5 — 2026-10-31
+
 ### Added
 - **Markdown preview**, no language server needed: a Markdown tab switches between *Source* and *Preview* (⇧⌘V), or *Open Preview to the Side* keeps a live page next to the text that follows your typing and scrolling — headings, lists with task boxes, tables, coloured code, quotes, local images, links that open files, headings or the browser. `editor.markdown_preview`, `editor.markdown_open`. The `marksman` server is now opt-in, so a README no longer asks for trust.
 - **Pick fonts from a list**: the interface font (Appearance), the code font (Editing & keys: file tabs, previews' code, diffs and chat code) and the terminal font are each a searchable list of the fonts on this Mac, drawn in their own face (monospaced first for code and terminal, *Show all*, *System default* to go back to the theme's font, a preview line); changes apply at once, a typed name that isn't installed is warned about, and *Install font…* adds a `.ttf`/`.otf` for your account. `appearance.ui_font_family`, `editor.font_family`, `terminal.font_family`.
@@ -35,6 +37,13 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Settings → Mawas now shows the *Catching up* section; a digest gives one notification, not two.
 - A side preview or split next to an agent never squeezes a pane below a readable width, and panes keep their widths when a neighbour closes. Esc closes Settings instead of reaching the terminal behind it. Showing or hiding the right panel redraws at once. The font picker says *System font*.
 - Markdown preview: code follows the code font live, `~~strikethrough~~` is drawn (in chat too), a README's `<details>`/`<summary>`, `<br>` and `<img>` are read and other HTML tags drop to their text, SVG images take their own size without blank bands, and a missing or web image is a box that says why.
+
+### Upgrading
+- **Test release** (a GitHub pre-release). On 0.3.4 open the Hutan menu → *Check for Updates…*, then *Update now* → *Quit and Install*. With Homebrew: `brew update && brew upgrade --cask hutan` (or *Update now*, which runs it in a terminal you can watch). 0.3.2 and older still need one manual install.
+- **Things that behave differently after the update:** closing a tab now closes its session (`tabs.close_session`; *Keep running in background* is the default when something runs); files open in their own tabs again (preview tabs are off); Mawas Home opens the Global chat (`assistant.home_scope = "follow_workspace"` brings the old behaviour back); Mawas's web access is off (`[assistant] web`, Settings → Mawas → *Let Mawas read the web*); the `marksman` language server is opt-in.
+- Protocol **0.69** (additive minor steps since 0.60).
+- **Database schema 24** (was 21): migrations 22 (grants target), 23 (`agent_state_log`) and 24 (`digest_runs`) run on first start and are forward-only — **an older Hutan cannot open the data after the update**, so keep a copy of `~/Library/Application Support/Hutan` if you may go back to 0.3.4.
+- **Experimental — at your own risk:** remote hosts over SSH stay switched off until you turn them on in Settings ▸ Experimental (`experimental.remote_hosts`); they may change or break between releases. See `docs/remote.md`.
 
 ## 0.3.4 — 2026-10-30
 
