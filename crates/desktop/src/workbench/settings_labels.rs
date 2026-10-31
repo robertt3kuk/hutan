@@ -1959,7 +1959,7 @@ pub fn digest_note(status: &hutan_protocol::notify::DigestStatus, now_ms: u64) -
     }
     lines.push(match status.avg_tokens {
         Some(tokens) => format!(
-            "A run reads about {} tokens of context (average of {} {}); every model call reads it again, so the bill is at least that.",
+            "A run uses about {} tokens (average of {} {}).",
             compact_tokens(tokens),
             status.runs,
             if status.runs == 1 { "run" } else { "runs" }
@@ -3073,7 +3073,7 @@ mod tests {
             tokens: None,
         });
         let note = digest_note(&status, now);
-        assert!(note[1].starts_with("A run reads about 18k tokens of context (average of 3 runs)"));
+        assert_eq!(note[1], "A run uses about 18k tokens (average of 3 runs).");
         assert_eq!(
             note[3],
             "Last run: skipped 1h ago: its launch has the tool `read`."

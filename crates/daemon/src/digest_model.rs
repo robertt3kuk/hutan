@@ -248,7 +248,7 @@ pub fn headline(answer: &str) -> String {
         .map(|l| {
             l.trim()
                 .trim_start_matches(['#', '*', '-', '>', ' '])
-                .trim()
+                .trim_end_matches(['*', '_', ' '])
                 .to_owned()
         })
         .filter(|l| !l.is_empty())
@@ -493,6 +493,7 @@ impl DigestModelService {
             Err(error) => return Self::row(started, "failed", Some(error.message), None, None),
         };
         let id = chat.id;
+        self.inputs.notify.quiet_chat(id);
         match self.preflight(id).await {
             Ok(()) => {}
             Err(Refusal(reason)) => {
@@ -540,7 +541,7 @@ impl DigestModelService {
             }
         };
         let answer = self.last_answer(id, before).await;
-        let tokens = self.context_tokens(id, before).await;
+        let tokens = self.turn_tokens(id, started).await;
         self.inputs.registry.chats().digest_sleep(id).await;
 
         // 5. Said, once.
@@ -731,19 +732,21 @@ impl DigestModelService {
             .map(|(_, text)| text)
     }
 
-    /// The context the turn ended with (OMP's `usage_update` `used`), when the harness
-    /// reported one after `after_seq`: each run starts a conversation of its own, so this is
-    /// what the one run read.
-    async fn context_tokens(&self, id: SessionId, after_seq: u64) -> Option<u64> {
-        self.events_of(id, "usage", 1)
+    /// What the run's turn used, as the harness reported it (the daemon's usage record of the
+    /// chat's turns since `since_ms`): the figure that is billed, not a guess. `None` when the
+    /// harness reported none.
+    async fn turn_tokens(&self, id: SessionId, since_ms: u64) -> Option<u64> {
+        let storage = self.inputs.storage.clone();
+        let rows = tokio::task::spawn_blocking(move || storage.usage().turns_of(id, 20))
             .await
-            .into_iter()
-            .filter(|(seq, _)| *seq > after_seq)
-            .filter_map(|(_, event)| match event.kind {
-                AgentEventKind::Usage { total, .. } => total.and_then(|t| t.total_tokens),
-                _ => None,
-            })
-            .next_back()
+            .ok()?
+            .ok()?;
+        let totals: Vec<u64> = rows
+            .iter()
+            .filter(|row| row.at_ms >= since_ms)
+            .filter_map(|row| row.total_tokens)
+            .collect();
+        (!totals.is_empty()).then(|| totals.iter().sum())
     }
 
     // ---- the status -----------------------------------------------------------------------------
@@ -1015,5 +1018,11 @@ mod tests {
             "Needs you · 2 requests wait: build server, docs"
         );
         assert_eq!(headline("  \n"), "");
+        assert_eq!(
+            headline(
+                "**Digest, last hour (coverage starts 5 minutes ago)**\n\n**Needs you first**\n"
+            ),
+            "Digest, last hour (coverage starts 5 minutes ago) · Needs you first"
+        );
     }
 }

@@ -162,6 +162,9 @@ struct Core {
     nodes: HashMap<(SessionId, String), NodeMemo>,
     /// The latest finished assistant message of each chat, already redacted and bounded.
     last_message: HashMap<SessionId, String>,
+    /// Chats whose finished turns raise nothing: the scheduled model digest's, which says what
+    /// it has to say in its own one notification (`raise_digest`).
+    quiet_chats: std::collections::HashSet<SessionId>,
     /// The state last seen of each task (a task raises its intent on the change into
     /// `done` or `failed`).
     tasks: HashMap<TaskId, TaskState>,
@@ -180,6 +183,7 @@ impl Core {
             last_finished: HashMap::new(),
             nodes: HashMap::new(),
             last_message: HashMap::new(),
+            quiet_chats: std::collections::HashSet::new(),
             tasks: HashMap::new(),
             focus: HashMap::new(),
         }
@@ -254,6 +258,12 @@ impl Core {
                     } => {
                         self.last_message
                             .insert(*session_id, clean(text, BODY_MAX_CHARS));
+                        Vec::new()
+                    }
+                    AgentEventKind::TurnCompleted { .. }
+                        if self.quiet_chats.contains(session_id) =>
+                    {
+                        self.last_message.remove(session_id);
                         Vec::new()
                     }
                     AgentEventKind::TurnCompleted { .. } => {
@@ -935,6 +945,12 @@ impl NotifyService {
                 SessionMeta::default()
             }
         }
+    }
+
+    /// Says that the finished turns of `session` raise no notification (the model digest's
+    /// chat: its own answer is the one notification).
+    pub fn quiet_chat(&self, session: SessionId) {
+        self.with_core(|core| core.quiet_chats.insert(session));
     }
 
     /// Raises the digest: one quiet native notification and a `notify.intent` for `session`

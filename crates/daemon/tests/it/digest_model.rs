@@ -394,6 +394,18 @@ async fn a_verified_launch_runs_the_digest_once_with_exactly_the_recipes_argumen
     // Once per period: many looks later it did not run again.
     env.runs_stay(1).await;
     assert_eq!(env.prompts().len(), 3);
+    // One notification for the whole run: not one more for each finished turn of the chat
+    // (`/tools`, `/mcp list`, the digest).
+    let about_the_chat: Vec<IntentKind> = env
+        .client
+        .notify_list()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|i| i.session_id == chat.id)
+        .map(|i| i.kind)
+        .collect();
+    assert_eq!(about_the_chat, [IntentKind::Digest]);
     asked.abort();
     env.stop().await;
 }
