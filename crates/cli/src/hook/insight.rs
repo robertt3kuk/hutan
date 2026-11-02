@@ -1,4 +1,4 @@
-//! The insight a hook event or a status-line tick carries (protocol 0.72, INSIGHT-B,
+//! The insight a hook event or a status-line tick carries (protocol 0.71, INSIGHT-B,
 //! `docs/integrations.md` § Insight): which tool ran and how long it took, which file it changed,
 //! when a turn began and ended, and (status line) the context, the cost and the API time.
 //!

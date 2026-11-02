@@ -1072,7 +1072,7 @@ struct SessionRegistry {
     /// Contain: wraps the spawn of sessions whose spec asks for it.
     sandbox: Arc<crate::contain::Sandbox>,
     /// What each session's agent reports about its context and spend; terminal agents' reports
-    /// are folded into it as they arrive (protocol 0.72).
+    /// are folded into it as they arrive (protocol 0.71).
     insight: Arc<crate::insight::InsightHub>,
 }
 

@@ -1,4 +1,4 @@
-//! Terminal agents' insight (INSIGHT-B, protocol 0.72, capability `agent.insight.report`): what
+//! Terminal agents' insight (INSIGHT-B, protocol 0.71, capability `agent.insight.report`): what
 //! the integrations report (`agent.report`'s `insight`) is folded by the same reducer as a chat's
 //! journal, per terminal session, and answered by `agent.insight` with the source of each block.
 //!

@@ -2331,7 +2331,7 @@ pub struct AgentReportArgs {
     #[arg(long, value_enum)]
     pub state: Option<AgentStateArg>,
     /// What the agent's integration knows about its context, tokens, tools and files (protocol
-    /// 0.72), as JSON, at most 4 KiB: `{"tools":[{"name":"read","calls":2}],"context":{"used":
+    /// 0.71), as JSON, at most 4 KiB: `{"tools":[{"name":"read","calls":2}],"context":{"used":
     /// 11200,"window":200000}}`; `-` reads it from standard input. Counts, tool names and paths
     /// only. With no `--state`, `--node`, `--message` or resume command the report leaves the
     /// agent's state alone

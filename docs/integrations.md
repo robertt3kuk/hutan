@@ -98,7 +98,7 @@ Resume commands are what the agents document: `codex resume <id>`, `claude --res
 
 A restart that runs a resume command says so on the session (`recovery.kind = agent_resumed` with the argv; `hutan ls` shows `resumed`): the screen and the agent's process of the previous run are gone, the agent continues its own conversation. See `docs/protocol.md` § Recovery.
 
-## Insight: tokens, tools, files and context of terminal agents (INSIGHT-B, protocol 0.72)
+## Insight: tokens, tools, files and context of terminal agents (INSIGHT-B, protocol 0.71)
 
 A chat's context, tokens, tools and files come from the journal (`docs/agents.md` § Insight). A terminal agent has no journal, so the integrations above also tell Hutan what they can see, and the daemon folds it into the same record per terminal session (`hutan chat insight SESSION`, the Context panel, MCP `agent_insight`; every block says where it came from: *the OMP extension*, *hooks*, *the status line*). State is in memory: it starts again when the daemon restarts, and when another agent starts in the same terminal. Spike: `docs/spikes/2026-10-28-insight.md` § 3.2, 3.4, 3.6.
 

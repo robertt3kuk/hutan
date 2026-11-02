@@ -1,5 +1,5 @@
 //! What a terminal agent's integration tells Hutan about its insight: the optional `insight` of
-//! `agent.report` (protocol 0.72, capability `agent.insight.report`; INSIGHT-B,
+//! `agent.report` (protocol 0.71, capability `agent.insight.report`; INSIGHT-B,
 //! `docs/integrations.md` § Insight).
 //!
 //! The integrations of Hutan (the OMP extension, the Claude Code and Codex hook script, the

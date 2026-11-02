@@ -21,7 +21,7 @@ impl Ctx {
                     .to_owned(),
             ));
         }
-        // A terminal that runs an agent has an insight too (protocol 0.72); only a chat can be
+        // A terminal that runs an agent has an insight too (protocol 0.71); only a chat can be
         // asked to measure its context.
         let session = if args.measure {
             self.resolve_chat(&client, &args.target).await?

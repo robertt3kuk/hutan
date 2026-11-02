@@ -347,7 +347,7 @@ impl ContextPanel {
             return;
         };
         let store = self.env.sessions.read(cx);
-        // A chat, or (daemon 0.72) a terminal that runs an agent.
+        // A chat, or (daemon 0.71) a terminal that runs an agent.
         let readable = store.session(session).is_some_and(|info| {
             info.chat.is_some()
                 || ((hutan_agents_view::attention::agent_app(info).is_some()
@@ -529,7 +529,7 @@ impl ContextPanel {
             if app.is_none() && info.terminal_agent.is_none() {
                 return Some(Empty::NotAnAgent);
             }
-            // A terminal agent shows what its integrations reported (protocol 0.72); until
+            // A terminal agent shows what its integrations reported (protocol 0.71); until
             // something did, the panel says what Hutan sees of it and how to see more.
             return match &self.insight {
                 Some(insight) if !insight.sources.is_empty() || !insight.turns.is_empty() => None,

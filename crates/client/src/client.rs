@@ -263,7 +263,7 @@ pub(crate) const DIGEST_MODEL_CAPABILITY: &str = "digest.model";
 /// (protocol 0.68).
 pub(crate) const NOTIFY_DIGEST_CAPABILITY: &str = "notify.digest";
 /// Capability for `agent.report`'s `insight`, and `agent.insight` of a terminal that runs an agent
-/// (protocol 0.72).
+/// (protocol 0.71).
 pub(crate) const AGENT_INSIGHT_REPORT_CAPABILITY: &str = "agent.insight.report";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
@@ -767,7 +767,7 @@ impl Client {
             .any(|capability| capability == AGENT_INSIGHT_CAPABILITY)
     }
 
-    /// True when the daemon advertised capability `agent.insight.report` (protocol 0.72): it
+    /// True when the daemon advertised capability `agent.insight.report` (protocol 0.71): it
     /// answers `agent.insight` for a terminal that runs an agent.
     pub fn supports_agent_insight_report(&self) -> bool {
         self.welcome

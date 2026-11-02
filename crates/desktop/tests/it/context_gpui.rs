@@ -783,7 +783,7 @@ fn a_file_row_opens_the_file_and_has_no_diff_outside_a_checkout(cx: &mut TestApp
     std::fs::remove_file(&path).ok();
 }
 
-// ---- a terminal agent's insight (INSIGHT-B, protocol 0.72) --------------------------------------
+// ---- a terminal agent's insight (INSIGHT-B, protocol 0.71) --------------------------------------
 
 #[gpui::test]
 fn a_terminal_agent_shows_what_its_integration_reported_with_the_source_of_each_block(

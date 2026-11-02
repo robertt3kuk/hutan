@@ -276,7 +276,7 @@ export default function (pi) {
 // ---- insight: tokens, tools, files and context for the Context panel --------------------------
 //
 // Reports what OMP's extension API gives about the main agent's conversation (`hutan agent report
-// --insight-json`, protocol 0.72): the usage of every model call, the tools that finished with
+// --insight-json`, protocol 0.71): the usage of every model call, the tools that finished with
 // their times, the files the edit/write tools changed (from the tools' arguments), the context
 // and its fixed part at the start of a conversation. One report at the end of the agent loop and
 // at most one every INSIGHT_GAP_MS while it runs. Counts, tool names and paths only: no prompt,

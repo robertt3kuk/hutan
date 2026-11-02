@@ -57,7 +57,7 @@ pub struct InsightTarget {
     pub cwd: Option<String>,
     /// The session is an assistant (Mawas): it has insight, but `/context` is not sent to it.
     pub assistant: bool,
-    /// The session is a terminal that runs an agent (protocol 0.72): no journal, only what the
+    /// The session is a terminal that runs an agent (protocol 0.71): no journal, only what the
     /// agent's integrations report; `harness` is the agent's program.
     pub terminal: bool,
 }
@@ -220,7 +220,7 @@ impl InsightHub {
     }
 
     /// What the integrations of a terminal agent reported (`agent.report`'s `insight`, protocol
-    /// 0.72). `agent` is the agent's program (`omp`, `claude`, `codex`), `model` the one its
+    /// 0.71). `agent` is the agent's program (`omp`, `claude`, `codex`), `model` the one its
     /// node says. `fresh`: the report's `seq` is the newest of its source. A report that is not
     /// still adds its tools, files and tokens (deltas that arrive out of order are as true as
     /// the others) but not its levels (the turn's edges, context, cost, API time), which a newer
