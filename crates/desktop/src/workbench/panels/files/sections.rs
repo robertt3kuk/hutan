@@ -264,6 +264,34 @@ impl FilesPanel {
             .collect()
     }
 
+    /// For each file of `agents`, the folder its row names so that two rows of the same file
+    /// name can be told apart (`crates/core`; the root folder's own name for a file at the
+    /// root); `None` for a file whose name no other row has.
+    fn agent_folders(&self, agents: &[AgentFile]) -> Vec<Option<String>> {
+        let mut by_name: HashMap<SharedString, usize> = HashMap::new();
+        for file in agents {
+            *by_name.entry(file_name(&file.path)).or_default() += 1;
+        }
+        agents
+            .iter()
+            .map(|file| {
+                if by_name.get(&file_name(&file.path)).copied().unwrap_or(0) < 2 {
+                    return None;
+                }
+                self.folder_label(&file.path).or_else(|| {
+                    let root = self.tree.as_ref()?.root_of(&file.path)?;
+                    Some(file_name(root).to_string())
+                })
+            })
+            .collect()
+    }
+
+    /// What each row of *Changed by agents* says besides the file's name: the folder when
+    /// another row has the same name (tests).
+    pub fn changed_by_agents_folders(&self, cx: &App) -> Vec<Option<String>> {
+        self.agent_folders(&self.changed_by_agents(cx))
+    }
+
     /// The agent marks of the rows (a lookup per row, built once a frame).
     pub(super) fn agent_marks(&self, cx: &App) -> AgentMarks {
         let root_rows = self.tree.as_ref().is_some_and(|t| t.is_grouped());
@@ -408,6 +436,7 @@ impl FilesPanel {
             }
         }
         if !agents.is_empty() {
+            let folders = self.agent_folders(&agents);
             let folded = self.section_folded(Section::ChangedByAgents);
             blocks.push(self.section_header(
                 Section::ChangedByAgents,
@@ -419,7 +448,15 @@ impl FilesPanel {
             ));
             if !folded {
                 for (index, file) in agents.iter().take(MAX_AGENT_ROWS).enumerate() {
-                    blocks.push(agent_row(index, file, &regions, &theme, &tokens, cx));
+                    blocks.push(agent_row(
+                        index,
+                        file,
+                        folders[index].as_deref(),
+                        &regions,
+                        &theme,
+                        &tokens,
+                        cx,
+                    ));
                 }
                 if agents.len() > MAX_AGENT_ROWS {
                     blocks.push(
@@ -640,6 +677,7 @@ fn open_row(
 fn agent_row(
     index: usize,
     file: &AgentFile,
+    folder: Option<&str>,
     regions: &Regions,
     theme: &Theme,
     tokens: &Tokens,
@@ -649,8 +687,12 @@ fn agent_row(
     let hover = theme.sidebar_hover;
     let path = file.path.display().to_string();
     let line = file.line + 1;
-    let tip: SharedString = file.tooltip().into();
-    let summary: SharedString = file.summary().into();
+    let tip: SharedString = format!("{}\n{path}", file.tooltip()).into();
+    let summary: SharedString = match folder {
+        Some(folder) => format!("{folder} · {}", file.summary()),
+        None => file.summary(),
+    }
+    .into();
     div()
         .w_full()
         .px(px(tokens.spacing))

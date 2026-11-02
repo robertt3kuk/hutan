@@ -40,6 +40,7 @@ mod font_families_gpui;
 mod font_picker_gpui;
 mod fork_gpui;
 mod fx1_gpui;
+mod fx_agent_files_gpui;
 mod fx_e2e2_gpui;
 mod fx_e2e2c_gpui;
 mod fx_e2e4_gpui;

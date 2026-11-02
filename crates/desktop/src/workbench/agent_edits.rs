@@ -14,10 +14,11 @@
 //! - `turn_started`: a write of a new turn starts a new base (the hunks are the current turn's).
 //! - Other changes (`external`, a rescan): the ledger's last text on disk follows; the base does
 //!   not move, and the hunks are recomputed against the new text.
-//!
-//! The checkpoint of the turn's start (CK-2) is not reachable through the protocol yet, so it is
-//! not a source; a write to a file that is neither open, nor in the ledger, nor named by a
-//! `file_diff` has no base and is not tracked.
+//! - The turn's checkpoint (`checkpoint.created`, when the turn ends): a file a `file_diff` named
+//!   without a patch (OMP keeps the old and new text of the first files of a call only) has its
+//!   base from the checkpoint's patch of the file, taken back from the file on disk. A write to a
+//!   file that is neither open, nor in the ledger, nor named by a `file_diff` has no base and is
+//!   not tracked.
 //!
 //! Bounds: at most [`MAX_FILES`] files (the oldest go first), texts up to [`MAX_TEXT_BYTES`]
 //! (a larger file is not tracked), hints of [`MAX_HINTS`] `file_diff` paths for
@@ -29,11 +30,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, Task};
-use hutan_client::{ChatUpdate, ClientError};
+use hutan_client::{ChatUpdate, CheckpointUpdate, ClientError};
 use hutan_code_view::agent::{self, AgentChanges, AgentLabel};
 use hutan_core::agent::{AgentEvent, AgentEventKind, Delivery, FileChange, FileChangeKind};
-use hutan_core::{SessionId, TurnId};
+use hutan_core::checkpoint::{CheckpointKind, CheckpointState};
+use hutan_core::{CheckpointId, CheckpointInfo, SessionId, TurnId};
 use hutan_protocol::ErrorCode;
+use hutan_protocol::checkpoint::{CheckpointDiffRequest, CheckpointFileStatus};
 use hutan_protocol::fs::{ChangeKind, FsChange, FsOrigin};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
@@ -49,6 +52,8 @@ pub const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
 /// `file_diff` paths remembered at most, and for how long.
 pub const MAX_HINTS: usize = 256;
 pub const HINT_TTL_MS: u64 = 10 * 60 * 1000;
+/// Turns whose checkpoint the ledger remembers.
+const MAX_CHECKPOINTS: usize = 64;
 const FORMAT_VERSION: u32 = 1;
 
 /// Who wrote a file: the session's name and the harness behind it.
@@ -122,6 +127,8 @@ pub struct Ledger {
     /// The turn each session is in, as `turn_started` said.
     turns: HashMap<SessionId, TurnId>,
     hints: VecDeque<Hint>,
+    /// The checkpoints recorded for the latest turns, newest last.
+    checkpoints: VecDeque<((SessionId, TurnId), CheckpointId)>,
 }
 
 impl Ledger {
@@ -218,8 +225,43 @@ impl Ledger {
             .any(|h| h.path == path && now_ms.saturating_sub(h.at_ms) < HINT_TTL_MS)
     }
 
-    /// The text of `path` before a write that left `after`, from what a `file_diff` said.
-    fn hinted_base(&self, path: &str, after: &str, now_ms: u64) -> Option<String> {
+    /// The files the `file_diff`s of `turn` of `session` named as updated without a patch (the
+    /// agent said which file it changed, not how) and the ledger does not hold: the turn's
+    /// checkpoint tells how. Oldest first.
+    pub fn named_without_patch(&self, session: SessionId, turn: TurnId) -> Vec<String> {
+        self.hints
+            .iter()
+            .filter(|h| {
+                h.session == session
+                    && h.turn == Some(turn)
+                    && h.kind == FileChangeKind::Update
+                    && h.patch.is_none()
+                    && !self.entries.contains_key(&h.path)
+            })
+            .map(|h| h.path.clone())
+            .collect()
+    }
+
+    /// The checkpoint of `turn` was recorded (`checkpoint.created`).
+    pub fn checkpoint_recorded(&mut self, session: SessionId, turn: TurnId, id: CheckpointId) {
+        self.checkpoints.retain(|(key, _)| *key != (session, turn));
+        while self.checkpoints.len() >= MAX_CHECKPOINTS {
+            self.checkpoints.pop_front();
+        }
+        self.checkpoints.push_back(((session, turn), id));
+    }
+
+    /// The checkpoint recorded for `turn`, when the turn has ended and kept one.
+    pub fn checkpoint_of(&self, session: SessionId, turn: TurnId) -> Option<CheckpointId> {
+        self.checkpoints
+            .iter()
+            .find(|(key, _)| *key == (session, turn))
+            .map(|(_, id)| *id)
+    }
+
+    /// The text of `path` before a write that left `after` (normalized), from what a
+    /// `file_diff` said.
+    pub fn hinted_base(&self, path: &str, after: &str, now_ms: u64) -> Option<String> {
         let hint = self
             .hints
             .iter()
@@ -433,20 +475,17 @@ impl Workbench {
         let mut updates = self.sessions.read(cx).connection().chat_updates();
         self.agent_ledger.listener = Some(cx.spawn(async move |this, cx| {
             loop {
-                let event = match updates.recv().await {
-                    Ok(ChatUpdate::Event(event)) => event,
-                    Ok(
-                        ChatUpdate::Resync { .. }
-                        | ChatUpdate::Queue(_)
-                        | ChatUpdate::Checkpoint(_),
-                    )
-                    | Err(RecvError::Lagged(_)) => continue,
+                let update = match updates.recv().await {
+                    Ok(update) => update,
+                    Err(RecvError::Lagged(_)) => continue,
                     Err(RecvError::Closed) => break,
                 };
-                if this
-                    .update(cx, |this, cx| this.on_agent_event(&event, cx))
-                    .is_err()
-                {
+                let alive = this.update(cx, |this, cx| match &update {
+                    ChatUpdate::Event(event) => this.on_agent_event(event, cx),
+                    ChatUpdate::Checkpoint(update) => this.on_checkpoint_update(update, cx),
+                    ChatUpdate::Resync { .. } | ChatUpdate::Queue(_) => {}
+                });
+                if alive.is_err() {
                     break;
                 }
             }
@@ -529,6 +568,150 @@ impl Workbench {
                     .ledger
                     .note_diff(key.clone(), session, turn, &change, now_ms());
                 this.ledger_watch(&key, cx);
+                this.ledger_read_hinted(key, session, cx);
+                if let Some(turn) = turn {
+                    this.ledger_resolve_named(session, turn, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The file a `file_diff` named may be written already (OMP says it when the tool is done,
+    /// Codex before it writes): when the diff takes the file's text back, that is the base, and
+    /// the file enters the ledger at once instead of waiting for a change that came before the
+    /// hint.
+    fn ledger_read_hinted(&mut self, key: String, session: SessionId, cx: &mut Context<Self>) {
+        if self.buffers.buffers.contains_key(&key) || self.agent_ledger.ledger.entry(&key).is_some()
+        {
+            return;
+        }
+        let connection = self.sessions.read(cx).connection().clone();
+        let file = PathBuf::from(&key);
+        let read = cx.background_spawn(async move { connection.fs_read_all(&file, false).await });
+        cx.spawn(async move |this, cx| {
+            let Ok(read) = read.await else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                if this.agent_ledger.ledger.entry(&key).is_some() {
+                    return;
+                }
+                let after = agent::normalize(&read.text);
+                let Some(base) = this.agent_ledger.ledger.hinted_base(&key, &after, now_ms())
+                else {
+                    return;
+                };
+                this.ledger_agent_wrote(&key, session, Some(&base), &read.text, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn on_checkpoint_update(&mut self, update: &CheckpointUpdate, cx: &mut Context<Self>) {
+        if let CheckpointUpdate::Created(info) = update {
+            self.ledger_from_checkpoint(info, cx);
+        }
+    }
+
+    /// A turn's checkpoint was recorded: remembered, and the files its `file_diff`s named
+    /// without a patch get their base from it ([`Self::ledger_resolve_named`]).
+    fn ledger_from_checkpoint(&mut self, info: &CheckpointInfo, cx: &mut Context<Self>) {
+        if info.kind != CheckpointKind::Turn
+            || !matches!(info.state, CheckpointState::Ok | CheckpointState::Late)
+        {
+            return;
+        }
+        let Some(turn) = info.turn_id else {
+            return;
+        };
+        self.agent_ledger
+            .ledger
+            .checkpoint_recorded(info.session_id, turn, info.id);
+        self.ledger_resolve_named(info.session_id, turn, cx);
+    }
+
+    /// The files the `file_diff`s of `turn` named without a patch get their base from the
+    /// checkpoint's patch of the file, taken back from the file as it is, once the turn's
+    /// checkpoint is recorded; whichever of the two comes second runs it. Without a checkpoint
+    /// (not a checkout, switched off) they stay unknown to the ledger.
+    fn ledger_resolve_named(&mut self, session: SessionId, turn: TurnId, cx: &mut Context<Self>) {
+        let Some(checkpoint_id) = self.agent_ledger.ledger.checkpoint_of(session, turn) else {
+            return;
+        };
+        let named = self.agent_ledger.ledger.named_without_patch(session, turn);
+        if named.is_empty() {
+            return;
+        }
+        let connection = self.sessions.read(cx).connection().clone();
+        let found = cx.background_spawn(async move {
+            let listing = connection
+                .checkpoint_diff(CheckpointDiffRequest {
+                    checkpoint_id,
+                    against: Default::default(),
+                    path: None,
+                    stat: true,
+                })
+                .await;
+            let listing = listing.ok()?;
+            let mut found = Vec::new();
+            for key in named {
+                // The checkpoint names files below the checkout; the ledger by canonical path.
+                let Some(file) = listing.files.iter().find(|f| {
+                    f.status == CheckpointFileStatus::Modified
+                        && !f.binary
+                        && key.ends_with(&format!("/{}", f.path))
+                }) else {
+                    continue;
+                };
+                let diff = connection
+                    .checkpoint_diff(CheckpointDiffRequest {
+                        checkpoint_id,
+                        against: Default::default(),
+                        path: Some(file.path.clone()),
+                        stat: false,
+                    })
+                    .await;
+                let Ok(diff) = diff else {
+                    continue;
+                };
+                let Some(patch) = diff.patch.filter(|_| !diff.truncated) else {
+                    continue;
+                };
+                let read = connection.fs_read_all(Path::new(&key), false).await;
+                let Ok(read) = read else {
+                    continue;
+                };
+                found.push((key, patch, read.text));
+            }
+            Some(found)
+        });
+        cx.spawn(async move |this, cx| {
+            let Some(found) = found.await else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                for (key, patch, text) in found {
+                    if this.agent_ledger.ledger.entry(&key).is_some() {
+                        continue;
+                    }
+                    // The file must still be what the turn left, or the patch does not apply.
+                    let Some(base) = agent::reverse_patch(&agent::normalize(&text), &patch) else {
+                        tracing::debug!(
+                            path = key,
+                            "agent ledger: the checkpoint's patch does not fit"
+                        );
+                        continue;
+                    };
+                    let changes = this.ledger_agent_wrote(&key, session, Some(&base), &text, cx);
+                    if let (Some(changes), Some(buffer)) =
+                        (changes, this.buffers.get(&key).cloned())
+                    {
+                        buffer.update(cx, |b, cx| b.set_agent_changes(Some(changes), cx));
+                    }
+                }
             })
             .ok();
         })
@@ -864,6 +1047,80 @@ mod tests {
                 .is_none()
         );
         assert!(ledger.is_empty());
+    }
+
+    #[test]
+    fn files_named_without_a_patch_wait_for_their_turns_checkpoint() {
+        let mut ledger = Ledger::default();
+        let (turn, other) = (TurnId::new(), TurnId::new());
+        let bare = |path: &str, kind| FileChange {
+            path: path.to_owned(),
+            kind,
+            move_path: None,
+            patch: None,
+            before: None,
+            after: None,
+        };
+        ledger.note_diff(
+            "/w/Cargo.toml".into(),
+            session(),
+            Some(turn),
+            &bare("/w/Cargo.toml", FileChangeKind::Update),
+            1,
+        );
+        ledger.note_diff(
+            "/w/crates/core/Cargo.toml".into(),
+            session(),
+            Some(turn),
+            &bare("/w/crates/core/Cargo.toml", FileChangeKind::Update),
+            2,
+        );
+        // With a patch, created, or of another turn: not waiting for the checkpoint.
+        ledger.note_diff(
+            "/w/a.rs".into(),
+            session(),
+            Some(turn),
+            &update("@@ -1 +1 @@\n-a\n+b\n"),
+            3,
+        );
+        ledger.note_diff(
+            "/w/new.txt".into(),
+            session(),
+            Some(turn),
+            &bare("/w/new.txt", FileChangeKind::Add),
+            4,
+        );
+        ledger.note_diff(
+            "/w/later.rs".into(),
+            session(),
+            Some(other),
+            &bare("/w/later.rs", FileChangeKind::Update),
+            5,
+        );
+        assert_eq!(
+            ledger.named_without_patch(session(), turn),
+            ["/w/Cargo.toml", "/w/crates/core/Cargo.toml"],
+            "two files of one name, each by its own path"
+        );
+        // Once the ledger holds a file, it does not wait any more.
+        ledger.agent_wrote(
+            "/w/Cargo.toml",
+            session(),
+            None,
+            Some("a\n".into()),
+            "b\n",
+            6,
+        );
+        assert_eq!(
+            ledger.named_without_patch(session(), turn),
+            ["/w/crates/core/Cargo.toml"]
+        );
+        // The checkpoint is remembered per turn, so whichever comes second runs the lookup.
+        let id = CheckpointId::new();
+        assert_eq!(ledger.checkpoint_of(session(), turn), None);
+        ledger.checkpoint_recorded(session(), turn, id);
+        assert_eq!(ledger.checkpoint_of(session(), turn), Some(id));
+        assert_eq!(ledger.checkpoint_of(session(), other), None);
     }
 
     #[test]
