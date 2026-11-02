@@ -21,6 +21,7 @@ mod digest;
 mod digest_model;
 mod direct;
 mod files;
+mod findings;
 mod finish;
 mod fs_ops;
 mod git_history;

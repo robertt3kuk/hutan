@@ -503,6 +503,15 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
     let review =
         crate::agents_review::ReviewService::new(registry.clone(), storage.clone(), lsp.clone());
     assistant.set_review(review.clone());
+    // `agents.findings`: what is wrong in a session or a workspace (protocol 0.70).
+    let findings = crate::checks::ChecksService::new(crate::checks::collect::ChecksInputs {
+        registry: registry.clone(),
+        storage: storage.clone(),
+        insight: insight.clone(),
+        tasks: tasks.clone(),
+        state_log: state_log.clone(),
+        thresholds: settings.checks.thresholds(),
+    });
     let resources = ResourceService::new(
         registry.clone(),
         hub.clone(),
@@ -637,6 +646,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             insight,
             review,
             verify,
+            findings,
             updates,
             settings: settings_service,
             storage: storage.clone(),

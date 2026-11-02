@@ -68,6 +68,7 @@ pub mod bus;
 pub mod chat;
 pub mod chat_queue;
 pub mod checkpoints;
+pub mod checks;
 pub mod config;
 pub mod conn;
 pub mod contain;

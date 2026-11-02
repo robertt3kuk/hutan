@@ -103,6 +103,16 @@
 //! [agents]                       # what the daemon records about agents (protocol 0.66, docs/assistant.md § Flow)
 //! state_log = true               # the log of states agents report, kept 14 days, for how long a terminal agent waited; false stops it and deletes what it holds
 //!
+//! [checks]                       # the thresholds of the findings detectors (protocol 0.70, docs/assistant.md § Checks)
+//! repeated_failure_min = 3       # `repeated_failure`: the same failure this many times (at least 2)
+//! thrash_turns = 3               # `thrash`: the same file changed in this many turns with a net change near zero (at least 2)
+//! context_pressure_percent = 85  # `context_pressure`: the context is this many percent of the window
+//! costly_turn_factor = 3         # `costly_turn`: a turn spent this many times the session's median tokens …
+//! costly_turn_min_tokens = 50000 # … and at least this many
+//! long_wait_minutes = 15         # `long_wait`: the agent waited for the user this long
+//! stalled_minutes = 20           # `stalled`: working with no event for this long
+//! unreviewed_hours = 4           # `unreviewed_changes`: finished work waits for review this long
+//!
 //! [updates]                      # the check for a newer Hutan (protocol 0.60, docs/packaging.md § Updates)
 //! check = "auto"                 # "auto": ask GitHub's releases at most every 24 h, and on request; "off": only on request
 //! channel = "prerelease"         # "prerelease": every release counts; "stable": releases not marked pre-release
@@ -227,7 +237,8 @@ pub struct DaemonSettings {
     pub updates: UpdatesSettings,
     /// `[agents]`: what the daemon records about agents (protocol 0.66, ADR 0025).
     pub agents: AgentsSettings,
-    /// `[checks]`: Hutan's own run of a session's tests (protocol 0.70, ADR 0025).
+    /// `[checks]`: Hutan's own run of a session's tests (protocol 0.70) and the thresholds of the
+    /// findings detectors (protocol 0.71), ADR 0025.
     pub checks: ChecksSettings,
 }
 
@@ -915,14 +926,42 @@ pub struct ChecksSettings {
     pub verify_timeout_secs: u64,
     /// `[checks.projects.<name or id>]`.
     pub projects: BTreeMap<String, ChecksProject>,
+    /// `repeated_failure`: the same failure this many times (default 3, at least 2). This and
+    /// the keys below are the thresholds of the findings detectors (`agents.findings`, protocol
+    /// 0.71, `docs/assistant.md` § Checks); they are read when the daemon starts.
+    pub repeated_failure_min: u32,
+    /// `thrash`: the same file changed in this many turns with a net change near zero
+    /// (default 3, at least 2).
+    pub thrash_turns: u32,
+    /// `context_pressure`: the context is this many percent of the window (default 85).
+    pub context_pressure_percent: u32,
+    /// `costly_turn`: a turn spent this many times the session's median tokens (default 3)…
+    pub costly_turn_factor: u32,
+    /// … and at least this many (default 50000).
+    pub costly_turn_min_tokens: u64,
+    /// `long_wait`: the agent waited for the user this many minutes (default 15).
+    pub long_wait_minutes: u64,
+    /// `stalled`: working with no event for this many minutes (default 20).
+    pub stalled_minutes: u64,
+    /// `unreviewed_changes`: finished work waits for review this many hours (default 4).
+    pub unreviewed_hours: u64,
 }
 
 impl Default for ChecksSettings {
     fn default() -> Self {
+        let thresholds = crate::checks::Thresholds::default();
         Self {
             test_command: None,
             verify_timeout_secs: DEFAULT_VERIFY_TIMEOUT_SECS,
             projects: BTreeMap::new(),
+            repeated_failure_min: thresholds.repeated_failure_min,
+            thrash_turns: thresholds.thrash_turns,
+            context_pressure_percent: thresholds.context_pressure_percent,
+            costly_turn_factor: thresholds.costly_turn_factor,
+            costly_turn_min_tokens: thresholds.costly_turn_min_tokens,
+            long_wait_minutes: thresholds.long_wait_minutes,
+            stalled_minutes: thresholds.stalled_minutes,
+            unreviewed_hours: thresholds.unreviewed_hours,
         }
     }
 }
@@ -1002,7 +1041,42 @@ impl ChecksSettings {
                 ));
             }
         }
-        Ok(())
+        self.thresholds_check()
+    }
+
+    /// The thresholds of the findings detectors, as [`crate::checks::Thresholds`].
+    pub fn thresholds(&self) -> crate::checks::Thresholds {
+        crate::checks::Thresholds {
+            repeated_failure_min: self.repeated_failure_min,
+            thrash_turns: self.thrash_turns,
+            context_pressure_percent: self.context_pressure_percent,
+            costly_turn_factor: self.costly_turn_factor,
+            costly_turn_min_tokens: self.costly_turn_min_tokens,
+            long_wait_minutes: self.long_wait_minutes,
+            stalled_minutes: self.stalled_minutes,
+            unreviewed_hours: self.unreviewed_hours,
+        }
+    }
+
+    fn thresholds_check(&self) -> Result<(), String> {
+        let at_least = |name: &str, value: u64, min: u64| {
+            (value < min).then(|| format!("checks.{name} must be at least {min}, not {value}"))
+        };
+        let problem = at_least("repeated_failure_min", self.repeated_failure_min.into(), 2)
+            .or_else(|| at_least("thrash_turns", self.thrash_turns.into(), 2))
+            .or_else(|| {
+                at_least(
+                    "context_pressure_percent",
+                    self.context_pressure_percent.into(),
+                    1,
+                )
+            })
+            .or_else(|| at_least("costly_turn_factor", self.costly_turn_factor.into(), 1))
+            .or_else(|| at_least("costly_turn_min_tokens", self.costly_turn_min_tokens, 1))
+            .or_else(|| at_least("long_wait_minutes", self.long_wait_minutes, 1))
+            .or_else(|| at_least("stalled_minutes", self.stalled_minutes, 1))
+            .or_else(|| at_least("unreviewed_hours", self.unreviewed_hours, 1));
+        problem.map_or(Ok(()), Err)
     }
 }
 

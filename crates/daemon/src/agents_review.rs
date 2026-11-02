@@ -19,7 +19,7 @@ use std::sync::Arc;
 use hutan_core::agent::{
     AgentEvent, AgentEventKind, FileChangeKind, MessageRole, ToolKind, ToolStatus,
 };
-use hutan_core::checkpoint::{CheckpointKind, CheckpointState};
+use hutan_core::checkpoint::{CheckpointInfo, CheckpointKind, CheckpointState};
 use hutan_core::{SessionId, TurnId};
 use hutan_index::redact::redact;
 use hutan_protocol::board::BoardSource;
@@ -42,6 +42,7 @@ use hutan_protocol::review::{
 };
 use hutan_storage::{ChatTurnRow, ChatTurnStatus, Storage};
 
+use crate::checkpoints::turns::TurnCheckpoints;
 use crate::context::{Keep, bound};
 use crate::lsp::LspHub;
 use crate::registry::{RegistryHandle, now_ms};
@@ -206,13 +207,46 @@ fn terminal_state(state: TerminalAgentState) -> &'static str {
 
 /// One tool call: its start and, when the journal has it, its end.
 #[derive(Debug, Clone)]
-struct ToolRun {
-    kind: ToolKind,
-    name: String,
-    title: String,
-    status: Option<ToolStatus>,
-    exit_code: Option<i32>,
-    duration_ms: Option<u64>,
+pub(crate) struct ToolRun {
+    pub(crate) kind: ToolKind,
+    pub(crate) name: String,
+    pub(crate) title: String,
+    pub(crate) status: Option<ToolStatus>,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) duration_ms: Option<u64>,
+    /// The last line of the output of a tool that failed.
+    pub(crate) failure: Option<String>,
+}
+
+/// The command calls of `runs` as the packet lists them: the line redacted and cut, how each
+/// ended, its exit code when the harness gave one.
+pub(crate) fn review_commands(runs: &[ToolRun]) -> Vec<ReviewCommand> {
+    runs.iter()
+        .filter(|run| run.kind == ToolKind::Command)
+        .map(|run| ReviewCommand {
+            text: line(&redact(&run.title), REVIEW_COMMAND_CHARS),
+            status: match run.status {
+                Some(ToolStatus::Completed) => ReviewToolStatus::Completed,
+                Some(ToolStatus::Failed) => ReviewToolStatus::Failed,
+                Some(ToolStatus::Declined) => ReviewToolStatus::Declined,
+                None => ReviewToolStatus::Unfinished,
+            },
+            exit_code: run.exit_code,
+            duration_ms: run.duration_ms,
+        })
+        .collect()
+}
+
+/// The last message of the agent in `events` that has words in it.
+pub(crate) fn last_assistant_message(events: &[AgentEvent]) -> Option<String> {
+    events.iter().rev().find_map(|event| match &event.kind {
+        AgentEventKind::MessageEnd {
+            role: MessageRole::Assistant,
+            text,
+            ..
+        } if !text.trim().is_empty() => Some(text.clone()),
+        _ => None,
+    })
 }
 
 fn fill_from_turn(review: &mut TurnReview, inputs: &ReviewInputs<'_>, turn: &TurnInput) {
@@ -261,18 +295,7 @@ fn fill_from_turn(review: &mut TurnReview, inputs: &ReviewInputs<'_>, turn: &Tur
     review.prompt = user_text
         .or_else(|| turn.prompt_before.clone())
         .map(|text| text_of(prompt_part(&text), REVIEW_PROMPT_CHARS));
-    let last_message = turn
-        .events
-        .iter()
-        .rev()
-        .find_map(|event| match &event.kind {
-            AgentEventKind::MessageEnd {
-                role: MessageRole::Assistant,
-                text,
-                ..
-            } if !text.trim().is_empty() => Some(text.clone()),
-            _ => None,
-        });
+    let last_message = last_assistant_message(&turn.events);
     review.final_message = last_message
         .as_deref()
         .map(|text| text_of(text, REVIEW_MESSAGE_CHARS));
@@ -285,24 +308,7 @@ fn fill_from_turn(review: &mut TurnReview, inputs: &ReviewInputs<'_>, turn: &Tur
 
     // Tools and commands.
     review.tools = Some(tools_of(&runs));
-    let commands: Vec<&ToolRun> = runs
-        .iter()
-        .filter(|run| run.kind == ToolKind::Command)
-        .collect();
-    let command_items: Vec<ReviewCommand> = commands
-        .iter()
-        .map(|run| ReviewCommand {
-            text: line(&redact(&run.title), REVIEW_COMMAND_CHARS),
-            status: match run.status {
-                Some(ToolStatus::Completed) => ReviewToolStatus::Completed,
-                Some(ToolStatus::Failed) => ReviewToolStatus::Failed,
-                Some(ToolStatus::Declined) => ReviewToolStatus::Declined,
-                None => ReviewToolStatus::Unfinished,
-            },
-            exit_code: run.exit_code,
-            duration_ms: run.duration_ms,
-        })
-        .collect();
+    let command_items = review_commands(&runs);
     let without_code = command_items
         .iter()
         .filter(|c| c.exit_code.is_none() && c.status == ReviewToolStatus::Completed)
@@ -465,7 +471,7 @@ fn text_of(text: &str, max: usize) -> ReviewText {
 }
 
 /// Pairs each `tool_start` with its `tool_end` (by item id) in the order of the starts.
-fn tool_runs(events: &[AgentEvent]) -> Vec<ToolRun> {
+pub(crate) fn tool_runs(events: &[AgentEvent]) -> Vec<ToolRun> {
     let mut runs: Vec<ToolRun> = Vec::new();
     let mut open: HashMap<String, usize> = HashMap::new();
     for event in events {
@@ -483,11 +489,13 @@ fn tool_runs(events: &[AgentEvent]) -> Vec<ToolRun> {
                     status: None,
                     exit_code: None,
                     duration_ms: None,
+                    failure: None,
                 });
             }
             AgentEventKind::ToolEnd {
                 tool,
                 status,
+                output,
                 exit_code,
                 duration_ms,
                 ..
@@ -506,6 +514,7 @@ fn tool_runs(events: &[AgentEvent]) -> Vec<ToolRun> {
                             status: None,
                             exit_code: None,
                             duration_ms: None,
+                            failure: None,
                         });
                         let last = runs.len() - 1;
                         &mut runs[last]
@@ -514,6 +523,12 @@ fn tool_runs(events: &[AgentEvent]) -> Vec<ToolRun> {
                 run.status = Some(*status);
                 run.exit_code = *exit_code;
                 run.duration_ms = *duration_ms;
+                if *status == ToolStatus::Failed {
+                    run.failure = output
+                        .as_deref()
+                        .and_then(|text| text.lines().rev().find(|l| !l.trim().is_empty()))
+                        .map(|l| line(&redact(l), REVIEW_COMMAND_CHARS));
+                }
             }
             _ => {}
         }
@@ -555,7 +570,7 @@ fn tools_of(runs: &[ToolRun]) -> ReviewTools {
 }
 
 /// The file changes the journal's `file_diff` events name, in order, last kind wins.
-fn journal_files(events: &[AgentEvent]) -> BTreeMap<String, CheckpointFileStatus> {
+pub(crate) fn journal_files(events: &[AgentEvent]) -> BTreeMap<String, CheckpointFileStatus> {
     let mut files = BTreeMap::new();
     for event in events {
         if let AgentEventKind::FileDiff { changes, .. } = &event.kind {
@@ -577,7 +592,7 @@ fn journal_files(events: &[AgentEvent]) -> BTreeMap<String, CheckpointFileStatus
 
 /// The folders the session may change: its own and the extra ones. A checkout of the
 /// checkpoint counts as the first when there is one.
-fn roots_of(session: &SessionInfo, files: &FilesInput) -> Vec<PathBuf> {
+pub(crate) fn roots_of(session: &SessionInfo, files: &FilesInput) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     let checkout = match files {
         FilesInput::Checkpoint { checkout, .. } | FilesInput::Unchanged { checkout, .. } => {
@@ -605,7 +620,7 @@ fn relative_to(path: &str, root: Option<&Path>) -> String {
 
 /// The checkpoint's files with what only the journal named added (a secret-named file is
 /// never in a snapshot; a file outside the checkout is not either), sorted by path.
-fn merge_files(
+pub(crate) fn merge_files(
     diff: &[CheckpointFile],
     journal: &BTreeMap<String, CheckpointFileStatus>,
     root: Option<&Path>,
@@ -1008,48 +1023,56 @@ impl ReviewService {
                 ));
             }
         };
-        let Some(info) = info else {
-            return FilesInput::Missing(
-                "no checkpoint of this turn is kept (they are kept 30 days, and a chat may have them off)"
-                    .to_owned(),
-            );
-        };
-        match info.state {
-            CheckpointState::Unchanged => FilesInput::Unchanged {
-                id: info.id,
-                checkout: info.checkout,
-            },
-            CheckpointState::Ok | CheckpointState::Late => {
-                match checkpoints
-                    .diff(CheckpointDiffRequest {
-                        checkpoint_id: info.id,
-                        against: hutan_protocol::checkpoint::DiffAgainst::End,
-                        path: None,
-                        stat: true,
-                    })
-                    .await
-                {
-                    Ok(diff) => FilesInput::Checkpoint {
-                        id: info.id,
-                        checkout: info.checkout,
-                        diff,
-                        late: info.state == CheckpointState::Late,
-                    },
-                    Err(error) => FilesInput::Missing(format!(
-                        "the turn's checkpoint could not be diffed: {}",
-                        error.message
-                    )),
-                }
+        files_input(checkpoints, info).await
+    }
+}
+
+/// The files of a turn from its checkpoint (`None`: none is kept), or why there are none.
+pub(crate) async fn files_input(
+    checkpoints: &TurnCheckpoints,
+    info: Option<CheckpointInfo>,
+) -> FilesInput {
+    let Some(info) = info else {
+        return FilesInput::Missing(
+            "no checkpoint of this turn is kept (they are kept 30 days, and a chat may have them off)"
+                .to_owned(),
+        );
+    };
+    match info.state {
+        CheckpointState::Unchanged => FilesInput::Unchanged {
+            id: info.id,
+            checkout: info.checkout,
+        },
+        CheckpointState::Ok | CheckpointState::Late => {
+            match checkpoints
+                .diff(CheckpointDiffRequest {
+                    checkpoint_id: info.id,
+                    against: hutan_protocol::checkpoint::DiffAgainst::End,
+                    path: None,
+                    stat: true,
+                })
+                .await
+            {
+                Ok(diff) => FilesInput::Checkpoint {
+                    id: info.id,
+                    checkout: info.checkout,
+                    diff,
+                    late: info.state == CheckpointState::Late,
+                },
+                Err(error) => FilesInput::Missing(format!(
+                    "the turn's checkpoint could not be diffed: {}",
+                    error.message
+                )),
             }
-            other => FilesInput::Missing(format!(
-                "the turn's checkpoint is {}{}",
-                other.as_str(),
-                info.reason
-                    .as_deref()
-                    .map(|reason| format!(" ({reason})"))
-                    .unwrap_or_default()
-            )),
         }
+        other => FilesInput::Missing(format!(
+            "the turn's checkpoint is {}{}",
+            other.as_str(),
+            info.reason
+                .as_deref()
+                .map(|reason| format!(" ({reason})"))
+                .unwrap_or_default()
+        )),
     }
 }
 

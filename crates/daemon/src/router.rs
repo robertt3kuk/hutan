@@ -27,6 +27,7 @@ use crate::agents_review::ReviewService;
 use crate::assistant::{AssistantService, Origin};
 use crate::bus::EventBus;
 use crate::checkpoints::turns::RestoreContext;
+use crate::checks::ChecksService;
 use crate::conn::{ConnHandle, ConnId};
 use crate::control::{Access, ControlService};
 use crate::daemon_settings::SettingsService;
@@ -77,6 +78,7 @@ pub struct Services {
     pub insight: Arc<InsightHub>,
     pub review: Arc<ReviewService>,
     pub verify: Arc<crate::verify::VerifyService>,
+    pub findings: Arc<ChecksService>,
     pub updates: Arc<UpdateService>,
     pub settings: Arc<SettingsService>,
     pub storage: hutan_storage::Storage,
@@ -110,6 +112,7 @@ pub struct Router {
     insight: Arc<InsightHub>,
     review: Arc<ReviewService>,
     verify: Arc<crate::verify::VerifyService>,
+    findings: Arc<ChecksService>,
     updates: Arc<UpdateService>,
     settings: Arc<SettingsService>,
     storage: hutan_storage::Storage,
@@ -153,6 +156,7 @@ impl Router {
             insight: services.insight,
             review: services.review,
             verify: services.verify,
+            findings: services.findings,
             updates: services.updates,
             settings: services.settings,
             storage: services.storage,
@@ -456,6 +460,8 @@ impl Router {
                 self.verify.cancel(req.session_id)?;
                 ok(&Empty {})
             }
+            Request::AgentsFindings(req) => ok(&self.findings.findings(req).await?),
+            Request::AgentsFindingsDismiss(req) => ok(&self.findings.dismiss(req).await?),
             Request::AgentMeasureContext(req) => ok(&self.measure_context(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
@@ -1207,6 +1213,10 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentsVerifyPlan(_) => ("agents.verify.plan", Read),
         Request::AgentsVerify(_) => ("agents.verify", Mutate),
         Request::AgentsVerifyCancel(_) => ("agents.verify.cancel", Mutate),
+        // Findings (protocol 0.70): read-only, from what the daemon records, redacted, bounded.
+        Request::AgentsFindings(_) => ("agents.findings", Read),
+        // Dismissing a finding is the user's: an agent, Mawas included, must not hide a problem.
+        Request::AgentsFindingsDismiss(_) => ("agents.findings.dismiss", UserOnly),
         Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.
