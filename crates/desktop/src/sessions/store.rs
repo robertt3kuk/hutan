@@ -47,6 +47,7 @@ use hutan_terminal_view::DefaultColors;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::agents::AgentAttentionChanged;
+use super::block_news::BlockNews;
 use super::calls;
 use super::tasks::TaskBook;
 use super::terminal::TerminalSession;
@@ -585,6 +586,8 @@ pub struct SessionsStore {
     /// Search follow it. Kept per project for when the project comes back.
     chosen_checkout: HashMap<WorkspaceId, PathBuf>,
     terminals: HashMap<SessionId, WeakEntity<TerminalSession>>,
+    /// What each terminal's `terminal.block` events have said so far: which of them are news.
+    block_news: HashMap<TerminalId, BlockNews>,
     /// Sessions this desktop created or changed whose events have not reached `state` yet.
     recent: HashMap<SessionId, SessionInfo>,
     colors: Option<DefaultColors>,
@@ -789,6 +792,7 @@ impl SessionsStore {
             checkouts_tried: HashSet::new(),
             chosen_checkout: HashMap::new(),
             terminals: HashMap::new(),
+            block_news: HashMap::new(),
             recent: HashMap::new(),
             colors: None,
             connected_since: None,
@@ -851,6 +855,10 @@ impl SessionsStore {
             self.tasks_loading = None;
         }
         let before = std::mem::replace(&mut self.state, latest);
+        if before.epoch != self.state.epoch {
+            // Terminal ids and block ids start again with a daemon.
+            self.block_news.clear();
+        }
         self.revision += 1;
         if connected {
             self.last_confirmed_ms = Some(unix_ms());
@@ -1189,14 +1197,19 @@ impl SessionsStore {
             }
             // Blocks go to the attachment that shows the terminal, if there is one.
             Notice::TerminalBlock { terminal, block } => {
+                // A block told again (its lines moved, events were made up) is no command
+                // starting or finishing.
+                let news = self.block_news.entry(*terminal).or_default().is_news(block);
                 // A command that starts an agent: look at the process tree for one that never
                 // reported.
-                if block.state == hutan_protocol::blocks::BlockState::Running
+                if news
+                    && block.state == hutan_protocol::blocks::BlockState::Running
                     && block.command.as_deref().is_some_and(untracked::is_agent_command)
                 {
                     self.scan_agents(cx);
                 }
-                if block.state == hutan_protocol::blocks::BlockState::Finished
+                if news
+                    && block.state == hutan_protocol::blocks::BlockState::Finished
                     && let Some(info) = self.state.sessions.iter().find(|s| s.terminal_id == Some(*terminal))
                 {
                     let mut places = session_places(info);

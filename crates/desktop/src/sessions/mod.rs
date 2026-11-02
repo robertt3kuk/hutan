@@ -6,6 +6,7 @@
 pub mod agents;
 pub mod agents_list;
 pub mod agents_text;
+mod block_news;
 pub mod calls;
 pub mod card;
 pub mod checkpoints;

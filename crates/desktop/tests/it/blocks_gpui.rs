@@ -386,6 +386,70 @@ fn lost_block_events_are_made_up_by_loading_the_blocks_again(cx: &mut TestAppCon
     assert_eq!(blocks(&view, cx, info.id), daemon.blocks(terminal));
 }
 
+/// A block told again because a reflow moved its lines is not a command finishing: the
+/// checkouts are read again once per finished command, not once per announcement.
+#[gpui::test]
+fn blocks_told_again_after_a_reflow_are_not_commands_finishing(cx: &mut TestAppContext) {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use hutan_desktop::sessions::{ActivityCause, CheckoutActivity};
+    use hutan_protocol::messages::{Empty, Request, TerminalResize, TerminalSize};
+
+    const COMMANDS: usize = 4;
+    let daemon = TestDaemon::start();
+    // Each command prints a line that wraps differently at 40 columns than at the window's
+    // width, so narrowing moves every block behind the first one.
+    let wide = "w".repeat(200);
+    let info = daemon.sh(&format!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007'; read go; i=1; \\
+         while [ $i -le {COMMANDS} ]; do \\
+         printf '\\033]133;A\\007$ \\033]133;B\\007cmd%d\\r\\n\\033]133;C\\007{wide}\\r\\n\\033]133;D;0\\007' $i; \\
+         i=$((i+1)); done; printf '\\033]133;A\\007$ \\033]133;B\\007'; sleep 600"
+    ));
+    let terminal = terminal_of(&info);
+    let (view, cx) = open(cx, &daemon, None);
+    wait_synced(&view, cx, 1);
+    open_session(&view, cx, info.id);
+    wait_blocks(&view, cx, info.id, "the first prompt", |b| b.len() == 1);
+
+    let sessions = view.read_with(cx, |wb, _| wb.sessions().clone());
+    let finished_commands = Rc::new(Cell::new(0usize));
+    let _subscription = cx.update(|_, cx| {
+        let counter = Rc::clone(&finished_commands);
+        cx.subscribe(&sessions, move |_, event: &CheckoutActivity, _| {
+            if event.cause == ActivityCause::CommandFinished {
+                counter.set(counter.get() + 1);
+            }
+        })
+    });
+    daemon.send_input(terminal, b"\n");
+    wait_until(cx, "every command finished", |cx| {
+        finished(&blocks(&view, cx, info.id)) == COMMANDS && finished_commands.get() == COMMANDS
+    });
+
+    // Narrower: every block behind the first line moves, and the daemon says so for each.
+    let before = blocks(&view, cx, info.id);
+    let _: Empty = daemon.call(Request::TerminalResize(TerminalResize {
+        terminal_id: terminal,
+        size: TerminalSize {
+            cols: 40,
+            rows: 24,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    }));
+    wait_until(cx, "the blocks on their new lines", |cx| {
+        let now = blocks(&view, cx, info.id);
+        now != before && now == daemon.blocks(terminal)
+    });
+    assert_eq!(
+        finished_commands.get(),
+        COMMANDS,
+        "one activity per command, none for a block that only moved"
+    );
+}
+
 #[gpui::test]
 fn the_inspector_lists_the_last_twenty_blocks_and_jumps_to_one(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
