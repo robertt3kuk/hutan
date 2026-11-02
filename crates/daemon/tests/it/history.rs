@@ -466,6 +466,73 @@ async fn hutan_blocks_and_agent_reports_are_indexed() {
     env.daemon.stop().await;
 }
 
+/// The index rows of the blocks (`b:<id>:…` keys), as `(key, row id)`: a record that is written
+/// again gets a new row id, so equal lists mean nothing was written again.
+fn block_rows(path: &Path) -> Vec<(String, i64)> {
+    let conn =
+        Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let mut statement = conn
+        .prepare("SELECT ext_key, id FROM entries WHERE ext_key LIKE 'b:%' ORDER BY ext_key")
+        .unwrap();
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+/// A finished block that is announced again because a reflow moved its lines is not a command
+/// finishing: its rows are not read or written a second time.
+#[tokio::test]
+async fn a_block_told_again_by_a_reflow_is_indexed_once() {
+    let env = start(true).await;
+    let client = env.daemon.connect().await;
+    let wide = "w".repeat(100);
+    let mark = |a: &str| format!("\\033]133;{a}\\007");
+    let (a, b, c, d) = (mark("A"), mark("B"), mark("C"), mark("D;0"));
+    // The first command's long output wraps differently at 40 columns than at 80: its block
+    // (and the open prompt's) move when the terminal narrows. The second command runs after.
+    let script = format!(
+        "printf '{a}$ {b}alphacmd\\r\\n{c}alphaout {wide}\\r\\n{d}{a}$ {b}'; read go; \\
+         printf 'betacmd\\r\\n{c}betaout\\r\\n{d}{a}$ {b}'; exec cat"
+    );
+    let session = create(&client, sh(&script)).await;
+    let terminal = terminal_of(&session);
+    wait_hits(&client, "alphacmd").await;
+    wait_hits(&client, "alphaout").await;
+    let before = block_rows(&env.index_db());
+    assert_eq!(
+        before.len(),
+        2,
+        "a command row and an output row: {before:?}"
+    );
+
+    client
+        .call::<Empty>(Request::TerminalResize(
+            hutan_protocol::messages::TerminalResize {
+                terminal_id: terminal,
+                size: size(40, 24),
+            },
+        ))
+        .await
+        .unwrap();
+    // The blocks moved: the daemon announced them again (the events go the same way to the
+    // index as the next command's, in order).
+    client.send_input(terminal, b"\n").await.unwrap();
+    wait_hits(&client, "betacmd").await;
+    wait_hits(&client, "betaout").await;
+    let after = block_rows(&env.index_db());
+    assert_eq!(after.len(), 4, "{after:?}");
+    assert_eq!(
+        &after[..2],
+        &before[..],
+        "the first command's rows were not written again"
+    );
+
+    stop(&client, session.id).await.unwrap();
+    env.daemon.stop().await;
+}
+
 #[tokio::test]
 async fn bad_search_requests_are_rejected() {
     let env = start(true).await;

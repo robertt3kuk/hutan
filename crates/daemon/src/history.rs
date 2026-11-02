@@ -623,6 +623,11 @@ async fn consume(
     registry: RegistryHandle,
 ) {
     let mut consumer = Consumer::default();
+    // Per terminal, the newest block already indexed as finished. A block is announced again
+    // when its lines move (a reflow) or after a gap in the events (a resync): that is not a
+    // command finishing, so it is neither read nor written a second time. Block ids only grow
+    // and a block finishes once, in order, so one number per terminal says what was seen.
+    let mut finished_through: HashMap<TerminalId, u64> = HashMap::new();
     match registry.snapshot().await {
         Ok(snapshot) => {
             for session in &snapshot.sessions {
@@ -635,6 +640,11 @@ async fn consume(
         match event {
             Event::SessionUpdated { session } => consumer.learn(&session, true, &handle),
             Event::TerminalBlock { terminal_id, block } if block.state == BlockState::Finished => {
+                let through = finished_through.entry(terminal_id).or_insert(0);
+                if block.id <= *through {
+                    continue;
+                }
+                *through = block.id;
                 let Some(command) = block
                     .command
                     .as_deref()
