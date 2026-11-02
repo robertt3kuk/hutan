@@ -245,6 +245,26 @@ Headers: `[shell: <command> · exit <code>|running · <n> lines]`, `[shell: term
 - **From the window.** *Review* on the footer of a finished turn (beside *Fork…*) and *Review Last Turn with Mawas* in the session menus and the Agents page's ⋯ attach the packet to **Mawas's composer as a chip** (`review · api · turn 3`); nothing is sent and nothing is read until you open the chip (it shows the packet's text under the chips) or send the message. For a terminal agent the entry says *Review with Mawas (what it reports)*. The chip is the attachment kind `turn_review`, gated by `[assistant.context] agents` like an agent transcript.
 - **Data, not instructions (R7).** The packet carries text agents and users wrote; the MCP tool marks its result as untrusted data like the board's. It changes nothing: reviewing is a Read.
 
+## Checks › Verification (CHECKS-B, protocol 0.71, capability `agents.verify`; ADR 0025)
+
+An agent that says "the tests pass" is giving its word. **Hutan can run the tests itself**, in the session's folder (its worktree when it has one), and keep the exit code, the time and the last 8 KiB of the output: `agents.verify` (design: `docs/spikes/2026-11-02-checks.md` §4). That record, and not the agent's prose, is what says a session's tests pass.
+
+- **Which command.** The one you configured, else the one the folder's files name — always shown to you before it runs (on the card, and by `hutan agents --verify`). In `daemon.toml` (read at start; written by hand: the daemon never lets an agent set what it runs):
+  ```toml
+  [checks]
+  test_command = "cargo test"          # every project without its own; absent: found from the files
+  verify_timeout_secs = 600            # a run still going after this long is killed (1 to 7200)
+
+  [checks.projects.hutan]              # per project (name or id): replaces the same key
+  test_command = "cargo test -p hutan-core"
+  ```
+  Without a setting: `Cargo.toml` → `cargo test`; a `package.json` with a real `test` script → `pnpm test`, `yarn test`, `bun test` or `npm test` by the lockfile; `go.mod` → `go test ./...`; pytest configuration (`pytest.ini`, `[tool.pytest` in `pyproject.toml`, `[tool:pytest]` in `setup.cfg`, or those files beside a `tests/` folder) → `pytest`; a `Makefile` with a `test:` target → `make test`. The folder and its parents up to the checkout are looked at; the first match wins and the reason names the others. Nothing found is an error that says what was looked for and how to set `[checks]`.
+- **How it runs.** `/bin/sh -c` in that folder, from your login environment (like a terminal), no input, **at most one run per session**, killed with everything it started after the timeout (default 10 minutes) or when you cancel it (`^C` of the CLI; `agents.verify.cancel`). Both output streams are kept as the last 8 KiB, with terminal escapes dropped and secrets redacted before the cut. The run is stored — the newest 20 per session, surviving a restart — and announced (`agents.verify.started` / `.ended`).
+- **It does not race the agent.** While the session's own turn is running (a chat's turn, an agent that reports *working*) the run is refused, because the agent may be changing the files under it. You may **force** it (`--force`; the run says it was forced); an agent or Mawas never can.
+- **Mawas.** She may propose it when a claim has no evidence (`agents_verify`): a card shows the **exact command and the folder**, *Deny* runs nothing, and a grant for it is bound to that chat and that agent. A command she writes herself always asks. See `docs/control.md` § Mawas.
+- **CLI.** `hutan agents --verify SESSION [--command CMD] [--force] [--json]` prints `$ command` and where it runs, then `passed: exit code 0` or `failed: exit code N` with the tail, and exits 1 unless the run passed.
+- **What it feeds.** The checks of a session (`verify_failed`: Hutan's own run exited non-zero after the agent said it was done) read the stored runs; the desktop's Verify button comes with the Checks tab (CHECKS-C).
+
 ## Suggested answers (ASK-SUGGEST, protocol 0.64, capability `ask.suggest`; ADR 0025 rule R2)
 
 Mawas watches the requests of your other agents (a permission to run a command, a question) and may tell you what she would answer. **Her suggestion is advice, never an answer**: she cannot answer an approval or a question (`approval.respond` and `question.answer` are for you only), and nothing is applied until you act.
@@ -399,6 +419,7 @@ hutan grants ls [--ws <id|name>]
 hutan grants revoke <id> | --all
 hutan memory ls|add|edit|archive|restore|history|proposals   (§ Memory)
 hutan memory export|import|files                                (§ Memory files)
+hutan agents --verify <session> [--command <cmd>] [--force]    (§ Checks › Verification)
 ```
 
 `hutan grants ls|revoke` list and remove what Mawas may do without asking (user-only: refused inside an agent's session); an approval is answered with `hutan approve <id> allow_once|allow_chat|allow_workspace|deny` (`hutan approvals` lists the options). `--attach` specs: `block:<terminal>:<block>`, `recent:<terminal>:<lines>`, `agent:<session>[:<turns>]` (default 5), `file:<path>[:<first>-<last>]`, `search:<query>` (5 hits; quotes optional). `ask` uses the default Mawas of `--ws`, else `$HUTAN_WORKSPACE`, else the global one (Home), prints the answer as it streams and exits 1 when the turn fails (also when the daemon refuses an attachment: the message is on stderr). `--json` prints every event. `hutan chat log <session>` shows the whole conversation, attachments included.
@@ -432,6 +453,8 @@ Reads are free (MAWAS-READS; `crates/daemon/src/mcp_wiring.rs` units, `crates/da
 An approval never outlives its call (MAWAS-WRITES; `crates/daemon/tests/it/mawas.rs`, `crates/cli/tests/it/mcp.rs`, `mcp_wiring.rs` units): a Mawas card whose caller's connection closes is resolved as expired with `decided_by = caller_gone`, the audit says *withdrawn*, the late *Allow* is refused and the session keeps its title, no grant results, and the next call asks and runs normally; through the real `hutan mcp`, a `notifications/cancelled` and the end of the MCP process both withdraw the card, a late `hutan approve` fails and nothing runs; the overlay, `allowedTools` and Codex overrides now list the gated tools too, and each harness's call window (`OMP_MCP_TIMEOUT_MS=660000`, `tool_timeout_sec=660.0`) is longer than the 10 minutes a Mawas approval waits; `hutan mcp --gated-tools` lists exactly the table's writers and the two flags exclude each other.
 
 Reviewing a turn (AGENTS-REVIEW, `crates/daemon/src/agents_review.rs` unit tests, `crates/daemon/tests/it/review.rs`, `assistant.rs`, `crates/cli/tests/it/{agent,mcp}.rs`, `crates/desktop/tests/it/mawas_gpui.rs`): commands keep their exit codes and a missing one stays missing; each signal fires on its evidence and stays quiet without it; files come from the checkpoint, the journal alone, or are *not recorded* with the reason; diagnostics cover the changed files only and carry `stale`; secrets are redacted in every text; a big turn is cut to 24 KiB and says what was cut; a terminal agent gets its report and the list of what is not recorded; a fixture chat's finished turn is reviewed from its journal and its checkpoint; the `turn_review` attachment is journaled as text and follows `[assistant.context] agents`; *Review* on a turn's footer attaches a chip without sending anything, and opening the chip shows the packet.
+
+Verification (CHECKS-B, `crates/daemon/src/verify/{detect,run}.rs` units, `crates/daemon/tests/it/{verify,mawas}.rs`, `crates/storage/src/tests.rs`, `crates/cli/tests/it/{agent,mcp}.rs`): detection per ecosystem from fixture folders (lockfiles, npm's placeholder script, pytest markers, `Makefile` targets, the first match naming the others); a passing and a failing run keep their exit codes and what both streams wrote; the output is a redacted tail of at most 8 KiB with escapes dropped; a run past its timeout is killed with its child process; a cancel and a caller that goes away end the run; one run per session; a run is refused while the session's own turn runs unless the user forces it; the command comes from the project's table, then `[checks]`, then the files, and from the login environment; runs are stored and survive a restart; Mawas's card shows the command and the folder and Deny runs nothing.
 
 ## Limits
 
