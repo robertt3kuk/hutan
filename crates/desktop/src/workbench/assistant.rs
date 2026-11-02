@@ -734,6 +734,74 @@ impl Workbench {
         }))
     }
 
+    /// *Check with Mawas* (CHECKS-C): Mawas Home opens, its Focus goes to the workspace and its
+    /// composer gets a prepared ask with the findings of the workspace (or of the session) in
+    /// it. The user reads it, changes it and sends it; nothing is sent here.
+    pub(crate) fn check_with_mawas(
+        &mut self,
+        at: actions::CheckAt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.assistant_enabled() {
+            self.set_notice("Mawas is off (assistant.enabled)", cx);
+            return;
+        }
+        let Some(panel) = self.assistant_panel(window, cx) else {
+            return;
+        };
+        self.assistant_last = true;
+        panel.update(cx, |panel, cx| {
+            panel.check_with_mawas(at.workspace, at.session, cx);
+            panel.focus_composer(cx);
+        });
+    }
+
+    /// *Ask Mawas* of a finding: Home opens and the prepared question waits in its composer.
+    pub(crate) fn ask_mawas(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.assistant_panel(window, cx) else {
+            return;
+        };
+        self.assistant_last = true;
+        panel.update(cx, |panel, cx| {
+            panel.ask_mawas(text, cx);
+            panel.focus_composer(cx);
+        });
+    }
+
+    /// The menus' line *Check with Mawas* for a workspace (`session: None`) or one session: not
+    /// for Mawas's own chats, plain shells, a daemon without the checks, or with Mawas off.
+    pub(crate) fn check_entry(
+        &self,
+        workspace: Option<hutan_core::WorkspaceId>,
+        session: Option<SessionId>,
+        cx: &gpui::App,
+    ) -> Option<MenuEntry> {
+        if !self.assistant_enabled() {
+            return None;
+        }
+        let store = self.sessions.read(cx);
+        let connection = store.connection();
+        if !connection.supports_agents_findings() || !connection.supports_assistant() {
+            return None;
+        }
+        let mut workspace = workspace;
+        if let Some(id) = session {
+            let info = store.session(id)?;
+            let agent = info.chat.as_ref().is_some_and(|chat| !chat.is_assistant())
+                || info.agent.is_some()
+                || info.terminal_agent.is_some();
+            if !agent {
+                return None;
+            }
+            workspace = workspace.or(Some(info.workspace_id));
+        }
+        let workspace = workspace?;
+        Some(Self::entry("Check with Mawas", move |this, window, cx| {
+            this.check_with_mawas(actions::CheckAt { workspace, session }, window, cx);
+        }))
+    }
+
     /// What the terminal view knows of block `block`: its command and exit code.
     pub(crate) fn block_facts(
         &self,

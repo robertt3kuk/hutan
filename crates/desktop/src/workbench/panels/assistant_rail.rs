@@ -526,6 +526,7 @@ impl AssistantPanel {
         let body = match tab {
             RailTab::Now => self.render_now(&today, look, cx),
             RailTab::Recent => self.render_recent(look, cx),
+            RailTab::Checks => self.render_checks(look, cx),
             RailTab::Memory => self.render_memory(&today, look, cx),
         };
         let width = self.rail_width_rem() * rem_px;
@@ -616,6 +617,12 @@ impl AssistantPanel {
                 self.recent_count(),
             ))
             .child(tab(
+                "today-tab-checks",
+                RailTab::Checks,
+                "Checks",
+                self.checks_badge(cx),
+            ))
+            .child(tab(
                 "today-tab-memory",
                 RailTab::Memory,
                 "Memory",
@@ -630,6 +637,7 @@ impl AssistantPanel {
         let word = match tab {
             RailTab::Now => "now",
             RailTab::Recent => "recent",
+            RailTab::Checks => "checks",
             RailTab::Memory => "memory",
         };
         if let Err(error) = self

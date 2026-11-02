@@ -433,6 +433,10 @@ pub struct AssistantPanel {
     pub(super) memory: MemoryTab,
     /// What the Today column's Recent tab shows.
     pub(super) recent: RecentTab,
+    /// What the Today column's Checks tab shows (the daemon's findings).
+    pub(super) checks: super::findings_ui::FindingsState,
+    /// A prepared ask (*Check with Mawas*, *Ask Mawas*) waiting for the chat to be there.
+    pub(super) pending_ask: Option<super::assistant_checks::PendingAsk>,
     /// `assistant.home_scope` as this page last saw it: a different value (Settings, another
     /// window) sends Home back to what the new value opens.
     home_seen: HomeScope,
@@ -508,6 +512,8 @@ impl AssistantPanel {
             idle_open: false,
             memory: MemoryTab::default(),
             recent: RecentTab::default(),
+            checks: super::findings_ui::FindingsState::default(),
+            pending_ask: None,
             home_seen: home_scope,
             edge_drag,
             folded: false,
@@ -2471,6 +2477,8 @@ impl Render for AssistantPanel {
         let rem_px = f32::from(window.rem_size());
         self.ensure_memory(cx);
         self.ensure_recent(cx);
+        self.ensure_checks(cx);
+        self.apply_pending_ask(cx);
         self.sync_catch_up(cx);
         let rail = (!self.folded && self.rail_open && connected)
             .then(|| self.render_rail(&look, false, rem_px, cx));

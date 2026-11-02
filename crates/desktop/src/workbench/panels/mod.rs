@@ -4,6 +4,7 @@
 mod agents;
 mod agents_page;
 mod assistant;
+mod assistant_checks;
 mod assistant_rail;
 mod changes;
 pub(crate) mod common;
@@ -13,6 +14,7 @@ mod files;
 mod files_git;
 mod files_names;
 mod files_tree;
+mod findings_ui;
 mod history;
 mod history_catalog;
 mod history_model;

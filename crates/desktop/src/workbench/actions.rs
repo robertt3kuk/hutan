@@ -392,6 +392,13 @@ pub struct ReviewAt {
     pub number: Option<u32>,
 }
 
+/// What *Check with Mawas* is about: a workspace, or one session of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CheckAt {
+    pub workspace: hutan_core::WorkspaceId,
+    pub session: Option<hutan_core::SessionId>,
+}
+
 /// What a "▶ Start" button opens the Start… sheet with.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct LauncherOpen {
@@ -463,6 +470,12 @@ data_actions! {
     /// *Review this turn* (the turn footer's button, the session menus' entry): the review
     /// packet of the turn becomes a chip of Mawas's composer; nothing is sent.
     ReviewTurn(ReviewAt);
+    /// *Ask Mawas* of a finding: this prepared question goes into the composer of Mawas Home;
+    /// nothing is sent.
+    AskMawas(String);
+    /// *Check with Mawas* (a workspace's ⋯, a session's ⋯): Mawas Home with the Focus on the
+    /// workspace and the prepared ask, with the findings, in the composer; the user sends it.
+    CheckWithMawas(CheckAt);
     /// The sidebar row's ⑂: fork the chat at its latest turn (the popover opens by the row
     /// when a choice is needed).
     ForkSessionLatest(SessionMenuAt);

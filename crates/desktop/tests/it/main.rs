@@ -14,6 +14,7 @@ mod changes_multi_gpui;
 mod changes_view_gpui;
 mod chat_gpui;
 mod checkpoints_gpui;
+mod checks_gpui;
 mod chrome_gpui;
 mod close_gpui;
 mod common;

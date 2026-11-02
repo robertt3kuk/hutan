@@ -574,6 +574,8 @@ impl Workbench {
                 this.reveal_workspace(workspace, cx);
             }));
         }
+        // Mawas checks the workspace's agents (CHECKS-C).
+        entries.extend(self.check_entry(Some(workspace), None, cx));
         entries
     }
 

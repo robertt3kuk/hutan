@@ -1136,6 +1136,9 @@ impl Workbench {
         if let Some(review) = self.turn_review_entry(session, cx) {
             entries.insert(entries.len() - 1, review);
         }
+        if let Some(check) = self.check_entry(None, Some(session), cx) {
+            entries.insert(entries.len() - 1, check);
+        }
         // After the openers, before Rename…: what the user can do to the queue.
         for (at, entry) in self.attention_entries(session, cx).into_iter().enumerate() {
             entries.insert(3 + at, entry);

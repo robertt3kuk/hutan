@@ -145,6 +145,8 @@ impl Workbench {
         // Agents page → session ⋯ → Review with Mawas (AGENTS-REVIEW): the last finished turn
         // (or, for a terminal agent, what it reports) becomes a chip of Mawas's composer.
         entries.extend(self.turn_review_entry(session, cx));
+        // … and *Check with Mawas* (CHECKS-C): the Focus on its workspace, the findings in the ask.
+        entries.extend(self.check_entry(None, Some(session), cx));
         entries.push(Self::entry("Copy session ID", move |this, _, cx| {
             this.copy_session_id(session, cx);
         }));

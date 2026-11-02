@@ -642,6 +642,9 @@ pub enum Region {
     ContextTurnAction(usize, &'static str),
     /// File row `index` of the Context panel's files block (`open`: the row, `diff`: its diff).
     ContextFile(usize, &'static str),
+    /// A control of finding row `index` of the Checks tab or the Context panel's Findings
+    /// (`checks-dismiss`, `findings-verify`, …; the names are `findings_ui::RAIL`/`CONTEXT`).
+    Finding(&'static str, usize),
     /// A control of the Problems panel's header (`severity`, `refresh`).
     Problems(&'static str),
     /// The Restart button of the Problems panel's server line `index` (top to bottom).
