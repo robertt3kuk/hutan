@@ -9,6 +9,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - **Hutan runs the tests itself**: `hutan agents --verify SESSION` runs the project's test command in the session's folder (its worktree if it has one) and keeps the exit code and the end of the output, so "all tests pass" can be checked against Hutan's own run, not the agent's word. The command comes from `[checks] test_command` (per project in `daemon.toml`) or is detected (Cargo, npm/pnpm/yarn/bun, pytest, Go, `make test`) and is shown before it runs; it won't run while the agent's own turn is running in that checkout. Mawas can ask for a run through her gate (`agents_verify`), and the card shows the command and folder.
 - **Insight for agents in a terminal**: an OMP, Claude Code or Codex agent running in a terminal now shows what it did in the Context panel and `hutan chat insight` — tools with their times, files, turns and, where the agent reports them, tokens, cost and context (OMP through Hutan's extension; Claude Code and Codex through the hooks, which carry less, each block labelled with its source). Opt-in for Claude Code: `hutan integration install claude --statusline` adds context and cost, chained to your own status line and restored on uninstall. `hutan integration status` says what each integration reports.
 
+### Fixed
+- *Files touched* and *Changed by agents* missed files an OMP edit changed when the edit was large (OMP keeps the text only for its first files); every file an edit, write, delete or rename names is now listed, and two files with the same name show their folders.
+
 ## 0.3.5 — 2026-10-31
 
 ### Added
