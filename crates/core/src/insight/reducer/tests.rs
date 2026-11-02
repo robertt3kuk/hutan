@@ -629,6 +629,81 @@ fn files_are_relative_to_the_folder_and_counted_from_their_patches() {
     assert_eq!(insight.turns[0].files, 3);
 }
 
+/// One OMP `edit` over three files whose snapshots did not all fit (FX-AGENT-FILES): two have a
+/// patch, one is named without text. Two of them are `Cargo.toml`s of different folders; a file
+/// changed again in a later turn is one file, in both turns.
+#[test]
+fn every_file_a_call_named_is_listed_once_by_its_path_whatever_its_basename() {
+    let mut s = Script::new();
+    let mut r = s.reducer("omp");
+    let patch = "--- a\n+++ b\n@@ -1 +1,2 @@\n a\n+b\n";
+    let t1 = TurnId::new();
+    let e = s.event(t1, AgentEventKind::TurnStarted);
+    r.apply(&e);
+    let e = s.at(
+        1,
+        Some(t1),
+        Some(ItemId::new()),
+        AgentEventKind::FileDiff {
+            changes: vec![
+                change("/work/app/Cargo.toml", FileChangeKind::Update, Some(patch)),
+                change(
+                    "/work/app/crates/core/Cargo.toml",
+                    FileChangeKind::Update,
+                    Some(patch),
+                ),
+                change(
+                    "/work/app/crates/core/src/safety.rs",
+                    FileChangeKind::Update,
+                    None,
+                ),
+            ],
+            patch: None,
+        },
+    );
+    r.apply(&e);
+    let e = s.event(t1, AgentEventKind::TurnCompleted { duration_ms: None });
+    r.apply(&e);
+    let t2 = TurnId::new();
+    let e = s.event(t2, AgentEventKind::TurnStarted);
+    r.apply(&e);
+    let e = s.at(
+        1,
+        Some(t2),
+        Some(ItemId::new()),
+        AgentEventKind::FileDiff {
+            changes: vec![change(
+                "/work/app/crates/core/src/safety.rs",
+                FileChangeKind::Update,
+                Some(patch),
+            )],
+            patch: None,
+        },
+    );
+    r.apply(&e);
+    let e = s.event(t2, AgentEventKind::TurnCompleted { duration_ms: None });
+    r.apply(&e);
+
+    let insight = r.snapshot(1, s.ts, None);
+    let files = insight.files.expect("files");
+    let paths: Vec<&str> = files.items.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "Cargo.toml",
+            "crates/core/Cargo.toml",
+            "crates/core/src/safety.rs"
+        ]
+    );
+    assert_eq!(files.count, 3);
+    assert_eq!(
+        files.items[2].added,
+        Some(1),
+        "the file named without text counts what a later patch says"
+    );
+    assert_eq!((insight.turns[0].files, insight.turns[1].files), (3, 1));
+}
+
 #[test]
 fn files_past_the_cap_are_counted_in_the_lines_and_say_truncated() {
     let mut s = Script::new();

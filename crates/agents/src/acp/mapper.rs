@@ -36,6 +36,8 @@ use crate::error::AgentError;
 const METHOD_NOT_FOUND: i64 = -32601;
 /// Tool calls remembered; past this, finished ones are forgotten (oldest first).
 const MAX_TOOLS: usize = 1024;
+/// Files of one tool call reported by name (no diff); a call changing more is cut here.
+const MAX_NAMED_FILES: usize = 256;
 
 /// `session/update` kinds that carry nothing a conversation shows: the slash-command palette
 /// and the title the agent gave the session.
@@ -72,6 +74,13 @@ struct Tool {
     text: String,
     /// Diffs already reported, by path and hash of the new content.
     diffs: HashSet<(String, u64)>,
+    /// What a call of an edit kind does to the files it names (`delete` removes them).
+    change: FileChangeKind,
+    /// Files of the call reported as changed so far (absolute), by a diff or by name.
+    files: HashSet<String>,
+    /// Files the call's updates have located (absolute), in the order given: an agent that
+    /// does not send a diff for a file still names it.
+    located: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -630,6 +639,9 @@ impl Mapper {
                 ended: false,
                 text: String::new(),
                 diffs: HashSet::new(),
+                change: FileChangeKind::Update,
+                files: HashSet::new(),
+                located: Vec::new(),
             },
         );
         item
@@ -683,6 +695,10 @@ impl Mapper {
             .to_owned();
         if let Some(tool) = self.tools.get_mut(id) {
             tool.tool = kind;
+            tool.change = match update.get("kind").and_then(Value::as_str) {
+                Some("delete") => FileChangeKind::Delete,
+                _ => FileChangeKind::Update,
+            };
             tool.name.clone_from(&name);
             tool.started = Some(Instant::now());
         }
@@ -699,8 +715,16 @@ impl Mapper {
     }
 
     /// What an update says about a call that has started: new content, diffs, an end.
+    ///
+    /// A call of an edit kind that completed changed every file it names, whether or not the
+    /// agent sent a diff for it: OMP's `edit` keeps the old and new text of the first files of
+    /// a call only (32 KiB between them) and names the rest by their path, and its `write`
+    /// sends no text at all. Those files are reported without a patch, so that every consumer
+    /// of the journal sees the same files the agent changed.
     fn tool_progress(&mut self, id: &str, update: &Value) -> Vec<AgentEventDraft> {
         let mut drafts = Vec::new();
+        let cwd = self.cwd.clone();
+        let cwd = cwd.as_deref();
         let Some(tool) = self.tools.get_mut(id) else {
             return drafts;
         };
@@ -711,10 +735,11 @@ impl Mapper {
         for entry in content.map(Vec::as_slice).unwrap_or_default() {
             match entry.get("type").and_then(Value::as_str) {
                 Some("diff") => {
-                    if let Some((change, key)) = diff_change(entry)
-                        && tool.diffs.insert(key)
-                    {
-                        changes.push(change);
+                    if let Some((change, key)) = diff_change(entry) {
+                        tool.files.insert(absolute(cwd, &change.path));
+                        if tool.diffs.insert(key) {
+                            changes.push(change);
+                        }
                     }
                 }
                 Some("content") => {
@@ -723,6 +748,50 @@ impl Mapper {
                     }
                 }
                 _ => {}
+            }
+        }
+        let status = update.get("status").and_then(Value::as_str);
+        if tool.tool == ToolKind::FileChange {
+            for path in update
+                .get("locations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|location| location.get("path").and_then(Value::as_str))
+                .filter(|path| !path.is_empty())
+            {
+                let path = absolute(cwd, path);
+                if tool.located.len() < MAX_NAMED_FILES && !tool.located.contains(&path) {
+                    tool.located.push(path);
+                }
+            }
+            if status == Some("completed") {
+                let results = file_results(update.get("rawOutput"), cwd);
+                let located = std::mem::take(&mut tool.located);
+                let named = results
+                    .into_iter()
+                    .chain(located.into_iter().map(|path| NamedFile {
+                        path,
+                        kind: tool.change,
+                        moved_to: None,
+                    }));
+                for file in named {
+                    if tool.files.len() >= MAX_NAMED_FILES || !tool.files.insert(file.path.clone())
+                    {
+                        continue;
+                    }
+                    if let Some(to) = &file.moved_to {
+                        tool.files.insert(to.clone());
+                    }
+                    changes.push(FileChange {
+                        path: file.path,
+                        kind: file.kind,
+                        move_path: file.moved_to,
+                        patch: None,
+                        before: None,
+                        after: None,
+                    });
+                }
             }
         }
         let text = texts.join("\n");
@@ -739,7 +808,6 @@ impl Mapper {
                 },
             ));
         }
-        let status = update.get("status").and_then(Value::as_str);
         match status {
             Some("completed" | "failed") => {
                 let tool_status = if status == Some("failed") {
@@ -1302,6 +1370,73 @@ fn tool_kind(kind: Option<&str>) -> ToolKind {
         Some("fetch") => ToolKind::WebSearch,
         _ => ToolKind::Other,
     }
+}
+
+/// A file an edit tool's result names.
+struct NamedFile {
+    /// Absolute.
+    path: String,
+    kind: FileChangeKind,
+    /// Where a renamed file went (`path` is where it was).
+    moved_to: Option<String>,
+}
+
+/// `path` as an absolute path: one that is not is taken to be below the agent's folder.
+fn absolute(cwd: Option<&str>, path: &str) -> String {
+    match cwd {
+        Some(cwd) if !path.starts_with('/') && !cwd.is_empty() => {
+            format!(
+                "{}/{}",
+                cwd.trim_end_matches('/'),
+                path.trim_start_matches("./")
+            )
+        }
+        _ => path.to_owned(),
+    }
+}
+
+/// The files an edit tool's `rawOutput` names, with what was done to each (OMP's
+/// `details.perFileResults[]`, or `details` itself for a call about one file: `path`, `op`
+/// `create | update | delete`, and `sourcePath` for a rename).
+fn file_results(raw: Option<&Value>, cwd: Option<&str>) -> Vec<NamedFile> {
+    let Some(details) = raw.and_then(|raw| raw.get("details")) else {
+        return Vec::new();
+    };
+    let entries: Vec<&Value> = match details.get("perFileResults").and_then(Value::as_array) {
+        Some(per_file) => per_file.iter().collect(),
+        None => vec![details],
+    };
+    entries
+        .into_iter()
+        .filter(|entry| entry.get("isError").and_then(Value::as_bool) != Some(true))
+        .filter_map(|entry| {
+            let path = entry
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.is_empty())?;
+            let kind = match entry.get("op").and_then(Value::as_str) {
+                Some("create") => FileChangeKind::Add,
+                Some("delete") => FileChangeKind::Delete,
+                _ => FileChangeKind::Update,
+            };
+            let source = entry
+                .get("sourcePath")
+                .and_then(Value::as_str)
+                .filter(|source| !source.is_empty());
+            Some(match source {
+                Some(source) => NamedFile {
+                    path: absolute(cwd, source),
+                    kind,
+                    moved_to: Some(absolute(cwd, path)),
+                },
+                None => NamedFile {
+                    path: absolute(cwd, path),
+                    kind,
+                    moved_to: None,
+                },
+            })
+        })
+        .collect()
 }
 
 /// A `diff` content entry as a [`FileChange`] (and the key that tells it was reported).

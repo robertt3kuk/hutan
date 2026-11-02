@@ -21,6 +21,7 @@ use hutan_core::{AgentEventKind, Seq, SessionId};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::messages::{Event, Request, SessionInfo, SessionResult};
+use hutan_protocol::review::AgentsReviewRequest;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 
@@ -332,6 +333,55 @@ async fn a_claude_chat_reports_cache_writes_files_failed_tools_and_estimated_cat
             totals.total
         ),
         (2, Some(1_550), Some(72_000), Some(9_120), Some(83_095))
+    );
+    t.daemon.stop().await;
+}
+
+/// OMP's `edit` over three files (`edit-pruned.jsonl`): the result keeps the old and new text of
+/// two of them and names the third by its path only (FX-AGENT-FILES). The insight's files, the
+/// turn's file count and the review packet all list the three, two of them `Cargo.toml`s.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_that_names_a_file_without_its_text_still_lists_it_everywhere() {
+    let mut t = T::harness("omp", "edit-pruned").await;
+    let chat = t.create("omp").await;
+    t.turn(chat.id, "Add pretty_assertions.").await;
+
+    let insight = t.insight(chat.id).await;
+    let files = insight.files.as_ref().expect("files");
+    assert_eq!(files.count, 3);
+    let listed: Vec<(&str, Option<u64>)> = files
+        .items
+        .iter()
+        .map(|f| (f.path.as_str(), f.added))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("/tmp/hutan-fixture/Cargo.toml", Some(1)),
+            ("/tmp/hutan-fixture/crates/core/Cargo.toml", Some(1)),
+            // No text, so no count of lines: the row says it changed, not by how much.
+            ("/tmp/hutan-fixture/crates/core/src/safety.rs", None),
+        ]
+    );
+    assert_eq!(insight.turns[0].files, 3);
+
+    let review = t
+        .client
+        .agents_review(AgentsReviewRequest {
+            session_id: chat.id,
+            turn_id: None,
+        })
+        .await
+        .unwrap();
+    let reviewed = review.files.expect("files in the packet");
+    let paths: Vec<&str> = reviewed.items.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "/tmp/hutan-fixture/Cargo.toml",
+            "/tmp/hutan-fixture/crates/core/Cargo.toml",
+            "/tmp/hutan-fixture/crates/core/src/safety.rs"
+        ]
     );
     t.daemon.stop().await;
 }
