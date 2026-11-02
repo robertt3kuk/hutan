@@ -118,22 +118,21 @@ fn files(agent: HookAgentArg, tool: &str, input: &Value) -> Vec<ReportedFile> {
 /// The files of an `apply_patch` envelope: `*** Add File: p`, `*** Update File: p`,
 /// `*** Delete File: p`. Nothing else of the patch is read.
 fn patch_files(patch: &str) -> Vec<ReportedFile> {
+    const MARKS: [(&str, FileChangeKind); 3] = [
+        ("*** Add File: ", FileChangeKind::Add),
+        ("*** Update File: ", FileChangeKind::Update),
+        ("*** Delete File: ", FileChangeKind::Delete),
+    ];
     patch
         .lines()
         .filter_map(|line| {
             let line = line.trim_end();
-            let (kind, path) = if let Some(path) = line.strip_prefix("*** Add File: ") {
-                (FileChangeKind::Add, path)
-            } else if let Some(path) = line.strip_prefix("*** Update File: ") {
-                (FileChangeKind::Update, path)
-            } else if let Some(path) = line.strip_prefix("*** Delete File: ") {
-                (FileChangeKind::Delete, path)
-            } else {
-                return None;
-            };
-            (!path.is_empty()).then(|| ReportedFile {
-                path: path.to_owned(),
-                kind,
+            MARKS.iter().find_map(|(mark, kind)| {
+                let path = line.strip_prefix(mark).filter(|path| !path.is_empty())?;
+                Some(ReportedFile {
+                    path: path.to_owned(),
+                    kind: *kind,
+                })
             })
         })
         .collect()
