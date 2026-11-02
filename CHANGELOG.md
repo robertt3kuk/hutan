@@ -4,6 +4,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+### Added
+- **Hutan runs the tests itself**: `hutan agents --verify SESSION` runs the project's test command in the session's folder (its worktree if it has one) and keeps the exit code and the end of the output, so "all tests pass" can be checked against Hutan's own run, not the agent's word. The command comes from `[checks] test_command` (per project in `daemon.toml`) or is detected (Cargo, npm/pnpm/yarn/bun, pytest, Go, `make test`) and is shown before it runs; it won't run while the agent's own turn is running in that checkout. Mawas can ask for a run through her gate (`agents_verify`), and the card shows the command and folder.
+
 ## 0.3.5 — 2026-10-31
 
 ### Added
