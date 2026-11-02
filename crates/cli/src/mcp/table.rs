@@ -1390,7 +1390,8 @@ static TOOLS: &[Tool] = &[
                       claimed_pass_without_test, tests_edited, tests_weakened, \
                       snapshot_updated, repeated_failure, thrash, context_pressure, \
                       costly_turn, long_wait, stalled, unreviewed_changes, overlap, \
-                      shared_checkout, and the signs of `agent_review`), a `severity` (alert, \
+                      shared_checkout, verify_failed (Hutan's own failed test run), and the \
+                      signs of `agent_review`), a `severity` (alert, \
                       warn, info), a `confidence` (`exact`: a record such as an exit code, a \
                       diff line or a count; `heuristic`: a pattern in words or paths, say so \
                       when you report it), its scope (workspace, session, turn), at most five \
