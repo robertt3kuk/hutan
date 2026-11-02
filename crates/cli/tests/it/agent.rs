@@ -688,3 +688,121 @@ exec sleep 600"#,
     }
     t.stop().await;
 }
+
+/// `hutan agents --verify` (protocol 0.71): the command and the folder come first, then the exit
+/// code and the tail of the output; anything but a pass exits 1; `--json` is the run; a folder
+/// with no test command says what was looked for.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_verify_prints_the_command_then_the_result_and_exits_one_unless_it_passed() {
+    let work = tempfile::tempdir().unwrap();
+    let folder = work.path().canonicalize().unwrap();
+    let t = TestDaemon::start_toml(
+        "[terminal]\nenv_inherit = \"daemon\"\n\n[checks]\ntest_command = \"echo ran-the-tests\"\n",
+        |_| {},
+    )
+    .await;
+    let cwd = folder.to_str().unwrap();
+    let session = t
+        .new_session(&["--cwd", cwd], &["sh", "-c", "exec sleep 600"])
+        .await;
+
+    let out = t.hutan(&["agents", "--verify", &session]).await.ok();
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert_eq!(lines[0], "$ echo ran-the-tests", "{}", out.stdout);
+    assert!(
+        lines[1].starts_with(&format!("(in {cwd}; ")),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        lines[1].contains("`[checks] test_command` of daemon.toml") && lines[1].contains("600 s"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        lines[2].starts_with("passed: exit code 0"),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("ran-the-tests\n"), "{}", out.stdout);
+
+    // `--command` runs another command; a failure prints the code and the output and exits 1.
+    let failed = t
+        .hutan(&[
+            "agents",
+            "--verify",
+            &session,
+            "--command",
+            "echo oops >&2; exit 4",
+        ])
+        .await;
+    assert_eq!(failed.code, 1, "{failed:?}");
+    assert!(
+        failed.stdout.starts_with("$ echo oops >&2; exit 4\n"),
+        "{}",
+        failed.stdout
+    );
+    assert!(
+        failed.stdout.contains("failed: exit code 4"),
+        "{}",
+        failed.stdout
+    );
+    assert!(failed.stdout.contains("oops"), "{}", failed.stdout);
+
+    // `--json` is the run and nothing else on stdout.
+    let json = t
+        .hutan(&[
+            "--json",
+            "agents",
+            "--verify",
+            &session,
+            "--command",
+            "echo j; exit 5",
+        ])
+        .await;
+    assert_eq!(json.code, 1, "{json:?}");
+    let run = json.json();
+    assert_eq!(run["status"], "failed");
+    assert_eq!(run["exit_code"], 5);
+    assert_eq!(run["session_id"], session);
+    assert_eq!(run["requested_by"], "user");
+    assert_eq!(run["output_tail"], "j\n");
+
+    // A folder with no test command: the message says what was looked for and what to set.
+    let bare = tempfile::tempdir().unwrap();
+    let t2 = TestDaemon::start_toml("[terminal]\nenv_inherit = \"daemon\"\n", |_| {}).await;
+    let other = t2
+        .new_session(
+            &[
+                "--cwd",
+                bare.path().canonicalize().unwrap().to_str().unwrap(),
+            ],
+            &["sh", "-c", "exec sleep 600"],
+        )
+        .await;
+    let none = finish(command(
+        Path::new(HUTAN),
+        Some(&t2.paths.socket),
+        &["agents", "--verify", &other],
+    ))
+    .await;
+    assert_eq!(none.code, 1, "{none:?}");
+    assert!(
+        none.stderr.contains("no test command found") && none.stderr.contains("[checks]"),
+        "{}",
+        none.stderr
+    );
+    t2.stop().await;
+
+    // The flags that do not go with it, and an unknown session.
+    for args in [
+        vec!["agents", "--verify", &session, "--board"],
+        vec!["agents", "--command", "true"],
+        vec!["agents", "--force"],
+        vec!["agents", "--verify", "no-such-session"],
+    ] {
+        let out = finish(command(Path::new(HUTAN), Some(&t.paths.socket), &args)).await;
+        assert_ne!(out.code, 0, "{args:?}: {}", out.stdout);
+    }
+    t.stop().await;
+}

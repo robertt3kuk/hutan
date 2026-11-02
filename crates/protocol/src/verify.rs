@@ -229,15 +229,23 @@ pub struct VerifyRun {
 }
 
 impl VerifyRun {
-    /// The run as the CLI and the MCP tool print it: the command, then the result and the tail.
+    /// The run as the CLI prints it: the command and where it ran, then [`result_text`].
+    ///
+    /// [`result_text`]: Self::result_text
     pub fn text(&self) -> String {
-        use std::fmt::Write as _;
-        let mut text = format!(
-            "$ {}\n(in {}, {})\n",
+        format!(
+            "$ {}\n(in {}, {})\n{}",
             self.command,
             self.cwd.display(),
-            self.why
-        );
+            self.why,
+            self.result_text()
+        )
+    }
+
+    /// How the run ended and the tail of its output.
+    pub fn result_text(&self) -> String {
+        use std::fmt::Write as _;
+        let mut text = String::new();
         match self.status {
             VerifyStatus::Running => text.push_str("running\n"),
             VerifyStatus::Passed => {

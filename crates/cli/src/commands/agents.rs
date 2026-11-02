@@ -17,6 +17,7 @@ use hutan_protocol::review::AgentsReviewRequest;
 use hutan_protocol::stats::{
     AgentsStats, AgentsStatsRequest, FailureSource, FlagKind, StatsBy, StatsGroup, WaitSource,
 };
+use hutan_protocol::verify::{AgentsVerifyPlanRequest, AgentsVerifyRequest, VerifyStatus};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Ctx;
@@ -39,6 +40,11 @@ impl Ctx {
         if let Some(target) = &args.review {
             return self
                 .agents_review(&client, target, args.turn.as_deref())
+                .await;
+        }
+        if let Some(target) = &args.verify {
+            return self
+                .agents_verify(&client, target, args.command.as_deref(), args.force)
                 .await;
         }
         if args.ws.is_some() || args.since.is_some() || args.limit.is_some() {
@@ -218,6 +224,57 @@ impl Ctx {
             .await
             .map_err(|e| self.fail(e))?;
         self.print(&packet, || packet.text())
+    }
+
+    /// `--verify`: `agents.verify` (protocol 0.71). Prints what will run before it runs (the
+    /// plan), then the run; exits 1 unless the tests passed. With `--json` only the run is
+    /// printed.
+    async fn agents_verify(
+        &self,
+        client: &Client,
+        target: &str,
+        command: Option<&str>,
+        force: bool,
+    ) -> Result<(), CliError> {
+        if !client.supports_agents_verify() {
+            return Err(CliError::Failed(
+                "this daemon cannot run a session's tests (it predates protocol 0.71); restart \
+                 it with `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let sessions = self.session_list(client, None).await?.sessions;
+        let session = super::sessions::resolve_target(&sessions, target)?.id;
+        let command = command.map(str::to_owned);
+        if !self.json {
+            let plan = client
+                .agents_verify_plan(AgentsVerifyPlanRequest {
+                    session_id: session,
+                    command: command.clone(),
+                })
+                .await
+                .map_err(|e| self.fail(e))?;
+            super::print_line(&format!(
+                "$ {}\n(in {}; {}; at most {} s)",
+                plan.command,
+                plan.cwd.display(),
+                plan.why,
+                plan.timeout_secs
+            ))?;
+        }
+        let run = client
+            .agents_verify(AgentsVerifyRequest {
+                session_id: session,
+                command,
+                force,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&run, || run.result_text().trim_end().to_owned())?;
+        match run.status {
+            VerifyStatus::Passed => Ok(()),
+            _ => Err(CliError::Reported),
+        }
     }
 }
 

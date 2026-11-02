@@ -1193,3 +1193,143 @@ async fn agent_review_reads_a_turn_and_marks_its_output_as_untrusted_data() {
     assert!(is_error(&mcp.answer(call).await));
     t.stop().await;
 }
+
+/// CHECKS-B: `agents_verify` is a gated tool. The card shows the exact command and the folder
+/// before anything runs; the result (the run, with its exit code and tail) is marked as untrusted
+/// data; a command the caller names always asks and never offers *Allow for this session*; an
+/// agent cannot force a run against a session's own turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_verify_asks_with_the_command_and_the_folder_and_marks_its_output_untrusted() {
+    let work = tempfile::tempdir().unwrap();
+    let folder = work.path().canonicalize().unwrap();
+    let t = TestDaemon::start_with(|config| {
+        std::fs::write(
+            &config.paths.config_file,
+            "[terminal]\nenv_inherit = \"daemon\"\n\n\
+             [control]\nagents = \"ask\"\napproval_timeout_secs = 20\n\n\
+             [checks]\ntest_command = \"touch ran-by-verify; echo verified-by-hutan\"\n",
+        )
+        .unwrap();
+    })
+    .await;
+    let agent = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    let target = t
+        .new_session(
+            &["--cwd", folder.to_str().unwrap()],
+            &["sh", "-c", "exec sleep 600"],
+        )
+        .await;
+    report_agent(&t, &agent).await;
+    let mut mcp = Mcp::start(&t.paths.socket, Some(&agent)).await;
+    let listed = mcp.initialize().await;
+    assert!(listed["result"].is_object());
+    let tools = mcp.call("tools/list", json!({})).await;
+    let tool = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "agents_verify")
+        .expect("agents_verify is listed");
+    assert_eq!(tool["annotations"]["readOnlyHint"], false);
+    assert!(
+        tool["inputSchema"]["properties"].get("force").is_none(),
+        "an agent cannot force a run: {tool}"
+    );
+
+    // The card names the command and the folder; nothing has run while it waits.
+    let marker = folder.join("ran-by-verify");
+    let call = mcp
+        .tool_request("agents_verify", json!({"session_id": target}))
+        .await;
+    let card = first_pending(&t).await;
+    assert_eq!(card["kind"], "control");
+    let title = card["title"].as_str().unwrap();
+    assert!(
+        title.contains("touch ran-by-verify; echo verified-by-hutan")
+            && title.contains(folder.to_str().unwrap()),
+        "{title}"
+    );
+    let detail = card["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("Command: touch ran-by-verify; echo verified-by-hutan")
+            && detail.contains(&format!("Folder: {}", folder.display()))
+            && detail.contains("`[checks] test_command` of daemon.toml"),
+        "{detail}"
+    );
+    let options: Vec<&str> = card["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(options, ["allow_once", "allow_session", "deny"]);
+    assert!(!marker.exists(), "nothing ran before the user answered");
+    t.hutan(&["approve", card["id"].as_str().unwrap(), "allow_once"])
+        .await
+        .ok();
+    let done = mcp.answer(call).await;
+    assert!(!is_error(&done), "{done}");
+    assert_eq!(done["result"]["_meta"]["hutan/untrusted"], true, "{done}");
+    assert!(text_of(&done).starts_with("UNTRUSTED DATA"), "{done}");
+    assert!(text_of(&done).contains("verified-by-hutan"), "{done}");
+    let run = &done["result"]["structuredContent"];
+    assert_eq!(run["status"], "passed", "{run}");
+    assert_eq!(run["exit_code"], 0);
+    assert_eq!(run["requested_by"], "agent");
+    assert_eq!(run["session_id"], target);
+    assert!(marker.exists(), "the run happened after the approval");
+
+    // Denied: nothing runs.
+    std::fs::remove_file(&marker).unwrap();
+    let call = mcp
+        .tool_request("agents_verify", json!({"session_id": target}))
+        .await;
+    let card = first_pending(&t).await;
+    t.hutan(&["approve", card["id"].as_str().unwrap(), "deny"])
+        .await
+        .ok();
+    let denied = mcp.answer(call).await;
+    assert!(is_error(&denied), "{denied}");
+    assert!(text_of(&denied).contains("DENIED"), "{denied}");
+    assert!(!marker.exists(), "a denied run runs nothing");
+
+    // A command the caller names always asks: no grant for later is offered.
+    let call = mcp
+        .tool_request(
+            "agents_verify",
+            json!({"session_id": target, "command": "echo named"}),
+        )
+        .await;
+    let card = first_pending(&t).await;
+    let options: Vec<&str> = card["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(options, ["allow_once", "deny"], "{card}");
+    assert!(
+        card["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Command: echo named")
+    );
+    t.hutan(&["approve", card["id"].as_str().unwrap(), "deny"])
+        .await
+        .ok();
+    assert!(is_error(&mcp.answer(call).await));
+
+    // `force` is the user's alone: refused before any card.
+    let call = mcp
+        .tool_request(
+            "agents_verify",
+            json!({"session_id": target, "force": true}),
+        )
+        .await;
+    let refused = mcp.answer(call).await;
+    assert!(is_error(&refused), "{refused}");
+    assert!(text_of(&refused).contains("force"), "{}", text_of(&refused));
+    let pending = t.hutan(&["approvals", "--json"]).await.ok().json();
+    assert!(pending["approvals"].as_array().unwrap().is_empty());
+    t.stop().await;
+}

@@ -2442,6 +2442,29 @@ pub struct AgentsArgs {
     /// With --review: this turn (a `turn_id` of `hutan chat log`)
     #[arg(long, value_name = "TURN", requires = "review")]
     pub turn: Option<String>,
+    /// Run one session's tests yourself instead: prints the command and the folder first (the
+    /// project's own `[checks] test_command` of daemon.toml, else found from the folder's files:
+    /// cargo, npm/pnpm/yarn/bun, pytest, go, make test; `--command` names another), then the exit
+    /// code and the last 8 KiB of the output once the run is over; exits 1 unless it passed. The
+    /// run is stored. ^C stops it. Refused while the session's own turn runs (`--force`
+    /// overrides). Session: id, unique id prefix, or title
+    #[arg(
+        long,
+        value_name = "SESSION",
+        conflicts_with_all = [
+            "target", "watch", "board", "activity", "stats", "review", "turn", "by", "since",
+            "limit", "ws", "finished",
+        ]
+    )]
+    pub verify: Option<String>,
+    /// With --verify: the command to run instead of the project's test command (a shell command
+    /// line)
+    #[arg(long, value_name = "COMMAND", requires = "verify")]
+    pub command: Option<String>,
+    /// With --verify: run although the session's own agent is working in the same checkout (the
+    /// run would race it)
+    #[arg(long, requires = "verify")]
+    pub force: bool,
 }
 
 /// `hutan ps`: the processes of the live sessions.
