@@ -260,7 +260,7 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "agents.verify",
             "notify.digest",
             "digest.model",
-            "agent.insight.report"
+            "agent.insight.report",
             "agents.findings"
         ]
     );

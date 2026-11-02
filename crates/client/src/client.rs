@@ -257,7 +257,7 @@ pub(crate) const AGENTS_REVIEW_CAPABILITY: &str = "agents.review";
 /// Capability for `agents.verify`, `agents.verify.plan`, `agents.verify.cancel` and their events
 /// (protocol 0.70).
 pub(crate) const AGENTS_VERIFY_CAPABILITY: &str = "agents.verify";
-/// Capability for `agents.findings` and `agents.findings.dismiss` (protocol 0.71).
+/// Capability for `agents.findings` and `agents.findings.dismiss` (protocol 0.72).
 pub(crate) const AGENTS_FINDINGS_CAPABILITY: &str = "agents.findings";
 /// Capability for `digest.status` and `ChatInfo.digest` (protocol 0.69).
 pub(crate) const DIGEST_MODEL_CAPABILITY: &str = "digest.model";
@@ -762,7 +762,7 @@ impl Client {
         Ok(())
     }
 
-    /// True when the daemon advertised capability `agents.findings` (protocol 0.71).
+    /// True when the daemon advertised capability `agents.findings` (protocol 0.72).
     pub fn supports_agents_findings(&self) -> bool {
         self.welcome
             .capabilities

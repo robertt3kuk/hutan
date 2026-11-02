@@ -1156,10 +1156,18 @@ pub fn journal_gaps(journal: &JournalFacts) -> Vec<CoverageGap> {
             ),
         ));
     }
-    match &journal.insight {
+    gaps.extend(insight_gaps(&journal.insight, "chat"));
+    gaps
+}
+
+/// Detectors that read the insight and could not run, and why. `what` names the source of the
+/// insight in the reason (`chat`, `terminal agent`).
+pub fn insight_gaps(insight: &Result<AgentInsight, String>, what: &str) -> Vec<CoverageGap> {
+    let mut gaps = Vec::new();
+    match insight {
         Err(why) => gaps.push(gap(
             &[detector::CONTEXT_PRESSURE, detector::COSTLY_TURN],
-            format!("the insight of this chat is not available: {why}"),
+            format!("the insight of this {what} is not available: {why}"),
         )),
         Ok(insight) => {
             if !insight.context.as_ref().is_some_and(|c| c.window.is_some()) {
@@ -1199,6 +1207,9 @@ pub enum JournalCoverage<'a> {
     Unreadable(&'a str),
     /// A terminal agent: it has no journal.
     TerminalAgent,
+    /// A terminal agent whose integration reports its insight (tools, files, tokens, context):
+    /// the detectors that read the insight run; what the insight lacks.
+    TerminalReported(&'a [CoverageGap]),
 }
 
 /// Which detectors ran over a session and which could not.
@@ -1219,6 +1230,13 @@ pub fn coverage(live: &LiveFacts, journal: JournalCoverage<'_>) -> SessionCovera
                 "terminal agent: no tool events — install the integration (`hutan integration install`)"
                     .to_owned(),
             ));
+        }
+        JournalCoverage::TerminalReported(insight_gaps) => {
+            gaps.push(gap(
+                TURN_DETECTORS,
+                "terminal agent: its integration reports tools, files and tokens, not the commands with exit codes, the turns or the final message".to_owned(),
+            ));
+            gaps.extend_from_slice(insight_gaps);
         }
     }
     if !meta.chat && !live.state_log {

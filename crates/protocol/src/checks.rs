@@ -1,4 +1,4 @@
-//! Findings: what is wrong in a session or a workspace (protocol 0.71, capability
+//! Findings: what is wrong in a session or a workspace (protocol 0.72, capability
 //! `agents.findings`, ADR 0025; `docs/protocol.md` § Findings, `docs/assistant.md` § Checks).
 //!
 //! A **finding** is a deterministic, evidence-backed statement produced by a named **detector**:

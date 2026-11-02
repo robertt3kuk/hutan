@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use hutan_core::agent::{AgentEvent, AgentEventKind, ToolKind};
 use hutan_core::checkpoint::{CheckpointInfo, CheckpointKind};
+use hutan_core::insight::AgentInsight;
 use hutan_core::task::DeliveryState;
 use hutan_core::{SessionId, WorkspaceId};
 use hutan_protocol::checkpoint::{
@@ -298,12 +299,16 @@ impl ChecksService {
             );
             live
         };
-        let outside: Vec<&SessionInfo> = live_infos
-            .iter()
-            .copied()
-            .filter(|i| i.chat.is_some() && !analyses.contains_key(&i.id))
-            .collect();
-        let outside_files = self.insight_files(&outside).await;
+        // What the integrations of terminal agents report, and the live sessions outside the
+        // scope for the overlap of two sessions.
+        let mut wanted: Vec<&SessionInfo> =
+            scope.iter().copied().filter(|i| i.chat.is_none()).collect();
+        for info in &live_infos {
+            if !analyses.contains_key(&info.id) && !wanted.iter().any(|w| w.id == info.id) {
+                wanted.push(info);
+            }
+        }
+        let insights = self.insights(&wanted).await;
 
         let ctx = self.context(now, &infos).await?;
         let mut findings: Vec<Finding> = Vec::new();
@@ -313,7 +318,7 @@ impl ChecksService {
             let analysis = analyses.get(&info.id).and_then(|a| a.as_ref().ok());
             let files = match analysis {
                 Some(analysis) => analysis.files.clone(),
-                None => outside_files.get(&info.id).cloned(),
+                None => files_of(&insights, info.id),
             };
             live_facts.push(self.live_facts(info, analysis, files, &ctx));
         }
@@ -330,7 +335,9 @@ impl ChecksService {
                 Some(at) => live_facts[at].clone(),
                 None => {
                     let analysis = analysis.and_then(|a| a.as_ref().ok());
-                    let files = analysis.and_then(|a| a.files.clone());
+                    let files = analysis
+                        .and_then(|a| a.files.clone())
+                        .or_else(|| files_of(&insights, info.id));
                     self.live_facts(info, analysis, files, &ctx)
                 }
             };
@@ -339,9 +346,36 @@ impl ChecksService {
                     .into_iter()
                     .map(Draft::finish),
             );
+            let terminal_insight = if analysis.is_none() {
+                insights
+                    .get(&info.id)
+                    .filter(|insight| insight.as_ref().is_ok_and(reports_something))
+            } else {
+                None
+            };
+            if let Some(insight) = terminal_insight {
+                // What its integration reports feeds the detectors that read the insight.
+                let journal = JournalFacts {
+                    meta: meta_of(info, roots_of(info, &[])),
+                    turns: Vec::new(),
+                    turns_total: 0,
+                    insight: insight.clone(),
+                };
+                findings.extend(
+                    detectors::journal_drafts(&journal, &self.thresholds)
+                        .into_iter()
+                        .map(Draft::finish),
+                );
+            }
+            let terminal_gaps = terminal_insight
+                .map(|insight| detectors::insight_gaps(insight, "terminal agent"))
+                .unwrap_or_default();
             let journal = match analysis {
                 Some(Ok(analysis)) => JournalCoverage::Read(&analysis.gaps),
                 Some(Err(why)) => JournalCoverage::Unreadable(why.as_str()),
+                None if terminal_insight.is_some() => {
+                    JournalCoverage::TerminalReported(&terminal_gaps)
+                }
                 None => JournalCoverage::TerminalAgent,
             };
             coverage.push(detectors::coverage(&live, journal));
@@ -625,16 +659,23 @@ impl ChecksService {
         out
     }
 
-    /// The files each of `chats` lists in its insight, for sessions outside the scope.
-    async fn insight_files(&self, chats: &[&SessionInfo]) -> HashMap<SessionId, Vec<String>> {
+    /// The insight of each of `sessions` (a terminal agent's is what its integration reports;
+    /// a chat outside the scope has the one its journal gives), or why there is none.
+    async fn insights(
+        &self,
+        sessions: &[&SessionInfo],
+    ) -> HashMap<SessionId, Result<AgentInsight, String>> {
         let mut out = HashMap::new();
-        for info in chats {
-            let Ok(target) = self.registry.insight_target(info.id).await else {
-                continue;
+        for info in sessions {
+            let insight = match self.registry.insight_target(info.id).await {
+                Ok(target) => self
+                    .insight
+                    .snapshot(info.id, &target)
+                    .await
+                    .map_err(|e| e.message),
+                Err(error) => Err(error.message),
             };
-            if let Ok(insight) = self.insight.snapshot(info.id, &target).await {
-                out.insert(info.id, insight_paths(&insight));
-            }
+            out.insert(info.id, insight);
         }
         out
     }
@@ -942,6 +983,27 @@ fn insight_paths(insight: &hutan_core::insight::AgentInsight) -> Vec<String> {
         .as_ref()
         .map(|files| files.items.iter().map(|f| f.path.clone()).collect())
         .unwrap_or_default()
+}
+
+/// The insight tells something: its integration reported tools, files, tokens or a context.
+fn reports_something(insight: &AgentInsight) -> bool {
+    insight.tools.is_some()
+        || insight.files.is_some()
+        || insight.totals.is_some()
+        || insight.context.is_some()
+        || !insight.turns.is_empty()
+}
+
+/// The files a session's insight lists, when it reports files at all.
+fn files_of(
+    insights: &HashMap<SessionId, Result<AgentInsight, String>>,
+    id: SessionId,
+) -> Option<Vec<String>> {
+    insights
+        .get(&id)
+        .and_then(|insight| insight.as_ref().ok())
+        .filter(|insight| insight.files.is_some())
+        .map(insight_paths)
 }
 
 /// A file of a session by repository and path in it: a worktree and the main checkout of one

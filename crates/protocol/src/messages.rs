@@ -317,14 +317,14 @@ pub enum Request {
     /// Capability `agents.verify`: kills the run of a session; answered with `Empty`.
     #[serde(rename = "agents.verify.cancel")]
     AgentsVerifyCancel(AgentsVerifyCancel),
-    /// Capability `agents.findings` (protocol 0.71): what is wrong in a session or a workspace —
+    /// Capability `agents.findings` (protocol 0.72): what is wrong in a session or a workspace —
     /// findings of named detectors (done after a failed command, tests edited or weakened, the
     /// same failure again, two agents on one file …), each with its confidence and evidence, and
     /// the coverage of every session; answered with `AgentsFindings`. Read-only; redacted;
     /// bounded (200 findings, 24 KiB).
     #[serde(rename = "agents.findings")]
     AgentsFindings(AgentsFindingsRequest),
-    /// Capability `agents.findings` (protocol 0.71): the user dismisses a finding; answered with
+    /// Capability `agents.findings` (protocol 0.72): the user dismisses a finding; answered with
     /// `FindingDismissed`. User-only: an agent cannot hide a problem.
     #[serde(rename = "agents.findings.dismiss")]
     AgentsFindingsDismiss(AgentsFindingsDismiss),

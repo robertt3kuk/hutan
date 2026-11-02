@@ -684,6 +684,7 @@ async fn journals_of_three_harnesses_in_two_workspaces_give_findings_with_their_
             agent_session_id: None,
             resume_argv: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();
@@ -777,6 +778,7 @@ async fn working_terminal(
             agent_session_id: None,
             resume_argv: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();
