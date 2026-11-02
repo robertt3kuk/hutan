@@ -3011,3 +3011,144 @@ fn digest_runs_are_listed_newest_first_and_only_the_newest_fifty_are_kept() {
     assert_eq!(runs.newest(2).unwrap().len(), 2);
     storage.close();
 }
+
+#[test]
+fn verify_runs_are_started_finished_listed_newest_first_and_kept_per_session() {
+    use crate::{VERIFY_RUNS_KEPT_PER_SESSION, VerifyRunEnd, VerifyRunRow};
+    let dir = tempfile::tempdir().unwrap();
+    let id;
+    let first;
+    {
+        let storage = Storage::open(db(&dir)).unwrap();
+        id = chat_session(&storage);
+        let runs = storage.verify_runs();
+        assert!(runs.latest(id).unwrap().is_none());
+        let row = |n: u64| VerifyRunRow {
+            id: 0,
+            session_id: id,
+            command: "cargo test".to_owned(),
+            cwd: "/work/repo".to_owned(),
+            source: "detected".to_owned(),
+            why: "Cargo.toml".to_owned(),
+            status: "running".to_owned(),
+            exit_code: None,
+            signal: None,
+            started_ms: 1_000 + n,
+            ended_ms: None,
+            duration_ms: None,
+            output_tail: String::new(),
+            output_truncated: false,
+            requested_by: "mawas".to_owned(),
+            forced: n == 0,
+            error: None,
+        };
+        first = runs.start(row(0)).unwrap();
+        let running = runs.get(first).unwrap().unwrap();
+        assert_eq!(running.status, "running");
+        assert!(running.forced && running.ended_ms.is_none());
+        runs.finish(
+            first,
+            VerifyRunEnd {
+                status: "failed".to_owned(),
+                exit_code: Some(101),
+                signal: None,
+                ended_ms: 1_900,
+                duration_ms: 900,
+                output_tail: "1 failed".to_owned(),
+                output_truncated: true,
+                error: None,
+            },
+        )
+        .unwrap();
+        for n in 1..=24 {
+            runs.start(row(n)).unwrap();
+        }
+        // The newest run is still running; nothing else is.
+        let newest = runs.latest(id).unwrap().unwrap();
+        assert_eq!(newest.started_ms, 1_024);
+        assert_eq!(newest.status, "running");
+        assert_eq!(runs.abandon_running(5_000).unwrap(), 20);
+        let kept = runs.of_session(id, 100).unwrap();
+        assert_eq!(
+            kept.len(),
+            usize::try_from(VERIFY_RUNS_KEPT_PER_SESSION).unwrap()
+        );
+        assert_eq!(kept[0].status, "error");
+        assert_eq!(kept[0].duration_ms, Some(3_976));
+        assert!(kept[0].error.as_deref().unwrap().contains("daemon stopped"));
+        assert!(
+            runs.get(first).unwrap().is_none(),
+            "the oldest run is dropped"
+        );
+        let by_session = runs.newest_for_sessions(&[id]).unwrap();
+        assert_eq!(by_session.len(), 1);
+        assert_eq!(by_session[0].started_ms, 1_024);
+        storage.close();
+    }
+    // The kept runs survive a reopen; the dropped one stays dropped.
+    let storage = Storage::open(db(&dir)).unwrap();
+    let runs = storage.verify_runs();
+    assert_eq!(runs.of_session(id, 100).unwrap().len(), 20);
+    assert!(runs.get(first).unwrap().is_none());
+    storage.close();
+}
+
+#[test]
+fn a_finished_verify_run_keeps_every_column_across_a_reopen() {
+    use crate::{VerifyRunEnd, VerifyRunRow};
+    let dir = tempfile::tempdir().unwrap();
+    let (id, run);
+    {
+        let storage = Storage::open(db(&dir)).unwrap();
+        id = chat_session(&storage);
+        run = storage
+            .verify_runs()
+            .start(VerifyRunRow {
+                id: 0,
+                session_id: id,
+                command: "pnpm test".to_owned(),
+                cwd: "/work/web".to_owned(),
+                source: "project".to_owned(),
+                why: "[checks.projects.web]".to_owned(),
+                status: "running".to_owned(),
+                exit_code: None,
+                signal: None,
+                started_ms: 10,
+                ended_ms: None,
+                duration_ms: None,
+                output_tail: String::new(),
+                output_truncated: false,
+                requested_by: "user".to_owned(),
+                forced: false,
+                error: None,
+            })
+            .unwrap();
+        storage
+            .verify_runs()
+            .finish(
+                run,
+                VerifyRunEnd {
+                    status: "timed_out".to_owned(),
+                    exit_code: None,
+                    signal: Some(9),
+                    ended_ms: 610_010,
+                    duration_ms: 610_000,
+                    output_tail: "still running".to_owned(),
+                    output_truncated: false,
+                    error: None,
+                },
+            )
+            .unwrap();
+        storage.close();
+    }
+    let storage = Storage::open(db(&dir)).unwrap();
+    let row = storage.verify_runs().get(run).unwrap().unwrap();
+    assert_eq!(row.status, "timed_out");
+    assert_eq!(row.signal, Some(9));
+    assert_eq!(row.exit_code, None);
+    assert_eq!(row.duration_ms, Some(610_000));
+    assert_eq!(row.output_tail, "still running");
+    assert_eq!(row.requested_by, "user");
+    assert_eq!(row.session_id, id);
+    storage.close();
+}

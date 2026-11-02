@@ -148,6 +148,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "digest_runs",
         sql: include_str!("../migrations/0024_digest_runs.sql"),
     },
+    Migration {
+        version: 25,
+        name: "verify_runs",
+        sql: include_str!("../migrations/0025_verify_runs.sql"),
+    },
 ];
 
 /// Schema version recorded in the database; 0 for a database without `app_meta`.

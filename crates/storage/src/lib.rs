@@ -19,6 +19,7 @@ mod state_log;
 #[cfg(test)]
 mod tests;
 mod usage;
+mod verify_runs;
 
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -52,6 +53,7 @@ pub use rows::{
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
 pub use state_log::{AgentStateLog, AgentStateRow, STATE_LOG_KEPT_DAYS};
 pub use usage::{USAGE_KEPT_DAYS, Usage, UsageLimitRow, UsageSum, UsageTurnRow};
+pub use verify_runs::{VERIFY_RUNS_KEPT_PER_SESSION, VerifyRunEnd, VerifyRunRow, VerifyRuns};
 
 /// Commands waiting for the writer before submitters wait their turn.
 const QUEUE_CAPACITY: usize = 1024;
@@ -217,6 +219,10 @@ impl Storage {
 
     pub fn digest_runs(&self) -> DigestRuns<'_> {
         DigestRuns(self)
+    }
+
+    pub fn verify_runs(&self) -> VerifyRuns<'_> {
+        VerifyRuns(self)
     }
 
     pub fn agent_state_log(&self) -> AgentStateLog<'_> {
