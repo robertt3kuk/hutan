@@ -545,3 +545,292 @@ async fn the_installed_script_reports_inside_hutan_and_is_silent_outside() {
     assert_eq!(out.status.code(), Some(0));
     assert!(out.stdout.is_empty() && out.stderr.is_empty());
 }
+
+/// The status-line tee (INSIGHT-B): opt-in, chained to the user's own command, restored by the
+/// uninstall. The tee script is run for real with `sh`.
+#[tokio::test]
+async fn the_status_line_tee_is_opt_in_chains_to_the_users_command_and_is_undone_by_the_uninstall()
+{
+    let root = TempDir::new().unwrap();
+    let dir = awkward_dir(&root, "claude home");
+    let mut settings_doc = claude_settings();
+    settings_doc["statusLine"] = json!({
+        "type": "command",
+        "command": "tr a-z A-Z; exit 3",
+        "padding": 2
+    });
+    let original = pretty(&settings_doc);
+    let settings = dir.join("settings.json");
+    fs::write(&settings, &original).unwrap();
+
+    // Without the flag the status line is never touched.
+    run(&["integration", "install", "claude"], &dir).await.ok();
+    let plain: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(plain["statusLine"], settings_doc["statusLine"]);
+    let status = run(&["integration", "status", "claude", "--json"], &dir)
+        .await
+        .ok()
+        .json();
+    assert_eq!(status["statusline"], "not_installed");
+    let not_reported = status["not_reported"].to_string();
+    assert!(not_reported.contains("--statusline"), "{status}");
+
+    // With it, the tee takes the place, keeping the other keys of the entry.
+    let out = run(&["integration", "install", "claude", "--statusline"], &dir)
+        .await
+        .ok();
+    assert!(out.stdout.contains("claude"), "{out:?}");
+    let teed: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    let tee = teed["statusLine"]["command"].as_str().unwrap().to_owned();
+    assert!(tee.contains("hutan-integration=claude-statusline"), "{tee}");
+    assert_eq!(teed["statusLine"]["padding"], 2);
+    assert_eq!(teed["statusLine"]["type"], "command");
+    let hooks = dir.join("hooks");
+    let script = hooks.join("hutan-statusline.sh");
+    assert_eq!(
+        fs::read_to_string(hooks.join("hutan-statusline.command")).unwrap(),
+        "tr a-z A-Z; exit 3"
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            &fs::read_to_string(hooks.join("hutan-statusline.original.json")).unwrap()
+        )
+        .unwrap()["statusLine"],
+        settings_doc["statusLine"]
+    );
+    let status = run(&["integration", "status", "claude", "--json"], &dir)
+        .await
+        .ok()
+        .json();
+    assert_eq!(
+        (status["status"].as_str(), status["statusline"].as_str()),
+        (Some("installed"), Some("installed"))
+    );
+    assert!(
+        status["reports"].to_string().contains("status line"),
+        "{status}"
+    );
+    // Installing again keeps what the first install kept (not the tee as the "original").
+    run(&["integration", "install", "claude", "--statusline"], &dir)
+        .await
+        .ok();
+    assert_eq!(
+        fs::read_to_string(hooks.join("hutan-statusline.command")).unwrap(),
+        "tr a-z A-Z; exit 3"
+    );
+
+    // The script passes the user's output and exit status through, outside a Hutan session.
+    let input = r#"{"model":{"id":"x"},"context_window":{"context_window_size":1000,"used_percentage":5,"current_usage":null}}"#;
+    let ran = run_tee(&script, input, &[]).await;
+    assert_eq!(
+        ran.0,
+        input.to_uppercase(),
+        "the user's command sees the same input"
+    );
+    assert_eq!(ran.1, 3, "and its exit status is the status line's");
+
+    // Inside a Hutan session it also tells `hutan agent statusline` (here a recording stand-in).
+    let spy = root.path().join("spy.sh");
+    let seen = root.path().join("seen");
+    fs::write(
+        &spy,
+        format!(
+            "#!/bin/sh\necho \"$@\" > '{}'\ncat >> '{}'\n",
+            seen.display(),
+            seen.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&spy, fs::Permissions::from_mode(0o755)).unwrap();
+    let ran = run_tee(
+        &script,
+        input,
+        &[
+            ("HUTAN_ENV", "1"),
+            ("HUTAN_SESSION_ID", "01K7F3B5N2Q9W8E4R6T1Y0V3KM"),
+            ("HUTAN_BIN", spy.to_str().unwrap()),
+        ],
+    )
+    .await;
+    assert_eq!(ran.0, input.to_uppercase());
+    let told = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Ok(text) = fs::read_to_string(&seen)
+                && text.contains("context_window")
+            {
+                return text;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the tee told Hutan");
+    assert!(told.starts_with("agent statusline\n"), "{told}");
+    assert!(told.contains(input), "{told}");
+
+    // Uninstalling puts the user's status line back, byte for byte, and removes the tee's files.
+    run(&["integration", "uninstall", "claude"], &dir)
+        .await
+        .ok();
+    assert_eq!(fs::read_to_string(&settings).unwrap(), original);
+    assert!(!script.exists());
+    assert!(!hooks.join("hutan-statusline.command").exists());
+    assert!(!hooks.join("hutan-statusline.original.json").exists());
+}
+
+async fn run_tee(script: &Path, input: &str, env: &[(&str, &str)]) -> (String, i32) {
+    use tokio::io::AsyncWriteExt as _;
+    let mut command = tokio::process::Command::new("sh");
+    command
+        .arg(script)
+        .env_remove("HUTAN_ENV")
+        .env_remove("HUTAN_SESSION_ID")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(input.as_bytes()).await.unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().await.unwrap();
+    (
+        String::from_utf8(out.stdout).unwrap(),
+        out.status.code().unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn without_a_status_line_of_their_own_the_tee_prints_nothing_and_the_uninstall_removes_it() {
+    let root = TempDir::new().unwrap();
+    let dir = root.path().join("claude");
+    fs::create_dir_all(&dir).unwrap();
+    let original = pretty(&json!({"model": "opus"}));
+    fs::write(dir.join("settings.json"), &original).unwrap();
+    run(&["integration", "install", "claude", "--statusline"], &dir)
+        .await
+        .ok();
+    let doc: Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap();
+    assert_eq!(doc["statusLine"]["type"], "command");
+    let ran = run_tee(&dir.join("hooks").join("hutan-statusline.sh"), "{}", &[]).await;
+    assert_eq!(ran, (String::new(), 0));
+    run(&["integration", "uninstall", "claude"], &dir)
+        .await
+        .ok();
+    assert_eq!(
+        fs::read_to_string(dir.join("settings.json")).unwrap(),
+        original
+    );
+}
+
+#[tokio::test]
+async fn a_status_line_the_user_set_after_the_install_is_theirs_and_one_that_cannot_be_chained_is_refused()
+ {
+    let root = TempDir::new().unwrap();
+    let dir = root.path().join("claude");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("settings.json"),
+        pretty(&json!({"statusLine": {"type": "command", "command": "echo mine"}})),
+    )
+    .unwrap();
+    run(&["integration", "install", "claude", "--statusline"], &dir)
+        .await
+        .ok();
+    // The user replaces it by another one.
+    fs::write(
+        dir.join("settings.json"),
+        pretty(&json!({"statusLine": {"type": "command", "command": "echo newer"}})),
+    )
+    .unwrap();
+    run(&["integration", "uninstall", "claude"], &dir)
+        .await
+        .ok();
+    let doc: Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap();
+    assert_eq!(doc["statusLine"]["command"], "echo newer");
+    assert!(!dir.join("hooks").join("hutan-statusline.sh").exists());
+
+    // A status line that is not a command has nothing to chain to: nothing is written.
+    let odd = root.path().join("odd");
+    fs::create_dir_all(&odd).unwrap();
+    let text = pretty(&json!({"statusLine": {"type": "text", "text": "hi"}}));
+    fs::write(odd.join("settings.json"), &text).unwrap();
+    let out = run(&["integration", "install", "claude", "--statusline"], &odd).await;
+    assert_eq!(out.code, 1, "{out:?}");
+    assert!(out.stderr.contains("statusLine"), "{out:?}");
+    assert_eq!(fs::read_to_string(odd.join("settings.json")).unwrap(), text);
+    assert!(!odd.join("hooks").exists());
+
+    // Only Claude Code has one.
+    let out = run(
+        &["integration", "install", "codex", "--statusline"],
+        &root.path().join("codex"),
+    )
+    .await;
+    assert_eq!(out.code, 2, "{out:?}");
+    assert!(out.stderr.contains("--statusline"), "{out:?}");
+}
+
+#[tokio::test]
+async fn status_says_what_each_installed_integration_reports_and_what_it_cannot() {
+    let root = TempDir::new().unwrap();
+    for (target, reports, missing) in [
+        ("omp", "tokens, cost", "OMP's /context"),
+        (
+            "claude",
+            "tools with their times (hooks)",
+            "tokens per turn",
+        ),
+        (
+            "codex",
+            "files changed by apply_patch",
+            "tool times, tokens",
+        ),
+    ] {
+        let dir = root.path().join(target);
+        let before = run(&["integration", "status", target, "--json"], &dir)
+            .await
+            .ok()
+            .json();
+        assert_eq!(
+            before["reports"],
+            json!([]),
+            "{target}: nothing before the install"
+        );
+        run(&["integration", "install", target], &dir).await.ok();
+        let status = run(&["integration", "status", target, "--json"], &dir)
+            .await
+            .ok()
+            .json();
+        assert!(
+            status["reports"].to_string().contains(reports),
+            "{target}: {status}"
+        );
+        assert!(
+            status["not_reported"].to_string().contains(missing),
+            "{target}: {status}"
+        );
+        let text = run(&["integration", "status", target], &dir)
+            .await
+            .ok()
+            .stdout;
+        assert!(
+            text.contains("reports: ") && text.contains("not reported: "),
+            "{target}: {text}"
+        );
+        run(&["integration", "uninstall", target], &dir).await.ok();
+        let after = run(&["integration", "status", target, "--json"], &dir)
+            .await
+            .ok()
+            .json();
+        assert_eq!(
+            after["reports"],
+            json!([]),
+            "{target}: nothing after the uninstall"
+        );
+    }
+}

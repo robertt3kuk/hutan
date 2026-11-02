@@ -9,10 +9,16 @@
 use hutan_core::{NodeKind, NodeOutcome};
 use serde_json::Value;
 
+use hutan_core::insight::InsightReport;
+
 use crate::args::{AgentStateArg, HookAgentArg};
+
+pub mod insight;
 
 pub const CODEX_SOURCE: &str = "codex-hooks";
 pub const CLAUDE_SOURCE: &str = "claude-hooks";
+/// Who reports what Claude Code's status line carries (`hutan agent statusline`).
+pub const CLAUDE_STATUSLINE_SOURCE: &str = "claude-statusline";
 /// The node id of the main agent in reports of Claude Code's hooks.
 pub const CLAUDE_ROOT_NODE: &str = "root";
 
@@ -29,7 +35,7 @@ pub struct PlanNode {
     pub transcript_path: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 #[allow(clippy::large_enum_variant)] // built once per hook event
 pub enum Plan {
     Report {
@@ -41,6 +47,8 @@ pub enum Plan {
         agent_session_id: Option<String>,
         resume_argv: Vec<String>,
         node: Option<PlanNode>,
+        /// Tools, files and turn edges of this event (`insight::from_hook`).
+        insight: Option<InsightReport>,
     },
     Release {
         source: &'static str,
@@ -230,6 +238,7 @@ pub fn plan(agent: HookAgentArg, input: &Value, env: &HookEnv<'_>) -> Option<Pla
         agent_session_id: session_id.filter(|_| about_main).map(str::to_owned),
         resume_argv,
         node,
+        insight: insight::from_hook(agent, event, input),
     })
 }
 

@@ -804,5 +804,124 @@ async fn agents_verify_prints_the_command_then_the_result_and_exits_one_unless_i
         let out = finish(command(Path::new(HUTAN), Some(&t.paths.socket), &args)).await;
         assert_ne!(out.code, 0, "{args:?}: {}", out.stdout);
     }
+
+/// Runs `hutan agent statusline` with `input` on stdin, as the status-line tee does.
+async fn statusline(socket: &Path, session: &str, input: &str) -> common::Out {
+    let mut command = agent_command(socket, Some(session), &["agent", "statusline"]);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(input.as_bytes()).await.unwrap();
+    drop(stdin);
+    let output = timeout(WAIT, child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    common::Out {
+        code: output.status.code().unwrap(),
+        stdout: String::from_utf8(output.stdout).unwrap(),
+        stderr: String::from_utf8(output.stderr).unwrap(),
+    }
+}
+
+/// The hook script's and the status-line tee's real commands against a real daemon: the
+/// terminal's insight has the tools, the file, the turn, the context and the cost, each from its
+/// source, and `hutan chat insight` says so.
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_hooks_and_the_status_line_give_a_terminal_its_insight() {
+    let t = TestDaemon::start().await;
+    let id = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    let go = |event: Value| {
+        let socket = t.paths.socket.clone();
+        let id = id.clone();
+        async move {
+            let out = hook(&socket, &id, "claude", &event, &[]).await;
+            assert_eq!(
+                (out.code, out.stdout.as_str(), out.stderr.as_str()),
+                (0, "", "")
+            );
+        }
+    };
+    let fixture = |text: &str| serde_json::from_str::<Value>(text).unwrap();
+    go(json!({"hook_event_name": "SessionStart", "session_id": "conv-1", "model": "claude-opus-5"})).await;
+    wait_agent_state(&t, &id, "idle").await;
+    go(json!({"hook_event_name": "UserPromptSubmit", "session_id": "conv-1", "prompt": "SECRET PROMPT"})).await;
+    wait_agent_state(&t, &id, "working").await;
+    go(fixture(include_str!(
+        "../fixtures/insight/claude-posttooluse-edit.json"
+    )))
+    .await;
+    go(fixture(include_str!(
+        "../fixtures/insight/claude-posttooluse-write-create.json"
+    )))
+    .await;
+    go(fixture(include_str!(
+        "../fixtures/insight/claude-posttooluse-failure.json"
+    )))
+    .await;
+    let tick = include_str!("../fixtures/insight/claude-statusline.json");
+    let out = statusline(&t.paths.socket, &id, tick).await;
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "", "")
+    );
+    go(json!({"hook_event_name": "Stop", "session_id": "conv-1"})).await;
+
+    // Reports are separate processes: wait until the last one (the turn's end) is in.
+    let insight = timeout(WAIT, async {
+        loop {
+            let out = t.hutan(&["chat", "insight", &id, "--json"]).await;
+            if out.code == 0 {
+                let insight = out.json();
+                if insight["turns"][0]["outcome"] == "completed"
+                    && insight["context"]["used"] == 52_008
+                {
+                    return insight;
+                }
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the reports arrived");
+    assert_eq!(insight["harness"], "claude");
+    assert_eq!(insight["tools"]["calls"], 3);
+    assert_eq!(insight["tools"]["failed"], 1);
+    let paths: Vec<&str> = insight["files"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["/work/app/src/lib.rs", "/work/app/notes.md"]);
+    assert_eq!(insight["files"]["items"][1]["kind"], "add");
+    assert_eq!(insight["totals"]["cost_usd"], 0.4127);
+    assert_eq!(insight["time"]["api_ms"], 21_400);
+    let source = |block: &str| {
+        insight["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["block"] == block)
+            .map(|s| s["source"].as_str().unwrap().to_owned())
+    };
+    assert_eq!(source("context").as_deref(), Some("statusline"));
+    assert_eq!(source("tools").as_deref(), Some("hooks"));
+    assert_eq!(source("files").as_deref(), Some("hooks"));
+    assert_eq!(source("turns").as_deref(), Some("hooks"));
+    assert!(
+        !insight.to_string().contains("SECRET PROMPT"),
+        "no message text is carried"
+    );
+
+    // The text view names each source, and the unreported fields are not drawn as zero.
+    let text = t.hutan(&["chat", "insight", &id]).await.ok().stdout;
+    assert!(text.contains("Sources"), "{text}");
+    assert!(text.contains("the status line (context"), "{text}");
+    assert!(text.contains("hooks ("), "{text}");
+    assert!(text.contains("Edit ×1"), "{text}");
     t.stop().await;
 }

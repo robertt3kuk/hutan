@@ -1,0 +1,1 @@
+{"session_id":"5f3e1c1a-8d51-4a6e-9a0c-2b7a3c5d9e10","cwd":"/work/app","hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"/work/app/notes.md","content":"x"},"tool_response":{"type":"create","filePath":"/work/app/notes.md"},"tool_use_id":"toolu_02EXAMPLE","duration_ms":12}

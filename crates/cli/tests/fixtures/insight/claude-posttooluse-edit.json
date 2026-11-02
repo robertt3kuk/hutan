@@ -1,0 +1,1 @@
+{"session_id":"5f3e1c1a-8d51-4a6e-9a0c-2b7a3c5d9e10","transcript_path":"/work/app/.claude/transcript.jsonl","cwd":"/work/app","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/work/app/src/lib.rs","old_string":"a","new_string":"b"},"tool_response":{"filePath":"/work/app/src/lib.rs","success":true},"tool_use_id":"toolu_01EXAMPLE","duration_ms":38}

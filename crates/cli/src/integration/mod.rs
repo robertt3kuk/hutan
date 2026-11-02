@@ -19,11 +19,14 @@ use crate::error::CliError;
 
 mod hooks_json;
 pub mod mcp;
+mod statusline;
 
 /// The script both hook-based integrations run (`integrations/hooks/`).
 const HOOK_SCRIPT: &str = include_str!("../../../../integrations/hooks/hutan-agent-state.sh");
 /// The OMP extension (`integrations/omp/`).
 const OMP_EXTENSION: &str = include_str!("../../../../integrations/omp/hutan-agent-state.ts");
+/// Claude Code's status-line tee (`integrations/hooks/`), opt-in.
+const STATUSLINE_SCRIPT: &str = include_str!("../../../../integrations/hooks/hutan-statusline.sh");
 /// Present in everything Hutan writes as a whole file; files without it are never overwritten.
 const FILE_MARKER: &str = "hutan-managed";
 
@@ -77,8 +80,16 @@ pub struct Report {
     pub files: Vec<PathBuf>,
     /// Copies of the agent's configuration made before editing it.
     pub backups: Vec<PathBuf>,
-    /// What is missing when `status` is `partial`.
+    /// What is missing when `status` is `partial`; also what the status-line tee lacks.
     pub missing: Vec<String>,
+    /// Claude Code only: the opt-in status-line tee (`install claude --statusline`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub statusline: Option<Status>,
+    /// What the installed integration tells Hutan about the agent's insight (empty while it is
+    /// not installed).
+    pub reports: Vec<String>,
+    /// What it cannot tell, and what would.
+    pub not_reported: Vec<String>,
 }
 
 impl Report {
@@ -91,6 +102,9 @@ impl Report {
             files: Vec::new(),
             backups: Vec::new(),
             missing: Vec::new(),
+            statusline: None,
+            reports: Vec::new(),
+            not_reported: Vec::new(),
         }
     }
 }
@@ -130,8 +144,20 @@ pub fn config_dir(target: IntegrationTarget, explicit: Option<&Path>) -> Result<
         .fold(PathBuf::from(home), |dir, part| dir.join(part)))
 }
 
-pub fn install(target: IntegrationTarget, dir: &Path) -> Result<Report, CliError> {
+/// Installs the hooks or the extension of `target`. With `statusline` (Claude Code only, opt-in)
+/// also puts the status-line tee in place of the user's `statusLine`, keeping their command.
+pub fn install(
+    target: IntegrationTarget,
+    dir: &Path,
+    statusline: bool,
+) -> Result<Report, CliError> {
     let layout = Layout::of(target, dir);
+    if statusline && layout.statusline.is_none() {
+        return Err(CliError::Usage(format!(
+            "--statusline is for Claude Code's status line; {} has none",
+            name(target)
+        )));
+    }
     let mut report = Report::new(target, dir);
     match &layout.config {
         Some(config) => {
@@ -139,8 +165,35 @@ pub fn install(target: IntegrationTarget, dir: &Path) -> Result<Report, CliError
             // script goes in before any hook points at it.
             let command = hook_command(target, &layout.script);
             let events = layout.events;
-            let edit = plan_config(config, |doc| hooks_json::install(doc, events, &command))?;
+            let tee = layout.statusline.as_ref().filter(|_| statusline);
+            let tee_command = tee.map(|tee| statusline::command(&tee.script));
+            let mut kept = None;
+            let edit = plan_config(config, |doc| {
+                let mut changed = hooks_json::install(doc, events, &command)?;
+                if let Some(tee_command) = &tee_command {
+                    let found = statusline::install(doc, tee_command)?;
+                    changed |= found.changed;
+                    kept = found.original;
+                }
+                Ok(changed)
+            })?;
             write_managed(&layout.script, layout.script_text, 0o755, &mut report)?;
+            if let Some(tee) = tee {
+                // The user's own status line is on disk before the settings point at the tee.
+                if let Some(original) = &kept {
+                    write_kept(
+                        &tee.command_file,
+                        &statusline::command_text(original),
+                        &mut report,
+                    )?;
+                    write_kept(
+                        &tee.original_file,
+                        &statusline::original_text(original),
+                        &mut report,
+                    )?;
+                }
+                write_managed(&tee.script, STATUSLINE_SCRIPT, 0o755, &mut report)?;
+            }
             edit.apply(&mut report)?;
         }
         None => write_managed(&layout.script, layout.script_text, 0o644, &mut report)?,
@@ -149,13 +202,34 @@ pub fn install(target: IntegrationTarget, dir: &Path) -> Result<Report, CliError
     Ok(report)
 }
 
+/// Removes what [`install`] added, the status-line tee among it (always, flag or not): the
+/// user's own `statusLine` is put back as it was while the tee is still in place.
 pub fn uninstall(target: IntegrationTarget, dir: &Path) -> Result<Report, CliError> {
     let layout = Layout::of(target, dir);
     let mut report = Report::new(target, dir);
     if let Some(config) = &layout.config {
-        plan_config(config, hooks_json::uninstall)?.apply(&mut report)?;
+        let tee = layout.statusline.as_ref();
+        let original = match tee {
+            Some(tee) => read_optional(&tee.original_file)?
+                .as_deref()
+                .and_then(statusline::read_original),
+            None => None,
+        };
+        plan_config(config, |doc| {
+            let mut changed = hooks_json::uninstall(doc)?;
+            if tee.is_some() {
+                changed |= statusline::uninstall(doc, original)?;
+            }
+            Ok(changed)
+        })?
+        .apply(&mut report)?;
     }
     remove_managed(&layout.script, &mut report)?;
+    if let Some(tee) = &layout.statusline {
+        remove_managed(&tee.script, &mut report)?;
+        remove_kept(&tee.command_file, &mut report)?;
+        remove_kept(&tee.original_file, &mut report)?;
+    }
     finish_status(&layout, &mut report)?;
     Ok(report)
 }
@@ -175,6 +249,17 @@ struct Layout {
     script: PathBuf,
     script_text: &'static str,
     events: &'static [&'static str],
+    /// Claude Code's status-line tee (opt-in), beside the hook script.
+    statusline: Option<Tee>,
+}
+
+/// The files of the status-line tee.
+struct Tee {
+    script: PathBuf,
+    /// The user's own command, as text, which the script runs after Hutan's part.
+    command_file: PathBuf,
+    /// The user's own `statusLine` entry, whole, which an uninstall puts back.
+    original_file: PathBuf,
 }
 
 impl Layout {
@@ -185,18 +270,25 @@ impl Layout {
                 script: dir.join(SCRIPT_NAME),
                 script_text: HOOK_SCRIPT,
                 events: CODEX_EVENTS,
+                statusline: None,
             },
             IntegrationTarget::Claude => Self {
                 config: Some(dir.join("settings.json")),
                 script: dir.join("hooks").join(SCRIPT_NAME),
                 script_text: HOOK_SCRIPT,
                 events: CLAUDE_EVENTS,
+                statusline: Some(Tee {
+                    script: dir.join("hooks").join(statusline::SCRIPT_NAME),
+                    command_file: dir.join("hooks").join(statusline::COMMAND_FILE),
+                    original_file: dir.join("hooks").join(statusline::ORIGINAL_FILE),
+                }),
             },
             IntegrationTarget::Omp => Self {
                 config: None,
                 script: dir.join("extensions").join(EXTENSION_NAME),
                 script_text: OMP_EXTENSION,
                 events: &[],
+                statusline: None,
             },
         }
     }
@@ -234,6 +326,7 @@ fn finish_status(layout: &Layout, report: &mut Report) -> Result<(), CliError> {
         )),
         None => missing.push(format!("{} is missing", layout.script.display())),
     }
+    let mut config_doc = None;
     if let Some(config) = &layout.config {
         let doc = read_json(config)?.unwrap_or_else(|| Value::Object(Default::default()));
         let installed = hooks_json::installed_events(&doc, layout.events);
@@ -243,6 +336,7 @@ fn finish_status(layout: &Layout, report: &mut Report) -> Result<(), CliError> {
                 missing.push(format!("hook {event} is missing in {}", config.display()));
             }
         }
+        config_doc = Some(doc);
     }
     report.status = if missing.is_empty() {
         Status::Installed
@@ -251,12 +345,110 @@ fn finish_status(layout: &Layout, report: &mut Report) -> Result<(), CliError> {
     } else {
         Status::Partial
     };
+    report.statusline = None;
+    let mut statusline_missing = Vec::new();
+    if let (Some(tee), Some(doc)) = (&layout.statusline, &config_doc) {
+        let entry = doc.get("statusLine").is_some_and(statusline::is_ours);
+        let script = read_optional(&tee.script)?;
+        let kept = tee.command_file.exists() && tee.original_file.exists();
+        if script.is_some() || entry || kept {
+            if script.as_deref() != Some(STATUSLINE_SCRIPT) {
+                statusline_missing.push(format!(
+                    "the status-line script {} is {}",
+                    tee.script.display(),
+                    if script.is_some() {
+                        "outdated"
+                    } else {
+                        "missing"
+                    }
+                ));
+            }
+            if !entry {
+                statusline_missing.push(format!(
+                    "`statusLine` of {} is not Hutan's",
+                    layout.config.as_deref().unwrap_or(&layout.script).display()
+                ));
+            }
+            if !kept {
+                statusline_missing.push(format!(
+                    "the copy of your status line ({}) is missing",
+                    tee.original_file.display()
+                ));
+            }
+            report.statusline = Some(if statusline_missing.is_empty() {
+                Status::Installed
+            } else {
+                Status::Partial
+            });
+        } else {
+            report.statusline = Some(Status::NotInstalled);
+        }
+    }
     report.missing = if report.status == Status::Partial {
         missing
     } else {
         Vec::new()
     };
+    report.missing.extend(statusline_missing);
+    (report.reports, report.not_reported) = what_is_reported(
+        report.target,
+        report.status != Status::NotInstalled,
+        report.statusline == Some(Status::Installed),
+    );
     Ok(())
+}
+
+/// What an installed integration tells Hutan about the agent's insight, and what it cannot
+/// (`hutan integration status`): the one place that says so for every agent.
+fn what_is_reported(target: &str, installed: bool, statusline: bool) -> (Vec<String>, Vec<String>) {
+    if !installed {
+        return (Vec::new(), Vec::new());
+    }
+    let words = |items: &[&str]| items.iter().map(|item| (*item).to_owned()).collect();
+    match target {
+        "omp" => (
+            words(&[
+                "tokens, cost and the context after every model call (extension)",
+                "the context split in fixed and messages (extension)",
+                "tools with their times (extension)",
+                "files the edit and write tools changed, from their arguments (extension)",
+                "turns, from prompt to idle (extension)",
+            ]),
+            words(&["the context by category (OMP's /context stays in its own screen)"]),
+        ),
+        "claude" if statusline => (
+            words(&[
+                "tools with their times (hooks)",
+                "files changed by Edit, Write, MultiEdit and NotebookEdit (hooks)",
+                "turns, from prompt to stop (hooks)",
+                "the context size, the cost and the API time (status line)",
+            ]),
+            words(&["tokens per turn", "the context by category"]),
+        ),
+        "claude" => (
+            words(&[
+                "tools with their times (hooks)",
+                "files changed by Edit, Write, MultiEdit and NotebookEdit (hooks)",
+                "turns, from prompt to stop (hooks)",
+            ]),
+            words(&[
+                "the context size, the cost and the API time (install with --statusline)",
+                "tokens per turn",
+                "the context by category",
+            ]),
+        ),
+        "codex" => (
+            words(&[
+                "tools (hooks)",
+                "files changed by apply_patch (hooks)",
+                "turns, from prompt to stop (hooks)",
+            ]),
+            words(&[
+                "tool times, tokens, the context size and the cost (Codex's hooks carry none)",
+            ]),
+        ),
+        _ => (Vec::new(), Vec::new()),
+    }
 }
 
 // ---- files ------------------------------------------------------------------------------------
@@ -329,6 +521,34 @@ fn remove_managed(path: &Path, report: &mut Report) -> Result<(), CliError> {
     report.changed = true;
     report.files.push(path.to_owned());
     Ok(())
+}
+
+/// Writes a file that holds something of the user's (their status-line command), replacing what
+/// an earlier install kept there.
+fn write_kept(path: &Path, text: &str, report: &mut Report) -> Result<(), CliError> {
+    if read_optional(path)?.as_deref() == Some(text) {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
+    }
+    write_atomic(path, text.as_bytes(), Some(0o600))?;
+    report.changed = true;
+    report.files.push(path.to_owned());
+    Ok(())
+}
+
+/// Removes a file [`write_kept`] wrote (after the uninstall put its content back).
+fn remove_kept(path: &Path, report: &mut Report) -> Result<(), CliError> {
+    match fs::remove_file(path) {
+        Ok(()) => {
+            report.changed = true;
+            report.files.push(path.to_owned());
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io_error(path, error)),
+    }
 }
 
 /// An edit of an agent's JSON configuration, worked out but not yet written.
@@ -544,6 +764,14 @@ pub fn describe(action: &str, report: &Report) -> String {
     }
     for item in &report.missing {
         text.push_str(&format!("\n  {item}"));
+    }
+    if action == "status" || action == "install" {
+        for item in &report.reports {
+            text.push_str(&format!("\n  reports: {item}"));
+        }
+        for item in &report.not_reported {
+            text.push_str(&format!("\n  not reported: {item}"));
+        }
     }
     text
 }

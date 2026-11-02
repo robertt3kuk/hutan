@@ -25,7 +25,7 @@ pub(super) fn run(json: bool, command: IntegrationCommand) -> Result<(), CliErro
         }
     } else {
         match action {
-            "install" => integration::install(args.target, &dir)?,
+            "install" => integration::install(args.target, &dir, args.statusline)?,
             "uninstall" => integration::uninstall(args.target, &dir)?,
             _ => integration::status(args.target, &dir)?,
         }

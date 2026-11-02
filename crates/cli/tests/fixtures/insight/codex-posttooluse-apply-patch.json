@@ -1,0 +1,1 @@
+{"session_id":"019b0000-0000-7000-8000-000000000001","turn_id":"turn-1","cwd":"/work/app","hook_event_name":"PostToolUse","model":"gpt-5.1-codex","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-a\n+b\n*** Add File: docs/new.md\n+hello\n*** Delete File: old.txt\n*** End Patch\n"},"tool_response":{"output":"Success"}}
