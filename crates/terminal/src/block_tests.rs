@@ -639,3 +639,91 @@ fn the_viewport_top_counts_every_scrolled_row() {
     em.feed(b"y\r\n");
     assert_eq!(em.viewport_top(), 198);
 }
+
+/// What a client knows of the blocks: the last event of each id, as the desktop keeps them.
+#[derive(Default)]
+struct Mirror(std::collections::BTreeMap<u64, Block>);
+
+impl Mirror {
+    fn catch_up(&mut self, em: &mut Emulator) {
+        for meta in em.drain_meta() {
+            if let TerminalMeta::Block(block) = meta {
+                self.0.insert(block.id, block);
+            }
+        }
+    }
+
+    fn shapes(&self) -> Vec<Shape> {
+        self.0.values().map(shape).collect()
+    }
+}
+
+/// The text of the row at absolute line `line`, in the viewport or the history.
+fn row_at(em: &mut Emulator, line: u64) -> String {
+    let top = em.viewport_top();
+    let rows = u64::from(em.size().rows);
+    match line.checked_sub(top) {
+        Some(row) if row < rows => {
+            let grid = em.grid_text();
+            grid.lines()
+                .nth(row as usize)
+                .unwrap_or("")
+                .trim_end()
+                .to_owned()
+        }
+        _ => {
+            let row = &em.history((top - line - 1) as u32, 1)[0];
+            let text: String = row.runs.iter().map(|run| run.text.as_str()).collect();
+            text.trim_end().to_owned()
+        }
+    }
+}
+
+#[test]
+fn the_events_follow_the_blocks_through_every_reflow() {
+    // A shell session as the user recorded it: wrapped output in the middle, a failing command
+    // after it, one more behind that. Once on a tall screen and once on a short one (the blocks
+    // reach into the scrollback).
+    let long = "bench *args   # Measure the performance budgets B1-B6, B3p, B7-B10 (docs/perf.md); not part of the gate.\r\n";
+    let list = format!("Available recipes:\r\n{long}    default\r\n    deny\r\n    fmt\r\n");
+    for rows in [30u16, 7] {
+        let mut em = emulator(60, rows, 500);
+        let mut mirror = Mirror::default();
+        em.feed(PROMPT.as_bytes());
+        em.feed(command("git status -sb", "## master...origin/master\r\n", 0).as_bytes());
+        em.feed(PROMPT.as_bytes());
+        em.feed(command("just --list | head -8", &list, 0).as_bytes());
+        em.feed(PROMPT.as_bytes());
+        let failing = command(
+            "git switch release/0.4",
+            "fatal: invalid reference: release/0.4\r\n",
+            128,
+        );
+        em.feed(failing.as_bytes());
+        em.feed(PROMPT.as_bytes());
+        em.feed(command("ls crates | wc -l", "22\r\n", 0).as_bytes());
+        em.feed(PROMPT.as_bytes());
+        mirror.catch_up(&mut em);
+        assert_eq!(mirror.shapes(), all(&em), "rows {rows}: before");
+        for width in [30u16, 18, 44, 60, 25, 80] {
+            em.resize(size(width, rows)).unwrap();
+            mirror.catch_up(&mut em);
+            let truth = all(&em);
+            assert_eq!(mirror.shapes(), truth, "rows {rows}, width {width}");
+            // The failing command keeps its exit code, and its rows are its own.
+            let failed = truth.iter().find(|b| b.exit == Some(128)).expect("failed");
+            assert_eq!(failed.command.as_deref(), Some("git switch release/0.4"));
+            if failed.state == BlockState::Finished {
+                assert_eq!(
+                    text(&mut em, failed.id, BlockPart::Output),
+                    "fatal: invalid reference: release/0.4"
+                );
+                let prompt = row_at(&mut em, failed.prompt);
+                assert!(
+                    prompt.starts_with("$ git switch"),
+                    "rows {rows}, width {width}: {prompt:?}"
+                );
+            }
+        }
+    }
+}

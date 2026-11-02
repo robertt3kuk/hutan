@@ -354,20 +354,29 @@ impl BlockIndex {
         }
     }
 
-    /// Rewrites every line number at or after `from` with `map` (rows were reflowed).
+    /// Rewrites every line number at or after `from` with `map` (rows were reflowed) and
+    /// announces each block whose lines moved: clients draw the blocks from the lines they were
+    /// last told, so a silent rewrite would leave their markers on the old rows.
     pub(crate) fn remap(&mut self, from: u64, map: impl Fn(u64) -> u64) {
         let apply = |line: &mut u64| {
             if *line >= from {
                 *line = map(*line);
             }
         };
-        for block in self.blocks.iter_mut().rev() {
+        let mut moved = Vec::new();
+        for (index, block) in self.blocks.iter_mut().enumerate().rev() {
             if Self::max_line(block) < from {
                 if block.state != BlockState::Truncated {
                     break;
                 }
                 continue;
             }
+            let before = (
+                block.prompt_line,
+                block.command_line,
+                block.output_start,
+                block.end_line,
+            );
             apply(&mut block.prompt_line);
             for line in [
                 &mut block.command_line,
@@ -379,6 +388,18 @@ impl BlockIndex {
             {
                 apply(line);
             }
+            let after = (
+                block.prompt_line,
+                block.command_line,
+                block.output_start,
+                block.end_line,
+            );
+            if before != after {
+                moved.push(index);
+            }
+        }
+        for index in moved.into_iter().rev() {
+            self.emit(index);
         }
         if let Some(Current {
             input_at: Some((line, _)),

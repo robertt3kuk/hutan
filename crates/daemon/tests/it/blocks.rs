@@ -16,7 +16,7 @@ use hutan_client::{BlockList, Client};
 use hutan_core::TerminalId;
 use hutan_protocol::ErrorCode;
 use hutan_protocol::blocks::{Block, BlockPart, BlockState, TerminalBlocksResult};
-use hutan_protocol::messages::{Event, TerminalSpec};
+use hutan_protocol::messages::{Empty, Event, Request, TerminalResize, TerminalSpec};
 use tokio::time::sleep;
 
 const PROMPT: &str = "HUTAN-TEST-PROMPT>";
@@ -398,6 +398,58 @@ async fn renders_carry_the_same_viewport_top_as_the_blocks_answer() {
     .await;
     let later = client.terminal_blocks(terminal, None, 10).await.unwrap();
     assert_eq!(later.viewport_top, view.screen.viewport_top);
+    t.stop().await;
+}
+
+/// A client builds its blocks from `terminal.block` events: after a width change reflowed the
+/// rows, the events carry the new lines, so its markers stay on their own rows.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reflow_tells_clients_where_the_blocks_went() {
+    let t = TestDaemon::start().await;
+    let (client, mut events) = t.connect_subscribed().await;
+    let wide = "w".repeat(100);
+    let block = |cmd: &str, out: &str, code: u8| {
+        format!(
+            "\\033]133;A\\007$ \\033]133;B\\007{cmd}\\r\\n\\033]133;C\\007{out}\\r\\n\\033]133;D;{code}\\007"
+        )
+    };
+    let script = format!(
+        "printf '{}{}{}\\033]133;A\\007$ \\033]133;B\\007'; exec cat",
+        block("one", "short", 0),
+        block("two", &wide, 0),
+        block("three", "fatal: nope", 128),
+    );
+    let session = create(&client, sh(&script)).await;
+    let terminal = terminal_of(&session);
+    let truth = wait_blocks(&client, terminal, "the scripted blocks", |b| {
+        b.len() == 4 && b[2].state == BlockState::Finished
+    })
+    .await;
+    assert_eq!(truth[2].exit_code, Some(128));
+
+    let mut applied = BlockList::new();
+    for (cols, rows) in [(40u16, 24u16), (30, 24), (90, 24), (40, 6)] {
+        client
+            .call::<Empty>(Request::TerminalResize(TerminalResize {
+                terminal_id: terminal,
+                size: size(cols, rows),
+            }))
+            .await
+            .unwrap();
+        let truth = blocks(&client, terminal).await;
+        wait_event(
+            &mut events,
+            &format!("events matching {cols}x{rows}"),
+            |event| {
+                if let Event::TerminalBlock { block, .. } = event {
+                    applied.apply(block.clone());
+                }
+                (applied.iter().cloned().collect::<Vec<_>>() == truth).then_some(())
+            },
+        )
+        .await;
+        assert_eq!(truth[2].exit_code, Some(128), "{cols}x{rows}");
+    }
     t.stop().await;
 }
 
