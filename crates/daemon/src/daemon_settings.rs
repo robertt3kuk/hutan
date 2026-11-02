@@ -1715,6 +1715,10 @@ mod tests {
             // `daemon.toml` and are no setting of the table, so neither `hutan config` nor an
             // agent can add or change one (`docs/integrations.md` § User hooks).
             hooks: _,
+            // `[checks]` names the commands the daemon runs for a verification (`test_command`),
+            // so it is written by hand in `daemon.toml` like the hooks: neither `hutan config`
+            // nor an agent can set what the daemon runs.
+            checks: _,
         } = Config::default();
         let config::AgentsSettings { state_log: _ } = agents;
         let config::UpdatesSettings {

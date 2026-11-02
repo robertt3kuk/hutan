@@ -133,6 +133,13 @@
 //! [checkpoints.projects.hutan]   # per project (name or id): only what differs
 //! mode = "off"
 //!
+//! [checks]                       # Hutan runs a session's tests itself (protocol 0.71, docs/assistant.md § Checks › Verification)
+//! test_command = "cargo test"    # default: found from the files of the folder (Cargo.toml, package.json + lockfile, pytest, go.mod, a Makefile `test:`)
+//! verify_timeout_secs = 600      # a run still going after this long is killed
+//!
+//! [checks.projects.hutan]        # per project (name or id): replaces the same key
+//! test_command = "cargo test -p hutan-core"
+//!
 //! [lsp]                          # language servers (protocol 0.39, docs/lsp.md); read at start
 //! enabled = true
 //! trust = "ask"                  # "ask": a folder needs the user's decision first; "always"; "never"
@@ -220,6 +227,8 @@ pub struct DaemonSettings {
     pub updates: UpdatesSettings,
     /// `[agents]`: what the daemon records about agents (protocol 0.66, ADR 0025).
     pub agents: AgentsSettings,
+    /// `[checks]`: Hutan's own run of a session's tests (protocol 0.71, ADR 0025).
+    pub checks: ChecksSettings,
 }
 
 /// `[agents]` of `daemon.toml`: the log of agents' states (`docs/assistant.md` § Flow).
@@ -887,6 +896,116 @@ impl WorktreeSettings {
     }
 }
 
+/// `verify_timeout_secs` when the setting is absent: ten minutes.
+pub const DEFAULT_VERIFY_TIMEOUT_SECS: u64 = 600;
+/// The most `verify_timeout_secs` accepts: two hours.
+pub const MAX_VERIFY_TIMEOUT_SECS: u64 = 7_200;
+
+/// `[checks]` of `daemon.toml`: how Hutan verifies a session's work by running its tests
+/// (`agents.verify`, `docs/assistant.md` § Checks › Verification). Applies from the next run.
+/// These commands are the user's own: a repository's files cannot set them (the daemon reads no
+/// `.hutan/` file for this), and the command is shown before it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChecksSettings {
+    /// The command of every project that has no `[checks.projects.<name or id>]` of its own;
+    /// absent: found by the files of the folder.
+    pub test_command: Option<String>,
+    /// A run still going after this many seconds is killed.
+    pub verify_timeout_secs: u64,
+    /// `[checks.projects.<name or id>]`.
+    pub projects: BTreeMap<String, ChecksProject>,
+}
+
+impl Default for ChecksSettings {
+    fn default() -> Self {
+        Self {
+            test_command: None,
+            verify_timeout_secs: DEFAULT_VERIFY_TIMEOUT_SECS,
+            projects: BTreeMap::new(),
+        }
+    }
+}
+
+/// `[checks.projects.<name or id>]`: a key set here replaces the same key of `[checks]`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChecksProject {
+    pub test_command: Option<String>,
+    pub verify_timeout_secs: Option<u64>,
+}
+
+/// Where a configured test command came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestCommandOrigin {
+    /// `[checks.projects.<key>]`, the key being the project's name or id.
+    Project(String),
+    /// `[checks]`.
+    Global,
+}
+
+impl ChecksSettings {
+    /// The test command set for the project with `id` and `name` (either may be empty): the
+    /// table of the name wins over the table of the id, which wins over `[checks]`.
+    pub fn test_command_for(&self, id: &str, name: &str) -> Option<(String, TestCommandOrigin)> {
+        for key in [name, id] {
+            if key.is_empty() {
+                continue;
+            }
+            if let Some(command) = self.projects.get(key).and_then(|p| p.test_command.as_ref()) {
+                return Some((command.clone(), TestCommandOrigin::Project(key.to_owned())));
+            }
+        }
+        self.test_command
+            .clone()
+            .map(|command| (command, TestCommandOrigin::Global))
+    }
+
+    /// The timeout for the project with `id` and `name`, in seconds.
+    pub fn timeout_secs_for(&self, id: &str, name: &str) -> u64 {
+        [name, id]
+            .into_iter()
+            .filter(|key| !key.is_empty())
+            .find_map(|key| self.projects.get(key).and_then(|p| p.verify_timeout_secs))
+            .unwrap_or(self.verify_timeout_secs)
+    }
+
+    fn check(&self) -> Result<(), String> {
+        let timeouts = std::iter::once(("checks".to_owned(), Some(self.verify_timeout_secs)))
+            .chain(
+                self.projects
+                    .iter()
+                    .map(|(name, p)| (format!("checks.projects.{name}"), p.verify_timeout_secs)),
+            );
+        for (table, secs) in timeouts {
+            if let Some(secs) = secs
+                && !(1..=MAX_VERIFY_TIMEOUT_SECS).contains(&secs)
+            {
+                return Err(format!(
+                    "{table}.verify_timeout_secs must be between 1 and {MAX_VERIFY_TIMEOUT_SECS}"
+                ));
+            }
+        }
+        let commands = std::iter::once(("checks".to_owned(), self.test_command.as_deref())).chain(
+            self.projects
+                .iter()
+                .map(|(name, p)| (format!("checks.projects.{name}"), p.test_command.as_deref())),
+        );
+        for (table, command) in commands {
+            if let Some(command) = command
+                && (command.trim().is_empty()
+                    || command.chars().count() > hutan_protocol::verify::VERIFY_COMMAND_CHARS)
+            {
+                return Err(format!(
+                    "{table}.test_command must be a command of at most {} characters",
+                    hutan_protocol::verify::VERIFY_COMMAND_CHARS
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// `[checkpoints] mode`: whether agent chat turns get checkpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1374,6 +1493,8 @@ struct File {
     #[serde(default)]
     worktrees: WorktreeSettings,
     #[serde(default)]
+    checks: ChecksSettings,
+    #[serde(default)]
     updates: UpdatesSettings,
     #[serde(default)]
     agents: AgentsSettings,
@@ -1486,6 +1607,7 @@ impl DaemonSettings {
         }
         file.checkpoints.check().map_err(toml::de::Error::custom)?;
         file.lsp.check().map_err(toml::de::Error::custom)?;
+        file.checks.check().map_err(toml::de::Error::custom)?;
         if file.hooks.len() > MAX_HOOKS {
             return Err(toml::de::Error::custom(format!(
                 "at most {MAX_HOOKS} [[hooks]] are allowed, not {}",
@@ -1518,6 +1640,7 @@ impl DaemonSettings {
             worktrees: file.worktrees,
             updates: file.updates,
             agents: file.agents,
+            checks: file.checks,
         })
     }
 }

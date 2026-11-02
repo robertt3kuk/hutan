@@ -105,6 +105,7 @@ pub const CAPABILITIES: &[&str] = &[
     "agents.activity",
     "agents.stats",
     "agents.review",
+    "agents.verify",
     "notify.digest",
     "digest.model",
 ];
@@ -523,6 +524,18 @@ async fn handle_frame(frame: Frame, handle: &ConnHandle, ctx: &Arc<ConnContext>)
                         } else {
                             ctx.router.dispatch(&handle, request).await
                         };
+                        handle.send_response(id, outcome);
+                    });
+                    return true;
+                }
+                // A verification run lasts as long as the tests do (minutes): on a task of its
+                // own, so that the connection goes on reading — a desktop's other requests are
+                // not held up behind it, and a CLI that is interrupted (its connection closes)
+                // is noticed (`handle.gone`) and takes its run with it.
+                Ok(request @ Request::AgentsVerify(_)) => {
+                    let (ctx, handle) = (ctx.clone(), handle.clone());
+                    tokio::spawn(async move {
+                        let outcome = ctx.router.dispatch(&handle, request).await;
                         handle.send_response(id, outcome);
                     });
                     return true;

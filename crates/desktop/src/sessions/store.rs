@@ -1299,6 +1299,9 @@ impl SessionsStore {
                 cx.emit(UpdateChanged::Available(release.clone()));
             }
             Notice::UpdateInstall { install } => cx.emit(UpdateChanged::Install(install.clone())),
+            // Hutan's own test runs (protocol 0.71): nothing in the sessions store depends on
+            // them; the Checks tab of Mawas's rail will listen for itself (CHECKS-C).
+            Notice::VerifyStarted { .. } | Notice::VerifyEnded { .. } => {}
             // The Memory page listens for itself and lists again when it is on screen.
             Notice::MemoryChanged { scope_revision, .. } => cx.emit(MemoryChanged {
                 scope_revision: *scope_revision,

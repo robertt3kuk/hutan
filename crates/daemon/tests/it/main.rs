@@ -59,6 +59,7 @@ mod transport;
 mod update;
 mod update_bundle;
 mod usage;
+mod verify;
 mod workspaces;
 mod worktree_review;
 mod worktree_setup;

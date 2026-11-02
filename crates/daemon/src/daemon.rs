@@ -518,6 +518,16 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         tasks.clone(),
         shutdown.clone(),
     );
+    // `agents.verify`: Hutan runs a session's tests itself; the gate shows its plan on a card.
+    let verify = crate::verify::VerifyService::new(
+        registry.clone(),
+        storage.clone(),
+        bus.clone(),
+        harnesses.clone(),
+        settings.checks.clone(),
+        shutdown.clone(),
+    );
+    control.set_verify(verify.clone());
     let memory = MemoryService::new(
         &settings.assistant,
         bus.clone(),
@@ -626,6 +636,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             hooks,
             insight,
             review,
+            verify,
             updates,
             settings: settings_service,
             storage: storage.clone(),

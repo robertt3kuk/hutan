@@ -47,6 +47,7 @@ use crate::update::UpdateService;
 use crate::usage::UsageService;
 use crate::worktrees::WorktreeService;
 use hutan_protocol::ui::{SessionSendText, SessionTextSent};
+use hutan_protocol::verify::VerifyRequester;
 
 mod activity;
 mod board;
@@ -75,6 +76,7 @@ pub struct Services {
     pub hooks: Arc<HooksService>,
     pub insight: Arc<InsightHub>,
     pub review: Arc<ReviewService>,
+    pub verify: Arc<crate::verify::VerifyService>,
     pub updates: Arc<UpdateService>,
     pub settings: Arc<SettingsService>,
     pub storage: hutan_storage::Storage,
@@ -107,6 +109,7 @@ pub struct Router {
     hooks: Arc<HooksService>,
     insight: Arc<InsightHub>,
     review: Arc<ReviewService>,
+    verify: Arc<crate::verify::VerifyService>,
     updates: Arc<UpdateService>,
     settings: Arc<SettingsService>,
     storage: hutan_storage::Storage,
@@ -149,6 +152,7 @@ impl Router {
             hooks: services.hooks,
             insight: services.insight,
             review: services.review,
+            verify: services.verify,
             updates: services.updates,
             settings: services.settings,
             storage: services.storage,
@@ -432,6 +436,26 @@ impl Router {
             Request::AgentsActivity(req) => ok(&self.agents_activity(req).await?),
             Request::AgentsStats(req) => ok(&self.agents_stats(req).await?),
             Request::AgentsReview(req) => ok(&self.review.review(req).await?),
+            Request::AgentsVerifyPlan(req) => ok(&self.verify.plan(req).await?),
+            Request::AgentsVerify(req) => {
+                let requested_by = match sender {
+                    Some(origin)
+                        if origin.kind == hutan_protocol::chat::MessageOriginKind::Mawas =>
+                    {
+                        VerifyRequester::Mawas
+                    }
+                    _ if self.agent_origin(conn).await.is_some() => VerifyRequester::Agent,
+                    _ => VerifyRequester::User,
+                };
+                ok(&self
+                    .verify
+                    .run(Actor::of(conn), requested_by, req, conn.gone())
+                    .await?)
+            }
+            Request::AgentsVerifyCancel(req) => {
+                self.verify.cancel(req.session_id)?;
+                ok(&Empty {})
+            }
             Request::AgentMeasureContext(req) => ok(&self.measure_context(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
@@ -1178,6 +1202,11 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentsStats(_) => ("agents.stats", Read),
         // What an agent did in one turn (protocol 0.66): read-only, redacted, bounded.
         Request::AgentsReview(_) => ("agents.review", Read),
+        // Hutan runs a session's tests (protocol 0.71): the plan is read-only; a run and its
+        // cancel change things, so an agent's request goes through the gate.
+        Request::AgentsVerifyPlan(_) => ("agents.verify.plan", Read),
+        Request::AgentsVerify(_) => ("agents.verify", Mutate),
+        Request::AgentsVerifyCancel(_) => ("agents.verify.cancel", Mutate),
         Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.

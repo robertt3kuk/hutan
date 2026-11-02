@@ -26,7 +26,7 @@
 //! audit table and to the `hutan::audit` log.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
@@ -43,6 +43,7 @@ use hutan_protocol::messages::{
     AgentState, ClientKind, Event, Request, SessionInfo, SessionListFilter, TerminalAgentState,
 };
 use hutan_protocol::suggest::AskTarget;
+use hutan_protocol::verify::{AgentsVerifyPlanRequest, AgentsVerifyRequest};
 use hutan_storage::{ApprovalOutcome, ApprovalRow, GrantRow, Storage};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -55,6 +56,7 @@ use crate::config::{AgentPolicy, AssistantMode, ControlSettings};
 use crate::mcp_wiring::MAWAS_APPROVAL_MAX;
 use crate::registry::{self, RegistryHandle};
 use crate::tasks::TaskService;
+use crate::verify::VerifyService;
 
 /// The option that runs the request this once.
 pub const ALLOW_ONCE: &str = "allow_once";
@@ -158,6 +160,8 @@ pub struct ControlService {
     registry: RegistryHandle,
     /// Which agent a `task.review` speaks to ([`TaskService::review_target`]).
     tasks: Arc<TaskService>,
+    /// The service whose plan the card of an `agents.verify` request shows; set once it exists.
+    verify: OnceLock<Arc<VerifyService>>,
     shutdown: CancellationToken,
     state: Mutex<State>,
 }
@@ -202,6 +206,7 @@ impl ControlService {
             storage,
             registry: registry.clone(),
             tasks,
+            verify: OnceLock::new(),
             shutdown,
             state: Mutex::new(state),
         });
@@ -219,6 +224,11 @@ impl ControlService {
     /// asked for each request and the timeout for each approval.
     pub fn apply_settings(&self, settings: ControlSettings) {
         *self.settings.write() = settings;
+    }
+
+    /// The service that says what a verification run would do, for its card.
+    pub fn set_verify(&self, verify: Arc<VerifyService>) {
+        let _ = self.verify.set(verify);
     }
 
     /// Whether `session` exists and is live: a claimed `origin` that is not gets ignored.
@@ -270,7 +280,7 @@ impl ControlService {
             return Ok(free);
         }
         let method = request_method(request);
-        let describe = self.describe(request).await;
+        let mut describe = self.describe(request).await;
         let mawas = self.mawas_origin(origin).await;
         if access == Access::UserOnly {
             self.audit_auto(origin, &describe, "deny_user_only");
@@ -281,6 +291,27 @@ impl ControlService {
                 format!("`{method}` is only available to the user, not to agents"),
                 "user_only",
             ));
+        }
+        if let Request::AgentsVerify(verify) = request {
+            // Only the user runs the tests against the session's own turn, and a run that would
+            // be refused is refused before any card (a card nobody could act on).
+            let refusal = if verify.force {
+                Some(forbidden(
+                    "`force` is the user's alone: an agent cannot run the tests while the \
+                     session's own turn is running"
+                        .to_owned(),
+                    "user_only",
+                ))
+            } else {
+                describe.refused.take()
+            };
+            if let Some(error) = refusal {
+                self.audit_auto(origin, &describe, "deny_refused");
+                if let Some(mawas) = &mawas {
+                    self.audit_line(mawas, method, "deny_refused", "policy", None, None);
+                }
+                return Err(error);
+            }
         }
         // Only Mawas suggests: refused before any card, whatever the policy says.
         if matches!(request, Request::AskSuggest(_)) && mawas.is_none() {
@@ -527,7 +558,9 @@ impl ControlService {
                 .map(|session| ControlTarget {
                     session_id: session.id,
                     title: clip(&session.title, 200),
-                    text: message_text(request).map(str::to_owned),
+                    text: message_text(request)
+                        .map(str::to_owned)
+                        .or_else(|| describe.target_text.clone()),
                 }),
             about: describe.about.clone(),
         };
@@ -1138,7 +1171,56 @@ impl ControlService {
         if let Request::AskSuggest(suggest) = request {
             self.describe_suggestion(suggest, &session_name, &mut described);
         }
+        if let Request::AgentsVerify(verify) = request {
+            let target = session_name(verify.session_id);
+            self.describe_verify(verify, target, &mut described).await;
+        }
         described
+    }
+
+    /// The card of a verification run says what runs: the whole command, the folder, why that
+    /// command, and for which session. A request that would be refused (no command to find, a
+    /// run in progress, the session's own turn running) says so instead, and is refused before
+    /// any card.
+    async fn describe_verify(
+        &self,
+        verify: &AgentsVerifyRequest,
+        target: String,
+        described: &mut Described,
+    ) {
+        let Some(service) = self.verify.get() else {
+            return;
+        };
+        let plan = service
+            .plan(AgentsVerifyPlanRequest {
+                session_id: verify.session_id,
+                command: verify.command.clone(),
+            })
+            .await;
+        match plan {
+            Ok(plan) => {
+                if let Some(error) = crate::verify::refusal_error(&plan, verify.force) {
+                    described.refused = Some(error);
+                    return;
+                }
+                described.title = format!(
+                    "run `{}` in {} to test {}",
+                    clip(&plan.command, 200),
+                    plan.cwd.display(),
+                    target
+                );
+                described.detail = format!(
+                    "Command: {}\nFolder: {}\nWhy this command: {}\nIt is killed after {} s.",
+                    plan.command,
+                    plan.cwd.display(),
+                    plan.why,
+                    plan.timeout_secs
+                );
+                described.target_text =
+                    Some(format!("$ {}\n(in {})", plan.command, plan.cwd.display()));
+            }
+            Err(error) => described.refused = Some(error),
+        }
     }
 
     /// A suggestion is judged by what it is about, not by an id: the card names the request that
@@ -1347,6 +1429,7 @@ pub fn always_ask(request: &Request) -> bool {
         Request::SessionClose(r) => r.stop_running,
         Request::UiRun(r) => r.action == "workbench::Quit",
         Request::UiSetSetting(r) => r.namespace == "assistant",
+        Request::AgentsVerify(r) => r.command.is_some(),
         _ => false,
     }
 }
@@ -1356,6 +1439,7 @@ pub fn always_ask(request: &Request) -> bool {
 /// (`fs.trash`, protocol 0.54): a grant given for one cleanup must not cover the next.
 pub fn asks_every_time(request: &Request) -> bool {
     matches!(request, Request::FsTrash(_))
+        || matches!(request, Request::AgentsVerify(r) if r.command.is_some())
 }
 
 /// Requests that act on **another agent** (ADR 0025 decision 3): a message to it (`chat.send`,
@@ -1371,6 +1455,7 @@ pub fn acts_on_agent(request: &Request) -> bool {
             | Request::ChatInterrupt(_)
             | Request::AgentInterrupt(_)
             | Request::TaskReview(_)
+            | Request::AgentsVerify(_)
     )
 }
 
@@ -1421,6 +1506,11 @@ pub struct Described {
     /// What the card is about when it is another agent's request: a suggestion's card names
     /// the agent whose request it is and shows the suggestion whole, like a message's.
     pub about: Option<ControlTarget>,
+    /// What the card shows as the words of a target-bound request that has none of its own: the
+    /// command a verification run would run, and where.
+    pub target_text: Option<String>,
+    /// The error the request earns before any card: it could not run, whatever the user says.
+    pub refused: Option<ErrorBody>,
 }
 
 const DETAIL_MAX_CHARS: usize = 400;
@@ -1447,6 +1537,8 @@ fn target_session(request: &Request) -> Option<SessionId> {
         Request::SessionReopen(r) => Some(r.session_id),
         Request::ProcessSignal(r) => Some(r.session_id),
         Request::AgentInterrupt(r) => Some(r.session_id),
+        Request::AgentsVerify(r) => Some(r.session_id),
+        Request::AgentsVerifyCancel(r) => Some(r.session_id),
         Request::SessionSendText(r) => Some(r.session_id),
         Request::ChatSend(r) => Some(r.session_id),
         Request::ChatRetry(r) => Some(r.session_id),
@@ -1760,12 +1852,18 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
         },
         Request::LspRestart(r) => format!("restart the language server {}", r.server_id),
         Request::LspStop(r) => format!("stop the language server {}", r.server_id),
+        Request::AgentsVerify(r) => format!("run the tests of {}", session(r.session_id)),
+        Request::AgentsVerifyCancel(r) => {
+            format!("stop the test run of {}", session(r.session_id))
+        }
         other => format!("make the request `{}`", request_method(other)),
     };
     Described {
         title,
         detail,
         about: None,
+        target_text: None,
+        refused: None,
     }
 }
 

@@ -122,6 +122,7 @@ pub mod tree;
 pub mod uihub;
 pub mod update;
 pub mod usage;
+pub mod verify;
 pub mod worktrees;
 
 pub use bus::RingLimits;

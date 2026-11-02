@@ -150,6 +150,15 @@ pub enum Notice {
     UpdateInstall {
         install: Box<hutan_protocol::update::UpdateInstall>,
     },
+    /// A verification run of a session started (`agents.verify.started`, protocol 0.71).
+    VerifyStarted {
+        run: Box<hutan_protocol::verify::VerifyRun>,
+    },
+    /// A verification run is over (`agents.verify.ended`): the whole run, with its exit code and
+    /// the tail of its output.
+    VerifyEnded {
+        run: Box<hutan_protocol::verify::VerifyRun>,
+    },
     /// Mawas's memory changed, or a proposal arrived or was answered (`memory.changed`,
     /// protocol 0.32): list the entries and proposals again.
     MemoryChanged {
@@ -544,6 +553,10 @@ impl StoreState {
             Event::UpdateInstallChanged { install } => {
                 effects.notices.push(Notice::UpdateInstall { install });
             }
+            Event::AgentsVerifyStarted { run } => {
+                effects.notices.push(Notice::VerifyStarted { run })
+            }
+            Event::AgentsVerifyEnded { run } => effects.notices.push(Notice::VerifyEnded { run }),
             Event::MemoryChanged {
                 scope,
                 workspace_id,

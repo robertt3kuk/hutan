@@ -2326,3 +2326,158 @@ async fn a_card_whose_caller_goes_away_is_withdrawn_and_a_late_allow_does_nothin
     assert_eq!(m.title_of(target.id).await, "on-time");
     m.daemon.stop().await;
 }
+
+// ---- Hutan runs the tests: `agents.verify` through Mawas's gate (CHECKS-B, protocol 0.71) ----
+
+/// What Mawas's verification of a terminal session of `alpha` shows and does: the card carries the
+/// exact command and the folder before anything runs, Deny runs nothing, a grant is bound to the
+/// chat **and** the agent, a command Mawas names always asks, `force` is the user's alone, and a
+/// run that would race the agent's own turn is refused before any card.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_verification_run_shows_its_command_and_folder_and_deny_runs_nothing() {
+    use hutan_protocol::verify::{AgentsVerifyRequest, VerifyRequester, VerifyRun, VerifyStatus};
+
+    let m = M::start(
+        "[checks]\ntest_command = \"touch ran; echo mawas-verified\"\n",
+        &["plain-turn"],
+    )
+    .await;
+    let ws = m.workspace("alpha").await;
+    let folder = m.work.path().canonicalize().unwrap().join("alpha");
+    let target = common::create_in(
+        &m.user,
+        Some(ws),
+        hutan_protocol::messages::TerminalSpec {
+            command: vec!["sleep".to_owned(), "600".to_owned()],
+            cwd: Some(folder.clone()),
+            title: Some("api".to_owned()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let mawas = m.mawas(ws, false).await;
+    let agent = m.from(mawas.id).await;
+    let marker = folder.join("ran");
+    let verify = |command: Option<&str>, force: bool| {
+        let (agent, session, command) = (agent.clone(), target.id, command.map(str::to_owned));
+        async move {
+            agent
+                .call::<VerifyRun>(Request::AgentsVerify(AgentsVerifyRequest {
+                    session_id: session,
+                    command,
+                    force,
+                }))
+                .await
+        }
+    };
+
+    // The card: the exact command, the folder, why, the agent — and nothing ran.
+    let (card, denied) = m.asked(verify(None, false)).await;
+    assert_eq!(card.session_id, mawas.id);
+    assert!(
+        card.title.starts_with(&format!(
+            "Mawas asks Hutan to run `touch ran; echo mawas-verified` in {} to test ",
+            folder.display()
+        )) && card.title.contains("“api”"),
+        "{}",
+        card.title
+    );
+    let detail = card.detail.clone().unwrap();
+    assert!(
+        detail.contains("Command: touch ran; echo mawas-verified")
+            && detail.contains(&format!("Folder: {}", folder.display()))
+            && detail.contains("`[checks] test_command` of daemon.toml"),
+        "{detail}"
+    );
+    assert_eq!(
+        card.target,
+        Some(ControlTarget {
+            session_id: target.id,
+            title: "api".into(),
+            text: Some(format!(
+                "$ touch ran; echo mawas-verified\n(in {})",
+                folder.display()
+            )),
+        })
+    );
+    assert_eq!(options_of(&card), ["allow_once", "allow_chat", "deny"]);
+    assert_eq!(card.options[1].label, "Allow for this chat and this agent");
+    assert!(!marker.exists(), "nothing ran while the card waited");
+
+    // Deny: it fails with the decision and nothing ran.
+    m.answer(card.id, "deny").await;
+    let error = denied.await.unwrap().unwrap_err();
+    assert_eq!(decision(error), (ErrorCode::Forbidden, "deny".to_owned()));
+    assert!(!marker.exists(), "a denied run runs nothing");
+    assert!(m.grants().await.is_empty());
+
+    // Allow for this chat and this agent: it runs, and the grant is bound to both.
+    let (card, allowed) = m.asked(verify(None, false)).await;
+    m.answer(card.id, "allow_chat").await;
+    let run = allowed.await.unwrap().unwrap();
+    assert_eq!(run.status, VerifyStatus::Passed);
+    assert_eq!(run.requested_by, VerifyRequester::Mawas);
+    assert!(run.output_tail.contains("mawas-verified"), "{run:?}");
+    assert!(marker.exists(), "it ran after the approval");
+    let grants = m.grants().await;
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].tool, "agents.verify");
+    assert_eq!(grants[0].target_session_id, Some(target.id));
+    assert_eq!(grants[0].chat_session_id, Some(mawas.id));
+    // The grant covers the next run of that agent without a card.
+    std::fs::remove_file(&marker).unwrap();
+    assert_eq!(
+        verify(None, false).await.unwrap().status,
+        VerifyStatus::Passed
+    );
+    assert!(marker.exists());
+    assert!(m.pending().await.is_empty());
+
+    // A command Mawas names is arbitrary code: it always asks, whatever was allowed.
+    let (card, named) = m.asked(verify(Some("echo named"), false)).await;
+    assert_eq!(options_of(&card), ["allow_once", "deny"], "{card:?}");
+    assert!(
+        card.detail
+            .as_deref()
+            .is_some_and(|d| d.contains("Command: echo named") && d.contains("always asks")),
+        "{:?}",
+        card.detail
+    );
+    m.answer(card.id, "deny").await;
+    assert!(named.await.unwrap().is_err());
+
+    // `force` is the user's alone: refused at once, no card.
+    let error = verify(None, true).await.unwrap_err();
+    assert_eq!(
+        decision(error),
+        (ErrorCode::Forbidden, "user_only".to_owned())
+    );
+    assert!(m.pending().await.is_empty());
+
+    // While the session's own turn runs, the run is refused before any card — even with a grant.
+    std::fs::remove_file(&marker).unwrap();
+    m.user
+        .call::<hutan_protocol::messages::AgentApplied>(Request::AgentReport(
+            hutan_protocol::messages::AgentReportRequest {
+                pid: None,
+                session_id: target.id,
+                source: "fake-hook".into(),
+                agent: "claude".into(),
+                state: Some(AgentState::Working),
+                message: None,
+                seq: 1,
+                agent_session_id: None,
+                resume_argv: None,
+                node: None,
+            },
+        ))
+        .await
+        .unwrap();
+    let ClientError::Remote(body) = verify(None, false).await.unwrap_err() else {
+        panic!("expected a remote error");
+    };
+    assert_eq!(body.code, ErrorCode::InvalidState);
+    assert_eq!(body.data.unwrap()["verify"]["refused"], "turn_running");
+    assert!(m.pending().await.is_empty() && !marker.exists());
+    m.daemon.stop().await;
+}
