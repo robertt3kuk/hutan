@@ -389,7 +389,7 @@ fn agent_in_workspace(
             ..TerminalSpec::default()
         }),
     }));
-    report(&env, created.session.id, AgentState::Working, 1);
+    report(env, created.session.id, AgentState::Working, 1);
     created.session
 }
 
@@ -404,7 +404,7 @@ fn check_with_mawas_sets_the_focus_and_fills_the_composer_with_the_findings_and_
     let workspace = env.daemon.create_workspace("shared", &[&dir]);
     let first = agent_in_workspace(&env, workspace.id, "first", &dir);
     let _second = agent_in_workspace(&env, workspace.id, "second", &dir);
-    let (view, cx, panel) = open_wide(cx, &env);
+    let (_view, cx, panel) = open_wide(cx, &env);
     wait_until(cx, "Mawas's chat", |cx| {
         panel.read_with(cx, |p, cx| {
             p.session(cx).is_some_and(|s| p.chat_model(s).is_some())
