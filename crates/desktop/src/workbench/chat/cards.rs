@@ -713,7 +713,13 @@ impl ChatView {
                                             .text_size(px(tokens.secondary_font_size))
                                             .child(label),
                                     )
-                                    .child(counts(&diff, look))
+                                    // A file the agent named without its text has no count.
+                                    .children(
+                                        (change.patch.is_some()
+                                            || change.before.is_some()
+                                            || change.after.is_some())
+                                        .then(|| counts(&diff, look)),
+                                    )
                                     .child(probe(&self.regions, Region::ChatPart(index, part))),
                             )
                             .children(target.map(|target| {
