@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use common::*;
 use hutan_client::{BlockList, Client};
+use hutan_core::Seq;
 use hutan_core::TerminalId;
 use hutan_protocol::ErrorCode;
 use hutan_protocol::blocks::{Block, BlockPart, BlockState, TerminalBlocksResult};
@@ -450,6 +451,63 @@ async fn a_reflow_tells_clients_where_the_blocks_went() {
         .await;
         assert_eq!(truth[2].exit_code, Some(128), "{cols}x{rows}");
     }
+    t.stop().await;
+}
+
+/// More blocks move in one reflow than the terminal's metadata channel holds (256 events): the
+/// daemon notices that it lost events and tells the blocks again, so a client that follows the
+/// events still ends with the daemon's blocks.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reflow_that_moves_more_blocks_than_the_channel_holds_still_reaches_clients() {
+    let t = TestDaemon::start().await;
+    let (client, mut events) = t.connect_subscribed().await;
+    let wide = "w".repeat(100);
+    // One long line (two rows at 80 columns, three at 40), then 270 one-row blocks behind it:
+    // narrowing moves every one of them down a row, in one burst.
+    let script = format!(
+        "b() {{ printf '\\033]133;A\\007$ \\033]133;B\\007%s\\r\\n\\033]133;C\\007%b\\033]133;D;0\\007' \"$1\" \"$2\"; }}; \
+         b long '{wide}\\r\\n'; i=1; while [ $i -le 270 ]; do b c$i ''; i=$((i+1)); done; \
+         printf '\\033]133;A\\007$ \\033]133;B\\007'; exec cat"
+    );
+    let session = create(&client, sh(&script)).await;
+    let terminal = terminal_of(&session);
+    wait_blocks(&client, terminal, "the scripted blocks", |b| {
+        b.len() == 272 && finished(b) == 271
+    })
+    .await;
+
+    let mut applied = BlockList::new();
+    let mut catch_up = async |events: &mut tokio::sync::broadcast::Receiver<(Seq, Event)>,
+                              want: Vec<Block>,
+                              what: &str| {
+        let deadline = Instant::now() + WAIT;
+        while applied.iter().cloned().collect::<Vec<_>>() != want {
+            assert!(
+                Instant::now() < deadline,
+                "{what}: the client's blocks never matched the daemon's ({} of {})",
+                applied.iter().len(),
+                want.len()
+            );
+            if let Ok(Ok((_, Event::TerminalBlock { block, .. }))) =
+                tokio::time::timeout(Duration::from_millis(100), events.recv()).await
+            {
+                applied.apply(block);
+            }
+        }
+    };
+    let truth = blocks(&client, terminal).await;
+    catch_up(&mut events, truth, "after the script").await;
+
+    client
+        .call::<Empty>(Request::TerminalResize(TerminalResize {
+            terminal_id: terminal,
+            size: size(40, 24),
+        }))
+        .await
+        .unwrap();
+    let truth = blocks(&client, terminal).await;
+    assert_eq!(truth.len(), 272);
+    catch_up(&mut events, truth, "after narrowing").await;
     t.stop().await;
 }
 

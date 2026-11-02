@@ -6009,7 +6009,22 @@ async fn watch_terminal(
     let mut probe_step = Some(0);
     let mut probe_after_prompt = false;
     let mut probe_due = std::pin::pin!(sleep_until(Instant::now() + PROGRAM_PROBE_GAPS[0]));
+    // Set when the metadata channel dropped events (a burst larger than its buffer: a resize
+    // that moved hundreds of blocks); cleared once the blocks have been told again.
+    let mut blocks_lost = false;
     let status = loop {
+        // The events still in the channel come first; the blocks as they are now go after them,
+        // so a late event never puts an older state over the newer one.
+        if blocks_lost && meta.is_empty() {
+            blocks_lost = false;
+            let limit = usize::try_from(hutan_protocol::blocks::BLOCKS_MAX_LIMIT).unwrap_or(0);
+            let (blocks, _) = terminal.blocks(None, limit);
+            for block in blocks.into_iter().rev() {
+                if !send(Command::TerminalMeta(id, TerminalMeta::Block(block))).await {
+                    return;
+                }
+            }
+        }
         tokio::select! {
             biased;
             () = &mut quiet, if throttled => throttled = false,
@@ -6061,7 +6076,8 @@ async fn watch_terminal(
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    warn!(terminal = %id, skipped, "terminal metadata lagged");
+                    warn!(terminal = %id, skipped, "terminal metadata lagged; telling the blocks again");
+                    blocks_lost = true;
                 }
                 Err(broadcast::error::RecvError::Closed) => break exit.await,
             },
