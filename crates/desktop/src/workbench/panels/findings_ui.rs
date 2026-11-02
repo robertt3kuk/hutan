@@ -289,6 +289,56 @@ impl FindingsState {
     pub(super) fn forget_verify(&mut self, session: SessionId) {
         self.verify.remove(&session);
     }
+
+    /// Where the *Verify* of `session` stands, in words (tests wait on it): `planning`,
+    /// `ready: <command>` (with ` (refused)` when the daemon would not run it), `running:
+    /// <command>`, `done: <status> exit <code>: <command>` or `failed: <why>`.
+    pub(super) fn step_text(&self, session: SessionId) -> Option<String> {
+        self.verify.get(&session).map(|step| match step {
+            VerifyStep::Planning => "planning".to_owned(),
+            VerifyStep::Ready(plan) => format!(
+                "ready: {}{}",
+                plan.command,
+                if plan.refused.is_some() {
+                    " (refused)"
+                } else {
+                    ""
+                }
+            ),
+            VerifyStep::Running(plan) => format!("running: {}", plan.command),
+            VerifyStep::Done(run) => format!(
+                "done: {} exit {}: {}",
+                run.status.as_str(),
+                run.exit_code
+                    .map_or_else(|| "-".to_owned(), |c| c.to_string()),
+                run.command
+            ),
+            VerifyStep::Failed(why) => format!("failed: {why}"),
+        })
+    }
+
+    /// A number that changes when what a surface draws of `scope` changes: the rows, the open
+    /// evidence and the state of every *Verify*.
+    pub(super) fn signature(&self, scope: Scope) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for finding in self.open_findings(scope) {
+            finding.id.hash(&mut hasher);
+            self.open.contains(&finding.id).hash(&mut hasher);
+        }
+        self.answer.is_some().hash(&mut hasher);
+        self.unsupported.hash(&mut hasher);
+        let mut runs = 0u64;
+        for (session, step) in &self.verify {
+            let mut each = std::collections::hash_map::DefaultHasher::new();
+            session.to_string().hash(&mut each);
+            self.step_text(*session).hash(&mut each);
+            matches!(step, VerifyStep::Done(_)).hash(&mut each);
+            runs = runs.wrapping_add(each.finish());
+        }
+        runs.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 /// The names of the regions a surface's rows record, so tests click them by name.
@@ -645,7 +695,8 @@ fn row<T: 'static>(
         });
     body = body.child(actions);
 
-    if let Some(session) = session
+    if surface.show_session
+        && let Some(session) = session
         && let Some(step) = state.verify.get(&session)
     {
         body = body.child(verify_step(
@@ -657,7 +708,7 @@ fn row<T: 'static>(
 }
 
 /// Where a *Verify* of the row's session stands: the command first, the result after.
-fn verify_step<T: 'static>(
+pub(super) fn verify_step<T: 'static>(
     session: SessionId,
     step: &VerifyStep,
     index: usize,

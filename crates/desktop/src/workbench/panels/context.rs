@@ -34,6 +34,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::common::{panel_toolbar, session_icon_with};
 use super::context_model::{self as model, Swatch, TurnLine, TurnState};
+use super::findings_ui::{self, CONTEXT, FindingsState, Scope, Surface};
 use crate::sessions::card;
 use crate::settings::ContextPanelSettings;
 use crate::theme::{DensityExt as _, Theme, Tokens};
@@ -111,6 +112,8 @@ enum Item {
     TurnsNote,
     Tools,
     Files,
+    /// The findings about the session, and its *Verify* button.
+    Findings,
     Totals,
     Notes,
     Sources,
@@ -149,6 +152,8 @@ pub struct ContextPanel {
     built_from: Option<Built>,
     /// How many insight snapshots were read or pushed (tests wait on it).
     updates: u64,
+    /// The daemon's findings about the followed session (the section *Findings*).
+    findings: FindingsState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +166,8 @@ struct Built {
     all_files: bool,
     sources: bool,
     chart: bool,
+    /// What the findings section shows (a hash of the rows and the runs).
+    findings: u64,
 }
 
 impl std::fmt::Debug for ContextPanel {
@@ -206,6 +213,7 @@ impl ContextPanel {
             listener: None,
             all_files: false,
             built_from: None,
+            findings: FindingsState::default(),
             updates: 0,
         }
     }
@@ -333,9 +341,11 @@ impl ContextPanel {
             self.prompts.clear();
             self.prompts_from = None;
             self.all_files = false;
+            self.findings = FindingsState::default();
             self.built_from = None;
         }
         self.listen(cx);
+        self.ensure_findings(cx);
         self.read_if_needed(cx);
         self.rebuild_if_changed(cx);
     }
@@ -573,6 +583,7 @@ impl ContextPanel {
             all_files: self.all_files,
             sources: settings.show_sources,
             chart: settings.show_fill_chart,
+            findings: self.findings.signature(self.findings_scope()),
         }
     }
 
@@ -585,7 +596,12 @@ impl ContextPanel {
             Some(Empty::NoSession) => items.push(Item::Empty(Empty::NoSession)),
             Some(empty) => {
                 items.push(Item::Identity);
+                // A terminal agent has findings too (what the checks see of it), and *Verify*.
+                let findings = matches!(empty, Empty::Terminal { .. } | Empty::Nothing);
                 items.push(Item::Empty(empty));
+                if findings {
+                    items.push(Item::Findings);
+                }
             }
             None => {
                 if let Some(insight) = self.insight.as_ref() {
@@ -617,6 +633,7 @@ impl ContextPanel {
                     {
                         items.push(Item::Files);
                     }
+                    items.push(Item::Findings);
                     if !model::totals_pairs(insight).is_empty()
                         || !model::time_pairs(insight).is_empty()
                     {
@@ -750,6 +767,7 @@ impl ContextPanel {
             Item::TurnsNote => self.render_turns_note(cx),
             Item::Tools => self.render_tools(cx),
             Item::Files => self.render_files(cx),
+            Item::Findings => self.render_findings(cx),
             Item::Totals => self.render_totals(cx),
             Item::Notes => self.render_notes(cx),
             Item::Sources => self.render_sources(window, cx),
@@ -1967,6 +1985,8 @@ impl ContextPanel {
 impl Render for ContextPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.env.regions.rendered(cx.entity_id());
+        self.ensure_findings(cx);
+        self.rebuild_if_changed(cx);
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let header = panel_toolbar("panels.context", Vec::new(), Vec::new(), cx);
@@ -2005,4 +2025,159 @@ pub enum ForkGate {
     /// A turn runs: forking waits for it.
     Waiting,
     Ready,
+}
+
+fn findings_state(panel: &mut ContextPanel) -> &mut FindingsState {
+    &mut panel.findings
+}
+
+/// The row number of the section's own *Verify* (the rows of the findings count from 0).
+const SECTION_VERIFY: usize = 9000;
+
+impl ContextPanel {
+    /// What the section reads: the findings about the session followed.
+    fn findings_scope(&self) -> Scope {
+        Scope {
+            workspace: None,
+            session: self.session,
+        }
+    }
+
+    /// Reads the findings about the session once the panel is on screen, again when the agents
+    /// changed (at most every two seconds).
+    fn ensure_findings(&mut self, cx: &mut Context<Self>) {
+        if self.session.is_none() || !self.visible {
+            return;
+        }
+        let (revision, connection, connected) = {
+            let store = self.env.sessions.read(cx);
+            (
+                (
+                    store.revision(),
+                    store.sessions().len(),
+                    store.approvals().len() + store.questions().len(),
+                ),
+                store.connection().clone(),
+                store.connection_state() == ConnectionState::Connected,
+            )
+        };
+        if !connected {
+            return;
+        }
+        let scope = self.findings_scope();
+        self.findings
+            .ensure(findings_state, cx, &connection, scope, revision);
+    }
+
+    /// Where the *Verify* of the followed session stands, in words (tests wait on it); see
+    /// `AssistantPanel::checks_verify_step`.
+    pub fn findings_verify_step(&self) -> Option<String> {
+        self.findings.step_text(self.session?)
+    }
+
+    /// The findings listed now, top to bottom.
+    pub fn findings_listed(&self) -> Vec<hutan_protocol::checks::Finding> {
+        self.findings
+            .open_findings(self.findings_scope())
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// The **Findings** section: what the daemon's checks found wrong in this session, each with
+    /// the actions of the Checks tab, and a *Verify* button with the result of the last run.
+    fn render_findings(&self, cx: &mut Context<Self>) -> AnyElement {
+        let style = UiStyle::get(cx);
+        let (theme, tokens) = (style.theme, style.density.ui());
+        let Some(session) = self.session else {
+            return div().into_any_element();
+        };
+        let scope = self.findings_scope();
+        let connection = self.env.sessions.read(cx).connection().clone();
+        let open = self.findings.open_findings(scope);
+        let surface = Surface {
+            theme: &theme,
+            tokens: &tokens,
+            regions: &self.env.regions,
+            names: &CONTEXT,
+            connection: &connection,
+            show_session: false,
+            now_ms: hutan_client::time::now_ms(),
+        };
+        let title = if self.findings.current(scope).is_some() {
+            format!("Findings · {}", open.len())
+        } else {
+            "Findings".to_owned()
+        };
+        let mut section = div()
+            .id("context-findings")
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(tokens.spacing * 2.0))
+            .px(px(tokens.spacing * 3.0))
+            .py(px(tokens.spacing * 2.0))
+            .child(div().text_size(px(tokens.font_size)).child(title));
+        if self.findings.unsupported {
+            section = section.child(muted_line(
+                "This daemon has no checks (it predates protocol 0.72).",
+                &theme,
+                &tokens,
+            ));
+        } else if self.findings.current(scope).is_none() {
+            section = section.child(muted_line(
+                self.findings
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "Checking what the agent did…".to_owned()),
+                &theme,
+                &tokens,
+            ));
+        } else if open.is_empty() {
+            section = section.child(muted_line(
+                "Nothing found in this session.",
+                &theme,
+                &tokens,
+            ));
+        } else {
+            section = section.children(findings_ui::rows(
+                &open,
+                0,
+                &self.findings,
+                findings_state,
+                &surface,
+                cx,
+            ));
+        }
+        if connection.supports_agents_verify() {
+            let verify = connection.clone();
+            section = section.child(
+                div().flex().gap(px(tokens.spacing)).child(
+                    ui::Button::new("context-verify", "Verify", &theme, &tokens)
+                        .compact()
+                        .tooltip("Run the project's tests in this session's folder; the command is shown first")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.findings
+                                .plan_verify(findings_state, cx, &verify, session);
+                        }))
+                        .child(probe(
+                            &self.env.regions,
+                            Region::Finding("findings-verify-session", 0),
+                        )),
+                ),
+            );
+            if let Some(step) = self.findings.verify.get(&session) {
+                section = section.child(findings_ui::verify_step(
+                    session,
+                    step,
+                    SECTION_VERIFY,
+                    &self.findings,
+                    findings_state,
+                    &surface,
+                    cx,
+                ));
+            }
+        }
+        section.into_any_element()
+    }
 }

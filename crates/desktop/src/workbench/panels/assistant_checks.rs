@@ -75,28 +75,7 @@ impl AssistantPanel {
     /// `ready: <command>` (with ` (refused)` when the daemon would not run it), `running:
     /// <command>`, `done: <status> exit <code>: <command>` or `failed: <why>`.
     pub fn checks_verify_step(&self, session: SessionId) -> Option<String> {
-        use super::findings_ui::VerifyStep;
-        self.checks.verify.get(&session).map(|step| match step {
-            VerifyStep::Planning => "planning".to_owned(),
-            VerifyStep::Ready(plan) => format!(
-                "ready: {}{}",
-                plan.command,
-                if plan.refused.is_some() {
-                    " (refused)"
-                } else {
-                    ""
-                }
-            ),
-            VerifyStep::Running(plan) => format!("running: {}", plan.command),
-            VerifyStep::Done(run) => format!(
-                "done: {} exit {}: {}",
-                run.status.as_str(),
-                run.exit_code
-                    .map_or_else(|| "-".to_owned(), |c| c.to_string()),
-                run.command
-            ),
-            VerifyStep::Failed(why) => format!("failed: {why}"),
-        })
+        self.checks.step_text(session)
     }
 
     /// Reads the findings once the Checks tab is on screen, and again when the agents changed

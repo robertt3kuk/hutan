@@ -311,3 +311,63 @@ fn verify_shows_the_command_first_then_the_result_of_a_passing_and_a_failing_run
         });
     }
 }
+
+#[gpui::test]
+fn the_context_panel_lists_the_findings_of_the_session_and_verifies_it(cx: &mut TestAppContext) {
+    use hutan_desktop::workbench::actions;
+    use hutan_desktop::workbench::panels::ContextPanel;
+
+    let env = started();
+    let failing = project(&env, "failing", 2);
+    let pair = shared_pair(&env, &failing, AgentState::Working);
+    let (view, cx) = open(cx, &env.daemon);
+    cx.simulate_resize(gpui::size(gpui::px(3000.0), gpui::px(1200.0)));
+    cx.dispatch_action(actions::OpenPanel("context".into()));
+    wait_until(cx, "the Context panel", |cx| {
+        view.read_with(cx, |wb, _| wb.panel::<ContextPanel>("context"))
+            .is_some()
+    });
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<ContextPanel>("context"))
+        .unwrap();
+    cx.dispatch_action(actions::OpenSession(pair[0].id.to_string()));
+    wait_until(cx, "the session followed", |cx| {
+        panel.read_with(cx, |p, _| p.session() == Some(pair[0].id))
+    });
+
+    // The checkout the two agents share is a finding about this session, with the Checks tab's
+    // actions.
+    wait_until(cx, "the findings", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.findings_listed()
+                .iter()
+                .any(|f| f.detector == "shared_checkout")
+        })
+    });
+    wait_until(cx, "the row", |cx| {
+        finding_painted(&view, cx, "findings-row", 0)
+            && finding_painted(&view, cx, "findings-dismiss", 0)
+    });
+
+    // Verify: the command first (the agent's turn runs, so the daemon says so), then the result.
+    wait_until(cx, "the Verify button", |cx| {
+        finding_painted(&view, cx, "findings-verify-session", 0)
+    });
+    click_finding(&view, cx, "findings-verify-session", 0);
+    wait_until(cx, "the command", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.findings_verify_step()
+                .is_some_and(|s| s.starts_with("ready: make test"))
+        })
+    });
+    wait_until(cx, "Run anyway", |cx| {
+        finding_painted(&view, cx, "findings-verify-anyway", 9000)
+    });
+    click_finding(&view, cx, "findings-verify-anyway", 9000);
+    wait_until(cx, "the result", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.findings_verify_step()
+                .is_some_and(|s| s == "done: failed exit 2: make test")
+        })
+    });
+}
