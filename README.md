@@ -20,13 +20,48 @@
   <img src="assets/screenshots/daemon.gif" alt="An agent keeps working after Hutan quits; reopening shows the finished answer" width="800">
 </p>
 
-**Mawas watches, you decide.** Mawas's board shows what needs you across every workspace, built from what the daemon recorded, each row marked *exact* or *state only*. Opening it makes no model call:
+### Mawas watches, you decide
+
+Mawas is Hutan's assistant over every agent you run, in every workspace. She reads freely, asks before every change, and never answers for you.
+
+**What needs me first?** The board groups every agent by what it needs, built from what the daemon recorded and marked *exact* or *state only*. Opening it makes no model call. Ask Mawas and she answers from the same board, with the source of each fact:
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/board.png" alt="Mawas's board: a request with Allow once, a working agent marked state only, and the Catch up line"></td>
+    <td width="50%"><img src="assets/screenshots/mawas-answer.png" alt="Mawas lists the two waiting requests with their sources and says she can't answer either one"></td>
+  </tr>
+</table>
+
+**She suggests, you answer.** Mawas can attach a suggested answer, with her reason, to another agent's waiting approval. Only your click on *Use* answers it:
 
 <p align="center">
-  <img src="assets/screenshots/board.png" alt="Mawas's board: a request with Allow once, a working agent marked state only, and the Catch up line" width="900">
+  <img src="assets/screenshots/mawas-use.gif" alt="Mawas suggests Allow once on an agent's approval card; clicking Use runs the command" width="800">
 </p>
 
-Captured from Hutan 0.3.5 with real agents (OMP on Claude Haiku 5.5).
+**Review a turn with evidence.** *Review* hands Mawas what the daemon recorded for a turn: commands with exit codes, changed files, and signals such as *dependency file changed* or *no test command*. Here she catches an agent that never ran the tests. When she wants to tell an agent something, you see the target and every word first, per agent:
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/review-answer.png" alt="Mawas: the turn finished, but nothing is verified; no test command was recorded"></td>
+    <td width="50%"><img src="assets/screenshots/mawas-nudge.png" alt="A card to approve Mawas's message to another agent, with the full text and Allow once, Allow for this chat and this agent, Deny"></td>
+  </tr>
+</table>
+
+### Around the agents
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/changes-stage.png" alt="Changes of an agent's worktree with Stage hunk and Discard hunk"><br><b>Review and stage by hunk</b>, then Finish: commit, merge the worktree, push. Agents can't stage or commit.</td>
+    <td width="50%"><img src="assets/screenshots/fork.png" alt="Fork from turn 1 into a new worktree"><br><b>Fork a chat from any turn</b>, into this folder or a new worktree with that turn's files. Turns that change files are checkpointed for <i>Rewind</i>.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/context.png" alt="Context panel: context fill, turns, tools, tokens, cost and time"><br><b>Where the context and the tokens went</b>, per turn and per tool, and what the agent does not report.</td>
+    <td width="50%"><img src="assets/screenshots/terminal-blocks.png" alt="A terminal where each command is a block with its exit code and duration"><br><b>A real terminal</b>: every command is a block with its exit code and duration. TUI agents run in it unmodified.</td>
+  </tr>
+</table>
+
+Captured from Hutan 0.3.5 with real agents (OMP on Claude Haiku 5.5) on a scratch data folder.
 
 ## Why
 
