@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use hutan_core::checkpoint::{CheckpointKind, CheckpointState};
 use hutan_core::insight::{
-    AgentInsight, InsightModel, InsightReducer, MAX_TURNS, SeedTurn, harness_insight,
+    AgentInsight, InsightModel, InsightReducer, InsightReport, MAX_TURNS, SeedTurn, harness_insight,
 };
 use hutan_core::{AgentEvent, SessionId, TurnId};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
@@ -57,6 +57,9 @@ pub struct InsightTarget {
     pub cwd: Option<String>,
     /// The session is an assistant (Mawas): it has insight, but `/context` is not sent to it.
     pub assistant: bool,
+    /// The session is a terminal that runs an agent (protocol 0.72): no journal, only what the
+    /// agent's integrations report; `harness` is the agent's program.
+    pub terminal: bool,
 }
 
 impl InsightTarget {
@@ -87,6 +90,19 @@ struct Entry {
     last_sent: Option<Instant>,
 }
 
+impl Entry {
+    fn new(reducer: InsightReducer, model: Option<InsightModel>, touched: u64) -> Self {
+        Self {
+            reducer,
+            model,
+            touched,
+            dirty: false,
+            armed: false,
+            last_sent: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Focus {
     conn: ConnHandle,
@@ -101,6 +117,32 @@ struct State {
     overflowed: Vec<SessionId>,
     focus: HashMap<ConnId, Focus>,
     tick: u64,
+}
+
+impl State {
+    /// Makes room for an entry of `session`: past [`MAX_SESSIONS`] the least recently used one
+    /// that nobody looks at goes (when everybody looks at some, the least recently used).
+    fn make_room(&mut self, session: SessionId) {
+        if self.entries.len() < MAX_SESSIONS || self.entries.contains_key(&session) {
+            return;
+        }
+        let focused: Vec<SessionId> = self.focus.values().map(|f| f.session).collect();
+        let victim = self
+            .entries
+            .iter()
+            .filter(|(id, _)| !focused.contains(id))
+            .min_by_key(|(_, entry)| entry.touched)
+            .map(|(id, _)| *id)
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.touched)
+                    .map(|(id, _)| *id)
+            });
+        if let Some(victim) = victim {
+            self.entries.remove(&victim);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -174,6 +216,66 @@ impl InsightHub {
         }
         if let Some(entry) = state.entries.get_mut(&session) {
             entry.reducer.cost_reported(cost_usd);
+        }
+    }
+
+    /// What the integrations of a terminal agent reported (`agent.report`'s `insight`, protocol
+    /// 0.72). `agent` is the agent's program (`omp`, `claude`, `codex`), `model` the one its
+    /// node says. `fresh`: the report's `seq` is the newest of its source. A report that is not
+    /// still adds its tools, files and tokens (deltas that arrive out of order are as true as
+    /// the others) but not its levels (the turn's edges, context, cost, API time), which a newer
+    /// report has already replaced.
+    ///
+    /// A session whose reducer is of another agent (the user ran a different one in the same
+    /// terminal) starts again. O(report); no allocation for a report that says nothing.
+    pub fn terminal_report(
+        self: &Arc<Self>,
+        session: SessionId,
+        agent: &str,
+        cwd: Option<&str>,
+        model: Option<InsightModel>,
+        mut report: InsightReport,
+        fresh: bool,
+    ) {
+        if !fresh {
+            report.turn = None;
+            report.context = None;
+            report.cost_usd = None;
+            report.api_ms = None;
+        }
+        if report.is_empty() {
+            return;
+        }
+        let mut guard = lock(&self.state);
+        let state = &mut *guard;
+        state.tick += 1;
+        let tick = state.tick;
+        // A chat's reducer is never replaced by a report; another agent's is.
+        let same_agent = match state.entries.get(&session) {
+            Some(entry) if !entry.reducer.is_terminal() => return,
+            Some(entry) => Some(entry.reducer.harness() == agent),
+            None => None,
+        };
+        if same_agent != Some(true) {
+            state.make_room(session);
+            state.entries.insert(
+                session,
+                Entry::new(
+                    InsightReducer::new_terminal(session, agent, cwd),
+                    None,
+                    tick,
+                ),
+            );
+        }
+        let Some(entry) = state.entries.get_mut(&session) else {
+            return;
+        };
+        if model.is_some() {
+            entry.model = model;
+        }
+        if entry.reducer.apply_report(&report, now_ms()) {
+            entry.touched = tick;
+            self.changed(state, session);
         }
     }
 
@@ -267,6 +369,21 @@ impl InsightHub {
         if !replace && lock(&self.state).entries.contains_key(&session) {
             return;
         }
+        if target.terminal {
+            // A terminal agent has no journal: what is known is what its integrations report,
+            // so an empty reducer waits for the first report.
+            let mut state = lock(&self.state);
+            state.tick += 1;
+            let tick = state.tick;
+            state.make_room(session);
+            let reducer =
+                InsightReducer::new_terminal(session, &target.harness, target.cwd.as_deref());
+            state
+                .entries
+                .entry(session)
+                .or_insert_with(|| Entry::new(reducer, target.model(), tick));
+            return;
+        }
         let _one_at_a_time = self.building.lock().await;
         // Built by whoever held the lock before.
         if !replace && lock(&self.state).entries.contains_key(&session) {
@@ -293,36 +410,10 @@ impl InsightHub {
             }
             state.tick += 1;
             let tick = state.tick;
-            if state.entries.len() >= MAX_SESSIONS && !state.entries.contains_key(&session) {
-                let focused: Vec<SessionId> = state.focus.values().map(|f| f.session).collect();
-                let victim = state
-                    .entries
-                    .iter()
-                    .filter(|(id, _)| !focused.contains(id))
-                    .min_by_key(|(_, entry)| entry.touched)
-                    .map(|(id, _)| *id)
-                    .or_else(|| {
-                        state
-                            .entries
-                            .iter()
-                            .min_by_key(|(_, entry)| entry.touched)
-                            .map(|(id, _)| *id)
-                    });
-                if let Some(victim) = victim {
-                    state.entries.remove(&victim);
-                }
-            }
-            state.entries.insert(
-                session,
-                Entry {
-                    reducer,
-                    model: target.model(),
-                    touched: tick,
-                    dirty: false,
-                    armed: false,
-                    last_sent: None,
-                },
-            );
+            state.make_room(session);
+            state
+                .entries
+                .insert(session, Entry::new(reducer, target.model(), tick));
             return;
         }
         warn!(%session, "insight could not keep up with the session's events; it will be built again when asked for");
@@ -570,6 +661,7 @@ mod tests {
             provider: Some("anthropic".into()),
             cwd: Some("/work/app".into()),
             assistant: false,
+            terminal: false,
         }
     }
 

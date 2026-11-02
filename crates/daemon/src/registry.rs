@@ -1071,6 +1071,9 @@ struct SessionRegistry {
     scratch_dir: PathBuf,
     /// Contain: wraps the spawn of sessions whose spec asks for it.
     sandbox: Arc<crate::contain::Sandbox>,
+    /// What each session's agent reports about its context and spend; terminal agents' reports
+    /// are folded into it as they arrive (protocol 0.72).
+    insight: Arc<crate::insight::InsightHub>,
 }
 
 /// What [`spawn`] needs besides the shared services.
@@ -1136,6 +1139,7 @@ pub fn spawn(
     stored: Stored,
 ) -> RegistryHandle {
     let (tx, rx) = mpsc::channel(MAILBOX_CAPACITY);
+    let insight = config.insight.clone();
     let chats = ChatManager::new(
         bus.clone(),
         config.storage.clone(),
@@ -1149,7 +1153,7 @@ pub fn spawn(
         config.tmp_dir,
         config.checkpoints,
         config.usage,
-        config.insight,
+        insight.clone(),
         config.sandbox.clone(),
     );
     let (workspaces, home, next_position) =
@@ -1184,6 +1188,7 @@ pub fn spawn(
         placements: PlacementCache::default(),
         scratch_dir: config.scratch_dir,
         sandbox: config.sandbox,
+        insight,
     };
     registry.restore_sessions(
         stored.sessions,
@@ -3014,6 +3019,7 @@ impl SessionRegistry {
         self.flush_at
             .get_or_insert_with(|| Instant::now() + DIRTY_WRITE_INTERVAL);
         self.emit(&Event::SessionClosed { session_id: id });
+        self.insight.forget(id);
         self.retitle_workspace(entry.info.workspace_id, None);
         self.sync_workspace(entry.info.workspace_id);
         // A checkout it shared is not shared any more.
@@ -3252,7 +3258,7 @@ impl SessionRegistry {
 
     // Agent reports ---------------------------------------------------------------------------
 
-    fn report_agent(&mut self, req: AgentReportRequest) -> Result<AgentApplied, ErrorBody> {
+    fn report_agent(&mut self, mut req: AgentReportRequest) -> Result<AgentApplied, ErrorBody> {
         let index = self.session_index(req.session_id)?;
         agent_field("source", &req.source)?;
         agent_field("agent", &req.agent)?;
@@ -3262,6 +3268,22 @@ impl SessionRegistry {
         if let Some(node) = &req.node {
             check_node_report(node)?;
         }
+        let insight = match req.insight.take() {
+            Some(report) => Some(
+                report
+                    .validated()
+                    .map_err(|error| ErrorBody::new(ErrorCode::BadRequest, error.to_string()))?,
+            ),
+            None => None,
+        };
+        // A report that carries an insight and nothing about the agent's state leaves the tree
+        // alone: a status-line tick must not make an agent `working` or create its node.
+        let insight_only = insight.is_some()
+            && req.state.is_none()
+            && req.node.is_none()
+            && req.message.is_none()
+            && req.agent_session_id.is_none()
+            && req.resume_argv.is_none();
         let resume = match &req.resume_argv {
             Some(argv) => {
                 agent::validate_resume_argv(argv)
@@ -3284,12 +3306,47 @@ impl SessionRegistry {
         let session = &mut self.sessions[index];
         let node_id = req.node.as_ref().map(|node| node.id.clone());
         // A hook can fire just as the process ends; there is nothing left to describe.
-        if !session.info.state.is_live()
-            || !session
-                .tree
-                .accept_seq(&req.source, node_id.as_deref(), req.seq)
-        {
+        if !session.info.state.is_live() {
             return Ok(AgentApplied { applied: false });
+        }
+        let fresh = session
+            .tree
+            .accept_seq(&req.source, node_id.as_deref(), req.seq);
+        if let Some(report) = insight {
+            let model = req
+                .node
+                .as_ref()
+                .and_then(|node| node.model.clone())
+                .or_else(|| {
+                    session
+                        .tree
+                        .tree()
+                        .root()
+                        .and_then(|root| root.model.clone())
+                })
+                .map(|id| hutan_core::insight::InsightModel {
+                    id,
+                    provider: None,
+                    thinking: None,
+                });
+            let cwd = session
+                .info
+                .cwd
+                .as_ref()
+                .map(|cwd| cwd.display().to_string());
+            self.insight.terminal_report(
+                req.session_id,
+                &req.agent,
+                cwd.as_deref(),
+                model,
+                report,
+                fresh,
+            );
+        }
+        // An older report adds its tools and files (above) and nothing else; one that carries
+        // only insight has nothing to say about the agent tree.
+        if !fresh || insight_only {
+            return Ok(AgentApplied { applied: fresh });
         }
         let message = req
             .message
@@ -4906,15 +4963,35 @@ impl SessionRegistry {
         }
     }
 
-    /// What insight needs to know of a chat, or why it has none: `not_found`, `bad_request`
-    /// for a session that is not a chat.
+    /// What insight needs to know of a session: of a chat, its harness and model; of a terminal,
+    /// the agent it runs (the one that reported, else the one the daemon recognised) and no
+    /// journal. `not_found` for an unknown session, `bad_request` for one that is no chat and
+    /// runs no agent.
     fn insight_target(&self, id: SessionId) -> Result<crate::insight::InsightTarget, ErrorBody> {
         let session = &self.sessions[self.session_index(id)?];
         let Some(spec) = &session.chat else {
-            return Err(ErrorBody::new(
-                ErrorCode::BadRequest,
-                format!("session {id} is not a chat session"),
-            ));
+            let root = session.tree.tree().root();
+            let agent = root
+                .map(|root| root.agent.clone())
+                .or_else(|| session.info.terminal_agent.as_ref().map(|a| a.app.clone()));
+            let Some(agent) = agent.filter(|agent| !agent.is_empty()) else {
+                return Err(ErrorBody::new(
+                    ErrorCode::BadRequest,
+                    format!("session {id} is neither a chat nor a terminal that runs an agent"),
+                ));
+            };
+            return Ok(crate::insight::InsightTarget {
+                harness: agent,
+                model: root.and_then(|root| root.model.clone()),
+                provider: None,
+                cwd: session
+                    .info
+                    .cwd
+                    .as_ref()
+                    .map(|cwd| cwd.display().to_string()),
+                assistant: false,
+                terminal: true,
+            });
         };
         let model = session
             .info
@@ -4948,6 +5025,7 @@ impl SessionRegistry {
                 .as_ref()
                 .map(|cwd| cwd.display().to_string()),
             assistant: spec.assistant || spec.agent == AGENT_ASSISTANT,
+            terminal: false,
         })
     }
 

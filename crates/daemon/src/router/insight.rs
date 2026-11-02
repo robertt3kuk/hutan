@@ -11,7 +11,8 @@ use crate::insight::measure_unsupported;
 use hutan_core::insight::harness_insight;
 
 impl Router {
-    /// The insight of a chat session; `node_id` must be the session's main agent.
+    /// The insight of a chat session or of a terminal that runs an agent; `node_id` must be the
+    /// session's main agent.
     pub(super) async fn agent_insight(
         &self,
         req: AgentInsightRequest,
@@ -31,6 +32,15 @@ impl Router {
         req: AgentMeasureContext,
     ) -> Result<AgentContextMeasured, ErrorBody> {
         let target = self.registry.insight_target(req.session_id).await?;
+        if target.terminal {
+            return Err(ErrorBody::new(
+                ErrorCode::Unsupported,
+                format!(
+                    "{} runs in a terminal: Hutan cannot send it `/context`; type it in the agent",
+                    target.harness
+                ),
+            ));
+        }
         if !harness_insight(&target.harness).can_measure || target.assistant {
             return Err(measure_unsupported(&target.harness));
         }

@@ -2314,6 +2314,9 @@ pub enum AgentCommand {
     /// Translate one Codex or Claude Code hook event (JSON on stdin) into a report; used by the
     /// installed hook scripts
     Hook(AgentHookArgs),
+    /// Read Claude Code's status-line JSON on stdin and report its context, cost and API time as
+    /// insight; run by the status-line tee `hutan integration install claude --statusline` adds
+    Statusline,
 }
 
 #[derive(Debug, Args)]
@@ -2324,8 +2327,16 @@ pub struct AgentReportArgs {
     /// The agent's name (`omp`, `claude`, `codex`)
     #[arg(long)]
     pub agent: String,
+    /// The agent's state; leave it out for a report that carries only `--insight-json`
     #[arg(long, value_enum)]
-    pub state: AgentStateArg,
+    pub state: Option<AgentStateArg>,
+    /// What the agent's integration knows about its context, tokens, tools and files (protocol
+    /// 0.72), as JSON, at most 4 KiB: `{"tools":[{"name":"read","calls":2}],"context":{"used":
+    /// 11200,"window":200000}}`; `-` reads it from standard input. Counts, tool names and paths
+    /// only. With no `--state`, `--node`, `--message` or resume command the report leaves the
+    /// agent's state alone
+    #[arg(long, value_name = "JSON")]
+    pub insight_json: Option<String>,
     /// Must increase per session and source; default: the current time in nanoseconds
     #[arg(long)]
     pub seq: Option<u64>,
@@ -2609,6 +2620,11 @@ pub struct IntegrationArgs {
     /// entry is written or removed.
     #[arg(long)]
     pub mcp: bool,
+    /// With `install claude`: also tee Claude Code's status line to Hutan (its context size, cost
+    /// and API time) and run the status-line command you have now after it, unchanged. Opt-in;
+    /// `uninstall claude` puts your own back. Without this flag the status line is never touched
+    #[arg(long, conflicts_with = "mcp")]
+    pub statusline: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

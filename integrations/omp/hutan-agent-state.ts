@@ -7,9 +7,12 @@
 // `hutan agent report`. Every agent is a node of the session's agent tree: OMP binds this
 // extension to the main session and to every subagent session, and `ctx.agent` (`kind`, `id`,
 // `parentId`, `name`) says which one an instance serves. Does nothing outside a Hutan session.
+// The main agent also reports its insight (tokens per model call, cost, tools with times, files
+// from the edit tools' arguments, the context and its fixed part): see "insight" at the end.
 // @ts-nocheck
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 const SOURCE = "omp-extension";
 // A turn that ends and restarts within this time (an automatic retry) stays "working".
@@ -264,5 +267,319 @@ export default function (pi) {
       blockedCount = 0;
       publish(true);
     }
+  });
+
+  // Tokens, tools, files and context of the main agent (see the end of this file).
+  trackInsight(pi, () => identity);
+}
+
+// ---- insight: tokens, tools, files and context for the Context panel --------------------------
+//
+// Reports what OMP's extension API gives about the main agent's conversation (`hutan agent report
+// --insight-json`, protocol 0.72): the usage of every model call, the tools that finished with
+// their times, the files the edit/write tools changed (from the tools' arguments), the context
+// and its fixed part at the start of a conversation. One report at the end of the agent loop and
+// at most one every INSIGHT_GAP_MS while it runs. Counts, tool names and paths only: no prompt,
+// no tool output, no diff. Subagents report nothing of their own; a failed or slow `hutan` loses
+// the delta it carried.
+
+const INSIGHT_GAP_MS = 500;
+// A report is at most 4 KiB; leave room for the envelope.
+const INSIGHT_MAX_JSON = 3600;
+const MAX_ROWS = 16;
+const MAX_FILES = 32;
+// Tools that change files.
+const FILE_TOOLS = new Set(["edit", "write", "ast_edit", "notebook", "delete"]);
+
+type FileKind = "add" | "update" | "delete";
+
+interface InsightContext {
+  used: number;
+  window?: number;
+  fixed?: number;
+}
+
+interface PendingInsight {
+  turn?: { phase: "start" | "end"; outcome?: string; duration_ms?: number };
+  tokens?: Record<string, number>;
+  context?: InsightContext;
+  cost_usd?: number;
+  tools: Map<string, { calls: number; failed: number; ms: number }>;
+  files: Map<string, FileKind>;
+}
+
+interface InsightHost {
+  getContextUsage?: () => { tokens?: unknown; contextWindow?: unknown } | undefined;
+  sessionManager?: {
+    getUsageStatistics?: () => { cost?: unknown } | undefined;
+    getEntries?: () => unknown;
+  };
+  model?: { id?: string };
+}
+
+interface InsightEvent {
+  toolCallId?: unknown;
+  toolName?: unknown;
+  args?: unknown;
+  isError?: unknown;
+  willContinue?: unknown;
+  messages?: unknown;
+  message?: { role?: unknown; usage?: Record<string, unknown> };
+}
+
+function emptyInsight(): PendingInsight {
+  return { tools: new Map(), files: new Map() };
+}
+
+function count(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+// The files a file tool names: `path` / `file_path`, the `paths` of `ast_edit`, or the
+// `[path#tag]` headers of a hashline patch (`input`).
+function pathsOf(toolName: string, args: unknown): string[] {
+  const named = record(args);
+  if (!FILE_TOOLS.has(toolName) || !named) return [];
+  const found: string[] = [];
+  const add = (path: unknown) => {
+    if (typeof path === "string" && path.length > 0 && path.length <= 1024 && !/[\u0000-\u001f]/.test(path)) {
+      found.push(path);
+    }
+  };
+  add(named.path);
+  add(named.file_path);
+  add(named.filePath);
+  if (Array.isArray(named.paths)) for (const path of named.paths.slice(0, MAX_FILES)) add(path);
+  if (typeof named.input === "string") {
+    for (const line of named.input.split("\n", 400)) {
+      const header = /^\[(.+?)#[0-9A-Za-z]{4}\]$/.exec(line);
+      if (header) add(header[1]);
+    }
+  }
+  return found;
+}
+
+function trackInsight(pi, identityOf: () => Identity | undefined) {
+  let pending = emptyInsight();
+  let flushTimer: NodeJS.Timeout | undefined;
+  let lastFlush = 0;
+  let turnStartedAt = 0;
+  let measuredModel: string | undefined;
+  const started = new Map<string, { name: string; at: number; args: unknown; existed: Map<string, boolean> }>();
+
+  const on = (event: string, handler: (event: InsightEvent, ctx: InsightHost) => void) => {
+    try {
+      pi.on(event, (e: InsightEvent, ctx: InsightHost) => {
+        try {
+          if (identityOf()?.kind === "main") handler(e ?? {}, ctx ?? {});
+        } catch {
+          // An insight is never worth disturbing the agent for.
+        }
+      });
+    } catch {
+      // This OMP has no such event.
+    }
+  };
+
+  const contextOf = (ctx: InsightHost, fixed: boolean): InsightContext | undefined => {
+    const usage = ctx.getContextUsage?.();
+    const used = count(usage?.tokens);
+    if (used === undefined) return undefined;
+    const context: InsightContext = { used };
+    const window = count(usage?.contextWindow);
+    if (window) context.window = window;
+    if (fixed) context.fixed = used;
+    return context;
+  };
+
+  const costOf = (ctx: InsightHost): number | undefined => {
+    const cost = ctx.sessionManager?.getUsageStatistics?.()?.cost;
+    return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+  };
+
+  // The conversation is empty: what the context holds now is all fixed (the system prompt, the
+  // tools, the project files).
+  const emptyConversation = (ctx: InsightHost): boolean => {
+    const entries = ctx.sessionManager?.getEntries?.();
+    return Array.isArray(entries) && !entries.some((entry) => record(entry)?.type === "message");
+  };
+
+  function payload(): Record<string, unknown> | undefined {
+    const insight: Record<string, unknown> = { source: "extension" };
+    if (pending.turn) insight.turn = pending.turn;
+    if (pending.tokens) insight.tokens = pending.tokens;
+    if (pending.context) insight.context = pending.context;
+    if (pending.cost_usd !== undefined) insight.cost_usd = pending.cost_usd;
+    const tools = [...pending.tools];
+    if (tools.length) {
+      insight.tools = tools.slice(0, MAX_ROWS).map(([name, row]) => ({
+        name,
+        calls: row.calls,
+        ...(row.failed ? { failed: row.failed } : {}),
+        ...(row.ms ? { ms: row.ms } : {}),
+      }));
+    }
+    const files = [...pending.files];
+    const sent = new Set<string>();
+    const listed: { path: string; kind: FileKind }[] = [];
+    insight.files = listed;
+    for (const [path, kind] of files.slice(0, MAX_FILES)) {
+      listed.push({ path, kind });
+      if (JSON.stringify(insight).length > INSIGHT_MAX_JSON) {
+        listed.pop();
+        break;
+      }
+      sent.add(path);
+    }
+    if (!listed.length) delete insight.files;
+    if (Object.keys(insight).length === 1) return undefined;
+    // What was sent is gone; the rest waits for the next report.
+    const rest = emptyInsight();
+    for (const [name, row] of tools.slice(MAX_ROWS)) rest.tools.set(name, row);
+    for (const [path, kind] of files) if (!sent.has(path)) rest.files.set(path, kind);
+    pending = rest;
+    return insight;
+  }
+
+  function flush() {
+    clearTimeout(flushTimer);
+    flushTimer = undefined;
+    lastFlush = Date.now();
+    const insight = payload();
+    if (!insight) return;
+    hutan([
+      "agent",
+      "report",
+      "--source",
+      SOURCE,
+      "--agent",
+      "omp",
+      `--seq=${nextSeq()}`,
+      `--insight-json=${JSON.stringify(insight)}`,
+    ]);
+    // Something did not fit: the next report carries it.
+    if (pending.tools.size || pending.files.size) schedule();
+  }
+
+  function schedule() {
+    if (flushTimer) return;
+    const wait = Math.max(0, INSIGHT_GAP_MS - (Date.now() - lastFlush));
+    flushTimer = setTimeout(flush, wait);
+    flushTimer.unref?.();
+  }
+
+  // The context at the start of a conversation is fixed overhead; read again, with the cost, when
+  // OMP switches conversation, compacts or changes the model.
+  const measure = (_event: InsightEvent, ctx: InsightHost) => {
+    started.clear();
+    const context = contextOf(ctx, emptyConversation(ctx));
+    if (context) pending.context = context;
+    const cost = costOf(ctx);
+    if (cost !== undefined) pending.cost_usd = cost;
+    measuredModel = ctx.model?.id;
+    flush();
+  };
+  on("session_start", measure);
+  on("session_switch", measure);
+  on("session_compact", (_event, ctx) => {
+    const context = contextOf(ctx, true);
+    if (context) pending.context = context;
+    flush();
+  });
+  on("model_select", (_event, ctx) => {
+    if (ctx.model?.id === measuredModel) return;
+    measuredModel = ctx.model?.id;
+    const context = contextOf(ctx, emptyConversation(ctx));
+    if (context) pending.context = context;
+    schedule();
+  });
+
+  on("agent_start", () => {
+    turnStartedAt = Date.now();
+    pending.turn = { phase: "start" };
+    schedule();
+  });
+
+  // Every model call: its usage is a delta of the running turn.
+  on("message_end", (event) => {
+    const message = event.message;
+    const usage = message?.usage;
+    if (message?.role !== "assistant" || !usage) return;
+    const sum = (key: string, value: unknown) => {
+      const n = count(value);
+      if (n === undefined) return;
+      pending.tokens = pending.tokens ?? {};
+      pending.tokens[key] = (pending.tokens[key] ?? 0) + n;
+    };
+    sum("input_tokens", usage.input);
+    sum("output_tokens", usage.output);
+    sum("cached_input_tokens", usage.cacheRead);
+    sum("cache_write_tokens", usage.cacheWrite);
+    sum("total_tokens", usage.totalTokens);
+    schedule();
+  });
+
+  on("tool_execution_start", (event) => {
+    if (typeof event.toolCallId !== "string" || typeof event.toolName !== "string") return;
+    // Whether a file a `write` is about to create is there already: a new file is `add`.
+    const existed = new Map<string, boolean>();
+    if (event.toolName === "write") {
+      for (const path of pathsOf("write", event.args)) {
+        try {
+          existed.set(path, existsSync(path));
+        } catch {
+          // Unknown: counted as an update.
+        }
+      }
+    }
+    if (started.size > 256) started.clear();
+    started.set(event.toolCallId, { name: event.toolName, at: Date.now(), args: event.args, existed });
+  });
+
+  on("tool_execution_end", (event) => {
+    const call = typeof event.toolCallId === "string" ? started.get(event.toolCallId) : undefined;
+    if (typeof event.toolCallId === "string") started.delete(event.toolCallId);
+    const name = typeof event.toolName === "string" ? event.toolName : call?.name;
+    if (!name) return;
+    const row = pending.tools.get(name) ?? { calls: 0, failed: 0, ms: 0 };
+    row.calls += 1;
+    if (event.isError === true) row.failed += 1;
+    if (call) row.ms += Math.max(0, Date.now() - call.at);
+    pending.tools.set(name, row);
+    if (call && event.isError !== true) {
+      for (const path of pathsOf(name, call.args)) {
+        const kind: FileKind = name === "delete" ? "delete" : name === "write" && call.existed.get(path) === false ? "add" : "update";
+        pending.files.set(path, kind);
+      }
+    }
+    schedule();
+  });
+
+  on("agent_end", (event, ctx) => {
+    // A retry or queued work goes on: still the same turn.
+    if (event.willContinue === true) {
+      schedule();
+      return;
+    }
+    const messages = Array.isArray(event.messages) ? event.messages : [];
+    const last = [...messages].reverse().find((message) => record(message)?.role === "assistant");
+    const stop = record(last)?.stopReason;
+    const outcome = stop === "error" ? "failed" : stop === "aborted" ? "cancelled" : undefined;
+    // The start is still waiting: it goes first, so the report that ends the turn ends something.
+    if (pending.turn?.phase === "start") flush();
+    pending.turn = {
+      phase: "end",
+      ...(outcome ? { outcome } : {}),
+      ...(turnStartedAt ? { duration_ms: Math.max(0, Date.now() - turnStartedAt) } : {}),
+    };
+    const context = contextOf(ctx, false);
+    if (context) pending.context = context;
+    const cost = costOf(ctx);
+    if (cost !== undefined) pending.cost_usd = cost;
+    flush();
   });
 }

@@ -30,6 +30,7 @@ mod history;
 mod history_sessions;
 mod hooks;
 mod insight;
+mod insight_terminal;
 mod login_env;
 mod lsp;
 mod mawas;

@@ -5,6 +5,7 @@
 use std::io::{IsTerminal as _, Read as _};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use hutan_core::insight::InsightReport;
 use hutan_core::{NodeKind, NodeOutcome, SessionId, Usage};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, AgentState, Request,
@@ -28,16 +29,18 @@ pub(super) async fn run(ctx: Option<Ctx>, command: &AgentCommand) {
     // Taken first: the order in which hooks start is the order of their events.
     let default_seq = nanos_since_epoch();
     // Always consumed, so the agent writing it never meets a closed pipe.
-    let hook_input = match command {
-        AgentCommand::Hook(_) => read_hook_input(),
+    let stdin = match command {
+        AgentCommand::Hook(_) | AgentCommand::Statusline => read_stdin(),
+        AgentCommand::Report(args) if args.insight_json.as_deref() == Some("-") => read_stdin(),
         AgentCommand::Report(_) | AgentCommand::Release(_) | AgentCommand::Interrupt(_) => None,
     };
     let Some(ctx) = ctx else { return };
     let Some(session) = session_from_env() else {
         return;
     };
+    let json = || serde_json::from_str::<Value>(stdin.as_deref()?).ok();
     let request = match command {
-        AgentCommand::Report(args) => report_request(args, session, default_seq),
+        AgentCommand::Report(args) => report_request(args, stdin.as_deref(), session, default_seq),
         AgentCommand::Release(args) => Some(Request::AgentRelease(AgentReleaseRequest {
             session_id: session,
             source: args.source.clone(),
@@ -46,7 +49,10 @@ pub(super) async fn run(ctx: Option<Ctx>, command: &AgentCommand) {
             outcome: args.outcome.map(outcome),
         })),
         AgentCommand::Hook(args) => {
-            hook_input.and_then(|input| hook_request(args.agent, &input, session, default_seq))
+            json().and_then(|input| hook_request(args.agent, &input, session, default_seq))
+        }
+        AgentCommand::Statusline => {
+            json().and_then(|input| statusline_request(&input, session, default_seq))
         }
         // A user command with output and exit codes: `commands.rs` runs it, not this path.
         AgentCommand::Interrupt(_) => None,
@@ -60,11 +66,22 @@ pub(super) async fn run(ctx: Option<Ctx>, command: &AgentCommand) {
     .await;
 }
 
-/// `hutan agent report`; `None` when `--usage-json` is not a usage object (the report is
-/// dropped rather than sent without the numbers it was meant to carry).
-fn report_request(args: &AgentReportArgs, session: SessionId, default_seq: u64) -> Option<Request> {
+/// `hutan agent report`; `None` when `--usage-json` is not a usage object or `--insight-json` is
+/// not an insight report (the report is dropped rather than sent without the numbers it was
+/// meant to carry). `stdin` is what standard input held when `--insight-json` is `-`.
+fn report_request(
+    args: &AgentReportArgs,
+    stdin: Option<&str>,
+    session: SessionId,
+    default_seq: u64,
+) -> Option<Request> {
     let usage = match &args.usage_json {
         Some(json) => Some(serde_json::from_str::<Usage>(json).ok()?),
+        None => None,
+    };
+    let insight = match args.insight_json.as_deref() {
+        Some("-") => Some(serde_json::from_str::<InsightReport>(stdin?).ok()?),
+        Some(json) => Some(serde_json::from_str::<InsightReport>(json).ok()?),
         None => None,
     };
     let node = args.node.as_ref().map(|id| NodeReport {
@@ -87,12 +104,31 @@ fn report_request(args: &AgentReportArgs, session: SessionId, default_seq: u64) 
         session_id: session,
         source: args.source.clone(),
         agent: args.agent.clone(),
-        state: Some(state(args.state)),
+        state: args.state.map(state),
         message: args.message.clone(),
         seq: args.seq.unwrap_or(default_seq),
         agent_session_id: args.agent_session_id.clone(),
         resume_argv: (!args.resume_argv.is_empty()).then(|| args.resume_argv.clone()),
         node,
+        insight,
+    }))
+}
+
+/// One tick of Claude Code's status line (`hutan agent statusline`): an insight-only report.
+fn statusline_request(input: &Value, session: SessionId, seq: u64) -> Option<Request> {
+    let insight = hook::insight::from_statusline(input)?;
+    Some(Request::AgentReport(AgentReportRequest {
+        pid: None,
+        session_id: session,
+        source: hook::CLAUDE_STATUSLINE_SOURCE.to_owned(),
+        agent: "claude".to_owned(),
+        state: None,
+        message: None,
+        seq,
+        agent_session_id: None,
+        resume_argv: None,
+        node: None,
+        insight: Some(insight),
     }))
 }
 
@@ -115,6 +151,7 @@ fn hook_request(
             agent_session_id,
             resume_argv,
             node,
+            insight,
         } => Request::AgentReport(AgentReportRequest {
             pid: None,
             session_id: session,
@@ -126,6 +163,7 @@ fn hook_request(
             agent_session_id,
             resume_argv: (!resume_argv.is_empty()).then_some(resume_argv),
             node: node.map(node_report),
+            insight,
         }),
         Plan::Release { source, node } => Request::AgentRelease(AgentReleaseRequest {
             session_id: session,
@@ -174,8 +212,8 @@ pub(crate) fn session_from_env() -> Option<SessionId> {
     std::env::var("HUTAN_SESSION_ID").ok()?.parse().ok()
 }
 
-/// The JSON document the agent wrote to the hook's stdin; `None` when there is none.
-fn read_hook_input() -> Option<Value> {
+/// What the agent (or the extension) wrote to standard input; `None` when there is none.
+fn read_stdin() -> Option<String> {
     let mut stdin = std::io::stdin();
     if stdin.is_terminal() {
         return None;
@@ -186,7 +224,7 @@ fn read_hook_input() -> Option<Value> {
         .take(MAX_HOOK_INPUT)
         .read_to_string(&mut text)
         .ok()?;
-    serde_json::from_str(&text).ok()
+    Some(text)
 }
 
 fn nanos_since_epoch() -> u64 {
