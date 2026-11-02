@@ -743,6 +743,11 @@ impl SessionsStore {
                     }
                     Err(RecvError::Lagged(missed)) => {
                         tracing::debug!("missed {missed} daemon notices");
+                        // Some of them were `terminal.block` events: the blocks of every
+                        // terminal on screen are asked for again.
+                        if this.update(cx, |this, cx| this.refetch_blocks(cx)).is_err() {
+                            break;
+                        }
                     }
                     Err(RecvError::Closed) => break,
                 }
@@ -1147,6 +1152,19 @@ impl SessionsStore {
                 .map(|(session, ids)| (session, ids.into_iter().collect()))
                 .collect(),
         );
+    }
+
+    /// The notice stream dropped events (a burst larger than its buffer): the blocks every
+    /// attached terminal holds may miss changes, so each one loads its list again.
+    fn refetch_blocks(&mut self, cx: &mut Context<Self>) {
+        let attached: Vec<_> = self
+            .terminals
+            .values()
+            .filter_map(WeakEntity::upgrade)
+            .collect();
+        for session in attached {
+            session.update(cx, |session, cx| session.refetch_blocks(cx));
+        }
     }
 
     fn apply_notice(&mut self, notice: &Notice, cx: &mut Context<Self>) {

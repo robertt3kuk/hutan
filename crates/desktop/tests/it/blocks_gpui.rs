@@ -343,6 +343,49 @@ fn scripted(daemon: &TestDaemon, count: u32) -> hutan_protocol::messages::Sessio
     ))
 }
 
+/// More `terminal.block` events reach the window than its notice buffer holds (256) before it
+/// reads any of them: it notices the gap and loads the blocks again instead of keeping what the
+/// surviving events left of them.
+#[gpui::test]
+fn lost_block_events_are_made_up_by_loading_the_blocks_again(cx: &mut TestAppContext) {
+    const COMMANDS: u32 = 400; // four events each, more than the daemon retells after a gap
+    let daemon = TestDaemon::start();
+    let info = daemon.sh(&format!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007'; read go; i=1; \
+         while [ $i -le {COMMANDS} ]; do \
+         printf '\\033]133;A\\007$ \\033]133;B\\007cmd%d\\r\\n\\033]133;C\\007out%d\\r\\n\\033]133;D;0\\007' $i $i; \
+         i=$((i+1)); done; printf '\\033]133;A\\007$ \\033]133;B\\007'; sleep 600"
+    ));
+    let terminal = terminal_of(&info);
+    let connection = daemon.connection();
+    let (view, cx) = open_with(
+        cx,
+        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        connection.clone(),
+        None,
+    );
+    wait_synced(&view, cx, 1);
+    open_session(&view, cx, info.id);
+    wait_blocks(&view, cx, info.id, "the first prompt", |b| b.len() == 1);
+
+    // The commands run while nothing in the window runs: their events pile up in its notice
+    // buffer, and the window reads them only once all of them are there.
+    daemon.send_input(terminal, b"\n");
+    while finished(&daemon.blocks(terminal)) < COMMANDS as usize {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    daemon.round_trip(&connection, terminal);
+
+    wait_blocks(
+        &view,
+        cx,
+        info.id,
+        "every command, as the daemon has them",
+        |b| finished(b) == COMMANDS as usize,
+    );
+    assert_eq!(blocks(&view, cx, info.id), daemon.blocks(terminal));
+}
+
 #[gpui::test]
 fn the_inspector_lists_the_last_twenty_blocks_and_jumps_to_one(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();

@@ -370,6 +370,12 @@ impl TerminalSession {
         });
     }
 
+    /// Loads the list again although no snapshot asks for it: events were lost.
+    pub fn refetch_blocks(&mut self, cx: &mut Context<Self>) {
+        self.blocks_stale = true;
+        self.fetch_blocks(cx);
+    }
+
     fn finish_fetch(
         &mut self,
         terminal: TerminalId,

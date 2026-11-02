@@ -609,6 +609,15 @@ impl TestDaemon {
         });
     }
 
+    /// One request on `connection` (the one a desktop uses), waited for: every event the daemon
+    /// sent that connection before the answer has reached it, without anything having run in
+    /// the window meanwhile.
+    pub fn round_trip(&self, connection: &Connection, terminal: hutan_core::TerminalId) {
+        let connection = connection.clone();
+        self.rt()
+            .block_on(async move { connection.fetch_blocks(terminal).await.unwrap() });
+    }
+
     /// The daemon's blocks of `terminal`, oldest first.
     pub fn blocks(&self, terminal: hutan_core::TerminalId) -> Vec<hutan_protocol::blocks::Block> {
         let result: hutan_protocol::blocks::TerminalBlocksResult = self.call(
