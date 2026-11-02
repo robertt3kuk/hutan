@@ -1160,7 +1160,8 @@ fn a_workspace_is_renamed_in_place_and_deleting_it_keeps_its_projects(cx: &mut T
             "Rename…",
             "Add Folder…",
             "Delete Workspace…",
-            "Reveal in Finder"
+            "Reveal in Finder",
+            "Check with Mawas"
         ]
     );
     run_entry(&view, cx, "Rename");

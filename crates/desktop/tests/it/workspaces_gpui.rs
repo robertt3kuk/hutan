@@ -1240,7 +1240,8 @@ fn the_project_and_workspace_menus_pin_rename_add_folders_and_close(cx: &mut Tes
             "Rename…",
             "Add Folder…",
             "Delete Workspace…",
-            "Reveal in Finder (no folders yet)"
+            "Reveal in Finder (no folders yet)",
+            "Check with Mawas"
         ]
     );
     for folder in [extra.clone(), extra_too.clone()] {
