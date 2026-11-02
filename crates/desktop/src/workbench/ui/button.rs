@@ -854,6 +854,11 @@ mod audit {
             "a Today row, a tab of the rail and an agent of the Recent tab",
         ),
         (
+            "desktop/src/workbench/panels/findings_ui.rs",
+            1,
+            "a finding's head row, which opens and closes its evidence",
+        ),
+        (
             "desktop/src/workbench/panels/changes.rs",
             3,
             "a checkout header, a changed file row and the \"N more files\" row",
