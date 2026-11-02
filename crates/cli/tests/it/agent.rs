@@ -804,6 +804,8 @@ async fn agents_verify_prints_the_command_then_the_result_and_exits_one_unless_i
         let out = finish(command(Path::new(HUTAN), Some(&t.paths.socket), &args)).await;
         assert_ne!(out.code, 0, "{args:?}: {}", out.stdout);
     }
+    t.stop().await;
+}
 
 /// Runs `hutan agent statusline` with `input` on stdin, as the status-line tee does.
 async fn statusline(socket: &Path, session: &str, input: &str) -> common::Out {

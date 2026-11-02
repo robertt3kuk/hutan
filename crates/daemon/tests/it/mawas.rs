@@ -2473,6 +2473,7 @@ async fn a_verification_run_shows_its_command_and_folder_and_deny_runs_nothing()
                 agent_session_id: None,
                 resume_argv: None,
                 node: None,
+                insight: None,
             },
         ))
         .await

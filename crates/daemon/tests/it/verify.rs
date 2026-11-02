@@ -398,6 +398,7 @@ async fn a_run_is_refused_while_the_sessions_own_turn_runs_unless_the_user_force
             agent_session_id: None,
             resume_argv: None,
             node: None,
+            insight: None,
         }))
     };
     report(AgentState::Working, 1).await.unwrap();
