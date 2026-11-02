@@ -2425,15 +2425,16 @@ pub struct AgentsArgs {
     /// With --stats: what the groups are made by (default: project)
     #[arg(long, value_enum, value_name = "BY", requires = "stats")]
     pub by: Option<StatsByArg>,
-    /// With --activity or --stats: how far back, as a number and a unit (`90s`, `30m`, `2h`,
-    /// `1d`; `7d` for --stats); default 24h for --activity, 7d for --stats
+    /// With --activity, --stats or --check: how far back, as a number and a unit (`90s`, `30m`,
+    /// `2h`, `1d`; `7d` for --stats); default 24h for --activity, 7d for --stats, all for --check
     #[arg(long, value_name = "AGO")]
     pub since: Option<String>,
     /// With --activity: the most events to list (1 to 200; default 100); with --stats: the most
-    /// groups (1 to 50; default 20)
+    /// groups (1 to 50; default 20); with --check: the most findings (1 to 200; default 100)
     #[arg(long, value_name = "N")]
     pub limit: Option<u32>,
-    /// With --board, --activity or --stats: only this workspace or project (name, id or unique prefix)
+    /// With --board, --activity, --stats or --check: only this workspace or project (name, id or
+    /// unique prefix)
     #[arg(long, value_name = "WORKSPACE")]
     pub ws: Option<String>,
     /// With --board: list the agents that have finished too
@@ -2476,6 +2477,35 @@ pub struct AgentsArgs {
     /// run would race it)
     #[arg(long, requires = "verify")]
     pub force: bool,
+    /// Check instead: what is wrong in a workspace or a session — findings of deterministic
+    /// detectors (a turn that ended "done" after its last test command failed, tests edited or
+    /// weakened, the same failure again and again, two agents on one file, a stall …), each
+    /// with its confidence (exact or heuristic) and evidence, and for every session which
+    /// detectors ran and which could not and why. Narrow with --ws or --session
+    #[arg(
+        long,
+        conflicts_with_all = ["target", "watch", "board", "activity", "stats", "review", "verify", "dismiss"]
+    )]
+    pub check: bool,
+    /// With --check: only this session (id, unique id prefix, or title)
+    #[arg(
+        long,
+        value_name = "SESSION",
+        requires = "check",
+        conflicts_with = "ws"
+    )]
+    pub session: Option<String>,
+    /// With --check: also list the findings that were dismissed
+    #[arg(long, requires = "check")]
+    pub include_dismissed: bool,
+    /// Dismiss one finding (its id, `chk_…`, as --check prints it). Only you can: an agent's
+    /// connection is refused. The id is remembered; the finding stays dismissed if it comes back
+    #[arg(
+        long,
+        value_name = "FINDING",
+        conflicts_with_all = ["target", "watch", "board", "activity", "stats", "review", "verify"]
+    )]
+    pub dismiss: Option<String>,
 }
 
 /// `hutan ps`: the processes of the live sessions.

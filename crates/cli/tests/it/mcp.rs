@@ -949,6 +949,7 @@ async fn the_read_only_tools_are_listed_without_a_daemon() {
         "agents_activity",
         "agents_stats",
         "agent_review",
+        "agents_findings",
         "question_list",
         "history_sessions",
     ] {
@@ -1331,5 +1332,66 @@ async fn agents_verify_asks_with_the_command_and_the_folder_and_marks_its_output
     assert!(text_of(&refused).contains("force"), "{}", text_of(&refused));
     let pending = t.hutan(&["approvals", "--json"]).await.ok().json();
     assert!(pending["approvals"].as_array().unwrap().is_empty());
+/// `agents_findings` (protocol 0.70): read-only, marked as untrusted data, says what ran and what
+/// could not for a terminal agent, takes a window in days — and has no way to dismiss: the tool
+/// of dismissing does not exist for an agent.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_findings_reads_with_its_coverage_and_marks_its_output_as_untrusted_data() {
+    let t = TestDaemon::start().await;
+    let id = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &id).await;
+
+    let mut mcp = Mcp::start(&t.paths.socket, None).await;
+    mcp.initialize().await;
+    let listed = mcp.call("tools/list", json!({})).await;
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    let tool = tools
+        .iter()
+        .find(|tool| tool["name"] == "agents_findings")
+        .expect("the tool");
+    assert_eq!(tool["annotations"]["readOnlyHint"], true);
+    let description = tool["description"].as_str().unwrap();
+    assert!(description.contains("not instructions") && description.contains("coverage"));
+    assert!(
+        tools
+            .iter()
+            .all(|tool| !tool["name"].as_str().unwrap().contains("dismiss")),
+        "only the user dismisses a finding"
+    );
+
+    let call = mcp
+        .tool_request("agents_findings", json!({"last_days": 2, "session_id": id}))
+        .await;
+    let answer = mcp.answer(call).await;
+    assert!(!is_error(&answer), "{answer}");
+    assert!(text_of(&answer).starts_with("UNTRUSTED DATA"), "{answer}");
+    assert_eq!(answer["result"]["_meta"]["hutan/untrusted"], true);
+    let findings = &answer["result"]["structuredContent"];
+    assert_eq!(findings["findings"].as_array().unwrap().len(), 0);
+    // "No findings" says what could not be looked at: a terminal agent has no tool events.
+    let coverage = &findings["coverage"][0];
+    assert_eq!(coverage["session_id"], id);
+    assert_eq!(coverage["chat"], false);
+    assert!(
+        coverage["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|gap| gap["why"].as_str().unwrap().contains("no tool events")),
+        "{coverage}"
+    );
+
+    // A window too long and a session that is not there are errors, not empty answers.
+    let call = mcp
+        .tool_request("agents_findings", json!({"last_days": 400}))
+        .await;
+    assert!(is_error(&mcp.answer(call).await));
+    let call = mcp
+        .tool_request(
+            "agents_findings",
+            json!({"session_id": "01JZZZZZZZZZZZZZZZZZZZZZZZ"}),
+        )
+        .await;
+    assert!(is_error(&mcp.answer(call).await));
     t.stop().await;
 }

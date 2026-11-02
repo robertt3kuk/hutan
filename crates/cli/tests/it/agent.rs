@@ -800,6 +800,152 @@ async fn agents_verify_prints_the_command_then_the_result_and_exits_one_unless_i
         vec!["agents", "--command", "true"],
         vec!["agents", "--force"],
         vec!["agents", "--verify", "no-such-session"],
+/// A repository on `main` with one commit, in a fresh temporary folder: where two agents can
+/// share a checkout.
+fn repository() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(root.join("a.txt"), "alpha\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "init"]);
+    (dir, root)
+}
+
+/// `hutan agents --check` (protocol 0.70): two agents working in one checkout are a finding that
+/// says how sure it is and where to look; the text says what could not be checked for a terminal
+/// agent; `--json` is the answer itself; only the user dismisses, by id — an agent's connection
+/// is refused — and a dismissed finding is hidden until it is asked for.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_check_lists_findings_with_their_coverage_and_only_the_user_dismisses() {
+    let t = TestDaemon::start().await;
+    let (_keep, root) = repository();
+    let cwd = root.display().to_string();
+    let script = r#"[ "$HUTAN_ENV" = 1 ] || exit 3
+"$HUTAN_BIN" agent report --source self --agent fake --state working
+exec sleep 600"#;
+    let first = t.new_session(&["--cwd", &cwd], &["sh", "-c", script]).await;
+    let second = t.new_session(&["--cwd", &cwd], &["sh", "-c", script]).await;
+    wait_agent_state(&t, &first, "working").await;
+    wait_agent_state(&t, &second, "working").await;
+
+    // The placement settles a moment after the reports: wait for the finding, not for time.
+    let answer = timeout(WAIT, async {
+        loop {
+            let answer = t.hutan(&["--json", "agents", "--check"]).await.ok().json();
+            if answer["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["detector"] == "shared_checkout")
+            {
+                return answer;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the shared checkout never showed in the findings");
+    let finding = answer["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["detector"] == "shared_checkout")
+        .unwrap();
+    assert_eq!(finding["severity"], "warn");
+    assert_eq!(finding["confidence"], "exact");
+    assert_eq!(finding["count"], 2);
+    let id = finding["id"].as_str().unwrap().to_owned();
+    assert!(id.starts_with("chk_") && id.len() == 20, "{id}");
+    assert_eq!(answer["counts"]["warn"], 1);
+    assert_eq!(answer["coverage"].as_array().unwrap().len(), 2);
+
+    // The text: the finding with its confidence and id, then what could not be checked.
+    let text = t.hutan(&["agents", "--check"]).await.ok().stdout;
+    for needle in [
+        "Findings: 0 alert · 1 warn · 0 info",
+        "WARN [exact] 2 agents write to one checkout",
+        &id,
+        "Coverage (which detectors ran, and which could not):",
+        "terminal agent: 3 of 20 detectors ran",
+        "terminal agent: no tool events — install the integration",
+    ] {
+        assert!(text.contains(needle), "{needle:?} missing from:\n{text}");
+    }
+
+    // One session; the same finding is about it.
+    let one = t
+        .hutan(&["--json", "agents", "--check", "--session", &first])
+        .await
+        .ok()
+        .json();
+    assert_eq!(one["coverage"].as_array().unwrap().len(), 1);
+    assert_eq!(one["findings"][0]["id"], id.as_str());
+
+    // An agent's connection may read but never dismiss.
+    let as_agent = finish(agent_command(
+        &t.paths.socket,
+        Some(&first),
+        &["--json", "agents", "--check"],
+    ))
+    .await;
+    assert_eq!(as_agent.code, 0, "{}", as_agent.stderr);
+    let refused = finish(agent_command(
+        &t.paths.socket,
+        Some(&first),
+        &["agents", "--dismiss", &id],
+    ))
+    .await;
+    assert_ne!(
+        refused.code, 0,
+        "an agent hid a problem: {}",
+        refused.stdout
+    );
+    assert!(
+        !t.hutan(&["agents", "--check"])
+            .await
+            .ok()
+            .stdout
+            .contains("dismissed finding")
+    );
+
+    // The user dismisses it: it is hidden, counted, and listed when asked for.
+    let said = t.hutan(&["agents", "--dismiss", &id]).await.ok().stdout;
+    assert!(said.starts_with(&format!("Dismissed {id}")), "{said}");
+    let hidden = t.hutan(&["agents", "--check"]).await.ok().stdout;
+    assert!(hidden.contains("1 dismissed finding is hidden"), "{hidden}");
+    assert!(hidden.contains("No findings."), "{hidden}");
+    let shown = t
+        .hutan(&["agents", "--check", "--include-dismissed"])
+        .await
+        .ok()
+        .stdout;
+    assert!(shown.contains("(dismissed)"), "{shown}");
+
+    // Errors say what is wrong; options that do not go together are refused.
+    for args in [
+        vec!["agents", "--dismiss", "not-an-id"],
+        vec!["agents", "--check", "--ws", "no-such-workspace"],
+        vec!["agents", "--check", "--session", "no-such-session"],
+        vec!["agents", "--check", "--stats"],
+        vec!["agents", "--check", "--session", &first, "--ws", "x"],
+        vec!["agents", "--dismiss", &id, "--check"],
+        vec!["agents", "--include-dismissed"],
+        vec!["agents", "--check", "--since", "soon"],
     ] {
         let out = finish(command(Path::new(HUTAN), Some(&t.paths.socket), &args)).await;
         assert_ne!(out.code, 0, "{args:?}: {}", out.stdout);

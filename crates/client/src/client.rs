@@ -257,6 +257,8 @@ pub(crate) const AGENTS_REVIEW_CAPABILITY: &str = "agents.review";
 /// Capability for `agents.verify`, `agents.verify.plan`, `agents.verify.cancel` and their events
 /// (protocol 0.70).
 pub(crate) const AGENTS_VERIFY_CAPABILITY: &str = "agents.verify";
+/// Capability for `agents.findings` and `agents.findings.dismiss` (protocol 0.71).
+pub(crate) const AGENTS_FINDINGS_CAPABILITY: &str = "agents.findings";
 /// Capability for `digest.status` and `ChatInfo.digest` (protocol 0.69).
 pub(crate) const DIGEST_MODEL_CAPABILITY: &str = "digest.model";
 /// Capability for `ClientFocus.window_active`, `IntentKind::Digest` and `ui.open`'s `view`
@@ -337,6 +339,7 @@ const CAPABILITIES: &[&str] = &[
     NOTIFY_DIGEST_CAPABILITY,
     AGENTS_VERIFY_CAPABILITY,
     AGENT_INSIGHT_REPORT_CAPABILITY,
+    AGENTS_FINDINGS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -757,6 +760,33 @@ impl Client {
             ))
             .await?;
         Ok(())
+    /// True when the daemon advertised capability `agents.findings` (protocol 0.70).
+    pub fn supports_agents_findings(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENTS_FINDINGS_CAPABILITY)
+    }
+
+    /// `agents.findings`: what is wrong in a session or a workspace — findings with their
+    /// confidence and evidence, and the coverage of every session.
+    pub async fn agents_findings(
+        &self,
+        request: hutan_protocol::checks::AgentsFindingsRequest,
+    ) -> Result<hutan_protocol::checks::AgentsFindings, ClientError> {
+        self.call(Request::AgentsFindings(request)).await
+    }
+
+    /// `agents.findings.dismiss`: the user dismisses a finding (a user-only request: an agent's
+    /// connection is refused).
+    pub async fn agents_findings_dismiss(
+        &self,
+        id: String,
+    ) -> Result<hutan_protocol::checks::FindingDismissed, ClientError> {
+        self.call(Request::AgentsFindingsDismiss(
+            hutan_protocol::checks::AgentsFindingsDismiss { id },
+        ))
+        .await
     }
 
     /// True when the daemon advertised capability `agent.insight` (protocol 0.59).

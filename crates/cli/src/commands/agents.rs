@@ -12,6 +12,7 @@ use hutan_protocol::board::{
     AgentsBoard, AgentsBoardRequest, BoardAgent, BoardGroup, BoardKind, BoardSource, BoardState,
     BoardWaitKind,
 };
+use hutan_protocol::checks::{AgentsFindings, AgentsFindingsRequest};
 use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, Subscribed};
 use hutan_protocol::review::AgentsReviewRequest;
 use hutan_protocol::stats::{
@@ -47,9 +48,16 @@ impl Ctx {
                 .agents_verify(&client, target, args.command.as_deref(), args.force)
                 .await;
         }
+        if args.check {
+            return self.agents_check(&client, &args).await;
+        }
+        if let Some(id) = &args.dismiss {
+            return self.agents_dismiss(&client, id).await;
+        }
         if args.ws.is_some() || args.since.is_some() || args.limit.is_some() {
             return Err(CliError::Usage(
-                "--ws, --since and --limit go with --board, --activity or --stats".to_owned(),
+                "--ws, --since and --limit go with --board, --activity, --stats or --check"
+                    .to_owned(),
             ));
         }
         if !client.supports_agent_tree() {
@@ -189,6 +197,203 @@ impl Ctx {
             tree_report(&observations, &sessions, now_ms())
         })
     }
+}
+
+impl Ctx {
+    /// `--check`: `agents.findings` (protocol 0.70), as text or `--json`.
+    async fn agents_check(&self, client: &Client, args: &AgentsArgs) -> Result<(), CliError> {
+        if !client.supports_agents_findings() {
+            return Err(CliError::Failed(
+                "this daemon has no findings (it predates protocol 0.70); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let now = now_ms();
+        let since_ms = match &args.since {
+            Some(ago) => Some(now.saturating_sub(parse_ago(ago)?)),
+            None => None,
+        };
+        let workspace_id = match &args.ws {
+            Some(target) => Some(self.resolve_workspace_id(client, target).await?),
+            None => None,
+        };
+        let session_id = match &args.session {
+            Some(target) => {
+                let sessions = self.session_list(client, None).await?.sessions;
+                Some(super::sessions::resolve_target(&sessions, target)?.id)
+            }
+            None => None,
+        };
+        let answer = client
+            .agents_findings(AgentsFindingsRequest {
+                workspace_id,
+                session_id,
+                since_ms,
+                include_dismissed: args.include_dismissed,
+                limit: args.limit,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&answer, || findings_text(&answer, now))
+    }
+
+    /// `--dismiss`: `agents.findings.dismiss` (protocol 0.70). Only the user's connection is
+    /// let through.
+    async fn agents_dismiss(&self, client: &Client, id: &str) -> Result<(), CliError> {
+        if !client.supports_agents_findings() {
+            return Err(CliError::Failed(
+                "this daemon has no findings (it predates protocol 0.70); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let dismissed = client
+            .agents_findings_dismiss(id.to_owned())
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&dismissed, || {
+            format!(
+                "Dismissed {} ({}). It stays dismissed if the problem comes back.",
+                dismissed.id,
+                hutan_client::time::local_time_text(dismissed.dismissed_at_ms)
+            )
+        })
+    }
+}
+
+/// The findings as text: the counts, each finding by severity with its confidence, its session,
+/// when it was last seen, its id and its evidence; then which detectors ran and which could not
+/// for every session, and what no detector can see.
+pub(super) fn findings_text(answer: &AgentsFindings, now_ms: u64) -> String {
+    use std::fmt::Write as _;
+    let session_label = |id: hutan_core::SessionId| -> String {
+        answer
+            .coverage
+            .iter()
+            .find(|c| c.session_id == id)
+            .map_or_else(
+                || id.to_string(),
+                |c| match &c.harness {
+                    Some(harness) => format!("{} ({harness})", c.title),
+                    None => c.title.clone(),
+                },
+            )
+    };
+    let counts = &answer.counts;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "Findings: {} alert · {} warn · {} info",
+        counts.alert, counts.warn, counts.info
+    );
+    if answer.omitted > 0 {
+        let _ = writeln!(
+            out,
+            "  {} more are not listed (the least important; narrow with --ws or --session)",
+            answer.omitted
+        );
+    }
+    if answer.dismissed_hidden > 0 {
+        let _ = writeln!(
+            out,
+            "  {} dismissed {} hidden (--include-dismissed lists them)",
+            answer.dismissed_hidden,
+            if answer.dismissed_hidden == 1 {
+                "finding is"
+            } else {
+                "findings are"
+            }
+        );
+    }
+    for cut in &answer.cut {
+        let _ = writeln!(out, "  cut to fit: {cut}");
+    }
+    if answer.findings.is_empty() {
+        let _ = writeln!(
+            out,
+            "\nNo findings. That is not \"nothing is wrong\": see what could not be checked below."
+        );
+    }
+    for finding in &answer.findings {
+        let severity = finding.severity.as_str().to_uppercase();
+        let _ = writeln!(
+            out,
+            "\n{severity} [{}] {}{}",
+            finding.confidence.as_str(),
+            finding.title,
+            if finding.dismissed {
+                " (dismissed)"
+            } else {
+                ""
+            }
+        );
+        let whose = match finding.scope.session_id {
+            Some(id) => session_label(id),
+            None => "across sessions".to_owned(),
+        };
+        let seen = if finding.count > 1 {
+            format!("{}× · last seen", finding.count)
+        } else {
+            "seen".to_owned()
+        };
+        let _ = writeln!(
+            out,
+            "  {whose} · {} · {seen} {} · {}",
+            finding.detector,
+            hutan_client::time::relative_text(now_ms, finding.last_at_ms),
+            finding.id
+        );
+        for item in &finding.evidence {
+            let _ = writeln!(
+                out,
+                "    {:?}: {}{}",
+                item.kind,
+                item.excerpt,
+                if item.redacted { " [redacted]" } else { "" }
+            );
+        }
+    }
+    let _ = writeln!(
+        out,
+        "\nCoverage (which detectors ran, and which could not):"
+    );
+    for c in &answer.coverage {
+        let kind = if c.chat { "chat" } else { "terminal agent" };
+        let _ = writeln!(
+            out,
+            "  {}{} — {kind}: {} of {} detectors ran",
+            c.title,
+            c.harness
+                .as_deref()
+                .map(|h| format!(" ({h})"))
+                .unwrap_or_default(),
+            if c.ran.is_empty() {
+                "see the gaps; the list was cut".to_owned()
+            } else {
+                c.ran.len().to_string()
+            },
+            hutan_protocol::checks::detector::ALL.len()
+        );
+        for gap in &c.gaps {
+            let _ = writeln!(
+                out,
+                "    could not run {}: {}",
+                gap.detectors.join(", "),
+                gap.why
+            );
+        }
+    }
+    if answer.coverage_omitted > 0 {
+        let _ = writeln!(out, "  … {} more sessions", answer.coverage_omitted);
+    }
+    if !answer.not_recorded.is_empty() {
+        let _ = writeln!(out, "\nNot recorded:");
+        for n in &answer.not_recorded {
+            let _ = writeln!(out, "  {} — {}", n.what, n.why);
+        }
+    }
+    out.trim_end().to_owned()
 }
 
 impl Ctx {

@@ -1396,6 +1396,30 @@ impl Connection {
     pub async fn agents_verify_cancel(&self, session_id: SessionId) -> Result<(), ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
         client.agents_verify_cancel(session_id).await
+    /// True while connected to a daemon that advertised capability `agents.findings`
+    /// ([`Client::supports_agents_findings`]); false when disconnected.
+    pub fn supports_agents_findings(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_agents_findings())
+    }
+
+    /// `agents.findings` ([`Client::agents_findings`]).
+    pub async fn agents_findings(
+        &self,
+        request: hutan_protocol::checks::AgentsFindingsRequest,
+    ) -> Result<hutan_protocol::checks::AgentsFindings, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agents_findings(request).await
+    }
+
+    /// `agents.findings.dismiss` ([`Client::agents_findings_dismiss`]).
+    pub async fn agents_findings_dismiss(
+        &self,
+        id: String,
+    ) -> Result<hutan_protocol::checks::FindingDismissed, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agents_findings_dismiss(id).await
     }
 
     /// `agent.measure_context` ([`Client::agent_measure_context`]).

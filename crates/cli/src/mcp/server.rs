@@ -696,6 +696,7 @@ mod tests {
             "agents_board",
             "agents_activity",
             "agents_stats",
+            "agents_findings",
             "question_list",
         ] {
             assert!(names.contains(&kept), "{kept}");
