@@ -150,7 +150,7 @@ pub enum Notice {
     UpdateInstall {
         install: Box<hutan_protocol::update::UpdateInstall>,
     },
-    /// A verification run of a session started (`agents.verify.started`, protocol 0.71).
+    /// A verification run of a session started (`agents.verify.started`, protocol 0.70).
     VerifyStarted {
         run: Box<hutan_protocol::verify::VerifyRun>,
     },

@@ -1202,7 +1202,7 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentsStats(_) => ("agents.stats", Read),
         // What an agent did in one turn (protocol 0.66): read-only, redacted, bounded.
         Request::AgentsReview(_) => ("agents.review", Read),
-        // Hutan runs a session's tests (protocol 0.71): the plan is read-only; a run and its
+        // Hutan runs a session's tests (protocol 0.70): the plan is read-only; a run and its
         // cancel change things, so an agent's request goes through the gate.
         Request::AgentsVerifyPlan(_) => ("agents.verify.plan", Read),
         Request::AgentsVerify(_) => ("agents.verify", Mutate),

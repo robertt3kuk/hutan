@@ -1,4 +1,4 @@
-//! Verification (protocol 0.71, capability `agents.verify`, ADR 0025, design
+//! Verification (protocol 0.70, capability `agents.verify`, ADR 0025, design
 //! `docs/spikes/2026-11-02-checks.md` §4): Hutan runs a session's tests itself and keeps the exit
 //! code, so "the tests pass" is a fact the daemon recorded and not the agent's word.
 //!

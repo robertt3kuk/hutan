@@ -1,4 +1,4 @@
-//! `agents.verify` (protocol 0.71, capability `agents.verify`, ADR 0025, design
+//! `agents.verify` (protocol 0.70, capability `agents.verify`, ADR 0025, design
 //! `docs/spikes/2026-11-02-checks.md` §4): Hutan runs a session's tests itself and keeps the exit
 //! code, so "the tests pass" is a record and not an agent's word (`docs/assistant.md` § Checks ›
 //! Verification, `docs/control.md`).

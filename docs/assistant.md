@@ -245,7 +245,7 @@ Headers: `[shell: <command> · exit <code>|running · <n> lines]`, `[shell: term
 - **From the window.** *Review* on the footer of a finished turn (beside *Fork…*) and *Review Last Turn with Mawas* in the session menus and the Agents page's ⋯ attach the packet to **Mawas's composer as a chip** (`review · api · turn 3`); nothing is sent and nothing is read until you open the chip (it shows the packet's text under the chips) or send the message. For a terminal agent the entry says *Review with Mawas (what it reports)*. The chip is the attachment kind `turn_review`, gated by `[assistant.context] agents` like an agent transcript.
 - **Data, not instructions (R7).** The packet carries text agents and users wrote; the MCP tool marks its result as untrusted data like the board's. It changes nothing: reviewing is a Read.
 
-## Checks › Verification (CHECKS-B, protocol 0.71, capability `agents.verify`; ADR 0025)
+## Checks › Verification (CHECKS-B, protocol 0.70, capability `agents.verify`; ADR 0025)
 
 An agent that says "the tests pass" is giving its word. **Hutan can run the tests itself**, in the session's folder (its worktree when it has one), and keep the exit code, the time and the last 8 KiB of the output: `agents.verify` (design: `docs/spikes/2026-11-02-checks.md` §4). That record, and not the agent's prose, is what says a session's tests pass.
 

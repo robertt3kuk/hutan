@@ -689,7 +689,7 @@ exec sleep 600"#,
     t.stop().await;
 }
 
-/// `hutan agents --verify` (protocol 0.71): the command and the folder come first, then the exit
+/// `hutan agents --verify` (protocol 0.70): the command and the folder come first, then the exit
 /// code and the tail of the output; anything but a pass exits 1; `--json` is the run; a folder
 /// with no test command says what was looked for.
 #[tokio::test(flavor = "multi_thread")]

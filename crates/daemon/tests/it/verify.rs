@@ -1,4 +1,4 @@
-//! `agents.verify` (protocol 0.71) end to end: a real daemon on a temporary `HUTAN_HOME`, terminal
+//! `agents.verify` (protocol 0.70) end to end: a real daemon on a temporary `HUTAN_HOME`, terminal
 //! sessions in scratch folders, and commands that are plain `sh`. Nothing here starts a harness or
 //! calls a model. What the gate does with Mawas's request is in `mawas.rs`; the rules of detection
 //! and of the output are unit tests of `verify`.

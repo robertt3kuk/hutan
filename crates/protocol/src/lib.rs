@@ -2,7 +2,7 @@
 //!
 //! - [`verify`]: `agents.verify`, `agents.verify.plan`, `agents.verify.cancel` and the events
 //!   `agents.verify.started` / `agents.verify.ended` — Hutan runs a session's tests itself and keeps
-//!   the exit code and the tail of the output (protocol 0.71, capability `agents.verify`).
+//!   the exit code and the tail of the output (protocol 0.70, capability `agents.verify`).
 //! - [`review`], [`assistant`]: `agents.review` and the `turn_review` attachment — what an agent did
 //!   in one turn, from the journal, the checkpoint and the language servers, with named heuristic
 //!   signals and what is not recorded (protocol 0.67, capability `agents.review`, ADR 0025).
@@ -180,7 +180,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 71,
+    minor: 70,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -2327,7 +2327,7 @@ async fn a_card_whose_caller_goes_away_is_withdrawn_and_a_late_allow_does_nothin
     m.daemon.stop().await;
 }
 
-// ---- Hutan runs the tests: `agents.verify` through Mawas's gate (CHECKS-B, protocol 0.71) ----
+// ---- Hutan runs the tests: `agents.verify` through Mawas's gate (CHECKS-B, protocol 0.70) ----
 
 /// What Mawas's verification of a terminal session of `alpha` shows and does: the card carries the
 /// exact command and the folder before anything runs, Deny runs nothing, a grant is bound to the

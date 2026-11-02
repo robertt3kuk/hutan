@@ -133,7 +133,7 @@
 //! [checkpoints.projects.hutan]   # per project (name or id): only what differs
 //! mode = "off"
 //!
-//! [checks]                       # Hutan runs a session's tests itself (protocol 0.71, docs/assistant.md § Checks › Verification)
+//! [checks]                       # Hutan runs a session's tests itself (protocol 0.70, docs/assistant.md § Checks › Verification)
 //! test_command = "cargo test"    # default: found from the files of the folder (Cargo.toml, package.json + lockfile, pytest, go.mod, a Makefile `test:`)
 //! verify_timeout_secs = 600      # a run still going after this long is killed
 //!
@@ -227,7 +227,7 @@ pub struct DaemonSettings {
     pub updates: UpdatesSettings,
     /// `[agents]`: what the daemon records about agents (protocol 0.66, ADR 0025).
     pub agents: AgentsSettings,
-    /// `[checks]`: Hutan's own run of a session's tests (protocol 0.71, ADR 0025).
+    /// `[checks]`: Hutan's own run of a session's tests (protocol 0.70, ADR 0025).
     pub checks: ChecksSettings,
 }
 

@@ -301,12 +301,12 @@ pub enum Request {
     /// Read-only; redacted; bounded (24 KiB).
     #[serde(rename = "agents.review")]
     AgentsReview(AgentsReviewRequest),
-    /// Capability `agents.verify` (protocol 0.71): what `agents.verify` would run for a session —
+    /// Capability `agents.verify` (protocol 0.70): what `agents.verify` would run for a session —
     /// the command, the folder, why that command, and whether it would be refused now; answered
     /// with `VerifyPlan`. Read-only.
     #[serde(rename = "agents.verify.plan")]
     AgentsVerifyPlan(AgentsVerifyPlanRequest),
-    /// Capability `agents.verify` (protocol 0.71): Hutan runs the session's tests in its folder
+    /// Capability `agents.verify` (protocol 0.70): Hutan runs the session's tests in its folder
     /// with the user's login environment and answers with the `VerifyRun` when it is over (exit
     /// code, duration, the redacted tail of the output); the run is stored. Mutate: the user's
     /// own request runs; an agent's goes through the control gate, Mawas's through hers, bound
@@ -1782,7 +1782,7 @@ pub enum Event {
     /// question changed (`suggestion` absent: it went away with the request).
     #[serde(rename = "ask.suggestion")]
     AskSuggestion(Box<AskSuggestion>),
-    /// Capability `agents.verify` (protocol 0.71): a verification run started (status
+    /// Capability `agents.verify` (protocol 0.70): a verification run started (status
     /// `running`, no output yet).
     #[serde(rename = "agents.verify.started")]
     AgentsVerifyStarted { run: Box<VerifyRun> },

@@ -226,7 +226,7 @@ impl Ctx {
         self.print(&packet, || packet.text())
     }
 
-    /// `--verify`: `agents.verify` (protocol 0.71). Prints what will run before it runs (the
+    /// `--verify`: `agents.verify` (protocol 0.70). Prints what will run before it runs (the
     /// plan), then the run; exits 1 unless the tests passed. With `--json` only the run is
     /// printed.
     async fn agents_verify(
@@ -238,7 +238,7 @@ impl Ctx {
     ) -> Result<(), CliError> {
         if !client.supports_agents_verify() {
             return Err(CliError::Failed(
-                "this daemon cannot run a session's tests (it predates protocol 0.71); restart \
+                "this daemon cannot run a session's tests (it predates protocol 0.70); restart \
                  it with `hutan daemon stop` and run the command again"
                     .to_owned(),
             ));

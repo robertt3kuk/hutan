@@ -255,7 +255,7 @@ pub(crate) const AGENTS_STATS_CAPABILITY: &str = "agents.stats";
 /// Capability for `agents.review` and the `turn_review` attachment (protocol 0.67).
 pub(crate) const AGENTS_REVIEW_CAPABILITY: &str = "agents.review";
 /// Capability for `agents.verify`, `agents.verify.plan`, `agents.verify.cancel` and their events
-/// (protocol 0.71).
+/// (protocol 0.70).
 pub(crate) const AGENTS_VERIFY_CAPABILITY: &str = "agents.verify";
 /// Capability for `digest.status` and `ChatInfo.digest` (protocol 0.69).
 pub(crate) const DIGEST_MODEL_CAPABILITY: &str = "digest.model";
@@ -721,7 +721,7 @@ impl Client {
         self.call(Request::AgentsReview(request)).await
     }
 
-    /// True when the daemon advertised capability `agents.verify` (protocol 0.71).
+    /// True when the daemon advertised capability `agents.verify` (protocol 0.70).
     pub fn supports_agents_verify(&self) -> bool {
         self.welcome
             .capabilities
