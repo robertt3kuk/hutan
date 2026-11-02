@@ -1317,6 +1317,14 @@ impl Connection {
             .is_some_and(|client| client.supports_agent_insight())
     }
 
+    /// True while connected to a daemon that advertised capability `agent.insight.report`
+    /// ([`Client::supports_agent_insight_report`]); false when disconnected.
+    pub fn supports_agent_insight_report(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_agent_insight_report())
+    }
+
     /// `agent.insight` ([`Client::agent_insight`]).
     pub async fn agent_insight(
         &self,

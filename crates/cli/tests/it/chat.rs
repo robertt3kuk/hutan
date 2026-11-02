@@ -861,7 +861,7 @@ async fn chat_insight_prints_the_context_the_tokens_and_what_the_agent_never_rep
     let empty = c.t.hutan(&["chat", "insight", &id]).await.ok().stdout;
     assert!(empty.contains("Context    not reported yet"), "{empty}");
     assert!(
-        empty.contains("Nothing has reported on this chat yet."),
+        empty.contains("Nothing has reported on this session yet."),
         "{empty}"
     );
 
@@ -906,10 +906,10 @@ async fn chat_insight_prints_the_context_the_tokens_and_what_the_agent_never_rep
     assert_eq!(measure.code, 1, "{measure:?}");
     assert!(measure.stderr.contains("unsupported"), "{measure:?}");
 
-    // A terminal session has no insight; an unknown one says so.
+    // A terminal that runs no agent has no insight (one that does has, protocol 0.72).
     let terminal = c.t.new_session(&[], &["sh", "-c", "sleep 30"]).await;
     let refused = c.t.hutan(&["chat", "insight", &terminal]).await;
     assert_ne!(refused.code, 0);
-    assert!(refused.stderr.contains("terminal session"), "{refused:?}");
+    assert!(refused.stderr.contains("runs an agent"), "{refused:?}");
     c.t.stop().await;
 }

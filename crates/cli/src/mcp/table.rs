@@ -670,15 +670,18 @@ static TOOLS: &[Tool] = &[
     // ---- insight ----------------------------------------------------------------------------
     Tool {
         name: "agent_insight",
-        description: "What an agent chat session's context holds and what its turns spent: the \
-                      context now (tokens used, the model's window, and the breakdown by \
-                      category when the user measured it), tokens per turn (input, output, cache \
-                      read and write, reasoning), the cost where the harness reports one (an \
-                      estimate: Codex reports none), tools used with counts and failures, the \
-                      files the agent changed, durations, which source each block came from, and \
-                      `unsupported`: what this harness never reports. A number nobody reported \
-                      is absent, never zero. No message text, tool output or diff. Read-only: it \
-                      never sends anything to the agent.",
+        description: "What an agent session's context holds and what its turns spent (a chat, or \
+                      a terminal that runs OMP, Claude Code or Codex with its Hutan integration \
+                      installed): the context now (tokens used, the model's window, and the \
+                      breakdown by category when the user measured it), tokens per turn (input, \
+                      output, cache read and write, reasoning), the cost where the harness \
+                      reports one (an estimate: Codex reports none), tools used with counts and \
+                      failures, the files the agent changed, durations, which source each block \
+                      came from (the chat, the OMP extension, hooks, the status line), and \
+                      `unsupported`: what this harness never reports. A terminal agent reports \
+                      less than a chat: what its integration cannot say is absent. A number \
+                      nobody reported is absent, never zero. No message text, tool output or \
+                      diff. Read-only: it never sends anything to the agent.",
         read_only: true,
         call: request("agent.insight"),
         schema: || {

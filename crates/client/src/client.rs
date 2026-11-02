@@ -262,6 +262,9 @@ pub(crate) const DIGEST_MODEL_CAPABILITY: &str = "digest.model";
 /// Capability for `ClientFocus.window_active`, `IntentKind::Digest` and `ui.open`'s `view`
 /// (protocol 0.68).
 pub(crate) const NOTIFY_DIGEST_CAPABILITY: &str = "notify.digest";
+/// Capability for `agent.report`'s `insight`, and `agent.insight` of a terminal that runs an agent
+/// (protocol 0.72).
+pub(crate) const AGENT_INSIGHT_REPORT_CAPABILITY: &str = "agent.insight.report";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -333,6 +336,7 @@ const CAPABILITIES: &[&str] = &[
     DIGEST_MODEL_CAPABILITY,
     NOTIFY_DIGEST_CAPABILITY,
     AGENTS_VERIFY_CAPABILITY,
+    AGENT_INSIGHT_REPORT_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -761,6 +765,15 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == AGENT_INSIGHT_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `agent.insight.report` (protocol 0.72): it
+    /// answers `agent.insight` for a terminal that runs an agent.
+    pub fn supports_agent_insight_report(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENT_INSIGHT_REPORT_CAPABILITY)
     }
 
     /// `agent.insight`: what a chat's context holds, what each turn used, its tools, files and

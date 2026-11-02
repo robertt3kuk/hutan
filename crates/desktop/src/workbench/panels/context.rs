@@ -347,10 +347,14 @@ impl ContextPanel {
             return;
         };
         let store = self.env.sessions.read(cx);
-        let is_chat = store
-            .session(session)
-            .is_some_and(|info| info.chat.is_some());
-        if !is_chat
+        // A chat, or (daemon 0.72) a terminal that runs an agent.
+        let readable = store.session(session).is_some_and(|info| {
+            info.chat.is_some()
+                || ((hutan_agents_view::attention::agent_app(info).is_some()
+                    || info.terminal_agent.is_some())
+                    && store.connection().supports_agent_insight_report())
+        });
+        if !readable
             || store.connection_state() != ConnectionState::Connected
             || !store.connection().supports_agent_insight()
         {
@@ -521,17 +525,19 @@ impl ContextPanel {
             return Some(Empty::NoSession);
         };
         if info.chat.is_none() {
-            return Some(match hutan_agents_view::attention::agent_app(info) {
-                Some(app) => Empty::Terminal {
-                    app: Some(app.to_owned()),
-                    hooks: !card::without_hooks(info),
-                },
-                None if info.terminal_agent.is_some() => Empty::Terminal {
-                    app: None,
-                    hooks: false,
-                },
-                None => Empty::NotAnAgent,
-            });
+            let app = hutan_agents_view::attention::agent_app(info).map(str::to_owned);
+            if app.is_none() && info.terminal_agent.is_none() {
+                return Some(Empty::NotAnAgent);
+            }
+            // A terminal agent shows what its integrations reported (protocol 0.72); until
+            // something did, the panel says what Hutan sees of it and how to see more.
+            return match &self.insight {
+                Some(insight) if !insight.sources.is_empty() || !insight.turns.is_empty() => None,
+                _ => Some(Empty::Terminal {
+                    hooks: app.is_some() && !card::without_hooks(info),
+                    app,
+                }),
+            };
         }
         if store.connection_state() != ConnectionState::Connected {
             return Some(Empty::NotConnected);
@@ -872,15 +878,13 @@ impl ContextPanel {
                     .as_deref()
                     .map_or_else(|| "The agent".to_owned(), model::harness_label);
                 let detail = if *hooks {
-                    format!(
-                        "{who} reports its state to Hutan from this terminal, not its tokens, \
-                         tools, files or cost. A chat shows all of them."
-                    )
+                    model::terminal_hint(app.as_deref(), &who)
                 } else {
                     format!(
                         "Hutan sees only the state {who} shows in this terminal's title. Not \
                          its tokens, tools, files or cost. Install its integration to get its \
-                         state and resume command; a chat shows everything."
+                         state, resume command and what it reports of its context; a chat shows \
+                         everything."
                     )
                 };
                 let action = (!*hooks).then(|| {

@@ -7,7 +7,8 @@ use super::Ctx;
 use crate::args::ChatInsightArgs;
 use crate::error::CliError;
 use hutan_core::insight::{
-    AgentInsight, BreakdownKind, CostKind, Exactness, InsightField, InsightOutcome,
+    AgentInsight, BreakdownKind, CostKind, Exactness, InsightBlock, InsightField, InsightOutcome,
+    InsightSourceKind,
 };
 
 impl Ctx {
@@ -20,7 +21,13 @@ impl Ctx {
                     .to_owned(),
             ));
         }
-        let session = self.resolve_chat(&client, &args.target).await?;
+        // A terminal that runs an agent has an insight too (protocol 0.72); only a chat can be
+        // asked to measure its context.
+        let session = if args.measure {
+            self.resolve_chat(&client, &args.target).await?
+        } else {
+            self.resolve(&client, &args.target).await?
+        };
         let insight = if args.measure {
             let measured = client
                 .agent_measure_context(session.id)
@@ -74,6 +81,47 @@ fn harness_name(harness: &str) -> &str {
     }
 }
 
+fn source_name(source: InsightSourceKind) -> &'static str {
+    match source {
+        InsightSourceKind::Chat => "the chat",
+        InsightSourceKind::Extension => "the OMP extension",
+        InsightSourceKind::Hooks => "hooks",
+        InsightSourceKind::Statusline => "the status line",
+        InsightSourceKind::Transcript => "the transcript",
+        InsightSourceKind::Osc7501 => "the terminal's status",
+    }
+}
+
+fn block_name(block: InsightBlock) -> &'static str {
+    match block {
+        InsightBlock::Context => "context",
+        InsightBlock::Breakdown => "split of the context",
+        InsightBlock::Turns => "turns",
+        InsightBlock::Tools => "tools",
+        InsightBlock::Files => "files",
+        InsightBlock::Time => "time",
+    }
+}
+
+/// Who told each block, grouped by source in the order the blocks come:
+/// `the OMP extension (context, turns, tools) · the status line (time)`.
+fn sources_text(insight: &AgentInsight) -> String {
+    let mut groups: Vec<(InsightSourceKind, Vec<&'static str>)> = Vec::new();
+    for entry in &insight.sources {
+        match groups
+            .iter_mut()
+            .find(|(source, _)| *source == entry.source)
+        {
+            Some((_, blocks)) => blocks.push(block_name(entry.block)),
+            None => groups.push((entry.source, vec![block_name(entry.block)])),
+        }
+    }
+    groups
+        .iter()
+        .map(|(source, blocks)| format!("{} ({})", source_name(*source), blocks.join(", ")))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
 fn field_name(field: InsightField) -> &'static str {
     match field {
         InsightField::Breakdown => "the context by category",
@@ -298,7 +346,9 @@ pub fn insight_text(insight: &AgentInsight) -> String {
         lines.push(format!("Not reported by {harness}: {}", names.join(", ")));
     }
     if insight.sources.is_empty() {
-        lines.push("Nothing has reported on this chat yet.".to_owned());
+        lines.push("Nothing has reported on this session yet.".to_owned());
+    } else {
+        lines.push(format!("Sources    {}", sources_text(insight)));
     }
     lines.join("\n")
 }
@@ -325,7 +375,7 @@ mod tests {
         let empty = AgentInsight::empty(SessionId::new(), 1, 0);
         let text = insight_text(&empty);
         assert!(text.contains("Context    not reported yet"), "{text}");
-        assert!(text.contains("Nothing has reported on this chat yet."));
+        assert!(text.contains("Nothing has reported on this session yet."));
         assert!(
             !text.contains('0'),
             "no zero is drawn for what is missing: {text}"

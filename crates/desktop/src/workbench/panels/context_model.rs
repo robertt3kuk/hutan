@@ -399,6 +399,30 @@ pub fn unsupported_note(harness: &str, unsupported: &[InsightField]) -> Option<S
     ))
 }
 
+/// What an agent that runs in a terminal with its Hutan integration installed will show here, and
+/// what it cannot (INSIGHT-B): the empty state before anything was reported.
+pub fn terminal_hint(app: Option<&str>, who: &str) -> String {
+    match app {
+        Some("omp") => format!(
+            "{who} reports its context, tokens, cost, tools and files to Hutan when a turn ends \
+             (its Hutan extension). Nothing has arrived yet: send it a prompt."
+        ),
+        Some("claude") => format!(
+            "{who}'s hooks report its tools and files once a tool has run. Its context size and \
+             cost need the status-line tee: hutan integration install claude --statusline. \
+             Tokens per turn and the context by category are not reported to a terminal."
+        ),
+        Some("codex") => format!(
+            "{who}'s hooks report its tools and files once a tool has run. Its hooks carry no \
+             tokens, context size or cost, so a terminal shows none; a chat shows all of them."
+        ),
+        _ => format!(
+            "{who} reports its state to Hutan from this terminal, not its tokens, tools, files \
+             or cost. A chat shows all of them."
+        ),
+    }
+}
+
 /// The cost line: the harness's own figure, labelled; or why there is none.
 pub fn cost_pair(insight: &AgentInsight) -> Option<Pair> {
     let harness = insight.harness.as_deref().unwrap_or_default();

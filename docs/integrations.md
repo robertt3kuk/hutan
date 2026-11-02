@@ -23,12 +23,13 @@ hutan agent release --source my-hooks
 
 Both commands are built to be called from hooks: outside Hutan (no `HUTAN_SESSION_ID`), without a daemon, on any daemon error, or after 200 ms they do nothing, print nothing, and exit 0. They never start a daemon.
 
-`hutan agent hook <codex|claude>` is the same for hook events: it reads the hook's JSON from stdin and turns it into the report below. The installed hook scripts call it.
+`hutan agent hook <codex|claude>` is the same for hook events: it reads the hook's JSON from stdin and turns it into the report below. The installed hook scripts call it. `hutan agent statusline` reads Claude Code's status-line JSON from stdin and reports its context, cost and API time (the status-line tee calls it). `--state` may be left out of `report` when `--insight-json` (the agent's insight, § Insight) says something instead.
 
 ## Installing the integrations
 
 ```sh
 hutan integration install   codex|claude|omp [--dir DIR]
+hutan integration install   claude --statusline [--dir DIR]    # opt-in: the status-line tee, § Insight
 hutan integration status    codex|claude|omp [--dir DIR]
 hutan integration uninstall codex|claude|omp [--dir DIR]
 ```
@@ -42,7 +43,7 @@ What `install` does, and only this:
 - Before it changes an existing configuration file it copies it to `<name>.hutan-<unix ms>.bak`. A file that is not valid JSON, or not shaped like the agent documents, is left alone and the install fails.
 - Idempotent: a second install changes nothing and writes no backup. An install of a newer version updates its own entries and script in place.
 
-`uninstall` removes exactly those hooks (and the groups, events, and `hooks` table they leave empty), the script, and the extension. `status` says `installed`, `partial` (with what is missing or outdated) or `not installed`.
+`uninstall` removes exactly those hooks (and the groups, events, and `hooks` table they leave empty), the script, and the extension; for Claude Code also the status-line tee, putting your own status line back (§ Insight). `status` says `installed`, `partial` (with what is missing or outdated) or `not installed`, and what the installed integration reports of the agent's insight and what it cannot.
 
 Codex asks you to review new or changed hooks the first time it starts after an install (its `hooks.state` trust list in `config.toml`); Hutan does not touch that file, so approve the Hutan hooks there once.
 
@@ -91,11 +92,50 @@ Agents Hutan starts itself (Codex chats, ACP harnesses) get the server without a
 | | `agent_end` | idle (after 400 ms, so an automatic retry stays working; `willContinue` keeps it working) | same |
 | | the same events in a subagent session | the subagent\'s node under `ctx.agent.parentId`; its end is idle + completed | — |
 
-Sources are `codex-hooks`, `claude-hooks`, `omp-extension`. `PostToolUse` is hooked because hooks never say that a permission prompt was answered; the next tool result is the signal. Hook events of a Codex whose `CODEX_THREAD_ID` is another conversation (a Codex started by Codex's own tools) are ignored. Session ids that are not made of letters, digits, `-_.:` are never put in a resume command (the state is still reported). The Claude hooks do not install a status line (it would replace the user's); Claude's `subagentStatusLine` (per-subagent model and token counts) is a possible later source.
+Sources are `codex-hooks`, `claude-hooks`, `omp-extension`, and `claude-statusline` for the opt-in status-line tee below. `PostToolUse` is hooked because hooks never say that a permission prompt was answered; the next tool result is the signal. Hook events of a Codex whose `CODEX_THREAD_ID` is another conversation (a Codex started by Codex's own tools) are ignored. Session ids that are not made of letters, digits, `-_.:` are never put in a resume command (the state is still reported). The Claude hooks do not install a status line unless asked (`--statusline`, § Insight); Claude's `subagentStatusLine` (per-subagent model and token counts) is a possible later source.
 
 Resume commands are what the agents document: `codex resume <id>`, `claude --resume <id>`, `omp --resume=<id>`. For other agents (`opencode --session <id>`, …) call `hutan agent report` from their own hooks.
 
 A restart that runs a resume command says so on the session (`recovery.kind = agent_resumed` with the argv; `hutan ls` shows `resumed`): the screen and the agent's process of the previous run are gone, the agent continues its own conversation. See `docs/protocol.md` § Recovery.
+
+## Insight: tokens, tools, files and context of terminal agents (INSIGHT-B, protocol 0.72)
+
+A chat's context, tokens, tools and files come from the journal (`docs/agents.md` § Insight). A terminal agent has no journal, so the integrations above also tell Hutan what they can see, and the daemon folds it into the same record per terminal session (`hutan chat insight SESSION`, the Context panel, MCP `agent_insight`; every block says where it came from: *the OMP extension*, *hooks*, *the status line*). State is in memory: it starts again when the daemon restarts, and when another agent starts in the same terminal. Spike: `docs/spikes/2026-10-28-insight.md` § 3.2, 3.4, 3.6.
+
+`hutan integration status <agent>` lists what the installed integration reports and what it cannot (`reports` / `not_reported` in `--json`):
+
+| | OMP (extension) | Claude Code (hooks) | Claude Code + status-line tee | Codex (hooks) |
+|---|---|---|---|---|
+| Context used / window | after every agent loop (`ctx.getContextUsage()`) | not reported | status line, after each assistant message | not reported |
+| Fixed / messages split | at session start and switch (empty conversation), after a compaction, on a model change | not reported | not reported | not reported |
+| Tokens per model call | `message_end` usage: input, output, cache read and write | not reported | not reported (only the window's cumulative counters, unused) | not reported |
+| Cost | `getUsageStatistics().cost`, OMP's own price table (an estimate) | not reported | `cost.total_cost_usd`, list price (an estimate) | not reported |
+| Tools | `tool_execution_*`: name, failures, time from the two events | `PostToolUse` / `PostToolUseFailure`: name, failure, `duration_ms`, subagents' too | same | `PostToolUse`: name; no duration |
+| Files changed | the edit and write tools' arguments (`path`, `paths`, hashline `[path#tag]` headers); `write` of a new file is `add` | `Edit`, `Write` (`add` when `tool_response.type` is `create`), `MultiEdit`, `NotebookEdit` | same | `apply_patch`: the `*** Add/Update/Delete File:` lines of its patch |
+| Turns | `agent_start` … `agent_end` (`willContinue` goes on), with the extension's own duration | `UserPromptSubmit` … `Stop` / `StopFailure` | same | `UserPromptSubmit` … `Stop` |
+| API time | not reported | not reported | `cost.total_api_duration_ms` | not reported |
+
+What **no** integration gives, and the panel and `hutan integration status` say so instead of drawing zeros: the context by category (OMP's `/context` stays on its own screen; Hutan never sends it to a terminal), Claude Code's and Codex's tokens per turn (their hooks carry none), Codex's cost, context size and tool times, and lines added and removed per file. OMP subagents report nothing of their own; their files and tools are not in the main agent's insight. Files are the ones the *agent's tools* named, not what `git` sees (a `bash` command that writes a file is not a file change here; `changes.*` and the checkpoints are the other view).
+
+### How a report travels
+
+- `hutan agent report --source S --agent A --insight-json JSON|-` (no `--state` needed): the extension sends one at each `agent_end` and at most one every 500 ms while a turn runs, with the deltas since the last one (tokens of a model call, tools that finished, files that changed) and the levels (context, cost). The hook script puts the insight of an event into the report it sends anyway. Both are the optional `insight` of `agent.report` (`docs/protocol.md` § Agent insight): at most 4 KiB, counts, tool names and paths only — no prompt, no tool output, no diff, and the daemon never puts paths into notifications or user hooks.
+- A report that carries only an `insight` leaves the agent tree alone (a status-line tick cannot make an agent *working*). It follows the `seq` rule of its source: an older report still adds its tools, files and tokens, but its levels do not replace newer ones. A `hutan` that is slow or absent loses the delta it carried; nothing is retried.
+- A block is written by the best source that reported it (chat, extension, status line, hooks); a lower one only fills a block a better one never reported.
+
+### Claude Code's status line (`--statusline`, opt-in)
+
+Claude Code runs one `statusLine` command per user and gives it the session's JSON (context window, cost, durations) on standard input. Hooks carry none of that, so
+
+```sh
+hutan integration install claude --statusline [--dir DIR]
+```
+
+puts Hutan's `hooks/hutan-statusline.sh` in its place **and keeps yours**: the script hands the JSON to `hutan agent statusline` (in the background, bounded to 200 ms, only inside a Hutan session) and then runs your command with the same input, passing its output and exit status through. Your own entry is kept whole in `hooks/hutan-statusline.original.json` (its other keys, such as `padding`, stay on the new entry) and its command as text in `hooks/hutan-statusline.command`. Without the flag the status line is never touched; with no status line of yours, the tee prints nothing. A `statusLine` that is not a command is refused (nothing is written). `uninstall` puts your entry back, byte for byte, **while the tee is still in place**: a status line you set after the install is yours and stays. `status` shows `statusline: installed | partial | not_installed`.
+
+Not verified against a live Claude Code: the exact JSON of a real session (the fixtures in `crates/cli/tests/fixtures/insight/` are built from the documented shape), whether `HUTAN_SESSION_ID` reaches the status-line command (hooks get it; the status line is assumed to), and the payload of a real `PostToolUse` (`duration_ms`, `tool_response.type`). Codex's `apply_patch` hook input is also from its documentation (the patch text is read from `tool_input.command`, `input` or `patch`). OMP's reports are recorded from a real OMP 18.14.1 run: `crates/daemon/tests/fixtures/insight-terminal/`.
+
+Tests: `crates/core/src/insight/` (the reducer's `apply_report`), `crates/cli/src/hook/insight.rs` and `integration/statusline.rs` (translation of payloads, the status-line entry), `crates/cli/tests/it/integration.rs` (install, chain, uninstall, `status`), `crates/daemon/tests/it/insight_terminal.rs` (the recorded OMP reports and the Claude/Codex shapes over the wire).
 
 ## Pasting images (`terminal.paste_images`)
 

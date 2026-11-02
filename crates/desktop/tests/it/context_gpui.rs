@@ -782,3 +782,111 @@ fn a_file_row_opens_the_file_and_has_no_diff_outside_a_checkout(cx: &mut TestApp
     });
     std::fs::remove_file(&path).ok();
 }
+
+// ---- a terminal agent's insight (INSIGHT-B, protocol 0.72) --------------------------------------
+
+#[gpui::test]
+fn a_terminal_agent_shows_what_its_integration_reported_with_the_source_of_each_block(
+    cx: &mut TestAppContext,
+) {
+    use hutan_core::agent::{FileChangeKind, TokenCounts};
+    use hutan_core::insight::{
+        InsightBlock, InsightReport, InsightSourceKind, ReportedContext, ReportedFile,
+        ReportedTool, ReportedTurn, TurnPhase,
+    };
+    use hutan_protocol::messages::{AgentApplied, AgentReportRequest, AgentState};
+
+    let daemon = TestDaemon::start();
+    let agent = daemon.create_session(&["sh", "-c", "exec cat"], None);
+    let report = |seq: u64, state: Option<AgentState>, insight: Option<InsightReport>| {
+        let applied: AgentApplied = daemon.call(Request::AgentReport(AgentReportRequest {
+            pid: None,
+            session_id: agent.id,
+            source: "omp-extension".into(),
+            agent: "omp".into(),
+            state,
+            message: None,
+            seq,
+            agent_session_id: None,
+            resume_argv: None,
+            node: None,
+            insight,
+        }));
+        assert!(applied.applied);
+    };
+    report(1, Some(AgentState::Idle), None);
+    let (view, cx) = open(cx, &daemon);
+    let panel = panel(&view, cx);
+    show_chat(&view, cx, agent.id);
+    // Nothing reported yet: the panel says what Hutan sees and what would give more.
+    wait_empty(&panel, cx, "the terminal agent's empty state", |e| {
+        matches!(e, Some(ContextEmpty::Terminal { .. }))
+    });
+
+    report(
+        2,
+        None,
+        Some(InsightReport {
+            source: InsightSourceKind::Extension,
+            turn: Some(ReportedTurn {
+                phase: TurnPhase::End,
+                outcome: None,
+                duration_ms: Some(2_500),
+            }),
+            tokens: Some(TokenCounts {
+                input_tokens: Some(8_200),
+                output_tokens: Some(52),
+                cached_input_tokens: Some(14_000),
+                ..TokenCounts::default()
+            }),
+            context: Some(ReportedContext {
+                used: 11_300,
+                window: Some(200_000),
+                fixed: Some(7_745),
+                estimated: false,
+            }),
+            cost_usd: Some(0.03),
+            tools: vec![ReportedTool {
+                name: "read".into(),
+                calls: 2,
+                failed: 0,
+                ms: Some(12),
+            }],
+            files: vec![ReportedFile {
+                path: "src/lib.rs".into(),
+                kind: FileChangeKind::Update,
+            }],
+            api_ms: None,
+        }),
+    );
+    wait_until(cx, "the terminal agent's insight", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.empty().is_none()
+                && p.insight()
+                    .is_some_and(|insight| insight.totals.is_some() && insight.tools.is_some())
+        })
+    });
+    let (sources, can_measure, turns) = panel.read_with(cx, |p, _| {
+        let insight = p.insight().unwrap();
+        (
+            insight.sources.clone(),
+            insight.can_measure,
+            p.turn_lines().len(),
+        )
+    });
+    assert!(!sources.is_empty());
+    assert!(
+        sources
+            .iter()
+            .all(|source| source.source == InsightSourceKind::Extension),
+        "{sources:?}"
+    );
+    assert!(
+        sources
+            .iter()
+            .any(|source| source.block == InsightBlock::Tools)
+    );
+    assert!(!can_measure, "no Measure context for a terminal");
+    assert!(bounds(&view, cx, Region::Context("measure")).is_none());
+    assert_eq!(turns, 1);
+}
