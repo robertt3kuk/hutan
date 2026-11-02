@@ -371,3 +371,82 @@ fn the_context_panel_lists_the_findings_of_the_session_and_verifies_it(cx: &mut 
         })
     });
 }
+
+/// A terminal in `dir`, in workspace `workspace`, in which an agent reported itself working.
+fn agent_in_workspace(
+    env: &AssistantEnv,
+    workspace: hutan_core::WorkspaceId,
+    title: &str,
+    dir: &Path,
+) -> SessionInfo {
+    use hutan_protocol::messages::{SessionCreate, SessionResult, SessionSpec, TerminalSpec};
+    let created: SessionResult = env.daemon.call(Request::SessionCreate(SessionCreate {
+        workspace_id: Some(workspace),
+        spec: SessionSpec::Terminal(TerminalSpec {
+            command: vec!["sh".into(), "-c".into(), "sleep 600".into()],
+            title: Some(title.to_owned()),
+            cwd: Some(dir.to_path_buf()),
+            ..TerminalSpec::default()
+        }),
+    }));
+    report(&env, created.session.id, AgentState::Working, 1);
+    created.session
+}
+
+#[gpui::test]
+fn check_with_mawas_sets_the_focus_and_fills_the_composer_with_the_findings_and_sends_nothing(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::actions;
+
+    let env = started();
+    let dir = project(&env, "shared", 0);
+    let workspace = env.daemon.create_workspace("shared", &[&dir]);
+    let first = agent_in_workspace(&env, workspace.id, "first", &dir);
+    let _second = agent_in_workspace(&env, workspace.id, "second", &dir);
+    let (view, cx, panel) = open_wide(cx, &env);
+    wait_until(cx, "Mawas's chat", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.session(cx).is_some_and(|s| p.chat_model(s).is_some())
+        })
+    });
+    let session = panel.read_with(cx, |p, cx| p.session(cx)).unwrap();
+    let model = panel.read_with(cx, |p, _| p.chat_model(session)).unwrap();
+
+    // The workspace's ⋯ offers it and the session's does too.
+    cx.dispatch_action(actions::CheckWithMawas(actions::CheckAt {
+        workspace: workspace.id,
+        session: None,
+    }));
+    wait_until(cx, "the prepared ask", |cx| {
+        model.read_with(cx, |m, _| m.draft_message().contains("agents_findings"))
+    });
+    let draft = model.read_with(cx, |m, _| m.draft_message());
+    assert!(draft.starts_with("Check the workspace shared"), "{draft}");
+    assert!(draft.contains(&workspace.id.to_string()), "{draft}");
+    assert!(draft.contains("write to one checkout"), "{draft}");
+    wait_until(cx, "the Focus", |cx| {
+        panel.read_with(cx, |p, cx| p.focus(cx) == Some(workspace.id))
+    });
+    // Nothing was sent: the conversation holds no turn.
+    let history: hutan_protocol::chat::ChatHistory = env.daemon.call(Request::ChatHistory(
+        hutan_protocol::chat::ChatHistoryRequest {
+            session_id: session,
+            before_seq: None,
+            limit: 50,
+        },
+    ));
+    assert!(history.events.is_empty(), "{history:?}");
+
+    // A session's ask names the session.
+    cx.dispatch_action(actions::CheckWithMawas(actions::CheckAt {
+        workspace: workspace.id,
+        session: Some(first.id),
+    }));
+    wait_until(cx, "the session's ask", |cx| {
+        model.read_with(cx, |m, _| {
+            m.draft_message()
+                .contains(&format!("agents_findings with session_id {}", first.id))
+        })
+    });
+}
