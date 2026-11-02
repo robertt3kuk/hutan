@@ -74,6 +74,17 @@ async fn intents(t: &TestDaemon) -> Vec<Value> {
     out.json()["intents"].as_array().unwrap().clone()
 }
 
+/// The pending intents but the `agent_blocked` ones. An id is a ULID: its first 10 characters are
+/// the time in milliseconds, so a prefix of 8 is shared by everything raised in the same second;
+/// a test that names an intent by prefix takes 20 characters (the time and 10 of the random part).
+async fn asked(t: &TestDaemon) -> Vec<Value> {
+    intents(t)
+        .await
+        .into_iter()
+        .filter(|intent| intent["kind"] != "agent_blocked")
+        .collect()
+}
+
 async fn wait_for_intents(t: &TestDaemon, at_least: usize) -> Vec<Value> {
     timeout(WAIT, async {
         loop {
@@ -153,7 +164,7 @@ async fn an_approval_is_watched_listed_acted_on_and_its_turn_noted() {
     }
 
     // An action the intent does not offer is refused and the intent stays.
-    let refused = t.hutan(&["notify", "act", &id[..8], "decline"]).await;
+    let refused = t.hutan(&["notify", "act", &id[..20], "decline"]).await;
     assert_eq!(refused.code, 1, "{refused:?}");
     assert!(
         refused.stderr.contains("option_not_offered") && refused.stderr.contains("accept"),
@@ -161,11 +172,11 @@ async fn an_approval_is_watched_listed_acted_on_and_its_turn_noted() {
     );
     let unknown = t.hutan(&["notify", "act", "0000", "accept"]).await;
     assert_eq!(unknown.code, 1);
-    assert_eq!(intents(&t).await.len(), 1);
+    assert_eq!(asked(&t).await.len(), 1);
 
     // By unique prefix: the approval is answered.
     let acted = t
-        .hutan(&["notify", "act", &id[..8], "accept", "--json"])
+        .hutan(&["notify", "act", &id[..20], "accept", "--json"])
         .await
         .ok()
         .json();
@@ -175,23 +186,30 @@ async fn an_approval_is_watched_listed_acted_on_and_its_turn_noted() {
 
     // The turn then ends in a session nobody has focused: the watcher prints that intent, and
     // it is all that is pending.
-    let finished = watch.next().await;
+    let finished = loop {
+        let next = watch.next().await;
+        // The agent's tree may report it blocked while the approval waits: that is an intent of
+        // its own, and when it is raised is the agent's timing, not what this test is about.
+        if next["kind"] != "agent_blocked" {
+            break next;
+        }
+    };
     assert_eq!(finished["kind"], "chat_turn_finished");
     assert_eq!(finished["session_id"], session.as_str());
-    let pending = intents(&t).await;
+    let pending = asked(&t).await;
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0]["id"], finished["id"]);
 
     // Acknowledging by prefix empties the list.
     let finished_id = finished["id"].as_str().unwrap();
     let acked = t
-        .hutan(&["notify", "ack", &finished_id[..8], "--json"])
+        .hutan(&["notify", "ack", &finished_id[..20], "--json"])
         .await
         .ok()
         .json();
     assert_eq!(acked["id"], finished_id);
     assert_eq!(acked["acknowledged"], true);
-    assert!(intents(&t).await.is_empty());
+    assert!(asked(&t).await.is_empty());
     watch.child.kill().await.unwrap();
     t.stop().await;
 }
