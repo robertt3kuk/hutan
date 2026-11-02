@@ -1332,7 +1332,10 @@ async fn agents_verify_asks_with_the_command_and_the_folder_and_marks_its_output
     assert!(text_of(&refused).contains("force"), "{}", text_of(&refused));
     let pending = t.hutan(&["approvals", "--json"]).await.ok().json();
     assert!(pending["approvals"].as_array().unwrap().is_empty());
-/// `agents_findings` (protocol 0.70): read-only, marked as untrusted data, says what ran and what
+    t.stop().await;
+}
+
+/// `agents_findings` (protocol 0.71): read-only, marked as untrusted data, says what ran and what
 /// could not for a terminal agent, takes a window in days — and has no way to dismiss: the tool
 /// of dismissing does not exist for an agent.
 #[tokio::test(flavor = "multi_thread")]

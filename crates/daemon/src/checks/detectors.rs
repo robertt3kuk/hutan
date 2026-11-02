@@ -959,6 +959,39 @@ pub fn live_drafts(facts: &LiveFacts, thresholds: &Thresholds) -> Vec<Draft> {
             out.push(d);
         }
     }
+
+    // Hutan's own run of the tests exited non-zero after the agent said it was done. A later
+    // run that passes, or any work of the agent after the run, ends it: the newest run decides.
+    if let (Some(run), Some(done)) = (&facts.verify, facts.done_since_ms)
+        && run.status == "failed"
+        && run.started_ms >= done
+    {
+        let mut d = draft(
+            meta,
+            detector::VERIFY_FAILED,
+            FindingConfidence::Exact,
+            format!("run:{}", run.run_id),
+            "Hutan's own run of the tests failed after the agent said it was done",
+        );
+        d.first_at_ms = run.started_ms;
+        d.last_at_ms = run.ended_ms.unwrap_or(run.started_ms);
+        let code = run
+            .exit_code
+            .map_or_else(|| "failed".to_owned(), |code| format!("exit {code}"));
+        d.evidence = vec![evidence(
+            EvidenceKind::Verify,
+            Some(run.run_id.to_string()),
+            format!("{code}: {} (asked by {})", run.command, run.requested_by),
+        )];
+        if let Some(line) = &run.last_line {
+            d.evidence.push(evidence(
+                EvidenceKind::Verify,
+                Some(run.run_id.to_string()),
+                format!("the last line of its output: {line}"),
+            ));
+        }
+        out.push(d);
+    }
     out
 }
 

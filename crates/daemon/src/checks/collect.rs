@@ -39,7 +39,7 @@ use tracing::warn;
 use super::detectors::{self, JournalCoverage};
 use super::facts::{
     BlockedSpan, ChangedFile, JournalFacts, LiveFacts, PlacementFact, RequestFact, SessionMeta,
-    TaskFact, ToolFailure, TurnFacts, TurnFile, TurnFiles,
+    TaskFact, ToolFailure, TurnFacts, TurnFile, TurnFiles, VerifyFact,
 };
 use super::{AnswerInputs, Draft, TURNS_ANALYSED, Thresholds, assemble};
 use crate::agents_review::{
@@ -89,6 +89,8 @@ struct Analysis {
     gaps: Vec<CoverageGap>,
     /// When the newest finished turn with file changes ended.
     changed_at_ms: Option<u64>,
+    /// When the chat's newest turn completed, if it is the newest and none runs now.
+    done_since_ms: Option<u64>,
     /// The files the chat's insight lists, as it names them.
     files: Option<Vec<String>>,
 }
@@ -392,6 +394,7 @@ impl ChecksService {
 
     /// What every session's live facts are read from, read once.
     async fn context(&self, now: u64, infos: &[SessionInfo]) -> Result<Context, ErrorBody> {
+        let agents: Vec<SessionId> = infos.iter().filter(|i| is_agent(i)).map(|i| i.id).collect();
         let chats: Vec<SessionId> = infos
             .iter()
             .filter(|i| is_agent(i) && i.chat.is_some())
@@ -442,10 +445,35 @@ impl ChecksService {
                     .into_iter()
                     .map(|w| (w.path, w.repo_root))
                     .collect();
-                Ok((requests, last_event, state_rows, repo_roots))
+                let verify: HashMap<SessionId, VerifyFact> = s
+                    .verify_runs()
+                    .newest_for_sessions(&agents)?
+                    .into_iter()
+                    .map(|row| {
+                        (
+                            row.session_id,
+                            VerifyFact {
+                                run_id: row.id,
+                                last_line: row
+                                    .output_tail
+                                    .lines()
+                                    .rev()
+                                    .find(|l| !l.trim().is_empty())
+                                    .map(str::to_owned),
+                                command: row.command,
+                                status: row.status,
+                                exit_code: row.exit_code,
+                                started_ms: row.started_ms,
+                                ended_ms: row.ended_ms,
+                                requested_by: row.requested_by,
+                            },
+                        )
+                    })
+                    .collect();
+                Ok((requests, last_event, state_rows, repo_roots, verify))
             })
             .await?;
-        let (requests, last_event, state_rows, repo_roots) = rows;
+        let (requests, last_event, state_rows, repo_roots, verify) = rows;
         let mut states: HashMap<SessionId, Vec<AgentStateRow>> = HashMap::new();
         for row in state_rows {
             states.entry(row.session_id).or_default().push(row);
@@ -458,6 +486,7 @@ impl ChecksService {
             repo_roots,
             tasks: self.tasks.list(TaskListRequest::default()).tasks,
             state_log: log_on,
+            verify,
         })
     }
 
@@ -547,6 +576,21 @@ impl ChecksService {
             changed_at_ms: analysis.and_then(|a| a.changed_at_ms),
             placement,
             files: changed_files,
+            verify: ctx.verify.get(&info.id).cloned(),
+            done_since_ms: if chat {
+                analysis.and_then(|a| a.done_since_ms)
+            } else {
+                info.agent
+                    .as_ref()
+                    .filter(|a| a.state == AgentState::Idle)
+                    .map(|a| a.updated_at_ms)
+                    .or_else(|| {
+                        info.terminal_agent
+                            .as_ref()
+                            .filter(|a| a.state == TerminalAgentState::Idle)
+                            .map(|a| a.since_ms)
+                    })
+            },
         }
     }
 
@@ -707,12 +751,19 @@ impl ChecksService {
             .filter(|t| t.status != ChatTurnStatus::Running && !t.files.files().is_empty())
             .map(TurnFacts::at_ms)
             .max();
+        // The agent said it was done when its newest turn completed and none runs now.
+        let done_since_ms = journal
+            .turns
+            .last()
+            .filter(|t| t.status == ChatTurnStatus::Completed)
+            .and_then(|t| t.ended_ms);
         let analysis = Arc::new(Analysis {
             fingerprint,
             turns: kept,
             drafts: detectors::journal_drafts(&journal, &self.thresholds),
             gaps: detectors::journal_gaps(&journal),
             changed_at_ms,
+            done_since_ms,
             files,
         });
         let mut cache = lock(&self.cache);
@@ -847,6 +898,8 @@ struct Context {
     repo_roots: HashMap<PathBuf, PathBuf>,
     tasks: Vec<hutan_core::task::Task>,
     state_log: bool,
+    /// The newest run of Hutan's own tests of each session that has one.
+    verify: HashMap<SessionId, VerifyFact>,
 }
 
 fn cut(text: String, max_chars: usize) -> String {

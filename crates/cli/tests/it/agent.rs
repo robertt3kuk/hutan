@@ -800,6 +800,13 @@ async fn agents_verify_prints_the_command_then_the_result_and_exits_one_unless_i
         vec!["agents", "--command", "true"],
         vec!["agents", "--force"],
         vec!["agents", "--verify", "no-such-session"],
+    ] {
+        let out = finish(command(Path::new(HUTAN), Some(&t.paths.socket), &args)).await;
+        assert_ne!(out.code, 0, "{args:?}: {}", out.stdout);
+    }
+    t.stop().await;
+}
+
 /// A repository on `main` with one commit, in a fresh temporary folder: where two agents can
 /// share a checkout.
 fn repository() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -881,7 +888,7 @@ exec sleep 600"#;
         "WARN [exact] 2 agents write to one checkout",
         &id,
         "Coverage (which detectors ran, and which could not):",
-        "terminal agent: 3 of 20 detectors ran",
+        "terminal agent: 4 of 21 detectors ran",
         "terminal agent: no tool events — install the integration",
     ] {
         assert!(text.contains(needle), "{needle:?} missing from:\n{text}");

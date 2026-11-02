@@ -424,6 +424,47 @@ async fn journals_of_three_harnesses_in_two_workspaces_give_findings_with_their_
                 Step::Say("Cleaned up. The build passes."),
             ],
         ));
+        // …and the user ran its tests through Hutan afterwards: they failed.
+        let started = hutan_client::time::now_ms() - 5 * MIN;
+        let run = storage
+            .verify_runs()
+            .start(hutan_storage::VerifyRunRow {
+                id: 0,
+                session_id: omp_chat.id,
+                command: "cargo test".into(),
+                cwd: "/work/api".into(),
+                source: "detected".into(),
+                why: "Cargo.toml in /work/api".into(),
+                status: "running".into(),
+                exit_code: None,
+                signal: None,
+                started_ms: started,
+                ended_ms: None,
+                duration_ms: None,
+                output_tail: String::new(),
+                output_truncated: false,
+                requested_by: "user".into(),
+                forced: false,
+                error: None,
+            })
+            .unwrap();
+        storage
+            .verify_runs()
+            .finish(
+                run,
+                hutan_storage::VerifyRunEnd {
+                    status: "failed".into(),
+                    exit_code: Some(101),
+                    signal: None,
+                    ended_ms: started + 20_000,
+                    duration_ms: 20_000,
+                    output_tail: "running 41 tests\ntest result: FAILED. 40 passed; 1 failed\n"
+                        .into(),
+                    output_truncated: false,
+                    error: None,
+                },
+            )
+            .unwrap();
 
         // Claude Code, in `web`: a clean turn — the test ran and passed, and it says so.
         let mut j = Journal::new(storage, claude_chat.id);
@@ -487,6 +528,17 @@ async fn journals_of_three_harnesses_in_two_workspaces_give_findings_with_their_
     assert_eq!(waited.confidence, FindingConfidence::Exact);
     assert!(waited.title.contains("42 min"), "{}", waited.title);
     let claim = find(&all, omp_chat.id, detector::CLAIMED_PASS_WITHOUT_TEST);
+    let verify = find(&all, omp_chat.id, detector::VERIFY_FAILED);
+    assert_eq!(
+        (verify.severity, verify.confidence),
+        (FindingSeverity::Alert, FindingConfidence::Exact)
+    );
+    assert!(
+        verify.evidence[0].excerpt.contains("exit 101: cargo test"),
+        "{:?}",
+        verify.evidence
+    );
+    assert!(verify.evidence[1].excerpt.contains("1 failed"));
     assert_eq!(
         (claim.severity, claim.confidence),
         (FindingSeverity::Warn, FindingConfidence::Heuristic)
@@ -553,7 +605,7 @@ async fn journals_of_three_harnesses_in_two_workspaces_give_findings_with_their_
     let omp_only = findings(&client, of_session(omp_chat.id)).await;
     assert_eq!(
         detectors_of(&omp_only, Some(omp_chat.id)),
-        [detector::CLAIMED_PASS_WITHOUT_TEST]
+        [detector::VERIFY_FAILED, detector::CLAIMED_PASS_WITHOUT_TEST]
     );
     assert_eq!(omp_only.coverage.len(), 1);
     let both = AgentsFindingsRequest {

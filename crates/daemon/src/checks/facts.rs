@@ -169,4 +169,25 @@ pub struct LiveFacts {
     pub placement: Option<PlacementFact>,
     /// The files the session changed, when something reports them (a chat's insight).
     pub files: Option<Vec<ChangedFile>>,
+    /// The newest run of Hutan's own tests of the session (`agents.verify`), if it ever ran one.
+    pub verify: Option<VerifyFact>,
+    /// When the agent last said it was done: the end of a chat's newest turn when it completed
+    /// (and none runs now), or when a terminal agent last reported itself idle.
+    pub done_since_ms: Option<u64>,
+}
+
+/// A run of Hutan's own tests, as `verify_runs` holds it.
+#[derive(Debug, Clone)]
+pub struct VerifyFact {
+    pub run_id: u64,
+    pub command: String,
+    /// `running`, `passed`, `failed`, `timed_out`, `cancelled` or `error`.
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub started_ms: u64,
+    pub ended_ms: Option<u64>,
+    /// `user` or `mawas`.
+    pub requested_by: String,
+    /// The last line the run printed.
+    pub last_line: Option<String>,
 }

@@ -760,7 +760,9 @@ impl Client {
             ))
             .await?;
         Ok(())
-    /// True when the daemon advertised capability `agents.findings` (protocol 0.70).
+    }
+
+    /// True when the daemon advertised capability `agents.findings` (protocol 0.71).
     pub fn supports_agents_findings(&self) -> bool {
         self.welcome
             .capabilities

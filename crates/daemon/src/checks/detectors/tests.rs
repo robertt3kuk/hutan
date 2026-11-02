@@ -11,7 +11,7 @@ use hutan_protocol::checks::{FindingConfidence, FindingSeverity};
 use hutan_protocol::review::{ReviewCommand, ReviewToolStatus};
 
 use super::*;
-use crate::checks::facts::{BlockedSpan, PlacementFact, RequestFact, TaskFact};
+use crate::checks::facts::{BlockedSpan, PlacementFact, RequestFact, TaskFact, VerifyFact};
 
 const MIN: u64 = 60_000;
 const HOUR: u64 = 3_600_000;
@@ -650,6 +650,8 @@ fn live(meta: SessionMeta, now: u64) -> LiveFacts {
         changed_at_ms: None,
         placement: None,
         files: None,
+        verify: None,
+        done_since_ms: None,
     }
 }
 
@@ -811,6 +813,69 @@ fn changes_of_a_task_that_wait_for_review_for_four_hours_are_unreviewed() {
     assert!(live_drafts(&l, &Thresholds::default()).is_empty());
     l.task = None;
     l.changed_at_ms = Some(now - 6 * HOUR);
+    assert!(live_drafts(&l, &Thresholds::default()).is_empty());
+}
+
+fn failed_run(started_ms: u64) -> VerifyFact {
+    VerifyFact {
+        run_id: 7,
+        command: "cargo test".into(),
+        status: "failed".into(),
+        exit_code: Some(101),
+        started_ms,
+        ended_ms: Some(started_ms + 20_000),
+        requested_by: "user".into(),
+        last_line: Some("test result: FAILED. 40 passed; 1 failed".into()),
+    }
+}
+
+#[test]
+fn hutans_own_failed_run_after_the_agent_said_it_was_done_is_an_exact_alert() {
+    let mut l = live(meta(), 10 * HOUR);
+    l.done_since_ms = Some(9 * HOUR);
+    l.verify = Some(failed_run(9 * HOUR + 5 * MIN));
+    let found = live_drafts(&l, &Thresholds::default());
+    let d = one(&found, detector::VERIFY_FAILED);
+    assert_eq!(d.severity, FindingSeverity::Alert);
+    assert_eq!(d.confidence, FindingConfidence::Exact);
+    assert_eq!(d.key, "run:7");
+    assert_eq!(
+        (d.first_at_ms, d.last_at_ms),
+        (9 * HOUR + 5 * MIN, 9 * HOUR + 5 * MIN + 20_000)
+    );
+    assert!(
+        d.evidence[0]
+            .excerpt
+            .contains("exit 101: cargo test (asked by user)")
+    );
+    assert!(d.evidence[1].excerpt.contains("1 failed"));
+    assert_eq!(d.evidence[0].kind, EvidenceKind::Verify);
+}
+
+#[test]
+fn a_run_that_passed_that_did_not_fail_or_that_the_agent_has_since_worked_past_is_not_a_finding() {
+    let mut l = live(meta(), 10 * HOUR);
+    l.done_since_ms = Some(9 * HOUR);
+    // A passing run, a cancelled one and a run that timed out never "exited non-zero".
+    for status in ["passed", "cancelled", "timed_out", "running", "error"] {
+        let mut run = failed_run(9 * HOUR + MIN);
+        run.status = status.into();
+        l.verify = Some(run);
+        assert!(
+            live_drafts(&l, &Thresholds::default()).is_empty(),
+            "{status}"
+        );
+    }
+    // The agent said it was done after the run: the run is old news.
+    l.verify = Some(failed_run(8 * HOUR));
+    assert!(live_drafts(&l, &Thresholds::default()).is_empty());
+    // The agent never said it was done (a turn runs, or a terminal agent is not idle): nothing.
+    l.verify = Some(failed_run(9 * HOUR + MIN));
+    l.done_since_ms = None;
+    assert!(live_drafts(&l, &Thresholds::default()).is_empty());
+    // No run at all.
+    l.done_since_ms = Some(9 * HOUR);
+    l.verify = None;
     assert!(live_drafts(&l, &Thresholds::default()).is_empty());
 }
 

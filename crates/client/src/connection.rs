@@ -1396,6 +1396,7 @@ impl Connection {
     pub async fn agents_verify_cancel(&self, session_id: SessionId) -> Result<(), ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
         client.agents_verify_cancel(session_id).await
+    }
     /// True while connected to a daemon that advertised capability `agents.findings`
     /// ([`Client::supports_agents_findings`]); false when disconnected.
     pub fn supports_agents_findings(&self) -> bool {

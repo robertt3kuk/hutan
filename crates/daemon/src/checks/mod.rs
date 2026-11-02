@@ -280,7 +280,7 @@ fn fit(answer: &mut AgentsFindings) {
 /// The severity of each detector (the design leaves the table to the engine).
 pub fn severity_of(detector_id: &str) -> FindingSeverity {
     match detector_id {
-        detector::DONE_AFTER_FAILED_COMMAND => FindingSeverity::Alert,
+        detector::DONE_AFTER_FAILED_COMMAND | detector::VERIFY_FAILED => FindingSeverity::Alert,
         detector::CLAIMED_PASS_WITHOUT_TEST
         | detector::TESTS_WEAKENED
         | detector::SNAPSHOT_UPDATED
