@@ -58,6 +58,10 @@ const NOTE_WINDOW: Duration = Duration::from_secs(15);
 const SERVED_MAX: usize = 1024;
 /// Paths whose birth a watcher remembers, for telling created from modified.
 const BIRTHS_MAX: usize = 1024;
+/// How long after a watch starts the files it added are looked at again, for a change the
+/// platform's stream missed (macOS starts a stream asynchronously, and a write right after the
+/// watch may never be reported: seen with the `notify` crate alone).
+const SETTLE_PAUSES_MS: [u64; 3] = [400, 1_500, 4_000];
 /// Paths of restores remembered (a restore announces each file it writes or deletes).
 const RESTORES_MAX: usize = 4096;
 
@@ -270,6 +274,7 @@ impl WatchHub {
             .collect();
         let watching = summary(&state, conn.id());
         drop(state);
+        let mut settling = Vec::new();
         for Added {
             path,
             known,
@@ -281,8 +286,18 @@ impl WatchHub {
             if let Some(meta) = &meta {
                 births.lock().exists(&path, meta, false);
             }
-            let Some(known) = known else { continue };
             let now = meta.filter(|m| m.is_file()).map(|m| version_of(&m));
+            // A file that exists is looked at again soon: the platform's stream may not be
+            // running yet, and a write right after the watch is then never reported.
+            if let Some(version) = now {
+                settling.push(Settling {
+                    path: path.clone(),
+                    seen: Some(version),
+                    feed: feed.clone(),
+                    births: births.clone(),
+                });
+            }
+            let Some(known) = known else { continue };
             if now == Some(known) {
                 continue;
             }
@@ -292,6 +307,9 @@ impl WatchHub {
             } else {
                 Raw::Removed(path)
             }]);
+        }
+        if !settling.is_empty() {
+            tokio::spawn(settle(settling, &SETTLE_PAUSES_MS));
         }
         Ok(watching)
     }
@@ -871,6 +889,9 @@ struct Births {
     /// The birth time of what is known at each path; cleared when full (a creation then may be
     /// reported twice).
     known: HashMap<PathBuf, SystemTime>,
+    /// The version each path had when its change was last reported (`None`: gone); cleared when
+    /// full.
+    delivered: HashMap<PathBuf, Option<FileVersion>>,
 }
 
 impl Births {
@@ -878,6 +899,7 @@ impl Births {
         Self {
             since,
             known: HashMap::new(),
+            delivered: HashMap::new(),
         }
     }
 
@@ -898,6 +920,63 @@ impl Births {
     /// `path` is gone: something born there later is created.
     fn gone(&mut self, path: &Path) {
         self.known.remove(path);
+    }
+
+    /// What was last reported of `path`: its version, or `None` for gone.
+    fn record(&mut self, path: &Path, version: Option<FileVersion>) {
+        if self.delivered.len() >= BIRTHS_MAX && !self.delivered.contains_key(path) {
+            self.delivered.clear();
+        }
+        self.delivered.insert(path.to_owned(), version);
+    }
+
+    /// What was last reported of `path`, when anything was (`Some(None)`: that it is gone).
+    fn reported(&self, path: &Path) -> Option<Option<FileVersion>> {
+        self.delivered.get(path).copied()
+    }
+}
+
+/// A file a watch added, as it was then, to be looked at again soon ([`SETTLE_PAUSES_MS`]).
+struct Settling {
+    path: PathBuf,
+    seen: Option<FileVersion>,
+    feed: Feed,
+    births: Arc<Mutex<Births>>,
+}
+
+/// Looks again at the files a watch added, a few times in the seconds after it: one that
+/// changed meanwhile and that the platform did not report is fed to its watcher's window like a
+/// change the platform had reported.
+async fn settle(mut watching: Vec<Settling>, pauses: &[u64]) {
+    for pause in pauses.iter().copied() {
+        tokio::time::sleep(Duration::from_millis(pause)).await;
+        let Ok(next) = tokio::task::spawn_blocking(move || {
+            for file in &mut watching {
+                let now = std::fs::symlink_metadata(&file.path)
+                    .ok()
+                    .filter(|meta| meta.is_file())
+                    .map(|meta| version_of(&meta));
+                if now == file.seen {
+                    continue;
+                }
+                file.seen = now;
+                if file.births.lock().reported(&file.path) == Some(now) {
+                    continue;
+                }
+                debug!(path = %file.path.display(), ?now, "changed after the watch and not reported by the platform");
+                file.feed.send(vec![if now.is_some() {
+                    Raw::Modified(file.path.clone())
+                } else {
+                    Raw::Removed(file.path.clone())
+                }]);
+            }
+            watching
+        })
+        .await
+        else {
+            return;
+        };
+        watching = next;
     }
 }
 
@@ -969,6 +1048,7 @@ fn prepare(
                 Ok(meta) => {
                     let version = meta.is_file().then(|| version_of(&meta));
                     let created = births.exists(&path, &meta, entry.created);
+                    births.record(&path, version);
                     let kind = if entry.from.is_some() {
                         ChangeKind::Renamed
                     } else if created {
@@ -982,6 +1062,7 @@ fn prepare(
                 // be of an older creation (FSEvents), of a file a client knows.
                 Err(_) => {
                     births.gone(&path);
+                    births.record(&path, None);
                     (ChangeKind::Removed, None)
                 }
             };
@@ -1513,5 +1594,79 @@ mod tests {
             canonical_lenient(&dir.path().join("not/yet/there.rs")),
             root.join("not/yet/there.rs")
         );
+    }
+
+    /// A file as a watch found it, and the channel its watcher's window reads.
+    fn settling(
+        path: &Path,
+    ) -> (
+        Settling,
+        mpsc::Receiver<Vec<Raw>>,
+        Arc<Mutex<Births>>,
+        FileVersion,
+    ) {
+        let (tx, rx) = mpsc::channel(8);
+        let births = Arc::new(Mutex::new(Births::new(SystemTime::now())));
+        let seen = version_of(&std::fs::symlink_metadata(path).unwrap());
+        let feed = Feed {
+            raws: tx,
+            lost: Arc::new(AtomicBool::new(false)),
+        };
+        let settling = Settling {
+            path: path.to_owned(),
+            seen: Some(seen),
+            feed,
+            births: births.clone(),
+        };
+        (settling, rx, births, seen)
+    }
+
+    #[tokio::test]
+    async fn a_write_the_platform_never_reported_is_found_by_looking_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "before").unwrap();
+        let (settling, mut rx, _births, _seen) = settling(&path);
+        // Written right after the watch; the platform says nothing.
+        std::fs::write(&path, "after the watch").unwrap();
+        settle(vec![settling], &[1, 1]).await;
+        let mut told = Vec::new();
+        while let Ok(batch) = rx.try_recv() {
+            told.extend(batch);
+        }
+        assert!(
+            matches!(told.as_slice(), [Raw::Modified(p)] if *p == path),
+            "one change, once: {told:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_change_the_platform_reported_or_that_never_happened_is_not_reported_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (quiet, reported) = (dir.path().join("quiet.txt"), dir.path().join("told.txt"));
+        std::fs::write(&quiet, "same").unwrap();
+        std::fs::write(&reported, "before").unwrap();
+        let (quiet_settling, mut quiet_rx, _, _) = settling(&quiet);
+        let (told_settling, mut told_rx, births, _) = settling(&reported);
+        std::fs::write(&reported, "after the watch").unwrap();
+        // The window already delivered this version of the file.
+        let now = version_of(&std::fs::symlink_metadata(&reported).unwrap());
+        births.lock().record(&reported, Some(now));
+        settle(vec![quiet_settling, told_settling], &[1, 1]).await;
+        assert!(quiet_rx.try_recv().is_err());
+        assert!(told_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_file_removed_after_the_watch_is_found_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gone.txt");
+        std::fs::write(&path, "x").unwrap();
+        let (settling, mut rx, _births, _seen) = settling(&path);
+        std::fs::remove_file(&path).unwrap();
+        settle(vec![settling], &[1, 1]).await;
+        let batch = rx.try_recv().unwrap();
+        assert!(matches!(batch.as_slice(), [Raw::Removed(p)] if *p == path));
+        assert!(rx.try_recv().is_err(), "once, not at every look");
     }
 }

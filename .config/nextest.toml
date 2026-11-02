@@ -19,3 +19,20 @@ test-threads = 4
 [[profile.default.overrides]]
 filter = 'package(hutan-daemon) & test(=sessions::ack_pacing_keeps_floods_bounded_and_the_daemon_responsive)'
 threads-required = "num-test-threads"
+
+# macOS delivers file events through one system daemon (fseventsd) for every process. Measured
+# with the daemon's own debug log (FX-GATE-TESTS): a write right after `fs.watch` reaches the
+# daemon 1–3 s later on a quiet machine, 10 s and more while another process creates 100 000
+# files, and the daemon's own part of it is about 0.1 s. The tests that wait for such events
+# therefore do not run beside each other, and the test that creates 100 000 files (a flood of
+# events for everybody) runs with the whole thread budget to itself.
+[test-groups]
+fs-events = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(hutan-daemon) & (test(/^files::/) | test(/^fs_ops::/))'
+test-group = "fs-events"
+
+[[profile.default.overrides]]
+filter = 'package(hutan-desktop) & test(=files_filter_gpui::a_project_of_a_hundred_thousand_files_answers_with_at_most_two_hundred)'
+threads-required = "num-test-threads"

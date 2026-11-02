@@ -1251,8 +1251,12 @@ fn text_of(size: usize) -> String {
 async fn a_write_right_after_fs_watch_is_reported_by_a_new_watcher_and_a_running_one() {
     let mut env = Env::new().await;
     // Outside the roots every directory is a watcher of its own, started by this watch; inside
-    // a root the first watch starts the root's watcher and the others join it.
-    for round in 0..20 {
+    // a root the first watch starts the root's watcher and the others join it. macOS starts a
+    // watcher's event stream asynchronously, and a write right after it may reach the daemon
+    // late or never (seen with a program that uses only the `notify` crate, no Hutan code): the
+    // daemon looks again at what a watch added (`SETTLE_PAUSES_MS`), so the change is reported
+    // either way. Every round waits for two events, hence eight rounds and not twenty.
+    for round in 0..8 {
         for path in [
             env.outside.join(format!("d{round}")).join("a.txt"),
             env.at(&format!("in{round}.txt")),
