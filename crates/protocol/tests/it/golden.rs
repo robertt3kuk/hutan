@@ -66,6 +66,7 @@ use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch, Termi
 use hutan_protocol::tree::*;
 use hutan_protocol::update::*;
 use hutan_protocol::usage::*;
+use hutan_protocol::verify::*;
 use hutan_protocol::worktree::*;
 use hutan_protocol::{ErrorBody, ErrorCode, Frame, PROTOCOL_VERSION};
 fn daemon_setting_entries() -> Vec<hutan_protocol::daemon_settings::DaemonSetting> {
@@ -4032,6 +4033,33 @@ fn requests() -> Vec<(&'static str, Request)> {
             }),
         ),
         (
+            "agents_verify",
+            Request::AgentsVerify(AgentsVerifyRequest {
+                session_id: sid(),
+                command: None,
+                force: false,
+            }),
+        ),
+        (
+            "agents_verify_command_force",
+            Request::AgentsVerify(AgentsVerifyRequest {
+                session_id: sid(),
+                command: Some("cargo test -p api".into()),
+                force: true,
+            }),
+        ),
+        (
+            "agents_verify_plan",
+            Request::AgentsVerifyPlan(AgentsVerifyPlanRequest {
+                session_id: sid(),
+                command: None,
+            }),
+        ),
+        (
+            "agents_verify_cancel",
+            Request::AgentsVerifyCancel(AgentsVerifyCancel { session_id: sid() }),
+        ),
+        (
             "chat_create_dirs",
             Request::ChatCreate(ChatCreate {
                 extra_dirs: vec!["/work/api".into(), "/work/shared".into()],
@@ -5699,6 +5727,18 @@ fn events() -> Vec<(&'static str, Event)> {
                 suggestion: None,
             })),
         ),
+        (
+            "agents_verify_started",
+            Event::AgentsVerifyStarted {
+                run: Box::new(verify_running_fixture()),
+            },
+        ),
+        (
+            "agents_verify_ended",
+            Event::AgentsVerifyEnded {
+                run: Box::new(verify_failed_fixture()),
+            },
+        ),
     ]
 }
 
@@ -5995,6 +6035,42 @@ fn activity_fixture() -> AgentsActivity {
             "turns and durations of terminal agents".into(),
             "terminal agents' states over time (only the current one exists)".into(),
         ],
+    }
+}
+
+fn verify_running_fixture() -> VerifyRun {
+    VerifyRun {
+        id: 9,
+        session_id: sid(),
+        command: "cargo test".into(),
+        cwd: "/work/repo".into(),
+        source: VerifySource::Detected,
+        why: "Cargo.toml in /work/repo".into(),
+        status: VerifyStatus::Running,
+        exit_code: None,
+        signal: None,
+        started_ms: 1_791_894_400_000,
+        ended_ms: None,
+        duration_ms: None,
+        output_tail: String::new(),
+        output_truncated: false,
+        requested_by: VerifyRequester::Mawas,
+        forced: false,
+        error: None,
+    }
+}
+
+fn verify_failed_fixture() -> VerifyRun {
+    VerifyRun {
+        status: VerifyStatus::Failed,
+        exit_code: Some(101),
+        ended_ms: Some(1_791_894_422_800),
+        duration_ms: Some(22_800),
+        output_tail:
+            "test health::returns_200 ... FAILED\n\ntest result: FAILED. 11 passed; 1 failed\n"
+                .into(),
+        output_truncated: true,
+        ..verify_running_fixture()
     }
 }
 
@@ -9690,6 +9766,52 @@ fn responses_match_fixtures() {
         (
             "agents_review_terminal",
             ControlMessage::ok(95, &review_terminal_fixture()).unwrap(),
+        ),
+        (
+            "agents_verify_plan",
+            ControlMessage::ok(
+                96,
+                &VerifyPlan {
+                    session_id: sid(),
+                    command: "cargo test".into(),
+                    cwd: "/work/repo".into(),
+                    source: VerifySource::Detected,
+                    why: "Cargo.toml in /work/repo".into(),
+                    refused: Some(VerifyRefusal::TurnRunning),
+                    timeout_secs: 600,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "agents_verify_failed",
+            ControlMessage::ok(97, &verify_failed_fixture()).unwrap(),
+        ),
+        (
+            "agents_verify_passed",
+            ControlMessage::ok(
+                98,
+                &VerifyRun {
+                    id: 8,
+                    session_id: sid(),
+                    command: "pnpm test".into(),
+                    cwd: "/work/web".into(),
+                    source: VerifySource::Project,
+                    why: "[checks.projects.web] test_command of daemon.toml".into(),
+                    status: VerifyStatus::Passed,
+                    exit_code: Some(0),
+                    signal: None,
+                    started_ms: 1_791_894_300_000,
+                    ended_ms: Some(1_791_894_312_400),
+                    duration_ms: Some(12_400),
+                    output_tail: "Tests: 41 passed, 41 total\n".into(),
+                    output_truncated: false,
+                    requested_by: VerifyRequester::User,
+                    forced: false,
+                    error: None,
+                },
+            )
+            .unwrap(),
         ),
         (
             "agent_context_measured",

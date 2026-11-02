@@ -1,0 +1,1 @@
+{"id":96,"result":{"command":"cargo test","cwd":"/work/repo","refused":"turn_running","session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM","source":"detected","timeout_secs":600,"why":"Cargo.toml in /work/repo"}}

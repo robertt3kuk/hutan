@@ -1358,6 +1358,38 @@ impl Connection {
         client.agents_review(request).await
     }
 
+    /// True while connected to a daemon that advertised capability `agents.verify`
+    /// ([`Client::supports_agents_verify`]); false when disconnected.
+    pub fn supports_agents_verify(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_agents_verify())
+    }
+
+    /// `agents.verify.plan` ([`Client::agents_verify_plan`]).
+    pub async fn agents_verify_plan(
+        &self,
+        request: hutan_protocol::verify::AgentsVerifyPlanRequest,
+    ) -> Result<hutan_protocol::verify::VerifyPlan, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agents_verify_plan(request).await
+    }
+
+    /// `agents.verify` ([`Client::agents_verify`]).
+    pub async fn agents_verify(
+        &self,
+        request: hutan_protocol::verify::AgentsVerifyRequest,
+    ) -> Result<hutan_protocol::verify::VerifyRun, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agents_verify(request).await
+    }
+
+    /// `agents.verify.cancel` ([`Client::agents_verify_cancel`]).
+    pub async fn agents_verify_cancel(&self, session_id: SessionId) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agents_verify_cancel(session_id).await
+    }
+
     /// `agent.measure_context` ([`Client::agent_measure_context`]).
     pub async fn agent_measure_context(
         &self,

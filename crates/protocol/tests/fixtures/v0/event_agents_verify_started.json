@@ -1,0 +1,1 @@
+{"data":{"run":{"command":"cargo test","cwd":"/work/repo","id":9,"requested_by":"mawas","session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM","source":"detected","started_ms":1791894400000,"status":"running","why":"Cargo.toml in /work/repo"}},"epoch":"01K7F3B5N2Q9W8E4R6T1Y0V3PQ","event":"agents.verify.started","seq":1122}

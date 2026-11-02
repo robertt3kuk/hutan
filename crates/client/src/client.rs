@@ -254,6 +254,9 @@ pub(crate) const AGENTS_ACTIVITY_CAPABILITY: &str = "agents.activity";
 pub(crate) const AGENTS_STATS_CAPABILITY: &str = "agents.stats";
 /// Capability for `agents.review` and the `turn_review` attachment (protocol 0.67).
 pub(crate) const AGENTS_REVIEW_CAPABILITY: &str = "agents.review";
+/// Capability for `agents.verify`, `agents.verify.plan`, `agents.verify.cancel` and their events
+/// (protocol 0.71).
+pub(crate) const AGENTS_VERIFY_CAPABILITY: &str = "agents.verify";
 /// Capability for `digest.status` and `ChatInfo.digest` (protocol 0.69).
 pub(crate) const DIGEST_MODEL_CAPABILITY: &str = "digest.model";
 /// Capability for `ClientFocus.window_active`, `IntentKind::Digest` and `ui.open`'s `view`
@@ -329,6 +332,7 @@ const CAPABILITIES: &[&str] = &[
     AGENTS_REVIEW_CAPABILITY,
     DIGEST_MODEL_CAPABILITY,
     NOTIFY_DIGEST_CAPABILITY,
+    AGENTS_VERIFY_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -715,6 +719,40 @@ impl Client {
         request: hutan_protocol::review::AgentsReviewRequest,
     ) -> Result<hutan_protocol::review::TurnReview, ClientError> {
         self.call(Request::AgentsReview(request)).await
+    }
+
+    /// True when the daemon advertised capability `agents.verify` (protocol 0.71).
+    pub fn supports_agents_verify(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENTS_VERIFY_CAPABILITY)
+    }
+
+    /// `agents.verify.plan`: what `agents.verify` would run for a session, and why.
+    pub async fn agents_verify_plan(
+        &self,
+        request: hutan_protocol::verify::AgentsVerifyPlanRequest,
+    ) -> Result<hutan_protocol::verify::VerifyPlan, ClientError> {
+        self.call(Request::AgentsVerifyPlan(request)).await
+    }
+
+    /// `agents.verify`: runs the session's tests and answers when the run is over.
+    pub async fn agents_verify(
+        &self,
+        request: hutan_protocol::verify::AgentsVerifyRequest,
+    ) -> Result<hutan_protocol::verify::VerifyRun, ClientError> {
+        self.call(Request::AgentsVerify(request)).await
+    }
+
+    /// `agents.verify.cancel`: kills the run of a session.
+    pub async fn agents_verify_cancel(&self, session_id: SessionId) -> Result<(), ClientError> {
+        let _: Empty = self
+            .call(Request::AgentsVerifyCancel(
+                hutan_protocol::verify::AgentsVerifyCancel { session_id },
+            ))
+            .await?;
+        Ok(())
     }
 
     /// True when the daemon advertised capability `agent.insight` (protocol 0.59).

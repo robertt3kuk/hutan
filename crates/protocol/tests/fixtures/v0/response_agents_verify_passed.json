@@ -1,0 +1,1 @@
+{"id":98,"result":{"command":"pnpm test","cwd":"/work/web","duration_ms":12400,"ended_ms":1791894312400,"exit_code":0,"id":8,"output_tail":"Tests: 41 passed, 41 total\n","requested_by":"user","session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM","source":"project","started_ms":1791894300000,"status":"passed","why":"[checks.projects.web] test_command of daemon.toml"}}
