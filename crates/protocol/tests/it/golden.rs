@@ -36,6 +36,7 @@ use hutan_protocol::blocks::{
 use hutan_protocol::board::*;
 use hutan_protocol::chat::*;
 use hutan_protocol::checkpoint::*;
+use hutan_protocol::checks::*;
 use hutan_protocol::control::ControlMessage;
 use hutan_protocol::fs::*;
 use hutan_protocol::git::*;
@@ -4113,6 +4114,26 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AgentsVerifyCancel(AgentsVerifyCancel { session_id: sid() }),
         ),
         (
+            "agents_findings",
+            Request::AgentsFindings(AgentsFindingsRequest::default()),
+        ),
+        (
+            "agents_findings_scoped",
+            Request::AgentsFindings(AgentsFindingsRequest {
+                workspace_id: Some(ws()),
+                session_id: Some(sid()),
+                since_ms: Some(1_791_800_000_000),
+                include_dismissed: true,
+                limit: Some(50),
+            }),
+        ),
+        (
+            "agents_findings_dismiss",
+            Request::AgentsFindingsDismiss(AgentsFindingsDismiss {
+                id: "chk_0123456789abcdef".into(),
+            }),
+        ),
+        (
             "chat_create_dirs",
             Request::ChatCreate(ChatCreate {
                 extra_dirs: vec!["/work/api".into(), "/work/shared".into()],
@@ -6286,6 +6307,134 @@ fn review_terminal_fixture() -> TurnReview {
             NotRecorded::new("turns", "a terminal agent has no journal"),
             NotRecorded::new("commands and files", "only its current state is reported"),
         ],
+        cut: Vec::new(),
+    }
+}
+
+/// Findings of a workspace: an alert with exact evidence, a heuristic warning in a turn, the
+/// overlap of two sessions, a dismissed one, the coverage of a chat and of a terminal agent.
+fn findings_fixture() -> AgentsFindings {
+    let scope = |session: Option<SessionId>, turn: Option<TurnId>| FindingScope {
+        workspace_id: ws(),
+        session_id: session,
+        turn_id: turn,
+    };
+    AgentsFindings {
+        generated_at_ms: 1_791_894_300_000,
+        findings: vec![
+            Finding {
+                id: "chk_0123456789abcdef".into(),
+                detector: detector::DONE_AFTER_FAILED_COMMAND.into(),
+                severity: FindingSeverity::Alert,
+                confidence: FindingConfidence::Exact,
+                scope: scope(Some(sid()), Some(turn())),
+                title: "Turn 3 ended \"done\" after its last test command failed".into(),
+                evidence: vec![
+                    FindingEvidence {
+                        kind: EvidenceKind::Command,
+                        reference: Some(turn().to_string()),
+                        excerpt: "exit 101: cargo nextest run -p api".into(),
+                        redacted: false,
+                    },
+                    FindingEvidence {
+                        kind: EvidenceKind::Event,
+                        reference: None,
+                        excerpt: "final message: Done, the tests pass".into(),
+                        redacted: false,
+                    },
+                ],
+                first_at_ms: 1_791_894_185_000,
+                last_at_ms: 1_791_894_185_000,
+                count: 1,
+                dismissed: false,
+            },
+            Finding {
+                id: "chk_fedcba9876543210".into(),
+                detector: detector::TESTS_WEAKENED.into(),
+                severity: FindingSeverity::Warn,
+                confidence: FindingConfidence::Heuristic,
+                scope: scope(Some(sid()), Some(turn())),
+                title: "A test was skipped in src/health_test.rs".into(),
+                evidence: vec![FindingEvidence {
+                    kind: EvidenceKind::Diff,
+                    reference: Some("src/health_test.rs".into()),
+                    excerpt: "+#[ignore = \"flaky\"]".into(),
+                    redacted: false,
+                }],
+                first_at_ms: 1_791_894_185_000,
+                last_at_ms: 1_791_894_185_000,
+                count: 1,
+                dismissed: true,
+            },
+            Finding {
+                id: "chk_00000000000000aa".into(),
+                detector: detector::OVERLAP.into(),
+                severity: FindingSeverity::Warn,
+                confidence: FindingConfidence::Exact,
+                scope: scope(None, None),
+                title: "2 live sessions changed src/health.rs".into(),
+                evidence: vec![
+                    FindingEvidence {
+                        kind: EvidenceKind::File,
+                        reference: Some(sid().to_string()),
+                        excerpt: "src/health.rs (api: add health endpoint)".into(),
+                        redacted: false,
+                    },
+                    FindingEvidence {
+                        kind: EvidenceKind::File,
+                        reference: Some(sid2().to_string()),
+                        excerpt: "src/health.rs (api: refactor handlers)".into(),
+                        redacted: false,
+                    },
+                ],
+                first_at_ms: 1_791_894_000_000,
+                last_at_ms: 1_791_894_250_000,
+                count: 2,
+                dismissed: false,
+            },
+        ],
+        omitted: 4,
+        dismissed_hidden: 1,
+        counts: FindingCounts {
+            alert: 1,
+            warn: 3,
+            info: 2,
+        },
+        coverage: vec![
+            SessionCoverage {
+                session_id: sid(),
+                title: "api: add health endpoint".into(),
+                harness: Some("codex".into()),
+                chat: true,
+                ran: vec![
+                    detector::DONE_AFTER_FAILED_COMMAND.into(),
+                    detector::TESTS_WEAKENED.into(),
+                ],
+                gaps: vec![CoverageGap {
+                    detectors: vec![detector::COSTLY_TURN.into()],
+                    why: "codex reports no cost".into(),
+                }],
+            },
+            SessionCoverage {
+                session_id: sid2(),
+                title: "scratch".into(),
+                harness: Some("claude".into()),
+                chat: false,
+                ran: vec![detector::STALLED.into(), detector::LONG_WAIT.into()],
+                gaps: vec![CoverageGap {
+                    detectors: vec![
+                        detector::DONE_AFTER_FAILED_COMMAND.into(),
+                        detector::TESTS_EDITED.into(),
+                    ],
+                    why: "terminal agent: no tool events — install the integration".into(),
+                }],
+            },
+        ],
+        coverage_omitted: 0,
+        not_recorded: vec![NotRecorded::new(
+            "how long terminal agents waited",
+            "the state log is off",
+        )],
         cut: Vec::new(),
     }
 }
@@ -9862,6 +10011,16 @@ fn responses_match_fixtures() {
                     requested_by: VerifyRequester::User,
                     forced: false,
                     error: None,
+            "agents_findings",
+            ControlMessage::ok(97, &findings_fixture()).unwrap(),
+        ),
+        (
+            "agents_findings_dismissed",
+            ControlMessage::ok(
+                98,
+                &FindingDismissed {
+                    id: "chk_0123456789abcdef".into(),
+                    dismissed_at_ms: 1_791_894_400_000,
                 },
             )
             .unwrap(),

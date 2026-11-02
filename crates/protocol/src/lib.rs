@@ -3,6 +3,10 @@
 //! - [`verify`]: `agents.verify`, `agents.verify.plan`, `agents.verify.cancel` and the events
 //!   `agents.verify.started` / `agents.verify.ended` — Hutan runs a session's tests itself and keeps
 //!   the exit code and the tail of the output (protocol 0.70, capability `agents.verify`).
+//! - [`checks`]: `agents.findings` and `agents.findings.dismiss` — what is wrong in a session or a
+//!   workspace, from named deterministic detectors with a confidence and evidence each, and the
+//!   coverage of every session; dismissing is the user's alone (protocol 0.71, capability
+//!   `agents.findings`, ADR 0025).
 //! - [`review`], [`assistant`]: `agents.review` and the `turn_review` attachment — what an agent did
 //!   in one turn, from the journal, the checkpoint and the language servers, with named heuristic
 //!   signals and what is not recorded (protocol 0.67, capability `agents.review`, ADR 0025).
@@ -138,6 +142,7 @@ pub mod blocks;
 pub mod board;
 pub mod chat;
 pub mod checkpoint;
+pub mod checks;
 pub mod control;
 pub mod daemon_settings;
 pub mod error;
