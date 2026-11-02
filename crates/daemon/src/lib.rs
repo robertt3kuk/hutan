@@ -110,6 +110,7 @@ pub mod safety;
 pub mod scratch;
 pub mod session_dirs;
 pub mod session_names;
+pub mod signs;
 pub mod start_error;
 pub mod state_log;
 pub mod tasks;

@@ -13,7 +13,7 @@
 //! are heuristics with names; they point at evidence and never decide.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hutan_core::agent::{
@@ -34,19 +34,18 @@ use hutan_protocol::messages::{SessionInfo, SessionListFilter, TerminalAgentStat
 use hutan_protocol::review::{
     AgentsReviewRequest, NotRecorded, REVIEW_COMMAND_CHARS, REVIEW_COMMANDS_MAX,
     REVIEW_DIAGNOSTIC_CHARS, REVIEW_DIAGNOSTIC_FILES_MAX, REVIEW_DIAGNOSTICS_PER_FILE,
-    REVIEW_EVIDENCE_CHARS, REVIEW_EVIDENCE_MAX, REVIEW_FILES_MAX, REVIEW_LARGE_DIFF_LINES,
-    REVIEW_MAX_BYTES, REVIEW_MESSAGE_CHARS, REVIEW_PROMPT_CHARS, REVIEW_TOOL_NAMES_MAX,
-    ReviewCommand, ReviewCommands, ReviewDiagnostic, ReviewDiagnosticFile, ReviewDiagnostics,
-    ReviewFile, ReviewFiles, ReviewFilesSource, ReviewReport, ReviewRequest, ReviewRequestKind,
-    ReviewSignal, ReviewSignalId, ReviewText, ReviewToolCount, ReviewToolStatus, ReviewTools,
-    ReviewTurn, ReviewTurnStatus, TurnReview,
+    REVIEW_FILES_MAX, REVIEW_MAX_BYTES, REVIEW_MESSAGE_CHARS, REVIEW_PROMPT_CHARS,
+    REVIEW_TOOL_NAMES_MAX, ReviewCommand, ReviewCommands, ReviewDiagnostic, ReviewDiagnosticFile,
+    ReviewDiagnostics, ReviewFile, ReviewFiles, ReviewFilesSource, ReviewReport, ReviewRequest,
+    ReviewRequestKind, ReviewText, ReviewToolCount, ReviewToolStatus, ReviewTools, ReviewTurn,
+    ReviewTurnStatus, TurnReview,
 };
 use hutan_storage::{ChatTurnRow, ChatTurnStatus, Storage};
 
-use crate::checkpoints::caps::{DEFAULT_EXCLUDE, excluded};
 use crate::context::{Keep, bound};
 use crate::lsp::LspHub;
 use crate::registry::{RegistryHandle, now_ms};
+use crate::signs::{SeenFile as Seen, line, signals};
 use crate::term_agent::OSC_SOURCE;
 
 /// The most events of one turn the journal is read for.
@@ -214,18 +213,6 @@ struct ToolRun {
     status: Option<ToolStatus>,
     exit_code: Option<i32>,
     duration_ms: Option<u64>,
-}
-
-/// A file as the turn's records give it, before the list is cut.
-#[derive(Debug, Clone)]
-struct Seen {
-    path: String,
-    status: CheckpointFileStatus,
-    added: Option<u64>,
-    removed: Option<u64>,
-    binary: bool,
-    /// Only the journal named it.
-    journal_only: bool,
 }
 
 fn fill_from_turn(review: &mut TurnReview, inputs: &ReviewInputs<'_>, turn: &TurnInput) {
@@ -477,17 +464,6 @@ fn text_of(text: &str, max: usize) -> ReviewText {
     }
 }
 
-/// `text` on one line, redacted by the caller, at most `max` characters; a cut ends in `…`.
-fn line(text: &str, max: usize) -> String {
-    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let cut = bound(&joined, max, Keep::Start);
-    if cut.truncated {
-        format!("{}…", cut.text)
-    } else {
-        cut.text
-    }
-}
-
 /// Pairs each `tool_start` with its `tool_end` (by item id) in the order of the starts.
 fn tool_runs(events: &[AgentEvent]) -> Vec<ToolRun> {
     let mut runs: Vec<ToolRun> = Vec::new();
@@ -736,235 +712,6 @@ fn diagnostics_of(
         warnings,
         files,
     }
-}
-
-// Signals -----------------------------------------------------------------------------------------
-
-/// File names of lockfiles and package manifests.
-const DEPENDENCY_FILES: &[&str] = &[
-    "Cargo.toml",
-    "Cargo.lock",
-    "package.json",
-    "package-lock.json",
-    "npm-shrinkwrap.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-    "bun.lock",
-    "bun.lockb",
-    "go.mod",
-    "go.sum",
-    "Gemfile",
-    "Gemfile.lock",
-    "pyproject.toml",
-    "poetry.lock",
-    "uv.lock",
-    "Pipfile",
-    "Pipfile.lock",
-    "requirements.txt",
-    "composer.json",
-    "composer.lock",
-    "build.gradle",
-    "build.gradle.kts",
-    "pom.xml",
-    "Package.swift",
-    "Package.resolved",
-    "Podfile",
-    "Podfile.lock",
-    "flake.lock",
-    "mix.exs",
-    "mix.lock",
-];
-
-/// Words that make a command look like a test run.
-const TEST_WORDS: &[&str] = &[
-    "test", "tests", "pytest", "jest", "vitest", "nextest", "mocha", "rspec", "phpunit", "tox",
-    "unittest", "xctest", "ctest",
-];
-
-/// Words with which an agent says it is finished.
-const DONE_WORDS: &[&str] = &[
-    "done",
-    "complete",
-    "completed",
-    "finished",
-    "fixed",
-    "implemented",
-    "works",
-    "working",
-    "passes",
-    "passing",
-    "passed",
-    "ready",
-    "resolved",
-    "all set",
-];
-
-fn words(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
-        .collect()
-}
-
-fn looks_like_a_test(command: &str) -> bool {
-    words(command)
-        .iter()
-        .any(|word| TEST_WORDS.contains(&word.as_str()))
-}
-
-fn sounds_done(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    let tokens = words(message);
-    DONE_WORDS.iter().any(|word| {
-        if word.contains(' ') {
-            lower.contains(word)
-        } else {
-            tokens.iter().any(|token| token == word)
-        }
-    })
-}
-
-fn is_failed(command: &ReviewCommand) -> bool {
-    command.status == ReviewToolStatus::Failed || command.exit_code.is_some_and(|code| code != 0)
-}
-
-fn evidence(text: impl AsRef<str>) -> String {
-    line(&redact(text.as_ref()), REVIEW_EVIDENCE_CHARS)
-}
-
-/// A path as the agent gave it that leaves the folders of the session.
-fn outside(path: &str, roots: &[PathBuf]) -> bool {
-    let path = Path::new(path);
-    if path.is_absolute() {
-        return !roots.is_empty() && !roots.iter().any(|root| path.starts_with(root));
-    }
-    matches!(path.components().next(), Some(Component::ParentDir))
-}
-
-fn signals(
-    seen: &[Seen],
-    commands: &[ReviewCommand],
-    message: Option<&str>,
-    roots: &[PathBuf],
-    totals: Option<(u64, u64)>,
-) -> Vec<ReviewSignal> {
-    let mut out: Vec<ReviewSignal> = Vec::new();
-    let mut push = |id: ReviewSignalId, label: &str, mut lines: Vec<String>| {
-        lines.truncate(REVIEW_EVIDENCE_MAX);
-        out.push(ReviewSignal {
-            id,
-            label: label.to_owned(),
-            evidence: lines,
-        });
-    };
-
-    let deps: Vec<String> = seen
-        .iter()
-        .filter(|f| {
-            Path::new(&f.path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| DEPENDENCY_FILES.contains(&name))
-        })
-        .map(|f| evidence(&f.path))
-        .collect();
-    if !deps.is_empty() {
-        push(
-            ReviewSignalId::DependencyFileChanged,
-            "a lockfile or a package manifest changed (by file name)",
-            deps,
-        );
-    }
-    let deleted: Vec<String> = seen
-        .iter()
-        .filter(|f| f.status == CheckpointFileStatus::Deleted)
-        .map(|f| evidence(&f.path))
-        .collect();
-    if !deleted.is_empty() {
-        push(ReviewSignalId::FileDeleted, "a file was deleted", deleted);
-    }
-    // Only the journal knows a path outside the checkout: the checkpoint's are relative to it.
-    let away: Vec<String> = seen
-        .iter()
-        .filter(|f| f.journal_only && outside(&f.path, roots))
-        .map(|f| evidence(&f.path))
-        .collect();
-    if !away.is_empty() {
-        push(
-            ReviewSignalId::PathOutsideFolder,
-            "the agent changed a path outside the session's folders",
-            away,
-        );
-    }
-    let patterns: Vec<String> = DEFAULT_EXCLUDE.iter().map(|p| (*p).to_owned()).collect();
-    let secret: Vec<String> = seen
-        .iter()
-        .filter(|f| excluded(f.path.as_bytes(), &patterns))
-        .map(|f| evidence(&f.path))
-        .collect();
-    if !secret.is_empty() {
-        push(
-            ReviewSignalId::SecretLikePath,
-            "a changed path has the name of a likely secret (.env, *.pem, *.key, id_rsa …)",
-            secret,
-        );
-    }
-    if let Some((added, removed)) = totals
-        && added + removed > REVIEW_LARGE_DIFF_LINES
-    {
-        push(
-            ReviewSignalId::LargeDiff,
-            &format!("more than {REVIEW_LARGE_DIFF_LINES} lines added plus removed"),
-            vec![format!("+{added} −{removed} over {} files", seen.len())],
-        );
-    }
-    // The commands of a journaled turn are all recorded (none is a fact too).
-    if !seen.is_empty() && !commands.iter().any(|c| looks_like_a_test(&c.text)) {
-        push(
-            ReviewSignalId::NoTestCommand,
-            "files changed and no command that looks like a test run (a test, pytest, jest, nextest … in its words)",
-            vec![format!(
-                "{} files changed; {} command(s), none a test run",
-                seen.len(),
-                commands.len()
-            )],
-        );
-    }
-    let unrecovered: Vec<&ReviewCommand> = commands
-        .iter()
-        .enumerate()
-        .filter(|(at, command)| {
-            is_failed(command)
-                && command.status != ReviewToolStatus::Declined
-                && !commands[at + 1..].iter().any(|later| {
-                    later.text == command.text
-                        && !is_failed(later)
-                        && later.status == ReviewToolStatus::Completed
-                })
-        })
-        .map(|(_, command)| command)
-        .collect();
-    if !unrecovered.is_empty()
-        && let Some(message) = message
-        && sounds_done(message)
-    {
-        let mut lines: Vec<String> = unrecovered
-            .iter()
-            .map(|c| {
-                let code = c
-                    .exit_code
-                    .map_or_else(|| "failed".to_owned(), |code| format!("exit {code}"));
-                evidence(format!("{code}: {}", c.text))
-            })
-            .collect();
-        lines.push(evidence(format!("final message: {message}")));
-        push(
-            ReviewSignalId::FailedCommandThenDone,
-            "a command failed and was not run again with success, and the final message sounds done (a word like done, fixed, passes)",
-            lines,
-        );
-    }
-    out
 }
 
 // Fitting -----------------------------------------------------------------------------------------
