@@ -11,6 +11,7 @@
 mod checkpoints;
 mod digest_runs;
 mod error;
+mod findings;
 mod memory;
 mod migrate;
 mod rows;
@@ -38,6 +39,7 @@ pub use checkpoints::{
 };
 pub use digest_runs::{DIGEST_RUNS_KEPT, DigestRunRow, DigestRuns};
 pub use error::{Result, StorageError};
+pub use findings::{DISMISSED_FINDINGS_KEPT, DismissedFindings};
 pub use memory::{
     Action, Author, Category, Change, EntryRow, EntryState, EntryView, Memory, MemoryError,
     Operation, ProposalRow, ProposalState, Receipt, Resolution, Resolved, RevisionRow, Scope,
@@ -223,6 +225,10 @@ impl Storage {
 
     pub fn verify_runs(&self) -> VerifyRuns<'_> {
         VerifyRuns(self)
+    }
+
+    pub fn dismissed_findings(&self) -> DismissedFindings<'_> {
+        DismissedFindings(self)
     }
 
     pub fn agent_state_log(&self) -> AgentStateLog<'_> {

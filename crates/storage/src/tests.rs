@@ -3150,5 +3150,52 @@ fn a_finished_verify_run_keeps_every_column_across_a_reopen() {
     assert_eq!(row.output_tail, "still running");
     assert_eq!(row.requested_by, "user");
     assert_eq!(row.session_id, id);
+fn a_dismissed_finding_keeps_its_first_time_survives_a_restart_and_the_newest_2000_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let findings = storage.dismissed_findings();
+    assert!(findings.all().unwrap().is_empty());
+    assert_eq!(
+        findings.dismiss("chk_0000000000000001", 1_000).unwrap(),
+        1_000
+    );
+    // Dismissed again later: the first time stays.
+    assert_eq!(
+        findings.dismiss("chk_0000000000000001", 9_000).unwrap(),
+        1_000
+    );
+    storage.close();
+
+    let storage = Storage::open(db(&dir)).unwrap();
+    let findings = storage.dismissed_findings();
+    assert_eq!(
+        findings.all().unwrap().get("chk_0000000000000001"),
+        Some(&1_000)
+    );
+    // One transaction, so the test does not wait for 2 000 commits.
+    storage
+        .batch(
+            (0..2_010u64)
+                .map(|n| crate::Write::DismissFinding {
+                    id: format!("chk_{n:016x}"),
+                    at_ms: 10_000 + n,
+                })
+                .collect(),
+        )
+        .unwrap();
+    let kept = findings.all().unwrap();
+    assert_eq!(
+        kept.len(),
+        usize::try_from(crate::DISMISSED_FINDINGS_KEPT).unwrap()
+    );
+    assert!(
+        kept.contains_key(&format!("chk_{:016x}", 2_009)),
+        "the newest stays"
+    );
+    // The one dismissed first (at 1 000) is the oldest and went with the first ten.
+    assert!(
+        !kept.contains_key("chk_0000000000000001"),
+        "the oldest went"
+    );
     storage.close();
 }
