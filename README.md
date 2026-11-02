@@ -8,6 +8,26 @@
 
 > **Status: pre-alpha, macOS only, not released.** The first vertical slice is built: terminals and shell blocks, the desktop workbench, agent chat and monitor, worktrees with tasks and review, restart recovery, and `Hutan.app` with native notifications, start at login, the menu bar item and the Dock badge. Several surfaces have had only a quick visual review, and expect breaking protocol changes. See [`docs/status.md`](docs/status.md) and [`docs/roadmap.md`](docs/roadmap.md).
 
+## See it
+
+<p align="center">
+  <img src="assets/screenshots/hero.png" alt="Hutan: an OMP chat waiting for approval to edit README.md, next to OMP running in a terminal" width="900">
+</p>
+
+**Close the window, the agents keep working.** The daemon owns every session. Here an agent keeps going after Hutan quits, `hutan ls` shows it finish, and reopening the app shows the answer (real agent, 55 s cut):
+
+<p align="center">
+  <img src="assets/screenshots/daemon.gif" alt="An agent keeps working after Hutan quits; reopening shows the finished answer" width="800">
+</p>
+
+**Mawas watches, you decide.** Mawas's board shows what needs you across every workspace, built from what the daemon recorded, each row marked *exact* or *state only*. Opening it makes no model call:
+
+<p align="center">
+  <img src="assets/screenshots/board.png" alt="Mawas's board: a request with Allow once, a working agent marked state only, and the Catch up line" width="900">
+</p>
+
+Captured from Hutan 0.3.5 with real agents (OMP on Claude Haiku 5.5).
+
 ## Why
 
 - **The daemon is the source of truth.** If the UI crashes or you close it, work keeps going. The desktop app, the `hutan` CLI and any future remote client all speak the same protocol over a Unix socket.
