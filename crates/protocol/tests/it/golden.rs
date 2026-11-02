@@ -10011,6 +10011,11 @@ fn responses_match_fixtures() {
                     requested_by: VerifyRequester::User,
                     forced: false,
                     error: None,
+                },
+            )
+            .unwrap(),
+        ),
+        (
             "agents_findings",
             ControlMessage::ok(97, &findings_fixture()).unwrap(),
         ),

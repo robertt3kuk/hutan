@@ -76,6 +76,9 @@ pub mod detector {
     pub const OVERLAP: &str = "overlap";
     /// Two agents write to one checkout.
     pub const SHARED_CHECKOUT: &str = "shared_checkout";
+    /// Hutan's own run of the session's tests (`agents.verify`) failed after the agent said it
+    /// was done.
+    pub const VERIFY_FAILED: &str = "verify_failed";
 
     /// Every detector the daemon runs, in the order coverage lists them.
     pub const ALL: &[&str] = &[
@@ -99,6 +102,7 @@ pub mod detector {
         UNREVIEWED_CHANGES,
         OVERLAP,
         SHARED_CHECKOUT,
+        VERIFY_FAILED,
     ];
 }
 

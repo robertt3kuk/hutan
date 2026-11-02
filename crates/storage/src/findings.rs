@@ -1,4 +1,4 @@
-//! The `dismissed_findings` table (schema v25, `docs/assistant.md` § Checks): the ids of the
+//! The `dismissed_findings` table (schema v26, `docs/assistant.md` § Checks): the ids of the
 //! findings the user dismissed.
 
 use std::collections::HashMap;

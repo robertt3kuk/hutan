@@ -3150,6 +3150,10 @@ fn a_finished_verify_run_keeps_every_column_across_a_reopen() {
     assert_eq!(row.output_tail, "still running");
     assert_eq!(row.requested_by, "user");
     assert_eq!(row.session_id, id);
+    storage.close();
+}
+
+#[test]
 fn a_dismissed_finding_keeps_its_first_time_survives_a_restart_and_the_newest_2000_are_kept() {
     let dir = tempfile::tempdir().unwrap();
     let storage = Storage::open(db(&dir)).unwrap();
