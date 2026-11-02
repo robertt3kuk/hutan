@@ -1172,6 +1172,16 @@ impl FilesPanel {
         let Some(tree) = &self.tree else {
             return;
         };
+        // What a filter finds are names: a file that was only written to cannot change them. A
+        // project that is being built in sends such notices all the time, and asking again for
+        // each would keep the filter from ever showing an answer.
+        let names_may_change = match &notice {
+            Notice::FsChanged { overflow: true, .. } | Notice::FsGeneration { .. } => true,
+            Notice::FsChanged { changes, .. } => changes.iter().any(|change| {
+                change.kind != hutan_protocol::fs::ChangeKind::Modified || change.from.is_some()
+            }),
+            _ => false,
+        };
         let open = tree.expanded_dirs();
         let again: Vec<PathBuf> = match notice {
             Notice::FsChanged { overflow: true, .. } => open,
@@ -1204,7 +1214,9 @@ impl FilesPanel {
             _ => return,
         };
         self.relist(again, cx);
-        self.refind(cx);
+        if names_may_change {
+            self.refind(cx);
+        }
         self.refresh_git(cx);
     }
 

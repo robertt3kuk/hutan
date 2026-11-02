@@ -876,3 +876,69 @@ fn the_file_called_what_was_typed_is_listed_before_paths_that_only_hold_its_lett
     );
     assert_eq!(rows.iter().filter(|r| r.trim() == "glue.rs").count(), 1);
 }
+
+#[gpui::test]
+fn notices_of_a_changing_project_do_not_keep_the_filter_from_answering(cx: &mut TestAppContext) {
+    use hutan_client::Notice;
+    use hutan_protocol::fs::{ChangeKind, FsChange};
+
+    let notice = |kind: ChangeKind, path: &Path| Notice::FsChanged {
+        changes: vec![FsChange {
+            path: path.to_owned(),
+            kind,
+            from: None,
+            version: None,
+            origin: None,
+        }],
+        overflow: false,
+    };
+    let daemon = TestDaemon::start();
+    let (view, cx, hold) = open_held(cx, &daemon);
+    let (_dir, root) = scratch();
+    small_project(&root);
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["deep", "docs", "src", "main.rs", "notes.md"]);
+    focus_tree(&panel, cx);
+    type_text(cx, "main");
+    wait_found(&panel, cx);
+    let requests = |cx: &VisualTestContext| panel.read_with(cx, |p, _| p.filter_requests());
+    let answers = |cx: &VisualTestContext| panel.read_with(cx, |p, _| p.filter_answers());
+    assert_eq!((requests(cx), answers(cx)), (1, 1));
+
+    // A file that was only written to cannot change what a filter finds: nobody asks again.
+    panel.update(cx, |p, cx| {
+        p.on_notice(notice(ChangeKind::Modified, &root.join("main.rs")), cx)
+    });
+    draw(cx);
+    cx.executor().advance_clock(FILES_FILTER_DEBOUNCE);
+    draw(cx);
+    assert_eq!(requests(cx), 1);
+
+    // A new file may: one request, whose answer is held. Notices that follow while it is on its
+    // way neither cancel it nor ask again.
+    hold.answers(true);
+    panel.update(cx, |p, cx| {
+        p.on_notice(notice(ChangeKind::Created, &root.join("a.rs")), cx)
+    });
+    draw(cx);
+    cx.executor().advance_clock(FILES_FILTER_DEBOUNCE);
+    wait_until(cx, "the request after the notice", |cx| requests(cx) == 2);
+    for name in ["b.rs", "c.rs", "d.rs", "e.rs", "f.rs"] {
+        panel.update(cx, |p, cx| {
+            p.on_notice(notice(ChangeKind::Created, &root.join(name)), cx)
+        });
+        draw(cx);
+        cx.executor().advance_clock(FILES_FILTER_DEBOUNCE);
+    }
+    assert_eq!(requests(cx), 2, "one request at a time");
+
+    // Its answer is taken, not dropped, and what changed meanwhile is asked once more.
+    hold.answers(false);
+    wait_until(cx, "the held answer taken and one more asked", |cx| {
+        cx.executor().advance_clock(FILES_FILTER_DEBOUNCE);
+        answers(cx) >= 2 && requests(cx) == 3
+    });
+    wait_until(cx, "the last answer", |cx| answers(cx) == 3);
+    assert_eq!(requests(cx), 3);
+}

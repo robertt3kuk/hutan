@@ -474,6 +474,8 @@ pub(super) struct Filter {
     restore: Option<Restore>,
     requests: usize,
     answers: usize,
+    /// The names may have changed while a request was on its way: ask again after its answer.
+    refind_pending: bool,
 }
 
 impl Filter {
@@ -492,6 +494,7 @@ impl Filter {
             restore: None,
             requests: 0,
             answers: 0,
+            refind_pending: false,
         }
     }
 
@@ -781,6 +784,7 @@ impl FilesPanel {
         self.filter.query = Query::parse(&self.filter.text);
         self.filter.seq += 1;
         self.filter.task = None;
+        self.filter.refind_pending = false;
         let Some(query) = self.filter.query.clone() else {
             return self.end_filter();
         };
@@ -1036,11 +1040,20 @@ impl FilesPanel {
         }
         self.forget_hidden_selection();
         cx.notify();
+        if std::mem::take(&mut self.filter.refind_pending) {
+            self.refind(cx);
+        }
     }
 
-    /// The tree or a notice from the daemon changed what a query would find: asks again.
+    /// The tree or a notice from the daemon changed what a query would find: asks again. A
+    /// request that is on its way is not cancelled — a project that keeps changing would then
+    /// never get an answer — its answer is shown and one more is asked after it.
     pub(super) fn refind(&mut self, cx: &mut Context<Self>) {
         if self.filter.query.is_some() && self.filter_mode() == FilterMode::Filter {
+            if self.filter.task.is_some() {
+                self.filter.refind_pending = true;
+                return;
+            }
             self.filter.seq += 1;
             self.find(cx);
         }
