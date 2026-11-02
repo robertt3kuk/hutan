@@ -171,7 +171,7 @@ pub fn insight_text(insight: &AgentInsight) -> String {
                 lines.push(format!(
                     "           by category{}:",
                     if rounded {
-                        " (rounded by the agent)"
+                        " (estimated: rounded or derived by the agent)"
                     } else {
                         ""
                     }
@@ -309,16 +309,20 @@ pub fn insight_text(insight: &AgentInsight) -> String {
         ));
     }
     if let Some(files) = &insight.files {
+        // Lines are only counted where the agent gave a patch; a terminal agent's tools do not.
+        let counted = if files.added > 0 || files.removed > 0 {
+            format!(", +{} −{} lines", files.added, files.removed)
+        } else {
+            String::new()
+        };
         lines.push(format!(
-            "Files      {} changed{}, +{} −{} lines",
+            "Files      {} changed{}{counted}",
             files.count,
             if files.truncated {
                 " (more not listed)"
             } else {
                 ""
             },
-            files.added,
-            files.removed
         ));
         for file in files.items.iter().take(8) {
             let changed = match (file.added, file.removed) {

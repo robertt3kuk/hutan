@@ -1117,7 +1117,24 @@ impl ContextPanel {
                 } else {
                     ""
                 };
-                format!("{estimated}as of /context at {when}; the context has moved since")
+                // A terminal agent's extension splits the context in two parts itself; only a
+                // chat's breakdown is a `/context` answer.
+                let from = insight
+                    .sources
+                    .iter()
+                    .find(|source| source.block == hutan_core::insight::InsightBlock::Breakdown)
+                    .map(|source| source.source)
+                    .filter(|source| *source != hutan_core::insight::InsightSourceKind::Chat);
+                match from {
+                    Some(source) => format!(
+                        "the part before any message and the messages, estimated by {}, as of \
+                         {when}; the split moves with the context",
+                        model::source_word(source)
+                    ),
+                    None => {
+                        format!("{estimated}as of /context at {when}; the context has moved since")
+                    }
+                }
             }
             (None, true) => {
                 "No breakdown yet. Measuring sends /context to the agent: it costs no tokens \
@@ -1327,7 +1344,11 @@ impl ContextPanel {
                 &theme,
                 &tokens,
             ))
-            .child(muted_line("Fork or rewind from any turn", &theme, &tokens))
+            .children(
+                self.info(cx)
+                    .is_some_and(|info| info.chat.is_some())
+                    .then(|| muted_line("Fork or rewind from any turn", &theme, &tokens)),
+            )
             .into_any_element()
     }
 

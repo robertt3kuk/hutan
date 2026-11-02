@@ -582,13 +582,13 @@ pub fn file_lines(insight: &AgentInsight) -> Vec<FileLine> {
         .map(|file| FileLine {
             path: file.path.clone(),
             kind: file_kind_word(file.kind),
+            // A count of lines is only drawn when the agent gave enough to count them (a file a
+            // terminal agent's tool wrote says that it changed, not by how much).
             stat: match (file.added, file.removed) {
-                (None, None) => None,
-                (added, removed) => Some(format!(
-                    "+{} −{}",
-                    added.unwrap_or_default(),
-                    removed.unwrap_or_default()
-                )),
+                (Some(added), removed) => {
+                    Some(format!("+{added} −{}", removed.unwrap_or_default()))
+                }
+                (None, _) => None,
             },
         })
         .collect()
