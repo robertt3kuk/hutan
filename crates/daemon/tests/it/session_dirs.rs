@@ -506,6 +506,7 @@ async fn agent_in(s: &S, session: SessionId) -> Client {
             resume_argv: None,
             pid: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

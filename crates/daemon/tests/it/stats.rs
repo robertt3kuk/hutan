@@ -161,6 +161,7 @@ async fn the_state_log_tells_how_long_terminal_agents_waited_and_what_failed() {
                 agent_session_id: None,
                 resume_argv: None,
                 node: None,
+                insight: None,
             }))
             .await
             .unwrap();

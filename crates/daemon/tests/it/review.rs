@@ -258,6 +258,7 @@ async fn a_terminal_agent_has_a_report_and_the_packet_says_what_it_cannot_know()
             agent_session_id: None,
             resume_argv: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

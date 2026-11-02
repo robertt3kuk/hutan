@@ -1,1 +1,1 @@
-{"id":91,"method":"worktree.remove","params":{"delete_branch":true,"force":true,"path":"/work/repo-wt/feature-login"}}
+{"id":92,"method":"worktree.remove","params":{"delete_branch":true,"force":true,"path":"/work/repo-wt/feature-login"}}

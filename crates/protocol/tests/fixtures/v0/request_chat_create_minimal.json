@@ -1,1 +1,1 @@
-{"id":46,"method":"chat.create","params":{"agent":"codex","cwd":"/repo"}}
+{"id":47,"method":"chat.create","params":{"agent":"codex","cwd":"/repo"}}

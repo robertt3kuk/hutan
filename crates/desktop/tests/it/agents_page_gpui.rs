@@ -214,6 +214,7 @@ fn a_plain_agent_report_is_one_session_in_the_page_and_the_panel_with_the_same_w
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
     // A plain shell nobody reports from is no agent: only `reporter` is listed anywhere.

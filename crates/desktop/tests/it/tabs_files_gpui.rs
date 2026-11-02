@@ -99,6 +99,7 @@ fn report_working(daemon: &TestDaemon, session: SessionId) {
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }));
 }
 

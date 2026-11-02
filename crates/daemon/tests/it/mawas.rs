@@ -469,6 +469,7 @@ async fn a_mawas_change_asks_even_when_the_policy_lets_agents_act() {
                 resume_argv: None,
                 pid: None,
                 node: None,
+                insight: None,
             },
         ))
         .await
@@ -752,6 +753,7 @@ async fn an_agent_can_never_list_revoke_or_answer_grants_and_approvals() {
                 resume_argv: None,
                 pid: None,
                 node: None,
+                insight: None,
             },
         ))
         .await
@@ -1532,6 +1534,7 @@ async fn mawas_never_types_into_an_agent_that_is_blocked_on_a_prompt() {
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     };
     let reported = |request| {
         let user = m.user.clone();
@@ -1941,6 +1944,7 @@ async fn mawas_suggests_an_answer_to_an_approval_and_only_the_user_answers() {
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     };
     m.user
         .call::<hutan_protocol::messages::AgentApplied>(Request::AgentReport(reported))

@@ -1141,6 +1141,7 @@ fn a_terminal_agent_forks_through_its_own_cli_in_a_new_tab_once_its_session_id_i
             agent_session_id: id.map(str::to_owned),
             resume_argv: None,
             node: None,
+            insight: None,
         }));
     };
     let cases = [

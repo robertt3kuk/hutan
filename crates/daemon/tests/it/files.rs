@@ -902,6 +902,7 @@ pub(crate) async fn report_working(
             resume_argv: None,
             pid: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

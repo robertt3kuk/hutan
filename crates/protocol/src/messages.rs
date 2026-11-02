@@ -1207,6 +1207,14 @@ pub struct AgentReportRequest {
     /// while it is in the session's process tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// Protocol 0.72 (capability `agent.insight.report`): what the agent's integration knows
+    /// about its context, tokens, tools and files (`docs/integrations.md` § Insight). At most
+    /// 4 KiB as JSON; it is about the session's agent as a whole whichever `node` the report
+    /// names, and it follows the same `seq` rule: a report whose `seq` is not newer is ignored
+    /// with its insight. A report with an `insight` and nothing else (no `state`, `node`,
+    /// `message`, conversation id or resume command) leaves the agent tree alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub insight: Option<hutan_core::insight::InsightReport>,
 }
 
 /// The agent behind `source` is gone: clears its report and its resume reference.

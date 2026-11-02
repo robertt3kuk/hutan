@@ -309,6 +309,7 @@ impl Env {
                 agent_session_id: None,
                 resume_argv: None,
                 node: None,
+                insight: None,
             }))
             .await
             .unwrap();

@@ -227,6 +227,7 @@ async fn a_hook_that_speaks_for_the_agent_is_not_counted_twice() {
             agent_session_id: None,
             resume_argv: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

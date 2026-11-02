@@ -1,1 +1,1 @@
-{"id":60,"method":"chat.create","params":{"agent":"direct","cwd":"/repo","model":"meta-llama/llama-3.3-70b-instruct","provider_id":"openrouter","system_prompt":"Answer in one sentence."}}
+{"id":61,"method":"chat.create","params":{"agent":"direct","cwd":"/repo","model":"meta-llama/llama-3.3-70b-instruct","provider_id":"openrouter","system_prompt":"Answer in one sentence."}}

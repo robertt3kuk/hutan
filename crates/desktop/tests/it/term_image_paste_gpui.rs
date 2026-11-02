@@ -180,6 +180,7 @@ fn a_terminal_that_runs_an_agent_gets_the_path_in_its_form(cx: &mut TestAppConte
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
     wait_until(cx, "the store to know the agent", |cx| {

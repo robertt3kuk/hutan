@@ -385,6 +385,7 @@ fn pid_report(
         resume_argv: None,
         node,
         pid,
+        insight: None,
     }
 }
 

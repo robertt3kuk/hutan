@@ -113,6 +113,7 @@ fn a_busy_session_asks_first_cancel_keeps_it_and_stop_and_close_closes_it(cx: &m
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }));
     let (view, cx) = open(cx, &daemon);
     wait_sessions(&view, cx, "the session", 1);
@@ -174,6 +175,7 @@ fn return_never_confirms_a_destructive_dialog_and_escape_cancels_it(cx: &mut Tes
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }));
     let (view, cx) = open(cx, &daemon);
     wait_sessions(&view, cx, "the session", 1);

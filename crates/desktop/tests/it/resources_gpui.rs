@@ -247,6 +247,7 @@ fn report(
         resume_argv: None,
         node,
         pid,
+        insight: None,
     }));
     assert!(applied.applied, "the daemon ignored a report");
 }

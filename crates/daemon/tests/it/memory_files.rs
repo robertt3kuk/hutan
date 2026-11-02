@@ -761,6 +761,7 @@ async fn import_refuses_what_it_cannot_read_and_agents() {
                 resume_argv: None,
                 pid: None,
                 node: None,
+                insight: None,
             },
         ))
         .await

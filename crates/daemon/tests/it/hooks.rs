@@ -315,6 +315,7 @@ fn main_report(session: SessionId, state: AgentState, seq: u64) -> AgentReportRe
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }
 }
 

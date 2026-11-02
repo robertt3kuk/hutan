@@ -1,1 +1,1 @@
-{"id":39,"method":"history.search","params":{"limit":20,"project":"/repo","query":"cargo test -p daemon","roles":["command","user"],"since_ms":1791000000000,"sources":["claude","hutan"],"until_ms":1791900000000}}
+{"id":40,"method":"history.search","params":{"limit":20,"project":"/repo","query":"cargo test -p daemon","roles":["command","user"],"since_ms":1791000000000,"sources":["claude","hutan"],"until_ms":1791900000000}}

@@ -1,1 +1,1 @@
-{"id":65,"method":"provider.add","params":{"kind":"ollama","name":"ollama"}}
+{"id":66,"method":"provider.add","params":{"kind":"ollama","name":"ollama"}}

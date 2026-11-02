@@ -162,6 +162,7 @@ async fn the_board_joins_chats_hooks_and_recognised_agents_across_workspaces() {
             agent_session_id: None,
             resume_argv: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

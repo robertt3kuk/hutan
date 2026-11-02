@@ -34,6 +34,7 @@ fn report(session: SessionId, source: &str, state: AgentState, seq: u64) -> Agen
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }
 }
 

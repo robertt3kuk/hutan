@@ -10,10 +10,10 @@ use crate::ids::{ItemId, SessionId, TurnId};
 use super::report::{self, ContextReport};
 use super::{
     AgentInsight, BreakdownKind, BreakdownRow, CostKind, Exactness, InsightBlock, InsightContext,
-    InsightFile, InsightFiles, InsightModel, InsightOutcome, InsightSource, InsightSourceKind,
-    InsightTime, InsightTools, InsightTotals, InsightTurn, MAX_FILES, MAX_PATH_BYTES,
-    MAX_SNAPSHOT_BYTES, MAX_TOOL_NAMES, MAX_TURNS, OTHER_TOOLS, ToolCount, TurnUsage,
-    harness_insight,
+    InsightField, InsightFile, InsightFiles, InsightModel, InsightOutcome, InsightReport,
+    InsightSource, InsightSourceKind, InsightTime, InsightTools, InsightTotals, InsightTurn,
+    MAX_FILES, MAX_PATH_BYTES, MAX_SNAPSHOT_BYTES, MAX_TOOL_NAMES, MAX_TURNS, OTHER_TOOLS,
+    ToolCount, TurnPhase, TurnUsage, harness_insight,
 };
 
 /// Tool calls whose end is still awaited; the oldest are forgotten past this many.
@@ -128,6 +128,27 @@ pub struct InsightReducer {
     files_more: bool,
     files_added: u64,
     files_removed: u64,
+
+    /// A terminal agent's reducer (fed with reports, not events).
+    terminal: bool,
+    /// The source that reported each block, by [`block_ix`]; `None`: a chat's.
+    sources: [Option<InsightSourceKind>; 6],
+    /// What the context held before any message, as the agent last said.
+    fixed: Option<u64>,
+    /// Time spent waiting for the model, as the agent said.
+    api_ms: Option<u64>,
+}
+
+/// The slot of `block` in [`InsightReducer::sources`].
+fn block_ix(block: InsightBlock) -> usize {
+    match block {
+        InsightBlock::Context => 0,
+        InsightBlock::Breakdown => 1,
+        InsightBlock::Turns => 2,
+        InsightBlock::Tools => 3,
+        InsightBlock::Files => 4,
+        InsightBlock::Time => 5,
+    }
 }
 
 impl InsightReducer {
@@ -160,7 +181,47 @@ impl InsightReducer {
             files_more: false,
             files_added: 0,
             files_removed: 0,
+            terminal: false,
+            sources: [None; 6],
+            fixed: None,
+            api_ms: None,
         }
+    }
+
+    /// A reducer for the terminal session `session_id` of the agent `harness` (`omp`, `claude`,
+    /// `codex`), whose folder is `cwd`. It is fed with [`apply_report`](Self::apply_report) and
+    /// has no journal: what it knows is what the integrations reported since it was made. The
+    /// agent's cost, when reported, is the conversation's, whenever it began.
+    pub fn new_terminal(session_id: SessionId, harness: &str, cwd: Option<&str>) -> Self {
+        Self {
+            terminal: true,
+            ..Self::new(session_id, harness, cwd, false)
+        }
+    }
+
+    /// A turn begins at `ts_ms`.
+    fn start_turn(&mut self, turn_id: Option<TurnId>, ts_ms: u64) {
+        self.usage.turn_started();
+        self.running = Some(Running {
+            turn_id,
+            started_ms: ts_ms,
+            tool_calls: 0,
+            tool_failed: 0,
+            files: HashSet::new(),
+            context_after: None,
+            measure: false,
+            answer: String::new(),
+        });
+    }
+
+    /// The reducer of a terminal agent (fed with reports), not of a chat.
+    pub fn is_terminal(&self) -> bool {
+        self.terminal
+    }
+
+    /// The harness (`omp`, `claude`, `codex`, `direct`) the reducer was made for.
+    pub fn harness(&self) -> &str {
+        &self.harness
     }
 
     /// The `seq` of the newest event applied; `0` before any.
@@ -202,17 +263,7 @@ impl InsightReducer {
                     // The turn before never ended (the daemon went down in it).
                     self.end_turn(event.ts_ms, InsightOutcome::Cancelled, None);
                 }
-                self.usage.turn_started();
-                self.running = Some(Running {
-                    turn_id: event.turn_id,
-                    started_ms: event.ts_ms,
-                    tool_calls: 0,
-                    tool_failed: 0,
-                    files: HashSet::new(),
-                    context_after: None,
-                    measure: false,
-                    answer: String::new(),
-                });
+                self.start_turn(event.turn_id, event.ts_ms);
             }
             AgentEventKind::MessageEnd { role, text, .. } => {
                 let Some(running) = self.running.as_mut() else {
@@ -621,6 +672,163 @@ impl InsightReducer {
         self.stamps.breakdown = Some(at_ms);
     }
 
+    // Terminal agents -------------------------------------------------------------------------
+
+    /// Who reported `block`; a chat's blocks are all the chat's.
+    fn source_of(&self, block: InsightBlock) -> InsightSourceKind {
+        self.sources[block_ix(block)].unwrap_or(InsightSourceKind::Chat)
+    }
+
+    /// Whether `source` may write `block`: a better source that reported it keeps it (a lower
+    /// one only fills a block a better one never reported).
+    fn admit(&mut self, block: InsightBlock, source: InsightSourceKind) -> bool {
+        let slot = &mut self.sources[block_ix(block)];
+        match slot {
+            Some(held) if held.rank() < source.rank() => false,
+            _ => {
+                *slot = Some(source);
+                true
+            }
+        }
+    }
+
+    /// `source` becomes the one named for `block` unless somebody else already is.
+    fn claim(&mut self, block: InsightBlock, source: InsightSourceKind) {
+        self.sources[block_ix(block)].get_or_insert(source);
+    }
+
+    /// Folds one report of a terminal agent's integration ([`InsightReport`]), received at
+    /// `ts_ms`. Returns whether the insight may have changed.
+    ///
+    /// Within a report the turn begins first and ends last, so one report can carry a whole
+    /// short turn. Tokens of a call that arrive without a turn begin one (the integration was
+    /// loaded in the middle of it); tools and files that arrive without one count for the
+    /// session only. A block is written only by the best source that reported it
+    /// ([`InsightSourceKind::rank`]).
+    pub fn apply_report(&mut self, report: &InsightReport, ts_ms: u64) -> bool {
+        let source = report.source;
+        if !report.is_empty() {
+            self.first_ts.get_or_insert(ts_ms);
+            self.last_ts = self.last_ts.max(ts_ms);
+        }
+        let mut changed = false;
+        if let Some(turn) = report.turn
+            && turn.phase == TurnPhase::Start
+            && self.admit(InsightBlock::Turns, source)
+        {
+            if self.running.is_some() {
+                // The turn before never ended (its report was lost, or the agent was killed).
+                self.end_turn(ts_ms, InsightOutcome::Cancelled, None);
+            }
+            self.start_turn(None, ts_ms);
+            changed = true;
+        }
+        if let Some(tokens) = report.tokens
+            && self.admit(InsightBlock::Turns, source)
+        {
+            if self.running.is_none() {
+                self.start_turn(None, ts_ms);
+            }
+            self.usage.observe(None, Some(tokens));
+            changed = true;
+        }
+        if let Some(context) = report.context
+            && self.admit(InsightBlock::Context, source)
+        {
+            self.context_used = Some(context.used);
+            if let Some(window) = context.window.filter(|window| *window > 0) {
+                self.context_window = Some(window);
+            }
+            self.context_estimated = context.estimated;
+            self.stamps.context = Some(ts_ms);
+            if let Some(running) = self.running.as_mut() {
+                running.context_after = Some(context.used);
+            }
+            if context.fixed.is_some() {
+                self.fixed = context.fixed;
+            }
+            if let Some(fixed) = self.fixed
+                && self.admit(InsightBlock::Breakdown, source)
+            {
+                // Two parts, not five: what is there before any message, and the messages.
+                let fixed = fixed.min(context.used);
+                let row = |id: &str, label: &str, tokens: u64| BreakdownRow {
+                    id: id.to_owned(),
+                    label: label.to_owned(),
+                    tokens,
+                    kind: BreakdownKind::Used,
+                };
+                self.breakdown = Some((
+                    vec![
+                        row("fixed", "Prompt, tools, project files", fixed),
+                        row("messages", "Messages", context.used - fixed),
+                    ],
+                    ts_ms,
+                    Exactness::Estimated,
+                ));
+                self.stamps.breakdown = Some(ts_ms);
+            }
+            changed = true;
+        }
+        if let Some(cost) = report.cost_usd {
+            self.usage.cost_reported(cost);
+            changed = true;
+        }
+        if let Some(api_ms) = report.api_ms
+            && self.admit(InsightBlock::Time, source)
+        {
+            self.api_ms = Some(api_ms);
+            self.stamps.time = Some(ts_ms);
+            changed = true;
+        }
+        if !report.tools.is_empty() && self.admit(InsightBlock::Tools, source) {
+            for tool in &report.tools {
+                let (calls, failed) = (u64::from(tool.calls), u64::from(tool.failed));
+                let row = self.tool_row(&tool.name);
+                row.calls += calls;
+                row.failed += failed;
+                add(&mut row.ms, tool.ms);
+                self.tool_calls += calls;
+                self.tool_failed += failed;
+                add(&mut self.tool_ms, tool.ms);
+                if let Some(running) = self.running.as_mut() {
+                    running.tool_calls = running.tool_calls.saturating_add(tool.calls);
+                    running.tool_failed = running.tool_failed.saturating_add(tool.failed);
+                }
+            }
+            self.stamps.tools = Some(ts_ms);
+            changed = true;
+        }
+        if !report.files.is_empty() && self.admit(InsightBlock::Files, source) {
+            for file in &report.files {
+                let change = FileChange {
+                    path: file.path.clone(),
+                    kind: file.kind,
+                    move_path: None,
+                    patch: None,
+                    before: None,
+                    after: None,
+                };
+                self.file_changed(None, &change, ts_ms);
+            }
+            changed = true;
+        }
+        if let Some(turn) = report.turn
+            && turn.phase == TurnPhase::End
+            && self.admit(InsightBlock::Turns, source)
+            && self.running.is_some()
+        {
+            self.claim(InsightBlock::Time, source);
+            self.end_turn(
+                ts_ms,
+                turn.outcome.unwrap_or(InsightOutcome::Completed),
+                turn.duration_ms,
+            );
+            changed = true;
+        }
+        changed
+    }
+
     // Snapshot --------------------------------------------------------------------------------
 
     /// The insight as of `as_of_ms`, numbered `seq`, for a model the daemon knows (the
@@ -631,7 +839,15 @@ impl InsightReducer {
         insight.harness = Some(self.harness.clone());
         insight.model = model;
         insight.unsupported = facts.unsupported.to_vec();
-        insight.can_measure = facts.can_measure;
+        // A terminal's agent cannot be asked for `/context`; and only OMP's extension says
+        // anything about what the context holds.
+        insight.can_measure = facts.can_measure && !self.terminal;
+        if self.terminal
+            && self.harness != "omp"
+            && !insight.unsupported.contains(&InsightField::Breakdown)
+        {
+            insight.unsupported.push(InsightField::Breakdown);
+        }
 
         insight.context = self.context_used.map(|used| {
             let (breakdown, breakdown_as_of_ms, breakdown_exactness) = match &self.breakdown {
@@ -662,7 +878,10 @@ impl InsightReducer {
         // A context nobody reported has no breakdown block either way; a breakdown without a
         // context cannot happen (`set_report` fills the context when it is empty).
 
-        if self.sums.turns > 0 || self.running.is_some() {
+        if self.sums.turns > 0
+            || self.running.is_some()
+            || (self.terminal && self.usage.cost_so_far().is_some())
+        {
             let sums = &self.sums;
             let cost = self.usage.cost_so_far().or(sums.cost);
             let cache_hit_ratio = match (sums.cache_read, sums.input, facts.cache_in_input) {
@@ -760,7 +979,7 @@ impl InsightReducer {
                 started_ms,
                 wall_ms: as_of_ms.saturating_sub(started_ms),
                 active_ms: self.sums.active_ms,
-                api_ms: None,
+                api_ms: self.api_ms,
                 tool_ms: self.tool_ms,
             });
         }
@@ -777,7 +996,7 @@ impl InsightReducer {
             if let Some(as_of_ms) = at {
                 insight.sources.push(InsightSource {
                     block,
-                    source: InsightSourceKind::Chat,
+                    source: self.source_of(block),
                     as_of_ms,
                 });
             }
@@ -822,7 +1041,7 @@ fn fit(insight: &mut AgentInsight) {
 }
 
 /// `text` cut to at most `max` bytes on a character boundary.
-fn clip(text: &str, max: usize) -> String {
+pub(super) fn clip(text: &str, max: usize) -> String {
     if text.len() <= max {
         return text.to_owned();
     }
@@ -864,3 +1083,6 @@ fn line_counts(change: &FileChange) -> (Option<u64>, Option<u64>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod terminal_tests;

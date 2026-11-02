@@ -3185,6 +3185,7 @@ impl SessionsStore {
                     resume_argv: None,
                     node: None,
                     pid: Some(found.pid),
+                    insight: None,
                 })
                 .await
                 .map_err(|e| e.to_string())?;

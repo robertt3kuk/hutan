@@ -163,6 +163,7 @@ impl Reporter {
             agent_session_id: None,
             resume_argv: node.resume_argv,
             node: Some(node.report),
+            insight: None,
         }));
         assert!(applied.applied, "the daemon ignored a report");
     }

@@ -1,1 +1,1 @@
-{"id":57,"method":"agent.release","params":{"node":"agent-abc123","outcome":"completed","seq":1791894166000000000,"session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM","source":"claude-hooks"}}
+{"id":58,"method":"agent.release","params":{"node":"agent-abc123","outcome":"completed","seq":1791894166000000000,"session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM","source":"claude-hooks"}}

@@ -410,6 +410,7 @@ async fn a_terminal_agent_with_a_resume_command_comes_back_as_resumed() {
             agent_session_id: Some("conv 42".into()),
             resume_argv: Some(argv.clone()),
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

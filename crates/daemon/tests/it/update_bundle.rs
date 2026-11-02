@@ -994,6 +994,7 @@ async fn an_agent_can_never_update_a_bundle() {
             resume_argv: None,
             pid: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

@@ -146,6 +146,7 @@ fn report_blocked(daemon: &TestDaemon, session: SessionId) {
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
 }
@@ -858,6 +859,7 @@ fn the_status_item_and_the_badge_follow_the_attention_model(cx: &mut TestAppCont
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
     wait_until(cx, "the badge to clear", |_| fakes.dock.badge() == 0);

@@ -534,6 +534,7 @@ fn the_trash_sheet_warns_of_unsaved_text_and_a_working_agent_and_undo_brings_it_
         agent_session_id: None,
         resume_argv: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
     let (view, cx) = open(cx, &daemon);

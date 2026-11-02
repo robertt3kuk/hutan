@@ -1,1 +1,1 @@
-{"id":64,"method":"provider.add","params":{"base_url":"https://openrouter.ai/api/v1","default_model":"meta-llama/llama-3.3-70b-instruct","kind":"openai-compatible","name":"OpenRouter"}}
+{"id":65,"method":"provider.add","params":{"base_url":"https://openrouter.ai/api/v1","default_model":"meta-llama/llama-3.3-70b-instruct","kind":"openai-compatible","name":"OpenRouter"}}

@@ -344,6 +344,7 @@ async fn report_agent(t: &TestDaemon, session: SessionId) {
             resume_argv: None,
             pid: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

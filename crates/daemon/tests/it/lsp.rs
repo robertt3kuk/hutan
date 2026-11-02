@@ -1207,6 +1207,7 @@ async fn agent_session(t: &TestDaemon, user: &Client) -> SessionId {
             resume_argv: None,
             pid: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

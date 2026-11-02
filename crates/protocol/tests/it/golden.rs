@@ -1623,6 +1623,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 ]),
                 node: None,
                 pid: Some(48_213),
+                insight: None,
             }),
         ),
         (
@@ -1638,6 +1639,56 @@ fn requests() -> Vec<(&'static str, Request)> {
                 resume_argv: None,
                 node: None,
                 pid: None,
+                insight: None,
+            }),
+        ),
+        (
+            "agent_report_insight",
+            Request::AgentReport(AgentReportRequest {
+                session_id: sid(),
+                source: "omp-extension".into(),
+                agent: "omp".into(),
+                state: None,
+                message: None,
+                seq: 9,
+                agent_session_id: None,
+                resume_argv: None,
+                node: None,
+                pid: None,
+                insight: Some(hutan_core::insight::InsightReport {
+                    source: hutan_core::insight::InsightSourceKind::Extension,
+                    turn: Some(hutan_core::insight::ReportedTurn {
+                        phase: hutan_core::insight::TurnPhase::End,
+                        outcome: None,
+                        duration_ms: Some(2_500),
+                    }),
+                    tokens: Some(TokenCounts {
+                        input_tokens: Some(8_200),
+                        cached_input_tokens: Some(14_000),
+                        cache_write_tokens: None,
+                        output_tokens: Some(52),
+                        reasoning_output_tokens: None,
+                        total_tokens: Some(22_252),
+                    }),
+                    context: Some(hutan_core::insight::ReportedContext {
+                        used: 11_200,
+                        window: Some(200_000),
+                        fixed: Some(10_678),
+                        estimated: false,
+                    }),
+                    cost_usd: Some(0.0296),
+                    api_ms: None,
+                    tools: vec![hutan_core::insight::ReportedTool {
+                        name: "read".into(),
+                        calls: 2,
+                        failed: 0,
+                        ms: Some(40),
+                    }],
+                    files: vec![hutan_core::insight::ReportedFile {
+                        path: "src/lib.rs".into(),
+                        kind: FileChangeKind::Update,
+                    }],
+                }),
             }),
         ),
         (
@@ -1894,6 +1945,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                     }),
                 }),
                 pid: Some(48_220),
+                insight: None,
             }),
         ),
         (
@@ -1920,6 +1972,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                     usage: None,
                 }),
                 pid: None,
+                insight: None,
             }),
         ),
         (

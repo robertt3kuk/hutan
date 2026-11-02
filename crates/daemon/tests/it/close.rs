@@ -91,6 +91,7 @@ async fn report_working(client: &Client, id: SessionId) {
             agent_session_id: None,
             resume_argv: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();
@@ -508,6 +509,7 @@ async fn a_closed_agent_terminal_comes_back_through_the_agents_resume_command() 
             agent_session_id: Some("conv 42".into()),
             resume_argv: Some(argv.clone()),
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

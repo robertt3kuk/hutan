@@ -12,6 +12,7 @@
 //! when inside it), times, and category names of the context. No message text, no tool output,
 //! no diff.
 
+mod input;
 mod reducer;
 pub mod report;
 mod tally;
@@ -22,6 +23,10 @@ use crate::agent::FileChangeKind;
 use crate::checkpoint::CheckpointState;
 use crate::ids::{SessionId, TurnId};
 
+pub use input::{
+    InsightReport, MAX_REPORT_BYTES, MAX_REPORT_FILES, MAX_REPORT_TOOLS, ReportError,
+    ReportedContext, ReportedFile, ReportedTool, ReportedTurn, TurnPhase,
+};
 pub use reducer::{InsightReducer, SeedTurn};
 pub use tally::TurnUsage;
 
@@ -342,15 +347,33 @@ pub enum InsightBlock {
 }
 
 /// Where a block came from, best first: a chat sees the harness's own protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InsightSourceKind {
     Chat,
+    /// An extension inside the agent (OMP's): it sees the agent's own events.
+    #[default]
     Extension,
     Hooks,
     Statusline,
     Transcript,
     Osc7501,
+}
+
+impl InsightSourceKind {
+    /// How far a source is trusted for a block: the lower, the better (the spike's merge rule:
+    /// chat, extension, status line, hooks, transcript, terminal status). A lower source only
+    /// fills a block a better one never reported.
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Chat => 0,
+            Self::Extension => 1,
+            Self::Statusline => 2,
+            Self::Hooks => 3,
+            Self::Transcript => 4,
+            Self::Osc7501 => 5,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

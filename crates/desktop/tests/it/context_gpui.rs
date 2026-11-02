@@ -675,6 +675,7 @@ fn the_panel_follows_the_session_in_view_and_says_why_it_has_nothing_to_show(
             agent_session_id: None,
             resume_argv: None,
             node: None,
+            insight: None,
         },
     ));
     let (view, cx) = open(cx, &daemon);

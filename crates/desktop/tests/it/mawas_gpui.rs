@@ -72,6 +72,7 @@ fn reported_agent(env: &AssistantEnv) -> SessionInfo {
         resume_argv: None,
         pid: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
     session
@@ -1542,6 +1543,7 @@ fn idle_agents_sit_under_one_folded_line_with_what_their_state_is_worth(cx: &mut
         resume_argv: None,
         pid: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
     let (view, cx, panel) = open_wide(cx, &env);
@@ -2208,6 +2210,7 @@ fn blocked_agent(env: &AssistantEnv) -> SessionInfo {
         resume_argv: None,
         pid: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
     session
@@ -2770,6 +2773,7 @@ fn agent_in(env: &AssistantEnv, workspace: WorkspaceId) -> SessionInfo {
         resume_argv: None,
         pid: None,
         node: None,
+        insight: None,
     }));
     assert!(applied.applied);
     session

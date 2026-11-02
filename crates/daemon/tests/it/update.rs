@@ -920,6 +920,7 @@ async fn an_agent_can_read_the_status_but_never_install() {
             resume_argv: None,
             pid: None,
             node: None,
+            insight: None,
         }))
         .await
         .unwrap();

@@ -108,6 +108,7 @@ pub const CAPABILITIES: &[&str] = &[
     "agents.verify",
     "notify.digest",
     "digest.model",
+    "agent.insight.report",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit
