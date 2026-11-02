@@ -86,6 +86,77 @@ pub fn chip_text(block: &Block) -> Option<String> {
     }
 }
 
+/// The chip of a failed command cut down to what matters, `✗ 128`: the exit status without the
+/// duration. `None` for a command that did not fail with a code.
+pub fn compact_chip_text(block: &Block) -> Option<String> {
+    if !matches!(block.state, BlockState::Finished | BlockState::Truncated) {
+        return None;
+    }
+    match block.exit_code {
+        Some(code) if code != 0 => Some(format!("✗ {code}")),
+        _ => None,
+    }
+}
+
+/// Which form of a block's chip is drawn, and on which of the block's rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChipSpot {
+    /// Index into the block's rows (0 = its prompt row).
+    pub row: usize,
+    /// The compact form (`✗ 128`) instead of the full one (`✗ 128 32 ms`).
+    pub compact: bool,
+}
+
+/// Whether a chip `cols` wide fits right-aligned on a row `used` columns wide in a terminal
+/// `model_cols` wide: one blank column after the text and two before it.
+fn chip_fits(model_cols: u16, cols: u16, used: u16) -> bool {
+    model_cols
+        .checked_sub(cols.saturating_add(1))
+        .is_some_and(|col| col >= 2 && used < col)
+}
+
+/// Where the chip of a block is drawn. `used` is the width of each of the block's rows that are
+/// on screen (the prompt row first), `full` and `compact` the widths of the two forms
+/// (`compact` is `None` for a command that did not fail).
+///
+/// A success chip is drawn in full on the prompt row when it fits there, and not at all
+/// otherwise. A failure is never left without its exit status (the red bar alone does not say
+/// *which* code): the full chip on the prompt row, else the compact one there, else the compact
+/// one on the last row of the block that has room, and when every row is full, over the end of
+/// the block's last row.
+pub fn place_chip(
+    model_cols: u16,
+    full: u16,
+    compact: Option<u16>,
+    used: &[u16],
+) -> Option<ChipSpot> {
+    let first = *used.first()?;
+    if chip_fits(model_cols, full, first) {
+        return Some(ChipSpot {
+            row: 0,
+            compact: false,
+        });
+    }
+    let compact = compact?;
+    if chip_fits(model_cols, compact, first) {
+        return Some(ChipSpot {
+            row: 0,
+            compact: true,
+        });
+    }
+    if let Some(row) = (1..used.len())
+        .rev()
+        .find(|row| chip_fits(model_cols, compact, used[*row]))
+    {
+        return Some(ChipSpot { row, compact: true });
+    }
+    // Nothing has room: cover the end of the block's last row.
+    (model_cols > compact).then_some(ChipSpot {
+        row: used.len() - 1,
+        compact: true,
+    })
+}
+
 /// A folded block: its output lines (model lines `start..end`) shown as one summary row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fold {
@@ -337,6 +408,43 @@ mod tests {
         ] {
             assert_eq!(format_duration(ms), text, "{ms} ms");
         }
+    }
+
+    #[test]
+    fn a_failure_keeps_its_code_where_the_full_chip_does_not_fit() {
+        // `✗ 128 32 ms` is 11 columns, `✗ 128` 5; the pane is 80 columns wide.
+        let place = |used: &[u16]| place_chip(80, 11, Some(5), used);
+        let spot = |row, compact| Some(ChipSpot { row, compact });
+        assert_eq!(place(&[40, 10]), spot(0, false), "plenty of room");
+        // The full chip needs the prompt row to end before column 68, the compact one before 74.
+        assert_eq!(place(&[69, 10]), spot(0, true), "the code without the time");
+        assert_eq!(
+            place(&[74, 10, 30]),
+            spot(2, true),
+            "the last row with room"
+        );
+        assert_eq!(place(&[74, 79, 30, 79]), spot(2, true));
+        assert_eq!(place(&[80, 80, 80]), spot(2, true), "over the last row");
+        assert_eq!(place(&[80]), spot(0, true), "a one-row block");
+        // A success has no compact form: it is drawn in full on its prompt row or not at all.
+        assert_eq!(place_chip(80, 6, None, &[40, 10]), spot(0, false));
+        assert_eq!(place_chip(80, 6, None, &[75, 10]), None);
+        // Too narrow for even the code: nothing is drawn.
+        assert_eq!(place_chip(5, 11, Some(5), &[0, 0]), None);
+        assert_eq!(place(&[]), None);
+    }
+
+    #[test]
+    fn only_a_failure_has_a_compact_chip() {
+        assert_eq!(
+            compact_chip_text(&finished(1, 0, (1, 2), 128, 32)),
+            Some("✗ 128".into())
+        );
+        assert_eq!(compact_chip_text(&finished(1, 0, (1, 2), 0, 32)), None);
+        assert_eq!(compact_chip_text(&block(1, 0, BlockState::Running)), None);
+        let mut lost = finished(1, 0, (1, 2), 0, 1);
+        lost.exit_code = None;
+        assert_eq!(compact_chip_text(&lost), None);
     }
 
     #[test]

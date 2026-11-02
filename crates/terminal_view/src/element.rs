@@ -606,27 +606,54 @@ fn prepare_overlay(
             overlay.separators.push(row);
             report.separators.push(row);
         }
-        let (Some(text), Some(tone)) = (blocks::chip_text(block), blocks::tone(block)) else {
+        let (Some(full), Some(tone)) = (blocks::chip_text(block), blocks::tone(block)) else {
             continue;
         };
-        let cols = u16::try_from(text_columns(&text)).unwrap_or(u16::MAX);
+        let compact = blocks::compact_chip_text(block);
+        // The block's rows on screen, prompt row first, and how wide each one is drawn.
+        let block_rows: Vec<u16> = display[..rows]
+            .iter()
+            .enumerate()
+            .filter(|(_, shown)| matches!(shown, DisplayRow::Line(line) if span.contains(*line)))
+            .filter_map(|(at, _)| u16::try_from(at).ok())
+            .collect();
+        let used: Vec<u16> = block_rows
+            .iter()
+            .map(|at| {
+                model
+                    .row_at(display[usize::from(*at)].line())
+                    .map_or(0, row_width)
+            })
+            .collect();
+        let width = |text: &str| u16::try_from(text_columns(text)).unwrap_or(u16::MAX);
+        let Some(spot) = blocks::place_chip(
+            model_cols,
+            width(&full),
+            compact.as_deref().map(width),
+            &used,
+        ) else {
+            continue;
+        };
+        let text = match (&compact, spot.compact) {
+            (Some(compact), true) => compact.clone(),
+            _ => full,
+        };
+        let cols = width(&text);
         let Some(col) = model_cols.checked_sub(cols.saturating_add(1)) else {
             continue;
         };
-        // The chip never covers what the prompt line shows.
-        let used = model.row_at(span.first).map_or(0, row_width);
-        if col < 2 || used >= col {
+        let Some(&chip_row) = block_rows.get(spot.row) else {
             continue;
-        }
+        };
         let color = tone_color(tone);
         let styled = styled_row(
             &text,
             Color::Rgb(color.0, color.1, color.2),
             CellFlags::empty(),
         );
-        report.chips.push((row, text.clone()));
+        report.chips.push((chip_row, text.clone()));
         overlay.chips.push(ChipPaint {
-            row,
+            row: chip_row,
             col,
             cols,
             shaped: shape_row(&styled, &view.theme, font, RowHover::NONE, text_system),

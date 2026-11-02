@@ -314,6 +314,61 @@ fn a_chip_never_covers_what_its_prompt_line_shows(cx: &mut TestAppContext) {
     assert_eq!(report.chips, vec![(4, "✗ 2 3 m".to_owned())], "{report:?}");
 }
 
+/// The screen of the scenario with `rows` replaced by lines of `x` of the given widths.
+fn show_wide(
+    view: &Entity<TerminalView>,
+    cx: &mut VisualTestContext,
+    widths: &[(usize, usize)],
+) -> OverlayReport {
+    let wide: Vec<(usize, String)> = widths.iter().map(|(r, w)| (*r, "x".repeat(*w))).collect();
+    let mut lines = SCREEN.to_vec();
+    for (r, text) in &wide {
+        lines[*r] = text;
+    }
+    view.update(cx, |v, cx| {
+        v.apply_render(snapshot(&lines, Modes::default(), 7, 20), cx)
+    });
+    draw(cx);
+    set_blocks(view, cx, scenario());
+    view.read_with(cx, |v, _| v.painted_overlay().clone())
+}
+
+type OverlayReport = hutan_terminal_view::blocks::OverlayReport;
+
+#[gpui::test]
+fn a_failed_command_keeps_its_exit_code_in_a_narrow_pane(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    let ok = (0, "✓ 1.2 s".to_owned());
+    // The 100-column pane. The prompt row of the failed block (row 4) is too long for the full
+    // chip (`✗ 2 3 m`, 7 columns) but leaves room for `✗ 2`: the code wins over the duration.
+    let report = show_wide(&view, cx, &[(4, 94)]);
+    assert_eq!(
+        report.chips,
+        vec![ok.clone(), (4, "✗ 2".to_owned())],
+        "{report:?}"
+    );
+
+    // The prompt row is full: the code goes on the last row of the block that has room.
+    let report = show_wide(&view, cx, &[(4, 99)]);
+    assert_eq!(
+        report.chips,
+        vec![ok.clone(), (6, "✗ 2".to_owned())],
+        "{report:?}"
+    );
+
+    // Every row of the block is full: the code covers the end of its last row.
+    let report = show_wide(&view, cx, &[(4, 100), (5, 100), (6, 100)]);
+    assert_eq!(
+        report.chips,
+        vec![ok.clone(), (6, "✗ 2".to_owned())],
+        "{report:?}"
+    );
+
+    // A success chip that does not fit is still dropped, never moved (block 1's prompt row).
+    let report = show_wide(&view, cx, &[(0, 96)]);
+    assert_eq!(report.chips, vec![(4, "✗ 2 3 m".to_owned())], "{report:?}");
+}
+
 #[gpui::test]
 fn the_alternate_screen_hides_the_overlay_and_blocks_off_removes_it(cx: &mut TestAppContext) {
     let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());
