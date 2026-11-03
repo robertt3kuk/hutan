@@ -41,7 +41,9 @@ pub struct TelemetryAgent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TelemetrySession {
     pub session_id: SessionId,
-    /// The agent the records named (`service.name`), as an agent id of [`TelemetryAgent`].
+    /// The name the agent's reports go under (the insight's `harness`): an agent id of
+    /// [`TelemetryAgent`] for an agent Hutan knows, and for a program it has no mapper for
+    /// (`other`) the program's own `service.name`, cleaned.
     pub agent: String,
     /// When the last request that mapped to insight arrived.
     pub last_report_ms: u64,
