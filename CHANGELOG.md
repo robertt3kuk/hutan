@@ -13,6 +13,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - *Files touched* and *Changed by agents* missed files an OMP edit changed when the edit was large (OMP keeps the text only for its first files); every file an edit, write, delete or rename names is now listed, and two files with the same name show their folders.
 - After the terminal reflowed (opening the right panel, resizing the window), command blocks' edges and ✓/✗ marks stayed on their old rows and landed on other commands' output; they now follow their commands through every width change.
 - A failed command always shows its exit code (`✗ 128`), even in a narrow pane where the full mark doesn't fit; and a window that fell behind on a busy terminal reloads its blocks instead of keeping stale ones.
+- A terminal resize no longer re-records its commands in the history index or makes the Changes view and Files panel re-read the checkout as if the commands had just finished.
 
 ## 0.3.5 — 2026-10-31
 
