@@ -164,6 +164,9 @@ struct Setup {
     /// The body of a fake `hutan` (`DaemonConfig::hutan_bin`) that answers
     /// `hutan mcp --read-only-tools`; `None`: the daemon finds no CLI that can.
     reads: Option<&'static str>,
+    /// Or the real `hutan` (`DaemonConfig::hutan_bin`), whose lists are the table's own;
+    /// wins over `reads`.
+    hutan_bin: Option<PathBuf>,
     /// Codex runs through a wrapper that logs its arguments to `codex-argv.log`.
     codex_argv: bool,
 }
@@ -179,6 +182,7 @@ impl Default for Setup {
             missing_codex: false,
             omp_cli: None,
             reads: None,
+            hutan_bin: None,
             codex_argv: false,
         }
     }
@@ -188,7 +192,10 @@ impl B {
     async fn start(setup: Setup) -> Self {
         let logs = tempfile::tempdir().unwrap();
         let toml = Self::toml(logs.path(), &setup);
-        let hutan_bin = setup.reads.map(|body| fake_cli("hutan", body));
+        let hutan_bin = setup
+            .hutan_bin
+            .clone()
+            .or_else(|| setup.reads.map(|body| fake_cli("hutan", body)));
         let daemon = TestDaemon::start_with(&toml, |config| {
             config.gateway = gateway();
             config.hutan_bin = hutan_bin;
@@ -1540,6 +1547,263 @@ async fn a_codex_assistant_approves_the_read_only_tools_and_a_plain_chat_does_no
         !after[before..].iter().any(|a| a.contains("web_search")),
         "an ordinary chat keeps its own web search: {:?}",
         &after[before..]
+    );
+    t.stop().await;
+}
+
+// ---- FX-036-A: nothing of Hutan's own tools reaches the user as the harness's question ------------
+
+/// What `hutan mcp <flag>` of the real CLI prints: one tool name per line.
+fn table_list(hutan: &Path, flag: &str) -> Vec<String> {
+    let out = std::process::Command::new(hutan)
+        .args(["mcp", flag])
+        .env_remove("HUTAN_SESSION_ID")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "hutan mcp {flag}: {out:?}");
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The real `hutan` and the two lists of its table that every Mawas harness is told:
+/// `(binary, read-only tools, gated tools)`.
+fn real_tables() -> (PathBuf, Vec<String>, Vec<String>) {
+    let hutan = fixture_bin("hutan");
+    let reads = table_list(&hutan, "--read-only-tools");
+    let writes = table_list(&hutan, "--gated-tools");
+    // The two that an OMP turn of the pre-release check asked about, and a count that says the
+    // list was not cut to a handful.
+    for name in ["agents_board", "agents_findings", "agent_review"] {
+        assert!(
+            reads.iter().any(|n| n == name),
+            "{name} is a read: {reads:?}"
+        );
+    }
+    assert!(
+        reads.len() > 30 && !writes.is_empty(),
+        "{reads:?} {writes:?}"
+    );
+    // OMP names a tool `mcp__hutan_<tool>` unless that is over 64 characters (then it cuts it
+    // and appends a hash) or the tool starts with `hutan_` (OMP drops the repeated word): the
+    // overlay's key would then name nothing, and a new tool must not do either.
+    for name in reads.iter().chain(&writes) {
+        assert!(
+            !name.starts_with("hutan_") && "mcp__hutan_".len() + name.len() <= 64,
+            "OMP would name `{name}` otherwise than the overlay does"
+        );
+    }
+    (hutan, reads, writes)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_tool_of_the_real_table_is_pre_allowed_in_the_launch_of_each_harness() {
+    let (hutan, reads, writes) = real_tables();
+    let every: Vec<&String> = reads.iter().chain(&writes).collect();
+
+    // OMP: one overlay line per tool.
+    let t = B::start(Setup {
+        assistant: OMP_ASSISTANT,
+        hutan_bin: Some(hutan.clone()),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let argv = t.argv("omp");
+    let at = argv.iter().position(|a| a == "--config").unwrap();
+    let overlay = std::fs::read_to_string(&argv[at + 1]).unwrap();
+    for name in &every {
+        assert!(
+            overlay.contains(&format!("\n    mcp__hutan_{name}: allow\n")),
+            "{name} is not in OMP's overlay:\n{overlay}"
+        );
+    }
+    t.stop().await;
+
+    // Claude Code: one allowed tool each.
+    let t = B::start(Setup {
+        assistant: CLAUDE_ASSISTANT,
+        hutan_bin: Some(hutan.clone()),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let new = t.received_of("claude", "session/new");
+    let allowed: Vec<&str> = new[0]["params"]["_meta"]["claudeCode"]["options"]["allowedTools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    for name in &every {
+        let wanted = format!("mcp__hutan__{name}");
+        assert!(
+            allowed.contains(&wanted.as_str()),
+            "{wanted} is not allowed"
+        );
+    }
+    t.stop().await;
+
+    // Codex: one approval override each.
+    let t = B::start(Setup {
+        assistant: "backend = \"codex\"",
+        codex_argv: true,
+        hutan_bin: Some(hutan),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    t.start_agent(session.id).await;
+    let argv: Vec<String> = std::fs::read_to_string(t.logs.path().join("codex-argv.log"))
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    for name in &every {
+        let wanted = format!("mcp_servers.hutan.tools.{name}.approval_mode=\"approve\"");
+        assert!(argv.contains(&wanted), "{wanted} is not in Codex's launch");
+    }
+    t.stop().await;
+}
+
+/// A question OMP's own approval gate asks the client (an elicitation, `Allow tool: write`).
+async fn waiting_question(t: &B, session: SessionId) -> hutan_protocol::chat::QuestionInfo {
+    tokio::time::timeout(common::WAIT, async {
+        loop {
+            let list = t
+                .client
+                .call::<hutan_protocol::chat::QuestionList>(Request::QuestionList(
+                    hutan_protocol::chat::QuestionListRequest {
+                        session_id: Some(session),
+                    },
+                ))
+                .await
+                .unwrap();
+            if let Some(question) = list.questions.into_iter().next() {
+                return question;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a question never waited for the user")
+}
+
+async fn deny(t: &B, question: &hutan_protocol::chat::QuestionInfo) {
+    t.client
+        .call::<hutan_protocol::messages::Empty>(Request::QuestionAnswer(
+            hutan_protocol::chat::QuestionAnswer {
+                question_id: question.id,
+                response: hutan_core::question::QuestionResponse::Submit {
+                    values: [(
+                        question.spec.fields[0].id.clone(),
+                        serde_json::json!("Deny"),
+                    )]
+                    .into(),
+                },
+            },
+        ))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn omps_own_question_about_a_hutan_tools_device_is_answered_by_the_daemon_and_no_other_is() {
+    // The transcript is what OMP 18.14 asked on a real turn (a write to the device of a tool
+    // with nothing to pass, content blank: OMP cannot name that call, so no overlay line
+    // allows it), for a read and a gated tool of the fake CLI's lists, then a write of a file
+    // and a device of a tool the daemon never told OMP to run.
+    let mut t = B::start(Setup {
+        omp: "hutan-tool-card",
+        assistant: OMP_ASSISTANT,
+        reads: Some(READS_CLI),
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    let _ = t.client.chat_send(session.id, "check").await;
+
+    // The first question that waits for the user is the file: the two before it were answered
+    // by the daemon (the replay sends the next only after the answer reached it).
+    let file = waiting_question(&t, session.id).await;
+    assert_eq!(file.spec.title, "Allow tool: write");
+    assert!(
+        file.spec.prompt.starts_with("Path: notes.txt"),
+        "{:?}",
+        file.spec
+    );
+    deny(&t, &file).await;
+    let device = waiting_question(&t, session.id).await;
+    assert!(
+        device
+            .spec
+            .prompt
+            .starts_with("Path: xd://mcp__hutan_lsp_status"),
+        "a Hutan tool the daemon did not name is the user's: {:?}",
+        device.spec
+    );
+    deny(&t, &device).await;
+    t.wait_turn_end().await;
+
+    // The journal says who answered what.
+    let history = t.history(session.id).await;
+    let mut asked = std::collections::HashMap::new();
+    let mut answers = Vec::new();
+    for event in &history.events {
+        match &event.kind {
+            AgentEventKind::QuestionRequested { question_id, spec } => {
+                asked.insert(*question_id, spec.prompt.clone());
+            }
+            AgentEventKind::QuestionResolved {
+                question_id,
+                outcome,
+                decided_by,
+            } => answers.push((
+                asked[question_id].clone(),
+                outcome.clone(),
+                decided_by.as_ref().map(|by| by.client_kind.clone()),
+            )),
+            _ => {}
+        }
+    }
+    let by = |path: &str| {
+        answers
+            .iter()
+            .find(|(prompt, ..)| prompt.contains(path))
+            .unwrap_or_else(|| panic!("{path}: {answers:?}"))
+    };
+    for tool in ["agents_board", "chat_send"] {
+        let (_, outcome, decided_by) = by(&format!("xd://mcp__hutan_{tool}"));
+        assert!(
+            matches!(outcome, hutan_core::question::QuestionOutcome::Answered { values, .. }
+                if values.values().next() == Some(&serde_json::json!("Approve"))),
+            "{tool}: {outcome:?}"
+        );
+        assert_eq!(decided_by.as_deref(), Some("daemon"), "{tool}");
+    }
+    for other in ["notes.txt", "xd://mcp__hutan_lsp_status"] {
+        let (_, _, decided_by) = by(other);
+        assert_ne!(decided_by.as_deref(), Some("daemon"), "{other}");
+    }
+    // What OMP received, in order: Approve, Approve, Deny, Deny.
+    let received = t.received("omp");
+    let choice = |id: u64| -> String {
+        received
+            .iter()
+            .find(|(name, msg)| name == "response" && msg["id"] == id)
+            .unwrap_or_else(|| panic!("no answer to {id}: {received:?}"))
+            .1["result"]["content"]["value"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(
+        [choice(901), choice(902), choice(903), choice(904)],
+        ["Approve", "Approve", "Deny", "Deny"]
     );
     t.stop().await;
 }

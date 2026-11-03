@@ -31,7 +31,7 @@ use hutan_agents::{
     ImageBlock, MessageExtras, StartSpec, Started,
 };
 use hutan_core::agent::{DecidedBy, NoticeLevel, PermissionOutcome};
-use hutan_core::question::{self, QuestionResponse};
+use hutan_core::question::{self, FieldKind, QuestionResponse};
 use hutan_core::{
     AgentEvent, AgentEventDraft, AgentEventKind, ApprovalId, ApprovalPolicy, Contain, Containment,
     ForkSupport, ItemId, ModelInfo, QuestionId, QuestionOutcome, SafetyPreset, SandboxMode,
@@ -69,8 +69,8 @@ use crate::harness::{
 use crate::insight::{InsightHub, InsightTarget};
 use crate::mcp_wiring::{
     ApprovedTools, CLAUDE_WEB_TOOLS, McpServerSpec, McpWiring, claude_allowed_tools,
-    codex_approval_overrides, codex_web_override, codex_window_override, omp_digest_overlay,
-    omp_overlay, omp_window_env,
+    codex_approval_overrides, codex_web_override, codex_window_override, omp_device_card,
+    omp_digest_overlay, omp_overlay, omp_window_env,
 };
 use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
@@ -392,6 +392,11 @@ struct Live {
     /// `agent.measure_context` waits here for the end of its turn: the first turn that ends
     /// while it is set is the measuring one (it holds `busy`, so no other turn runs).
     measuring: Mutex<Option<oneshot::Sender<MeasureEnd>>>,
+    /// Mawas's OMP: the tools of Hutan's own MCP server it was told to run without asking
+    /// (set once, by `start_harness`). OMP's own question about a call of one of them that its
+    /// overlay cannot name is answered by the daemon ([`omp_device_card`]); never set for any
+    /// other chat.
+    own_tools: OnceLock<Vec<String>>,
 }
 
 /// How the turn of `agent.measure_context` ended.
@@ -447,6 +452,7 @@ impl Live {
             seed: Mutex::new(None),
             usage,
             measuring: Mutex::new(None),
+            own_tools: OnceLock::new(),
         })
     }
 
@@ -662,6 +668,22 @@ fn client_name(kind: Option<ClientKind>) -> &'static str {
         Some(ClientKind::Notifier) => "notifier",
         Some(ClientKind::Other) | None => "other",
     }
+}
+
+/// What the daemon credits the answers it gives itself to (`decided_by.client_kind` of the
+/// resolved question).
+const OWN_CARD_DECIDER: &str = "daemon";
+
+/// OMP's own question about a call of one of Hutan's tools, with what answers it.
+#[derive(Debug)]
+struct OwnCard {
+    session: SessionId,
+    question: QuestionId,
+    /// The Hutan tool the call is for.
+    tool: String,
+    /// The question's one field, and its option that approves.
+    field: String,
+    approve: String,
 }
 
 fn enum_name<T: Serialize>(value: &T) -> String {
@@ -1753,6 +1775,10 @@ impl ChatManager {
             *lock(&live.first_turn) = Some(memory.text);
         }
         *lock(&live.seed) = spec.fork.as_ref().and_then(|fork| fork.seed.clone());
+        if spec.assistant && spec.agent == AGENT_OMP && !digest && !tools.is_empty() {
+            // Set once, here: nothing else holds the Live yet.
+            live.own_tools.set(tools.all()).ok();
+        }
         self.attach_insight(&live, Some(&start.cwd), !started.resumed)
             .await;
         self.adopt(&live);
@@ -2863,6 +2889,18 @@ impl ChatManager {
         response: QuestionResponse,
         client: Option<ClientKind>,
     ) -> Result<(), ErrorBody> {
+        self.answer_question_by(question, response, client_name(client))
+            .await
+    }
+
+    /// [`answer_question`](Self::answer_question) credited to `decided_by` (a client kind, or
+    /// `daemon` for what the daemon itself answers).
+    async fn answer_question_by(
+        &self,
+        question: QuestionId,
+        response: QuestionResponse,
+        decided_by: &'static str,
+    ) -> Result<(), ErrorBody> {
         let (session, response) = {
             let mut questions = lock(&self.questions);
             let Some(pending) = questions.get_mut(&question) else {
@@ -2880,7 +2918,7 @@ impl ChatManager {
             };
             // The first answer to reach the agent is the one that counts, as for approvals.
             if pending.decided_by.is_none() {
-                pending.decided_by = Some(client_name(client));
+                pending.decided_by = Some(decided_by);
             }
             (pending.info.session_id, response)
         };
@@ -2913,6 +2951,67 @@ impl ChatManager {
                     error => ErrorBody::new(ErrorCode::ProviderError, error.to_string()),
                 })
             }
+        }
+    }
+
+    /// OMP's own question about a call of one of Hutan's tools through its `xd://` device, in
+    /// Mawas's OMP, when `kind` is that question: what the daemon answers instead of the user
+    /// ([`omp_device_card`] says which questions those are and why). `None` for every other
+    /// event, chat and question, and for a card whose choice is not the one OMP words
+    /// `Approve`.
+    fn own_tool_card(&self, live: &Live, kind: &AgentEventKind) -> Option<OwnCard> {
+        let AgentEventKind::QuestionRequested { question_id, spec } = kind else {
+            return None;
+        };
+        let tool = omp_device_card(&spec.title, &spec.prompt, live.own_tools.get()?)?;
+        // One choice, whose options are OMP's `Approve` (`Approve Once` when it offers grants
+        // too) and `Deny`.
+        let [field] = spec.fields.as_slice() else {
+            return None;
+        };
+        let FieldKind::Choice {
+            options,
+            multi: false,
+            ..
+        } = &field.kind
+        else {
+            return None;
+        };
+        let approve = options
+            .iter()
+            .find(|option| matches!(option.value.as_str(), "Approve" | "Approve Once"))?;
+        Some(OwnCard {
+            session: live.id,
+            question: *question_id,
+            tool: tool.to_owned(),
+            field: field.id.clone(),
+            approve: approve.value.clone(),
+        })
+    }
+
+    /// Answers OMP's own question about one of Hutan's tools (see [`Self::own_tool_card`]): the
+    /// tool is one OMP was told to run without asking, a read needs no question and a change
+    /// asks once on Hutan's own card. The answer is credited to `daemon`.
+    async fn approve_own_card(self: Arc<Self>, card: OwnCard) {
+        let values =
+            question::Values::from([(card.field, serde_json::Value::String(card.approve))]);
+        match self
+            .answer_question_by(
+                card.question,
+                QuestionResponse::Submit { values },
+                OWN_CARD_DECIDER,
+            )
+            .await
+        {
+            Ok(()) => debug!(
+                session = %card.session, tool = %card.tool,
+                "answered OMP's own question about a Hutan tool for Mawas"
+            ),
+            // Answered meanwhile (the user, or the turn ended): nothing is left to do.
+            Err(error) => debug!(
+                session = %card.session, tool = %card.tool, error = %error.message,
+                "OMP's own question about a Hutan tool was not answered by the daemon"
+            ),
         }
     }
 
@@ -3091,7 +3190,11 @@ impl ChatManager {
                                 draft.kind,
                                 AgentEventKind::TurnFailed { .. }
                             ));
+                            let own_card = self.own_tool_card(&live, &draft.kind);
                             self.handle(&live, *draft).await;
+                            if let Some(card) = own_card {
+                                tokio::spawn(self.clone().approve_own_card(card));
+                            }
                             if let Some(failed) = ended {
                                 self.after_turn(&live, failed);
                             }

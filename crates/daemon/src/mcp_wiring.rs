@@ -309,6 +309,33 @@ pub fn claude_allowed_tools(names: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// How OMP 18.14 words its own approval question for a call of one of Hutan's tools through the
+/// `xd://` device its MCP tools are mounted under (measured on a real turn: the model wrote to
+/// the device with empty content): the title `Allow tool: write`, then `Path:
+/// xd://mcp__hutan_<tool>`, then `Content:` and the text it was given (here nothing) or, when
+/// the content is a JSON object, `Arguments:` and the arguments.
+const OMP_DEVICE_CARD_TITLE: &str = "Allow tool: write";
+
+/// Which of `names` (Hutan's tools) OMP's own approval question is about, when it is the
+/// question of a `write` to that tool's `xd://` device (see [`OMP_DEVICE_CARD_TITLE`]); `None`
+/// for any other question, in which case it is the user's to answer.
+///
+/// The overlay's `tools.approval.mcp__hutan_<tool>: allow` is what keeps OMP from asking about a
+/// call it can name. A call through the device is named by the JSON object OMP reads in the
+/// write's *content*; a write whose content it cannot read that way (blank, for a tool that
+/// takes nothing) is a `write` of the highest tier under no tool's name, and no overlay line
+/// can allow that without allowing every `write` (the user's files, other servers' devices).
+/// So the daemon answers the question, for the tools it has already told OMP to run without
+/// asking (a read needs no question, a change asks once on Hutan's own card).
+pub fn omp_device_card<'a>(title: &str, prompt: &str, names: &'a [String]) -> Option<&'a str> {
+    if title != OMP_DEVICE_CARD_TITLE {
+        return None;
+    }
+    let path = prompt.lines().next()?.strip_prefix("Path: ")?;
+    let tool = path.strip_prefix(&format!("xd://mcp__{SERVER_NAME}_"))?;
+    names.iter().map(String::as_str).find(|name| *name == tool)
+}
+
 /// Codex overrides (`-c key=value`) that approve `names` without asking:
 /// `mcp_servers.<server>.tools.<tool>.approval_mode = "approve"`.
 pub fn codex_approval_overrides(names: &[String]) -> Vec<String> {
@@ -432,6 +459,89 @@ mod tests {
         ] {
             assert!(!is_tool_name(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn omp_asks_about_a_device_call_it_cannot_name_and_only_those_of_listed_hutan_tools_are_ours() {
+        let names = vec!["agents_findings".to_owned(), "agent_review".to_owned()];
+        let card = |title: &str, prompt: &str| omp_device_card(title, prompt, &names);
+        // What OMP words for a call whose content it could not read as a JSON object: blank,
+        // text, or (as here) whatever follows `Content:`.
+        for prompt in [
+            "Path: xd://mcp__hutan_agents_findings\nContent:",
+            "Path: xd://mcp__hutan_agents_findings\nContent:\n",
+            "Path: xd://mcp__hutan_agents_findings\nContent:\nlast_days: 3",
+            "Path: xd://mcp__hutan_agents_findings\nArguments:\n{\n  \"last_days\": 3\n}",
+        ] {
+            assert_eq!(
+                card("Allow tool: write", prompt),
+                Some("agents_findings"),
+                "{prompt:?}"
+            );
+        }
+        assert_eq!(
+            card(
+                "Allow tool: write",
+                "Path: xd://mcp__hutan_agent_review\nContent:"
+            ),
+            Some("agent_review")
+        );
+        for (title, prompt) in [
+            // Another tool of the table than the ones listed (a gated one is listed too, in
+            // the daemon; here it simply is not).
+            (
+                "Allow tool: write",
+                "Path: xd://mcp__hutan_chat_send\nContent:",
+            ),
+            // Another server's device, a prefix, a topic page, a different scheme.
+            (
+                "Allow tool: write",
+                "Path: xd://mcp__other_agents_findings\nContent:",
+            ),
+            (
+                "Allow tool: write",
+                "Path: xd://mcp__hutan_agents_findings_x\nContent:",
+            ),
+            (
+                "Allow tool: write",
+                "Path: xd://mcp__hutan_agents_findings/topic\nContent:",
+            ),
+            (
+                "Allow tool: write",
+                "Path: local://mcp__hutan_agents_findings\nContent:",
+            ),
+            // A file, with the device named only in what was written.
+            (
+                "Allow tool: write",
+                "Path: /tmp/x\nContent:\nPath: xd://mcp__hutan_agents_findings",
+            ),
+            (
+                "Allow tool: write",
+                "Reason: x\nPath: xd://mcp__hutan_agents_findings\nContent:",
+            ),
+            // Another tool of OMP's, or its own `write` of the device's name through another
+            // title.
+            (
+                "Allow tool: bash",
+                "Path: xd://mcp__hutan_agents_findings\nContent:",
+            ),
+            (
+                "Allow tool: mcp__hutan_agents_findings",
+                "Origin: MCP server tool",
+            ),
+            ("", ""),
+        ] {
+            assert_eq!(card(title, prompt), None, "{title:?} {prompt:?}");
+        }
+        assert_eq!(
+            omp_device_card(
+                "Allow tool: write",
+                "Path: xd://mcp__hutan_agents_findings\nContent:",
+                &[]
+            ),
+            None,
+            "with no tool told to run without asking, nothing is ours to answer"
+        );
     }
 
     const CLI: &str = "case \"$2\" in --gated-tools) printf 'chat_send\\nsession_rename\\n';; \
