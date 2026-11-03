@@ -653,15 +653,17 @@ impl ChatView {
             // A request that waits for an answer shows what it would change.
             let part = PART_DIFF + u32::try_from(file).unwrap_or(0);
             let open = self.open(id, part, pending);
-            let label = match change.kind {
-                FileChangeKind::Add => "added",
-                FileChangeKind::Delete => "deleted",
-                FileChangeKind::Update => "edited",
+            let label = match (change.kind, &diff.moved_from) {
+                (_, Some(_)) => "moved",
+                (FileChangeKind::Add, _) => "added",
+                (FileChangeKind::Delete, _) => "deleted",
+                (FileChangeKind::Update, _) => "edited",
             };
-            let name = match &diff.moved_from {
-                Some(from) => format!("{from} → {}", diff.path),
-                None => diff.path.clone(),
-            };
+            // The path as the session's folder knows it (relative inside it), cut in the middle
+            // when the row is short of room: the folder gives way, the file name stays; the
+            // tooltip has the whole path.
+            let shown = FileRowPath::new(&diff.path, diff.moved_from.as_deref(), cwd.as_deref());
+            let tip = SharedString::from(shown.tooltip.clone());
             // "Open": the file in a tab at its first change (E-10); a deleted file has none.
             let target = (change.kind != FileChangeKind::Delete)
                 .then(|| open_target(change, cwd.as_deref(), diff.first_changed_line()))
@@ -688,6 +690,12 @@ impl ChatView {
                                     .rounded(px(tokens.radius - 2.0))
                                     .cursor_pointer()
                                     .hover(move |s| s.bg(hover))
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            crate::workbench::style::TextTooltip::new(tip.clone())
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.toggle(index, id, part, cx);
                                     }))
@@ -702,9 +710,22 @@ impl ChatView {
                                         div()
                                             .flex_1()
                                             .min_w_0()
-                                            .truncate()
+                                            .flex()
                                             .font_family(look.mono.clone())
-                                            .child(SharedString::from(name)),
+                                            .child(
+                                                div()
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .text_color(theme.muted)
+                                                    .child(SharedString::from(
+                                                        shown.folder.clone(),
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_none()
+                                                    .child(SharedString::from(shown.name.clone())),
+                                            ),
                                     )
                                     .child(
                                         div()
@@ -1221,6 +1242,57 @@ impl ChatView {
     }
 }
 
+/// How a file row of a card writes its path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileRowPath {
+    /// The folder with its trailing `/`, or empty: the part that gives way when the row is short
+    /// of room, so the file name is always whole.
+    pub folder: String,
+    pub name: String,
+    /// The whole path (absolute where the session's folder is known), for the tooltip; a move
+    /// says where it came from.
+    pub tooltip: String,
+}
+
+impl FileRowPath {
+    /// `path` relative to `cwd` when it lies inside it (an agent may send it absolute), split into
+    /// folder and file name.
+    pub(crate) fn new(
+        path: &str,
+        moved_from: Option<&str>,
+        cwd: Option<&std::path::Path>,
+    ) -> Self {
+        let inside = |path: &str| -> String {
+            let path = std::path::Path::new(path);
+            cwd.and_then(|cwd| path.strip_prefix(cwd).ok())
+                .unwrap_or(path)
+                .display()
+                .to_string()
+        };
+        let whole = |path: &str| -> String {
+            let path = std::path::Path::new(path);
+            match cwd {
+                Some(cwd) if path.is_relative() => cwd.join(path).display().to_string(),
+                _ => path.display().to_string(),
+            }
+        };
+        let relative = inside(path);
+        let (folder, name) = match relative.rsplit_once('/') {
+            Some((folder, name)) => (format!("{folder}/"), name.to_owned()),
+            None => (String::new(), relative),
+        };
+        let tooltip = match moved_from {
+            Some(from) => format!("{} → {}", whole(from), whole(path)),
+            None => whole(path),
+        };
+        Self {
+            folder,
+            name,
+            tooltip,
+        }
+    }
+}
+
 fn counts(diff: &FileDiff, look: &Look) -> AnyElement {
     counts_of(diff.added, diff.removed, look)
 }
@@ -1639,6 +1711,52 @@ mod tests {
         assert_eq!(
             footer_line(&footer(TurnOutcome::Cancelled, None)).as_deref(),
             Some("interrupted · 2 m 53 s")
+        );
+    }
+
+    #[test]
+    fn three_files_of_one_long_folder_differ_in_the_part_the_row_keeps() {
+        let cwd = std::path::Path::new("/Users/someone/projects/a-rather-long-checkout-name");
+        let rows: Vec<FileRowPath> = [
+            "/Users/someone/projects/a-rather-long-checkout-name/crates/daemon/Cargo.toml",
+            "/Users/someone/projects/a-rather-long-checkout-name/crates/desktop/Cargo.toml",
+            "/Users/someone/projects/a-rather-long-checkout-name/Cargo.toml",
+        ]
+        .iter()
+        .map(|path| FileRowPath::new(path, None, Some(cwd)))
+        .collect();
+        // Relative to the session's folder, the folder first and the name whole.
+        assert_eq!(
+            (rows[0].folder.as_str(), rows[0].name.as_str()),
+            ("crates/daemon/", "Cargo.toml")
+        );
+        assert_eq!(rows[1].folder, "crates/desktop/");
+        assert_eq!(
+            (rows[2].folder.as_str(), rows[2].name.as_str()),
+            ("", "Cargo.toml")
+        );
+        // The tooltip has the whole path.
+        assert_eq!(
+            rows[0].tooltip,
+            "/Users/someone/projects/a-rather-long-checkout-name/crates/daemon/Cargo.toml"
+        );
+        // A path outside the folder stays as it is; a relative one is completed in the tooltip.
+        let outside = FileRowPath::new("/etc/hosts", None, Some(cwd));
+        assert_eq!(
+            (outside.folder.as_str(), outside.name.as_str()),
+            ("/etc/", "hosts")
+        );
+        let relative = FileRowPath::new("src/lib.rs", None, Some(cwd));
+        assert_eq!(
+            relative.tooltip,
+            "/Users/someone/projects/a-rather-long-checkout-name/src/lib.rs"
+        );
+        // A move says where it came from in the tooltip.
+        let moved = FileRowPath::new("src/new.rs", Some("src/old.rs"), Some(cwd));
+        assert_eq!(moved.name, "new.rs");
+        assert_eq!(
+            moved.tooltip,
+            "/Users/someone/projects/a-rather-long-checkout-name/src/old.rs → /Users/someone/projects/a-rather-long-checkout-name/src/new.rs"
         );
     }
 }
