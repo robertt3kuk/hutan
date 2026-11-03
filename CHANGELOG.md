@@ -4,6 +4,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+### Added
+- **How any agent can report its stats to Hutan**: `docs/integrations.md` § *Report your agent's stats to Hutan* describes the levels — recognised by name, state over OSC 7501, insight (tokens, cost, context, tools, files, turns) with `hutan agent report --insight-json` — with a JSON Schema (`docs/schemas/agent-insight-report-v1.json`) and an example script (`integrations/examples/third-party-agent.sh`) that the tests run end to end.
+
 ## 0.3.6 — 2026-11-03
 
 ### Added
