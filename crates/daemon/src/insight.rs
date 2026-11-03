@@ -319,6 +319,12 @@ impl InsightHub {
             entry.touched = tick;
             self.changed(state, session);
         }
+        // A report from a session somebody looks at: its transcript is followed too.
+        let focused = state.focus.values().any(|focus| focus.session == session);
+        drop(guard);
+        if focused {
+            self.start_tail(session);
+        }
     }
 
     /// The session is gone for good (deleted, or its journal was replaced).
@@ -481,6 +487,15 @@ impl InsightHub {
             // A request (or a detector) asks: the transcript is read once, when the user allowed
             // it and it was not read a moment ago.
             self.sync(session, Some(target.clone()), Reason::Pull).await;
+            // A session somebody looks at is followed from now on (its agent may have started
+            // after the window began to look).
+            let focused = lock(&self.state)
+                .focus
+                .values()
+                .any(|focus| focus.session == session);
+            if focused {
+                self.start_tail(session);
+            }
         }
         let mut insight = {
             let mut state = lock(&self.state);
@@ -1352,5 +1367,59 @@ mod tests {
             serde_json::to_vec(&insight).unwrap().len() <= hutan_core::insight::MAX_SNAPSHOT_BYTES
         );
         eprintln!("insight: one session at every cap holds about {held} bytes");
+    }
+
+    fn followed(route: Route, key: Option<&str>, path: &str) -> TailFile {
+        TailFile::new(
+            PathBuf::from(path),
+            key.map(str::to_owned),
+            route,
+            Source::Claude,
+        )
+    }
+
+    fn hints(id: Option<&str>, path: Option<&str>) -> TailHints {
+        TailHints {
+            agent_session_id: id.map(str::to_owned),
+            transcript_path: path.map(str::to_owned),
+            ..TailHints::default()
+        }
+    }
+
+    #[test]
+    fn a_transcript_is_followed_until_the_agent_names_another_conversation() {
+        let file = followed(Route::SessionId, Some("a"), "/r/a.jsonl");
+        assert!(!rebind_wanted(&file, &hints(Some("a"), None)));
+        assert!(!rebind_wanted(&file, &hints(Some("a"), Some("/r/a.jsonl"))));
+        // `/clear`: another id, another file.
+        assert!(rebind_wanted(&file, &hints(Some("b"), None)));
+        assert!(rebind_wanted(&file, &hints(None, Some("/r/b.jsonl"))));
+        // Nothing said: nothing to change.
+        assert!(!rebind_wanted(&file, &hints(None, None)));
+        // A guess by folder gives way to a certain route as soon as the agent names one.
+        let guess = followed(Route::Folder, Some("a"), "/r/a.jsonl");
+        assert!(!rebind_wanted(&guess, &hints(None, None)));
+        assert!(rebind_wanted(&guess, &hints(Some("a"), None)));
+    }
+
+    #[test]
+    fn the_status_says_in_words_why_a_transcript_is_or_is_not_read() {
+        assert!(
+            TranscriptStatus::Off(Source::Claude)
+                .text()
+                .contains("Claude Code history is off")
+        );
+        assert!(
+            TranscriptStatus::Searching(Why::Rivals)
+                .text()
+                .contains("another session runs the same agent")
+        );
+        let reading = TranscriptStatus::Reading {
+            route: Route::Folder,
+            cut: true,
+        };
+        assert!(reading.is_reading());
+        assert!(reading.text().contains("likely") && reading.text().contains("only the end"));
+        assert!(!TranscriptStatus::NotLooked.is_reading());
     }
 }
