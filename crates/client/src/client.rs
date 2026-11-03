@@ -269,6 +269,8 @@ pub(crate) const NOTIFY_DIGEST_CAPABILITY: &str = "notify.digest";
 /// Capability for `agent.report`'s `insight`, and `agent.insight` of a terminal that runs an agent
 /// (protocol 0.71).
 pub(crate) const AGENT_INSIGHT_REPORT_CAPABILITY: &str = "agent.insight.report";
+/// Capability for `telemetry.status`, the loopback OTLP receiver (protocol 0.74, ADR 0026).
+pub(crate) const AGENT_TELEMETRY_CAPABILITY: &str = "agent.telemetry";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -343,6 +345,7 @@ const CAPABILITIES: &[&str] = &[
     AGENT_INSIGHT_REPORT_CAPABILITY,
     AGENTS_FINDINGS_CAPABILITY,
     AGENTS_FINDINGS_RESTORE_CAPABILITY,
+    AGENT_TELEMETRY_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -1179,6 +1182,25 @@ impl Client {
     /// could not finish is in `last_check` of the answer.
     pub async fn update_check(&self) -> Result<hutan_protocol::update::UpdateStatus, ClientError> {
         self.call(Request::UpdateCheck(Empty {})).await
+    }
+
+    /// True when the daemon advertised capability `agent.telemetry` (protocol 0.74):
+    /// `telemetry.status`.
+    pub fn supports_telemetry(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENT_TELEMETRY_CAPABILITY)
+    }
+
+    /// `telemetry.status`: whether the loopback OTLP receiver listens, on which port, which
+    /// agents are enabled and what each session last reported. Contacts nothing; carries no
+    /// token. Turning an agent on is [`Client::daemon_setting_set`]
+    /// (`telemetry.agents.<agent>`).
+    pub async fn telemetry_status(
+        &self,
+    ) -> Result<hutan_protocol::telemetry::TelemetryStatus, ClientError> {
+        self.call(Request::TelemetryStatus(Empty {})).await
     }
 
     /// `update.install`: has the daemon update Hutan the way it was installed. A Homebrew

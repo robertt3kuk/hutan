@@ -5920,6 +5920,7 @@ fn telemetry_status_fixture() -> TelemetryStatus {
             last_report_ms: 1_791_894_000_000,
             reports: 12,
             service_version: Some("2.1.316".into()),
+            model: Some("claude-opus-5-5".into()),
         }],
         counters: TelemetryCounters {
             accepted: 40,

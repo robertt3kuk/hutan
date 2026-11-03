@@ -80,6 +80,7 @@ pub struct Services {
     pub verify: Arc<crate::verify::VerifyService>,
     pub findings: Arc<ChecksService>,
     pub updates: Arc<UpdateService>,
+    pub telemetry: Arc<crate::telemetry::TelemetryService>,
     pub settings: Arc<SettingsService>,
     pub storage: hutan_storage::Storage,
     pub state_log: Arc<crate::state_log::StateLog>,
@@ -114,6 +115,7 @@ pub struct Router {
     verify: Arc<crate::verify::VerifyService>,
     findings: Arc<ChecksService>,
     updates: Arc<UpdateService>,
+    telemetry: Arc<crate::telemetry::TelemetryService>,
     settings: Arc<SettingsService>,
     storage: hutan_storage::Storage,
     state_log: Arc<crate::state_log::StateLog>,
@@ -158,6 +160,7 @@ impl Router {
             verify: services.verify,
             findings: services.findings,
             updates: services.updates,
+            telemetry: services.telemetry,
             settings: services.settings,
             storage: services.storage,
             state_log: services.state_log,
@@ -618,6 +621,7 @@ impl Router {
             Request::UpdateStatus(_) => ok(&self.updates.status()),
             Request::UpdateCheck(_) => ok(&self.updates.check().await),
             Request::UpdateInstall(req) => ok(&self.updates.install(req).await?),
+            Request::TelemetryStatus(_) => ok(&self.telemetry.status().await),
             Request::NotifyList(_) => ok(&NotifyList {
                 intents: self.notify.list(),
             }),
@@ -1301,6 +1305,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // Replacing Hutan runs Homebrew in a terminal: an agent can never update or downgrade
         // it (ADR 0024).
         Request::UpdateInstall(_) => ("update.install", UserOnly),
+        // The receiver's state: no token, no payload, nothing to contact.
+        Request::TelemetryStatus(_) => ("telemetry.status", Read),
         Request::HooksTest(_) => ("hooks.test", UserOnly),
         Request::NotifyList(_) => ("notify.list", Read),
         Request::DigestStatus(_) => ("digest.status", Read),

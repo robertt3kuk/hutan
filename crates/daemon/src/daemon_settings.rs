@@ -113,6 +113,7 @@ enum Group {
     Checkpoints,
     Updates,
     Agents,
+    Telemetry,
 }
 
 struct Spec {
@@ -242,6 +243,21 @@ macro_rules! harness_specs {
             Kind::String,
             |c| text_value(harness(c, $id).account.as_ref()),
         ));
+    };
+}
+
+/// `telemetry.agents.<id>`: one switch per agent the receiver has a mapper for (a test keeps the
+/// list equal to `hutan_telemetry::Agent::ALL`).
+macro_rules! telemetry_agent_specs {
+    ($specs:ident, $($id:literal),+) => {
+        $(
+            $specs.push(live(
+                concat!("telemetry.agents.", $id),
+                Kind::Bool,
+                Group::Telemetry,
+                |c| json!(c.telemetry.agents.get($id) == Some(&true)),
+            ));
+        )+
     };
 }
 
@@ -608,6 +624,23 @@ fn build_specs() -> Vec<Spec> {
             |c| int_value(c.checkpoints.max_repo_refs),
         ),
     ]);
+    // The loopback OTLP receiver (protocol 0.74, ADR 0026): which agents' own OpenTelemetry it
+    // accepts and the port it listens on. It opens when the first agent is on and closes with
+    // the last; `0` is a port the daemon picks once and writes back. Both are user-only, like
+    // every setting here.
+    specs.push(live(
+        "telemetry.port",
+        Kind::Int {
+            min: Some(0),
+            max: Some(65_535),
+            only: &[],
+        },
+        Group::Telemetry,
+        |c| int_value(u64::from(c.telemetry.port)),
+    ));
+    telemetry_agent_specs!(
+        specs, "claude", "codex", "omp", "gemini", "qwen", "copilot", "goose", "opencode", "other"
+    );
     specs
 }
 
@@ -1398,6 +1431,7 @@ pub struct SettingsService {
     worktrees: Arc<WorktreeService>,
     updates: Arc<UpdateService>,
     state_log: Arc<StateLog>,
+    telemetry: Arc<crate::telemetry::TelemetryService>,
     /// One edit of the file at a time.
     write: Mutex<()>,
 }
@@ -1415,6 +1449,7 @@ pub struct Targets {
     pub worktrees: Arc<WorktreeService>,
     pub updates: Arc<UpdateService>,
     pub state_log: Arc<StateLog>,
+    pub telemetry: Arc<crate::telemetry::TelemetryService>,
 }
 
 impl SettingsService {
@@ -1438,6 +1473,7 @@ impl SettingsService {
             worktrees: targets.worktrees,
             updates: targets.updates,
             state_log: targets.state_log,
+            telemetry: targets.telemetry,
             write: Mutex::new(()),
         })
     }
@@ -1461,6 +1497,7 @@ impl SettingsService {
         running.checkpoints = self.registry.chats().checkpoints().settings();
         running.updates = self.updates.settings();
         running.agents.state_log = self.state_log.enabled();
+        running.telemetry = self.telemetry.settings().await;
         running
     }
 
@@ -1600,6 +1637,7 @@ impl SettingsService {
                 .apply_settings(fresh.checkpoints.clone()),
             Group::Updates => self.updates.apply_settings(fresh.updates.clone()),
             Group::Agents => self.state_log.set_enabled(fresh.agents.state_log).await,
+            Group::Telemetry => self.telemetry.apply_settings(fresh.telemetry.clone()).await,
         }
         Ok(())
     }
@@ -1719,8 +1757,11 @@ mod tests {
             // so it is written by hand in `daemon.toml` like the hooks: neither `hutan config`
             // nor an agent can set what the daemon runs.
             checks: _,
+            // `[telemetry]` is `telemetry.port` and one `telemetry.agents.<id>` per agent.
+            telemetry,
         } = Config::default();
         let config::AgentsSettings { state_log: _ } = agents;
+        let config::TelemetrySettings { port: _, agents: _ } = telemetry;
         let config::UpdatesSettings {
             check: _,
             channel: _,
@@ -1912,6 +1953,7 @@ mod tests {
             "checkpoints.keep_days",
             "checkpoints.max_repo_bytes",
             "checkpoints.max_repo_refs",
+            "telemetry.port",
         ]
         .map(str::to_owned)
         .into();
@@ -1919,6 +1961,9 @@ mod tests {
             for permission in Permission::ALL {
                 expected.push(format!("assistant.{table}.{}", permission.name()));
             }
+        }
+        for agent in hutan_telemetry::Agent::ALL {
+            expected.push(format!("telemetry.agents.{}", agent.id()));
         }
         for id in HARNESS_IDS {
             for field in ["bin", "args", "env", "cli", "account"] {

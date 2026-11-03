@@ -1233,6 +1233,22 @@ impl Connection {
         client.update_check().await
     }
 
+    /// True while connected to a daemon that advertised capability `agent.telemetry`; false when
+    /// disconnected.
+    pub fn supports_telemetry(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_telemetry())
+    }
+
+    /// `telemetry.status` ([`Client::telemetry_status`]).
+    pub async fn telemetry_status(
+        &self,
+    ) -> Result<hutan_protocol::telemetry::TelemetryStatus, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.telemetry_status().await
+    }
+
     /// `update.install` ([`Client::update_install`]).
     pub async fn update_install(
         &self,

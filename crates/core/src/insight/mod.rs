@@ -24,8 +24,8 @@ use crate::checkpoint::CheckpointState;
 use crate::ids::{SessionId, TurnId};
 
 pub use input::{
-    InsightReport, MAX_REPORT_BYTES, MAX_REPORT_FILES, MAX_REPORT_TOOLS, ReportError,
-    ReportedContext, ReportedFile, ReportedTool, ReportedTurn, TurnPhase,
+    InsightReport, MAX_REPORT_BYTES, MAX_REPORT_FILES, MAX_REPORT_TOOLS, MAX_TOOL_NAME_BYTES,
+    ReportError, ReportedContext, ReportedFile, ReportedTool, ReportedTurn, TurnPhase,
 };
 pub use reducer::{InsightReducer, SeedTurn};
 pub use tally::TurnUsage;

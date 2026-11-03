@@ -50,6 +50,9 @@ pub struct TelemetrySession {
     /// The agent's own version (`service.version`), when it said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_version: Option<String>,
+    /// The model the records named last (not a secret: a model id such as `claude-opus-5-5`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// What the receiver has done since the daemon started: every request is counted once.

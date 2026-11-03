@@ -21,6 +21,8 @@ anyhow.workspace = true
 base64.workspace = true
 bytes.workspace = true
 futures.workspace = true
+getrandom.workspace = true
+http-body-util.workspace = true
 hutan-agents.workspace = true
 hutan-agents-view.workspace = true
 hutan-core.workspace = true
@@ -30,8 +32,11 @@ hutan-index.workspace = true
 hutan-lsp-client.workspace = true
 hutan-protocol.workspace = true
 hutan-storage.workspace = true
+hutan-telemetry.workspace = true
 hutan-terminal.workspace = true
 globset.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 ignore.workspace = true
 libc.workspace = true
 notify.workspace = true
@@ -43,6 +48,7 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "signal", "process", "fs"] }
 tokio-util.workspace = true
@@ -79,6 +85,7 @@ hutan-daemon = { path = ".", features = ["test-support"] }
 hutan-client.workspace = true
 hutan-gateway = { workspace = true, features = ["test-support"] }
 rusqlite.workspace = true
+flate2.workspace = true
 tempfile.workspace = true
 
 [lints]

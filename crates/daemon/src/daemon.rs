@@ -142,6 +142,9 @@ pub struct DaemonConfig {
     /// How the digest is timed: how often the daemon looks, and how long an "hour" of
     /// `notify.digest_hours` is (tests shorten both).
     pub digest: DigestTuning,
+    /// What tests change of the OTLP receiver (queue size, rates, how long a turn the logs never
+    /// end stays open, a gate that holds its mapper still).
+    pub telemetry: crate::telemetry::Tuning,
 }
 
 impl DaemonConfig {
@@ -168,6 +171,7 @@ impl DaemonConfig {
             usage_probes: false,
             updates: UpdateTuning::default(),
             digest: DigestTuning::default(),
+            telemetry: crate::telemetry::Tuning::default(),
         }
     }
 }
@@ -378,6 +382,18 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
     );
     let insight = crate::insight::InsightHub::new(storage.clone(), bus.clone());
     let state_log = crate::state_log::StateLog::new(storage.clone(), settings.agents.state_log);
+    // The loopback OTLP receiver: no socket unless `daemon.toml` enables an agent (ADR 0026). It
+    // listens before the registry restores the sessions of the last run, so that those terminals
+    // already get their endpoint and token; its mapper starts once the registry exists.
+    let telemetry_env = crate::telemetry::SessionEnv::new();
+    let telemetry = crate::telemetry::TelemetryService::open(crate::telemetry::TelemetryInputs {
+        env: telemetry_env.clone(),
+        config_file: paths.config_file.clone(),
+        settings: settings.telemetry.clone(),
+        tuning: config.telemetry.clone(),
+        shutdown: shutdown.clone(),
+    })
+    .await;
     let registry = registry::spawn(
         bus.clone(),
         hub.clone(),
@@ -415,9 +431,11 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             usage: usage.clone(),
             insight: insight.clone(),
             sandbox: sandbox.clone(),
+            telemetry_env: telemetry_env.clone(),
         },
         stored,
     );
+    telemetry.attach(registry.clone());
     let history = HistoryService::new(
         paths.clone(),
         settings.history.clone(),
@@ -623,6 +641,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             registry: registry.clone(),
             worktrees: worktrees.clone(),
             updates: updates.clone(),
+            telemetry: telemetry.clone(),
             state_log: state_log.clone(),
         },
     );
@@ -651,6 +670,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             verify,
             findings,
             updates,
+            telemetry,
             settings: settings_service,
             storage: storage.clone(),
             state_log: state_log.clone(),

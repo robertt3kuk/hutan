@@ -25,8 +25,8 @@ use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 
 use hutan_core::agent::{FileChangeKind, TokenCounts};
 use hutan_core::insight::{
-    InsightOutcome, InsightReport, InsightSourceKind, ReportedContext, ReportedFile, ReportedTool,
-    ReportedTurn, TurnPhase,
+    InsightOutcome, InsightReport, InsightSourceKind, MAX_PATH_BYTES, MAX_REPORT_BYTES,
+    MAX_TOOL_NAME_BYTES, ReportedContext, ReportedFile, ReportedTool, ReportedTurn, TurnPhase,
 };
 
 use crate::model::{Attrs, Decoded};
@@ -116,6 +116,11 @@ impl Agent {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mapped {
     pub agent: Agent,
+    /// The name the agent's reports are given under (`agent` of an `agent.report`): its id for
+    /// an agent Hutan knows, and for [`Agent::Other`] the program's own `service.name` (cleaned:
+    /// letters, digits, `.`, `_`, `-`, at most 64), so that two programs never share a record
+    /// and the insight names the program.
+    pub name: String,
     /// `service.version` of the agent, for display.
     pub service_version: Option<String>,
     /// The model the records name (the last one).
@@ -245,6 +250,7 @@ impl Mapper {
             }
             out.push(Mapped {
                 agent,
+                name: agent_name(agent, resource.attrs.str("service.name")),
                 service_version: resource.attrs.str("service.version").map(str::to_owned),
                 model,
                 reports,
@@ -269,6 +275,7 @@ impl Mapper {
             builder.turn(TurnPhase::End, Some(InsightOutcome::Completed), None);
             out.push(Mapped {
                 agent: *agent,
+                name: agent.id().to_owned(),
                 service_version: None,
                 model: None,
                 reports: builder.finish(),
@@ -285,6 +292,31 @@ impl Mapper {
             .filter_map(|(_, state)| state.open_turn)
             .map(|last| last.saturating_add(idle_ms))
             .min()
+    }
+}
+/// The name an agent's reports go under: the id of a known agent, else the program's own
+/// `service.name` cleaned to letters, digits, `.`, `_` and `-` (at most 64), else `other`.
+fn agent_name(agent: Agent, service: Option<&str>) -> String {
+    if agent != Agent::Other {
+        return agent.id().to_owned();
+    }
+    let cleaned: String = service
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(64)
+        .collect();
+    if cleaned.trim_matches('-').is_empty() {
+        agent.id().to_owned()
+    } else {
+        cleaned
     }
 }
 
@@ -375,6 +407,7 @@ impl Builder {
 
     pub(crate) fn tool(&mut self, name: &str, failed: bool, ms: Option<u64>) {
         let failed = u32::from(failed);
+        let name = clip_bytes(name, MAX_TOOL_NAME_BYTES);
         match self.cur.tools.iter_mut().find(|tool| tool.name == name) {
             Some(tool) => {
                 tool.calls = tool.calls.saturating_add(1);
@@ -408,12 +441,40 @@ impl Builder {
     }
 
     pub(crate) fn files(&mut self, files: impl IntoIterator<Item = ReportedFile>) {
-        self.cur.files.extend(files);
+        self.cur.files.extend(files.into_iter().map(|mut file| {
+            file.path = clip_bytes(&file.path, MAX_PATH_BYTES).to_owned();
+            file
+        }));
     }
 
     fn finish(mut self) -> Vec<InsightReport> {
         self.flush();
+        for report in &mut self.done {
+            fit(report);
+        }
         self.done
+    }
+}
+
+/// `text` cut to at most `max` bytes, at a character boundary.
+fn clip_bytes(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// Drops files, then tool rows, from the end until the report is within what the daemon takes
+/// (a larger report is refused whole).
+fn fit(report: &mut InsightReport) {
+    while serde_json::to_vec(report).is_ok_and(|json| json.len() > MAX_REPORT_BYTES) {
+        if report.files.pop().is_none() && report.tools.pop().is_none() {
+            break;
+        }
     }
 }
 

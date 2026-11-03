@@ -52,6 +52,9 @@
 //! - [`mcp_wiring`]: how `hutan mcp` is registered with the agents Hutan starts.
 //! - [`update`]: the check for a newer Hutan, how this Hutan was installed, and the Homebrew
 //!   update (`update.status|check|install`, protocol 0.60, ADR 0024).
+//! - [`telemetry`]: the loopback OTLP receiver — off until an agent is enabled, 127.0.0.1 only, a
+//!   token per session, bounded, always answering at once — that turns an agent's own
+//!   OpenTelemetry into insight (`telemetry.status`, protocol 0.74, ADR 0026).
 //! - [`daemon_settings`]: `daemon.toml` as a list of settings: `daemon.settings.get` / `.set`
 //!   validate, edit the file in place and apply what can change live (protocol 0.28).
 
@@ -116,6 +119,7 @@ pub mod signs;
 pub mod start_error;
 pub mod state_log;
 pub mod tasks;
+pub mod telemetry;
 pub mod term_agent;
 pub mod terminal_search;
 pub mod terminals;

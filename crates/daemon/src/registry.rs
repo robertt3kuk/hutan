@@ -1110,6 +1110,9 @@ struct SessionRegistry {
     /// What each session's agent reports about its context and spend; terminal agents' reports
     /// are folded into it as they arrive (protocol 0.71).
     insight: Arc<crate::insight::InsightHub>,
+    /// The loopback OTLP receiver's per-session tokens (protocol 0.74, ADR 0026): a terminal that
+    /// starts while the receiver listens gets `HUTAN_OTLP_ENDPOINT` and `HUTAN_OTLP_TOKEN`.
+    telemetry_env: Arc<crate::telemetry::SessionEnv>,
 }
 
 /// What [`spawn`] needs besides the shared services.
@@ -1161,6 +1164,8 @@ pub struct RegistryConfig {
     pub insight: Arc<crate::insight::InsightHub>,
     /// Contain (protocol 0.52): the Seatbelt boundary of sessions that ask for one.
     pub sandbox: Arc<crate::contain::Sandbox>,
+    /// The receiver's per-session tokens, shared with the receiver itself.
+    pub telemetry_env: Arc<crate::telemetry::SessionEnv>,
 }
 
 /// Starts the actor from the stored state. It stops when every [`RegistryHandle`] is dropped.
@@ -1224,6 +1229,7 @@ pub fn spawn(
         placements: PlacementCache::default(),
         scratch_dir: config.scratch_dir,
         sandbox: config.sandbox,
+        telemetry_env: config.telemetry_env,
         insight,
     };
     registry.restore_sessions(
@@ -2819,6 +2825,12 @@ impl SessionRegistry {
         if contained.is_some() {
             env.insert("HUTAN_CONTAINED".to_owned(), "1".to_owned());
         }
+        // The receiver's endpoint and this session's token, only while the receiver listens
+        // (ADR 0026 decision 8). Nothing a client put there survives: the values are the
+        // daemon's.
+        env.remove(crate::telemetry::ENDPOINT_ENV);
+        env.remove(crate::telemetry::TOKEN_ENV);
+        env.extend(self.telemetry_env.issue(session.info.id));
         let mut config = TerminalConfig {
             argv,
             cwd: session.info.cwd.clone(),
@@ -3038,6 +3050,8 @@ impl SessionRegistry {
             self.storage.sessions().set_closed(id, Some(closed_at_ms)),
             "closing a session",
         );
+        // The session's OTLP token goes with it; reopening it starts a process with a new one.
+        self.telemetry_env.revoke(id);
         let entry = self.sessions.remove(index);
         // The images pasted into its terminal go with it.
         crate::scratch::remove(&self.scratch_dir, id);

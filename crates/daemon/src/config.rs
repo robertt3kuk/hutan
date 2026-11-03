@@ -103,6 +103,12 @@
 //! [agents]                       # what the daemon records about agents (protocol 0.66, docs/assistant.md § Flow)
 //! state_log = true               # the log of states agents report, kept 14 days, for how long a terminal agent waited; false stops it and deletes what it holds
 //!
+//! [telemetry]                    # the loopback OTLP receiver (protocol 0.74, ADR 0026, docs/integrations.md § Report your agent's stats to Hutan); no socket until an agent is on
+//! port = 0                       # 0: picked once at random in 49152-65535 and written here; else a fixed port (1024-65535). A busy port leaves the receiver down, never moved
+//!
+//! [telemetry.agents]             # which agents' own OpenTelemetry Hutan accepts: claude codex omp gemini qwen copilot goose opencode other
+//! claude = true                  # the receiver opens on 127.0.0.1 when the first is on and closes with the last
+//!
 //! [checks]                       # the thresholds of the findings detectors (protocol 0.70, docs/assistant.md § Checks)
 //! repeated_failure_min = 3       # `repeated_failure`: the same failure this many times (at least 2)
 //! thrash_turns = 3               # `thrash`: the same file changed in this many turns with a net change near zero (at least 2)
@@ -240,6 +246,53 @@ pub struct DaemonSettings {
     /// `[checks]`: Hutan's own run of a session's tests (protocol 0.70) and the thresholds of the
     /// findings detectors (protocol 0.71), ADR 0025.
     pub checks: ChecksSettings,
+    /// `[telemetry]`: the loopback OTLP receiver (protocol 0.74, ADR 0026); off until an agent is
+    /// enabled.
+    pub telemetry: TelemetrySettings,
+}
+
+/// `[telemetry]` of `daemon.toml`: the receiver of agents' own OpenTelemetry (ADR 0026). Both
+/// parts are the user's: `daemon.settings.set` (user-only) is the only writer.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TelemetrySettings {
+    /// `0` (the default): the daemon picks a port once, in the ephemeral range, and writes it
+    /// here; Codex's endpoint lives in a config file, so the port must not change. Else a fixed
+    /// port of at least 1024.
+    pub port: u16,
+    /// `[telemetry.agents]`: agent id → on. Absent is off.
+    pub agents: BTreeMap<String, bool>,
+}
+
+impl TelemetrySettings {
+    /// The agents the user turned on, in the order of [`hutan_telemetry::Agent::ALL`].
+    pub fn enabled(&self) -> Vec<hutan_telemetry::Agent> {
+        hutan_telemetry::Agent::ALL
+            .into_iter()
+            .filter(|agent| self.agents.get(agent.id()) == Some(&true))
+            .collect()
+    }
+
+    pub fn check(&self) -> Result<(), String> {
+        if self.port != 0 && self.port < 1024 {
+            return Err(format!(
+                "telemetry.port must be 0 (pick one) or at least 1024, not {}",
+                self.port
+            ));
+        }
+        if let Some(unknown) = self
+            .agents
+            .keys()
+            .find(|id| hutan_telemetry::Agent::from_id(id).is_none())
+        {
+            let known: Vec<&str> = hutan_telemetry::Agent::ALL.iter().map(|a| a.id()).collect();
+            return Err(format!(
+                "unknown agent `{unknown}` in [telemetry.agents] (known: {})",
+                known.join(", ")
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// `[agents]` of `daemon.toml`: the log of agents' states (`docs/assistant.md` § Flow).
@@ -1572,6 +1625,8 @@ struct File {
     updates: UpdatesSettings,
     #[serde(default)]
     agents: AgentsSettings,
+    #[serde(default)]
+    telemetry: TelemetrySettings,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1692,6 +1747,7 @@ impl DaemonSettings {
             hook.check(index).map_err(toml::de::Error::custom)?;
         }
         file.worktrees.check().map_err(toml::de::Error::custom)?;
+        file.telemetry.check().map_err(toml::de::Error::custom)?;
         Ok(Self {
             restore_sessions: file.daemon.restore_sessions,
             home_folder,
@@ -1714,6 +1770,7 @@ impl DaemonSettings {
             worktrees: file.worktrees,
             updates: file.updates,
             agents: file.agents,
+            telemetry: file.telemetry,
             checks: file.checks,
         })
     }
@@ -1800,6 +1857,36 @@ pub fn set_history_enabled(path: &Path, enabled: bool) -> Result<(), DaemonError
         }
     }
 
+    write_atomic(path, &doc.to_string()).map_err(DaemonError::io(context("writing")))
+}
+
+/// Records `[telemetry] port` in `daemon.toml`, the way the receiver remembers the port it
+/// picked: the table is created when missing and every other key and comment stays as it is.
+pub fn set_telemetry_port(path: &Path, port: u16) -> Result<(), DaemonError> {
+    let context = |what: &str| format!("{what} {}", path.display());
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(DaemonError::io(context("reading"))(e)),
+    };
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
+        DaemonError::io(context("parsing"))(io::Error::new(io::ErrorKind::InvalidData, e))
+    })?;
+    let telemetry = doc
+        .entry("telemetry")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    let Some(table) = telemetry.as_table_like_mut() else {
+        return Err(DaemonError::io(context("updating"))(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "`telemetry` is not a table",
+        )));
+    };
+    match table.get_mut("port") {
+        Some(item) => *item = toml_edit::value(i64::from(port)),
+        None => {
+            table.insert("port", toml_edit::value(i64::from(port)));
+        }
+    }
     write_atomic(path, &doc.to_string()).map_err(DaemonError::io(context("writing")))
 }
 

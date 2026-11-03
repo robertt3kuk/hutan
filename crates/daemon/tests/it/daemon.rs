@@ -262,7 +262,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "digest.model",
             "agent.insight.report",
             "agents.findings",
-            "agents.findings.restore"
+            "agents.findings.restore",
+            "agent.telemetry"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

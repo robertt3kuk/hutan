@@ -400,3 +400,46 @@ fn content_never_reaches_a_report_a_status_or_a_debug_dump() {
         }
     }
 }
+
+#[test]
+fn a_program_is_reported_under_its_own_cleaned_name_and_a_known_agent_under_its_id() {
+    let name_of = |service: &str| {
+        let body = json!({"resourceSpans": [{
+            "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": service}}]},
+            "scopeSpans": [{"spans": [{"spanId": "01", "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                {"key": "gen_ai.tool.name", "value": {"stringValue": "t"}}]}]}]
+        }]});
+        map(&fixtures::json(Signal::Traces, &body), NOW)[0]
+            .name
+            .clone()
+    };
+    assert_eq!(name_of("my-agent"), "my-agent");
+    assert_eq!(name_of("Acme Agent/2"), "Acme-Agent-2");
+    assert_eq!(name_of("///"), "other");
+    assert_eq!(name_of(&"x".repeat(200)).len(), 64);
+    // The agents Hutan knows go under their id whichever way the service names itself.
+    assert_eq!(name_of("github-copilot"), "copilot");
+    assert_eq!(name_of("oh-my-pi"), "omp");
+    for agent in Agent::ALL {
+        assert_eq!(Agent::from_id(agent.id()), Some(agent));
+    }
+}
+
+#[test]
+fn a_report_that_would_be_over_the_daemons_4_kib_is_cut_to_fit_not_refused() {
+    let long_path = format!("update:{}", "d/".repeat(120));
+    let files: Vec<Value> = (0..32)
+        .map(|n| json!({"stringValue": format!("{long_path}{n}")}))
+        .collect();
+    let body = genai_span(vec![
+        json!({"key": "hutan.files.changed", "value": {"arrayValue": {"values": files}}}),
+    ]);
+    let mapped = map(&fixtures::json(Signal::Traces, &body), NOW);
+    for report in &mapped[0].reports {
+        report.clone().validated().unwrap();
+        assert!(serde_json::to_vec(report).unwrap().len() <= hutan_core::insight::MAX_REPORT_BYTES);
+    }
+    let kept: usize = mapped[0].reports.iter().map(|r| r.files.len()).sum();
+    assert!(kept > 0 && kept < 32, "{kept}");
+}

@@ -56,6 +56,7 @@ mod start_error;
 mod stats;
 mod task_delivery;
 mod tasks;
+mod telemetry;
 mod term_agent;
 mod terminal_search;
 mod transport;
