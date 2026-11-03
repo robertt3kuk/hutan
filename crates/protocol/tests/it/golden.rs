@@ -63,6 +63,7 @@ use hutan_protocol::review::*;
 use hutan_protocol::stats::*;
 use hutan_protocol::suggest::*;
 use hutan_protocol::task::*;
+use hutan_protocol::telemetry::*;
 use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch, TerminalSearchResult};
 use hutan_protocol::tree::*;
 use hutan_protocol::update::*;
@@ -4186,6 +4187,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         ),
         ("update_status", Request::UpdateStatus(Empty {})),
         ("update_check", Request::UpdateCheck(Empty {})),
+        ("telemetry_status", Request::TelemetryStatus(Empty {})),
         (
             "update_install_cask",
             Request::UpdateInstall(UpdateInstallRequest {
@@ -5882,6 +5884,49 @@ fn bundle_install_fixture(stage: InstallStage) -> UpdateInstall {
         total: Some(36_700_160),
         message: None,
         manual_command: None,
+    }
+}
+
+fn telemetry_agents_fixture(claude_and_codex: bool) -> Vec<TelemetryAgent> {
+    [
+        ("claude", "Claude Code"),
+        ("codex", "Codex"),
+        ("omp", "OMP"),
+        ("gemini", "Gemini CLI"),
+        ("qwen", "Qwen Code"),
+        ("copilot", "Copilot CLI"),
+        ("goose", "Goose"),
+        ("opencode", "OpenCode"),
+        ("other", "other agents (OpenTelemetry GenAI)"),
+    ]
+    .into_iter()
+    .map(|(id, label)| TelemetryAgent {
+        id: id.into(),
+        label: label.into(),
+        enabled: claude_and_codex && matches!(id, "claude" | "codex"),
+    })
+    .collect()
+}
+
+fn telemetry_status_fixture() -> TelemetryStatus {
+    TelemetryStatus {
+        listener: ListenerState::Listening,
+        port: Some(51234),
+        down_reason: None,
+        agents: telemetry_agents_fixture(true),
+        sessions: vec![TelemetrySession {
+            session_id: sid(),
+            agent: "claude".into(),
+            last_report_ms: 1_791_894_000_000,
+            reports: 12,
+            service_version: Some("2.1.316".into()),
+        }],
+        counters: TelemetryCounters {
+            accepted: 40,
+            rejected: 3,
+            dropped: 1,
+            ignored: 9,
+        },
     }
 }
 
@@ -10454,6 +10499,38 @@ fn responses_match_fixtures() {
                     command: None,
                     install: Some(bundle_install_fixture(InstallStage::Ready)),
                     ..update_status_fixture()
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "telemetry_status",
+            ControlMessage::ok(110, &telemetry_status_fixture()).unwrap(),
+        ),
+        (
+            "telemetry_status_off",
+            ControlMessage::ok(
+                111,
+                &TelemetryStatus {
+                    listener: ListenerState::Off,
+                    port: None,
+                    down_reason: None,
+                    sessions: vec![],
+                    counters: TelemetryCounters::default(),
+                    agents: telemetry_agents_fixture(false),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "telemetry_status_down",
+            ControlMessage::ok(
+                112,
+                &TelemetryStatus {
+                    listener: ListenerState::Down,
+                    down_reason: Some("127.0.0.1:51234 is in use".into()),
+                    sessions: vec![],
+                    ..telemetry_status_fixture()
                 },
             )
             .unwrap(),

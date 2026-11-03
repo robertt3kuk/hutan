@@ -831,6 +831,12 @@ pub enum Request {
     /// update or downgrade Hutan.
     #[serde(rename = "update.install")]
     UpdateInstall(UpdateInstallRequest),
+    /// Capability `agent.telemetry` (protocol 0.74, ADR 0026): whether the loopback OTLP
+    /// receiver is listening, on which port, which agents the user enabled and what each session
+    /// last reported; answered with `TelemetryStatus`. Read-only; contacts nothing and carries no
+    /// token or payload. Turning an agent on is `daemon.settings.set` (user-only).
+    #[serde(rename = "telemetry.status")]
+    TelemetryStatus(Empty),
 }
 
 impl Request {

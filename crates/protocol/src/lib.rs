@@ -1,5 +1,9 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`telemetry`]: `telemetry.status` — the loopback OTLP receiver that turns an agent's own
+//!   OpenTelemetry into insight (`InsightSourceKind::Otlp`): off until the user enables an agent;
+//!   whether the listener is there, its port, which agents are on, what each session last
+//!   reported (protocol 0.74, capability `agent.telemetry`, ADR 0026).
 //! - [`verify`]: `agents.verify`, `agents.verify.plan`, `agents.verify.cancel` and the events
 //!   `agents.verify.started` / `agents.verify.ended` — Hutan runs a session's tests itself and keeps
 //!   the exit code and the tail of the output (protocol 0.70, capability `agents.verify`).
@@ -168,6 +172,7 @@ pub mod review;
 pub mod stats;
 pub mod suggest;
 pub mod task;
+pub mod telemetry;
 pub mod terminal_search;
 pub mod tree;
 pub mod ui;
@@ -186,7 +191,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 73,
+    minor: 74,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
