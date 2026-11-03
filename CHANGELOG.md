@@ -4,6 +4,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+## 0.3.6 — 2026-11-03
+
 ### Added
 - **Checks in the window**: Mawas's rail has a **Checks** tab (Now · Recent · Checks · Memory) that follows the Focus — findings grouped by severity and session, each labelled *exact* or *heuristic*, with its evidence, *Open*, *Review*, *Verify* (shows the test command first, then the exit code and output), *Dismiss* and *Ask Mawas*; a line says what couldn't be checked. A session's Context panel has the same Findings and a *Verify* button. *Check with Mawas* in a workspace's or a session's ⋯ opens Mawas focused on that workspace with the findings ready in her composer — you send.
 - **Checks: what's wrong in a session or a workspace**: `hutan agents --check [--ws W | --session S]` lists findings with their evidence — *done* after a failed command, "tests pass" claimed with no passing test run, tests edited or weakened (`skip`, `#[ignore]`, `.only`, assertions removed), snapshots rewritten, the same failure again and again, edits going back and forth, context nearly full, a costly turn, a long wait on you, a stall, changes left unreviewed, Hutan's own test run failing, two agents changing the same file, two agents in one checkout. Each says whether it's exact or a heuristic, and what couldn't be checked for which agent. Mawas reads them (`agents_findings`) but can't dismiss them; you can (`--dismiss`).
@@ -18,6 +20,13 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - The Files panel's filter could stay without an answer in a project that kept being written to; a file change macOS reported late or not at all right after a folder was opened is now picked up.
 - Mawas's read tools could still make OMP ask "Allow tool: write · xd://mcp__hutan_…" (OMP asks when a tool call arrives with empty content, which no setting can allow); Hutan now answers that exact question for Mawas's own Hutan tools, so reads run without a prompt and changes still ask on Hutan's card. *Check with Mawas* and other prepared asks bring the composer into view, and a second ask replaces an unsent first one.
 - Checks and files polish: the severity word sits at the start of a finding; a Verify run shows only on the row that started it; findings name sessions by title and every agent involved; dismissed findings can be shown and restored in the Checks tab (`hutan agents --restore`); an edit card shows paths relative to the session folder; *Files touched* says which files its line counts cover; *Warn* and the other severity colours stay readable on every background.
+
+### Upgrading
+- **Test release** (a GitHub pre-release). On 0.3.5 open the Hutan menu → *Check for Updates…*, then *Update now* → *Quit and Install*. With Homebrew: `brew update && brew upgrade --cask hutan` (or *Update now*, which runs it in a terminal you can watch). 0.3.2 and older still need one manual install.
+- **New opt-ins:** `[checks] test_command` in `daemon.toml` names the command Hutan runs to verify a project (otherwise it is detected and shown before it runs); `hutan integration install claude --statusline` adds context and cost for Claude Code in a terminal; re-run `hutan integration install omp` to update the OMP extension so an OMP agent in a terminal reports its insight.
+- Protocol **0.73** (additive minor steps since 0.69).
+- **Database schema 26** (was 24): migrations 25 (`verify_runs`) and 26 (`dismissed_findings`) run on first start and are forward-only — **an older Hutan cannot open the data after the update**, so keep a copy of `~/Library/Application Support/Hutan` if you may go back to 0.3.5.
+- **Experimental — at your own risk:** remote hosts over SSH stay switched off until you turn them on in Settings ▸ Experimental (`experimental.remote_hosts`); they may change or break between releases. See `docs/remote.md`.
 
 ## 0.3.5 — 2026-10-31
 
