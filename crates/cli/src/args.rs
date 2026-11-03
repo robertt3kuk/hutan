@@ -113,6 +113,10 @@ pub enum Command {
     /// (`hutan update status|check|install`)
     #[command(subcommand)]
     Update(UpdateCommand),
+    /// Agents' own OpenTelemetry as insight: the loopback OTLP receiver, off until you enable an
+    /// agent (`hutan telemetry status|enable|disable`)
+    #[command(subcommand)]
+    Telemetry(TelemetryCommand),
     /// Model providers for direct chat: OpenAI, Anthropic, Ollama, OpenAI-compatible servers
     #[command(subcommand)]
     Provider(ProviderCommand),
@@ -931,6 +935,27 @@ pub enum UpdateCommand {
     /// touched; after the update the app relaunches, and an idle daemon moves onto the new build
     /// by itself
     Install(UpdateInstallArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TelemetryCommand {
+    /// Whether the receiver listens (and on which port), which agents are enabled and what each
+    /// session last reported; contacts nothing and shows no token
+    Status,
+    /// Accept an agent's own OpenTelemetry (tokens, tools, cost, turns) as its insight. The
+    /// receiver opens on 127.0.0.1 when the first agent is enabled; terminals started after
+    /// that get `HUTAN_OTLP_ENDPOINT` and `HUTAN_OTLP_TOKEN`. Your choice alone: refused inside
+    /// an agent's session
+    Enable(TelemetryAgentArgs),
+    /// Stop accepting an agent's OpenTelemetry; the receiver closes with the last agent
+    Disable(TelemetryAgentArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct TelemetryAgentArgs {
+    /// `other` is any program that follows the OpenTelemetry GenAI conventions
+    #[arg(value_parser = ["claude", "codex", "omp", "gemini", "qwen", "copilot", "goose", "opencode", "other"])]
+    pub agent: String,
 }
 
 #[derive(Debug, Args)]

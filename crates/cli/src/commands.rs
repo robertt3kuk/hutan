@@ -52,6 +52,7 @@ mod recovery;
 mod resources;
 mod sessions;
 mod tasks;
+mod telemetry;
 mod terminal;
 mod theme;
 mod ui;
@@ -141,6 +142,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Account(command) => ctx?.account(command).await,
         Command::Usage(args) => ctx?.usage(args).await,
         Command::Update(command) => ctx?.update(command).await,
+        Command::Telemetry(command) => ctx?.telemetry(command).await,
         Command::Provider(command) => ctx?.provider(command).await,
         Command::Config(command) => ctx?.config(command).await,
         Command::Ask(args) => ctx?.ask(args).await,
