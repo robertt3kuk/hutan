@@ -62,6 +62,8 @@ const BIRTHS_MAX: usize = 1024;
 /// platform's stream missed (macOS starts a stream asynchronously, and a write right after the
 /// watch may never be reported: seen with the `notify` crate alone).
 const SETTLE_PAUSES_MS: [u64; 3] = [400, 1_500, 4_000];
+/// The files of a folder a watch looks at again, at most.
+const SETTLE_FOLDER_MAX: usize = 4_096;
 /// Paths of restores remembered (a restore announces each file it writes or deletes).
 const RESTORES_MAX: usize = 4096;
 
@@ -286,13 +288,18 @@ impl WatchHub {
             if let Some(meta) = &meta {
                 births.lock().exists(&path, meta, false);
             }
-            let now = meta.filter(|m| m.is_file()).map(|m| version_of(&m));
-            // A file that exists is looked at again soon: the platform's stream may not be
-            // running yet, and a write right after the watch is then never reported.
-            if let Some(version) = now {
+            let now = meta.as_ref().filter(|m| m.is_file()).map(|m| version_of(m));
+            // What exists is looked at again soon: the platform's stream may not be running
+            // yet, and a write right after the watch is then never reported.
+            let seen = if meta.as_ref().is_some_and(|m| m.is_dir()) {
+                Some(Seen::Folder(files_in(&path)))
+            } else {
+                now.map(|version| Seen::File(Some(version)))
+            };
+            if let Some(seen) = seen {
                 settling.push(Settling {
                     path: path.clone(),
-                    seen: Some(version),
+                    seen,
                     feed: feed.clone(),
                     births: births.clone(),
                 });
@@ -936,39 +943,91 @@ impl Births {
     }
 }
 
-/// A file a watch added, as it was then, to be looked at again soon ([`SETTLE_PAUSES_MS`]).
+/// What a watch found at a path it added, to be looked at again soon ([`SETTLE_PAUSES_MS`]).
+enum Seen {
+    /// A file: its version, `None` when it was not there.
+    File(Option<FileVersion>),
+    /// A folder: the files directly in it.
+    Folder(HashMap<PathBuf, FileVersion>),
+}
+
 struct Settling {
     path: PathBuf,
-    seen: Option<FileVersion>,
+    seen: Seen,
     feed: Feed,
     births: Arc<Mutex<Births>>,
 }
 
-/// Looks again at the files a watch added, a few times in the seconds after it: one that
-/// changed meanwhile and that the platform did not report is fed to its watcher's window like a
-/// change the platform had reported.
+/// The files directly in `folder` (at most [`SETTLE_FOLDER_MAX`]) and their versions.
+fn files_in(folder: &Path) -> HashMap<PathBuf, FileVersion> {
+    let mut files = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(folder) {
+        for entry in entries.flatten().take(SETTLE_FOLDER_MAX) {
+            let path = entry.path();
+            if let Ok(meta) = std::fs::symlink_metadata(&path)
+                && meta.is_file()
+            {
+                files.insert(path, version_of(&meta));
+            }
+        }
+    }
+    files
+}
+
+/// Looks again at the files and folders a watch added, a few times in the seconds after it:
+/// a change that the platform did not report is fed to its watcher's window like a change the
+/// platform had reported.
 async fn settle(mut watching: Vec<Settling>, pauses: &[u64]) {
     for pause in pauses.iter().copied() {
         tokio::time::sleep(Duration::from_millis(pause)).await;
         let Ok(next) = tokio::task::spawn_blocking(move || {
-            for file in &mut watching {
-                let now = std::fs::symlink_metadata(&file.path)
-                    .ok()
-                    .filter(|meta| meta.is_file())
-                    .map(|meta| version_of(&meta));
-                if now == file.seen {
-                    continue;
+            for watched in &mut watching {
+                let mut raws = Vec::new();
+                let births = watched.births.lock();
+                match &mut watched.seen {
+                    Seen::File(seen) => {
+                        let now = std::fs::symlink_metadata(&watched.path)
+                            .ok()
+                            .filter(|meta| meta.is_file())
+                            .map(|meta| version_of(&meta));
+                        if now != *seen {
+                            *seen = now;
+                            if births.reported(&watched.path) != Some(now) {
+                                raws.push(if now.is_some() {
+                                    Raw::Modified(watched.path.clone())
+                                } else {
+                                    Raw::Removed(watched.path.clone())
+                                });
+                            }
+                        }
+                    }
+                    Seen::Folder(files) => {
+                        let now = files_in(&watched.path);
+                        for (path, version) in &now {
+                            if files.get(path) == Some(version)
+                                || births.reported(path) == Some(Some(*version))
+                            {
+                                continue;
+                            }
+                            raws.push(if files.contains_key(path) {
+                                Raw::Modified(path.clone())
+                            } else {
+                                Raw::Created(path.clone())
+                            });
+                        }
+                        for path in files.keys() {
+                            if !now.contains_key(path) && births.reported(path) != Some(None) {
+                                raws.push(Raw::Removed(path.clone()));
+                            }
+                        }
+                        *files = now;
+                    }
                 }
-                file.seen = now;
-                if file.births.lock().reported(&file.path) == Some(now) {
-                    continue;
+                drop(births);
+                if !raws.is_empty() {
+                    debug!(path = %watched.path.display(), changes = raws.len(), "changed after the watch and not reported by the platform");
+                    watched.feed.send(raws);
                 }
-                debug!(path = %file.path.display(), ?now, "changed after the watch and not reported by the platform");
-                file.feed.send(vec![if now.is_some() {
-                    Raw::Modified(file.path.clone())
-                } else {
-                    Raw::Removed(file.path.clone())
-                }]);
             }
             watching
         })
@@ -1614,7 +1673,7 @@ mod tests {
         };
         let settling = Settling {
             path: path.to_owned(),
-            seen: Some(seen),
+            seen: Seen::File(Some(seen)),
             feed,
             births: births.clone(),
         };
@@ -1668,5 +1727,44 @@ mod tests {
         let batch = rx.try_recv().unwrap();
         assert!(matches!(batch.as_slice(), [Raw::Removed(p)] if *p == path));
         assert!(rx.try_recv().is_err(), "once, not at every look");
+    }
+
+    #[tokio::test]
+    async fn a_file_born_in_a_watched_folder_after_the_watch_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let (kept, changed) = (dir.path().join("kept.txt"), dir.path().join("changed.txt"));
+        std::fs::write(&kept, "same").unwrap();
+        std::fs::write(&changed, "before").unwrap();
+        let (tx, mut rx) = mpsc::channel(8);
+        let births = Arc::new(Mutex::new(Births::new(SystemTime::now())));
+        let settling = Settling {
+            path: dir.path().to_owned(),
+            seen: Seen::Folder(files_in(dir.path())),
+            feed: Feed {
+                raws: tx,
+                lost: Arc::new(AtomicBool::new(false)),
+            },
+            births,
+        };
+        let born = dir.path().join("born.txt");
+        std::fs::write(&born, "new").unwrap();
+        std::fs::write(&changed, "after the watch").unwrap();
+        settle(vec![settling], &[1, 1]).await;
+        let mut told: Vec<String> = Vec::new();
+        while let Ok(batch) = rx.try_recv() {
+            for raw in batch {
+                told.push(match raw {
+                    Raw::Created(p) => {
+                        format!("created {}", p.file_name().unwrap().to_string_lossy())
+                    }
+                    Raw::Modified(p) => {
+                        format!("modified {}", p.file_name().unwrap().to_string_lossy())
+                    }
+                    other => format!("{other:?}"),
+                });
+            }
+        }
+        told.sort();
+        assert_eq!(told, ["created born.txt", "modified changed.txt"]);
     }
 }
