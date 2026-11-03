@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hutan agent insight report, v1",
+  "description": "What `hutan agent report --insight-json` accepts (docs/integrations.md § Report your agent's stats to Hutan). Every part is optional; a part the agent does not know is left out, never zero. Counts, tool names and relative paths only: no prompt, no tool output, no diff. At most 4096 bytes as JSON. Fields this schema does not list are ignored by Hutan, so a newer sender stays valid.",
+  "type": "object",
+  "properties": {
+    "source": {
+      "description": "Who knows this. Default `extension`. `chat` is the daemon's own and is refused; `transcript` and `osc7501` are Hutan's own readers, listed because the daemon takes them.",
+      "enum": ["extension", "hooks", "statusline", "transcript", "osc7501"]
+    },
+    "turn": {
+      "description": "A turn of the agent (from the user's prompt to the agent being idle again) began or ended.",
+      "type": "object",
+      "required": ["phase"],
+      "properties": {
+        "phase": { "enum": ["start", "end"] },
+        "outcome": {
+          "description": "How an ending turn ended; absent means `completed`. A turn that ends is never `running` (the report is refused).",
+          "enum": ["running", "completed", "failed", "cancelled"]
+        },
+        "duration_ms": {
+          "description": "How long the turn took, when the agent measured it.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "tokens": {
+      "description": "What ONE model call of the running turn used: a delta, not a running total. A counter the agent does not know stays out.",
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "description": "Prompt tokens. Send them without the cache counters when the agent can split them (the Anthropic shape); Hutan derives a cache hit ratio only for the agents it knows (omp, claude, codex).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached_input_tokens": { "description": "Prompt tokens read from the provider's cache.", "type": "integer", "minimum": 0 },
+        "cache_write_tokens": { "description": "Tokens written to the provider's cache.", "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "reasoning_output_tokens": { "type": "integer", "minimum": 0 },
+        "total_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "context": {
+      "description": "The context window now (a level: the latest report wins).",
+      "type": "object",
+      "required": ["used"],
+      "properties": {
+        "used": { "description": "Tokens in the context.", "type": "integer", "minimum": 0 },
+        "window": { "description": "The model's context window; 0 is ignored.", "type": "integer", "minimum": 0 },
+        "fixed": {
+          "description": "What the context holds before the first message (system prompt, tools, project files); with it the context splits into fixed and messages. Send it when the agent starts, switches conversation, compacts or changes model.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated": { "description": "The agent's own estimate, not a count its provider gave. Default false.", "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "cost_usd": {
+      "description": "The cost of the whole conversation so far in US dollars, by the agent's own price table (cumulative, not a delta). A value that is not a finite number of at least zero is dropped.",
+      "type": "number",
+      "minimum": 0
+    },
+    "api_ms": {
+      "description": "Milliseconds the agent has spent waiting for its model so far (cumulative).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "tools": {
+      "description": "Tools that finished since the last report, one row per name. At most 16 rows (the first ones are kept).",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "description": "At most 64 bytes (cut).", "type": "string", "minLength": 1, "maxLength": 64 },
+          "calls": { "description": "Calls that finished; default 1.", "type": "integer", "minimum": 1 },
+          "failed": { "description": "Of them, calls that failed; default 0.", "type": "integer", "minimum": 0 },
+          "ms": { "description": "Time the calls took together, when the agent says.", "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    },
+    "files": {
+      "description": "Files the agent changed since the last report (reads are not changes). At most 32 (the first ones are kept). Paths never go into notifications or user hooks.",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["path", "kind"],
+        "properties": {
+          "path": {
+            "description": "Relative to the session's folder when inside it; at most 260 bytes (cut); a path with a control character is dropped.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 260
+          },
+          "kind": { "enum": ["add", "update", "delete"] }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

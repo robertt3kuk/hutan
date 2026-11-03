@@ -187,6 +187,68 @@ The parser is bounded (the whole OSC string at most 8 KiB, `app` 64 and `kind` 3
 
 **In the sidebar** (SIDEBAR-CARDS) a terminal agent is a card: its news line shows the question or the error the OSC report carries, and, with hooks, the tool it runs now and the model (the hooks' `--activity` and `--model`; OSC 7501 carries neither). The first card that only OSC or the program's name speaks for, and that has no news, says *Hooks add model and tool* with a link to *Agent integrations…* (this page's Settings). No channel carries a terminal agent's last-turn summary, so the card never shows one.
 
+## Report your agent's stats to Hutan (the public contract; TEL-0)
+
+For people who write an agent, a wrapper or a plugin and want Hutan to show its tokens, context, cost, tools and files. Four levels, each works alone and adds to the one below; give the most you can. Evidence and the reasons for this shape: `docs/spikes/2026-11-03-agent-telemetry.md` (§ 5), ADR 0026.
+
+| Level | Transport | Carries | Status |
+|---|---|---|---|
+| **L0 — recognised** | none | the program is known by name (`omp`, `claude`, `codex`, `gemini`, `opencode`, `aider`); its title and a braille spinner become *idle* / *working* | shipped (§ Agents that report in the terminal) |
+| **L1 — state** | **OSC 7501** written to the terminal | state (`working`, `blocked` with what it waits for, `error`, `done`, `idle`), the app name, a short message; works over `ssh`, containers and tmux | shipped (§ Agents that report in the terminal) |
+| **L2 — insight** | **`hutan agent report --insight-json`** (this section) | tokens, context, cost, tools, files, turns, API time | shipped (protocol 0.71) |
+| **L3 — OpenTelemetry** | OTLP/HTTP to a Hutan endpoint | what an agent already exports as OTel GenAI signals | **proposed, not built**: it needs the daemon's first TCP listener, which waits for ADR 0026 to be accepted. Nothing below L3 depends on it |
+
+### L2: `hutan agent report --insight-json`
+
+```sh
+hutan agent report --source my-agent --agent my-agent --state idle                    # first: the agent is there
+hutan agent report --source my-agent --agent my-agent --insight-json '{"tools":[{"name":"read","calls":2,"ms":14}],"context":{"used":11600,"window":200000}}'
+some-json-producer | hutan agent report --source my-agent --agent my-agent --insight-json -   # or on standard input
+hutan chat insight "$HUTAN_SESSION_ID"                                                # what Hutan now knows (--json for the record)
+```
+
+- **It is safe to call from anywhere.** Inside a Hutan session (`HUTAN_SESSION_ID` is set for every process of it) it reports; anywhere else, with no daemon, after 200 ms, on a bad document or on any daemon error, it prints nothing and exits 0. An agent can call it unconditionally and never breaks because of it. A document that is not an insight report, or is larger than 4 KiB, is dropped; nothing is retried.
+- **`--source`** names the reporter (1 to 256 bytes; the sequence number below is kept per source), **`--agent`** the agent (1 to 256 bytes; shown as the insight's `harness`). Hutan knows extra facts about `omp`, `claude` and `codex` (what each cannot report, how its cache counters relate to input); any other name gets the generic treatment.
+- **`--state idle|working|blocked`** is how the agent first appears: send one before anything else (an agent is in Hutan's agent tree, and its insight can be read, from its first state report; an insight sent earlier is kept and shows from then on). A report that carries *only* `--insight-json` leaves the agent's state alone, so a metrics tick can never make an agent look busy.
+- **`--seq N`** must grow per session and source; the default is the clock in nanoseconds, which is right for a shell script. A report older than one already taken still adds its tokens, tools and files, but its levels (context, cost, API time) do not replace newer ones.
+
+**The document** is the `InsightReport` of `docs/protocol.md` § Agent insight. Its JSON Schema is checked in at **`docs/schemas/agent-insight-report-v1.json`** (offline, never downloaded; validate your output against it; tests keep it equal to what the daemon reads). Every part is optional, unknown fields are ignored (so a newer sender stays valid), and **a number you do not know stays out: it is never zero**.
+
+| Part | Meaning | Kind |
+|---|---|---|
+| `source` | who knows this: `extension` (default), `hooks`, `statusline` (`chat` is the daemon's own and is refused; `transcript` and `osc7501` are Hutan's own readers) | label |
+| `turn` `{phase: start\|end, outcome?: completed\|failed\|cancelled, duration_ms?}` | a turn began or ended; the end of a turn is never `running` (the report is refused) | event |
+| `tokens` `{input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, reasoning_output_tokens, total_tokens}` | what **one model call** of the running turn used | **delta**: Hutan adds them |
+| `context` `{used, window?, fixed?, estimated?}` | tokens in the context now, the model's window, the part that is the same every turn (system prompt, tools, project files; with it the context splits in *fixed* and *messages*), whether it is your estimate | **level**: the latest wins |
+| `cost_usd` | the whole conversation's cost so far in dollars, by your own price table (shown as an estimate) | **level** (cumulative) |
+| `api_ms` | milliseconds spent waiting for the model so far | **level** (cumulative) |
+| `tools` `[{name, calls?, failed?, ms?}]` | tools that **finished since your last report**, one row per name, `ms` the time of all their calls | **delta** |
+| `files` `[{path, kind: add\|update\|delete}]` | files the agent **changed** since your last report (a read is not a change) | **delta** |
+
+Send deltas as they happen and levels when they change; a sender that loses a delta (no `hutan`, a timeout) loses it, nothing is retried, so keep what you have not delivered and send it with the next report if it matters. A good rhythm is the one the OMP extension uses: a report at each end of a turn and at most one every 500 ms while a turn runs.
+
+**Limits.** At most 4 KiB per report as JSON (larger: refused whole); 16 tool rows and 32 files (the first ones are kept); a tool name 64 bytes, a path 260 bytes (cut); a tool row without a name, a path with a control character, and a cost that is not a finite number of at least zero are dropped; `window: 0` is ignored.
+
+**Counting tokens.** Send `input_tokens` as the prompt tokens that were **not** read from or written to a cache, with the cache counters beside them (`cached_input_tokens` read, `cache_write_tokens` written): the shape of Anthropic's API and of OMP's and Claude Code's reports. An agent that cannot split them sends what it has and leaves the cache counters out. Hutan derives a **cache hit ratio** only for the agents it knows (`omp`, `claude`, `codex`), never for yours.
+
+**What never goes in.** Counts, tool names and paths only: **no prompt, no message text, no tool output, no diff, no command line, no secret**. Hutan treats an insight report like every agent's report: bounded, shown with the name of its source on each block, and **paths never go into notifications or user hooks**. It cannot change an agent's approvals, tasks or permissions.
+
+**Where it shows.** `hutan chat insight SESSION [--json]`, the Context panel and the MCP tool `agent_insight`. Each block says which source wrote it (*the OMP extension*, *hooks*, *the status line*, or for you the default `extension`). When several sources report the same block (your wrapper and a Claude Code hook, say) the better one wins, per block; a block is never the sum of two sources.
+
+**What does not work yet.** A contained terminal (Hutan's Seatbelt boundary with the daemon socket refused, `docs/agents.md` § Contain) cannot reach the daemon, so its hooks cannot report; a session on another machine reports to that machine's daemon only; the insight starts again when the daemon restarts.
+
+**A complete example.** `integrations/examples/third-party-agent.sh` plays one turn of an imaginary agent `acme` with five reports, each one a file of `integrations/examples/insight-reports/`:
+
+```sh
+integrations/examples/third-party-agent.sh && hutan chat insight "$HUTAN_SESSION_ID"
+```
+
+Tests (`crates/cli/tests/it/insight_contract.rs`): the schema equals the fields, enums and limits of the type the daemon reads (a drift test fails on either side); every example validates and the daemon keeps it whole; the example script runs through the real `hutan` and a real daemon into the insight record (tokens add up, the cost and context are levels, tools and files appear, the turn closes, each block names its source); bad documents change nothing and never fail; inline JSON and standard input give the same insight; an insight sent before the first state report shows once the agent exists.
+
+### L3: OpenTelemetry (proposed, not built)
+
+Eight agents already export OpenTelemetry (Claude Code, Codex, OMP, Gemini CLI, Qwen Code, Copilot CLI, Goose, OpenCode; observed in the spike). The proposal: a loopback OTLP/HTTP endpoint in the daemon, **off unless the user enables an agent**, one capability token per session in the endpoint, only a fixed set of attributes read (the OpenTelemetry GenAI semantic conventions: model, `gen_ai.usage.*` tokens, `execute_tool` spans, `invoke_agent` turns, plus optional `hutan.cost.usd`, `hutan.context.*`, `hutan.files.changed`), everything else discarded unread. It would map into the same insight record as L2 and carry no authority. None of this exists: there is no listener, no `HUTAN_OTLP_ENDPOINT`, no setting. The decision, the threat model and the slices are in ADR 0026 and the spike; until it is accepted an agent that speaks OTel can use L2 from a small exporter or hook.
+
 ## Observation tree
 
 Every session has a tree of agents: the main agent and the subagents it spawned, as the daemon observes them (`hutan agents [--json] [--watch]`, protocol `agent.tree`, `docs/protocol.md` § Agent observation tree). `hutan agents --board [--ws WORKSPACE] [--finished] [--json]` prints instead the **board** of every agent across workspaces, grouped like the Agents page (what each does, what it waits for, whether its facts come from a journal, a hook or only a recognised terminal), from `agents.board` (protocol 0.63, `docs/protocol.md` § Agents board). `hutan agents --activity [--since 30m|2h|1d] [--ws WORKSPACE] [--limit N] [--json]` prints what happened across agents in the window (default 24 h) — the counts, the newest events and what the daemon does not record — from `agents.activity` (protocol 0.65, `docs/protocol.md` § Agents activity). Reporters name a node with `hutan agent report --node ID [--parent ID --kind sub --name N --agent-type T --model M --activity A --usage-json '{"kind":"omp.tokens","input":1200}' --outcome completed|failed|interrupted|disconnected]`, and end one with `hutan agent release --node ID [--outcome O]`; without `--node` a report is about the main agent, as before. Sequence numbers count per session, source and node; reports are ordered by `seq`, not arrival. A reporter that runs as a process of the session adds `--pid PID` (protocol 0.18): `hutan ps` marks that process and `hutan agent interrupt SESSION NODE` can signal it (`docs/resources.md`). `hutan agents --stats [--since 7d] [--by project|harness|day|session|task] [--ws WORKSPACE] [--limit N] [--json]` prints the flow across agents (time per turn and task, how long they waited for you, tokens, failures that came again) with how well each number is known and what is not recorded, from `agents.stats` (protocol 0.66, `docs/protocol.md` § Agents stats).

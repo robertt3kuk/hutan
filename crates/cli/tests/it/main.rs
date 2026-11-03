@@ -17,6 +17,7 @@ mod history;
 mod history_resume;
 mod hooks;
 mod hosts;
+mod insight_contract;
 mod integration;
 mod integration_mcp;
 mod lsp;

@@ -1,0 +1,1 @@
+{"tools":[{"name":"read","calls":2,"ms":14},{"name":"edit","calls":1,"failed":1,"ms":9},{"name":"bash","calls":1,"ms":812}],"files":[{"path":"src/main.rs","kind":"update"},{"path":"notes/todo.md","kind":"add"}]}
