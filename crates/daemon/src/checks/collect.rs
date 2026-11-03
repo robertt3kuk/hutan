@@ -367,8 +367,12 @@ impl ChecksService {
                         .map(Draft::finish),
                 );
             }
+            // The transcript of a Claude Code or Codex terminal (INSIGHT-C): read, it gave the
+            // insight its context and tokens; not read, the gaps say why and what turns it on.
+            let note = detectors::transcript_note(&self.insight.transcript_status(info.id));
             let terminal_gaps = terminal_insight
                 .map(|insight| detectors::insight_gaps(insight, "terminal agent"))
+                .map(|gaps| detectors::with_note(gaps, note.as_deref()))
                 .unwrap_or_default();
             let journal = match analysis {
                 Some(Ok(analysis)) => JournalCoverage::Read(&analysis.gaps),
@@ -378,7 +382,16 @@ impl ChecksService {
                 }
                 None => JournalCoverage::TerminalAgent,
             };
-            coverage.push(detectors::coverage(&live, journal));
+            let terminal_only = matches!(journal, JournalCoverage::TerminalAgent);
+            let mut seen = detectors::coverage(&live, journal);
+            if terminal_only
+                && let Some(note) = note
+                && let Some(first) = seen.gaps.first_mut()
+            {
+                // The first gap is the one the panels quote: it says what turns the transcript on.
+                first.why = format!("{} — {note}", first.why);
+            }
+            coverage.push(seen);
         }
         // Across sessions: the findings that concern a session of the scope.
         let in_scope: Vec<SessionId> = scope.iter().map(|i| i.id).collect();

@@ -801,6 +801,13 @@ async fn status_says_what_each_installed_integration_reports_and_what_it_cannot(
             json!([]),
             "{target}: nothing before the install"
         );
+        // Without its hooks the transcript is found by folder: likely, not certain.
+        if target != "omp" {
+            assert!(
+                before["transcript"].to_string().contains("likely"),
+                "{target}: {before}"
+            );
+        }
         run(&["integration", "install", target], &dir).await.ok();
         let status = run(&["integration", "status", target, "--json"], &dir)
             .await
@@ -822,6 +829,24 @@ async fn status_says_what_each_installed_integration_reports_and_what_it_cannot(
             text.contains("reports: ") && text.contains("not reported: "),
             "{target}: {text}"
         );
+        // The transcript route (INSIGHT-C): what it adds, how it is found, the consent it needs.
+        // OMP reports through its extension and has none.
+        if target == "omp" {
+            assert_eq!(status["transcript"], json!([]));
+            assert!(!text.contains("transcript: "), "{text}");
+        } else {
+            let route = status["transcript"].to_string();
+            assert!(
+                route.contains("tools with their times"),
+                "{target}: {route}"
+            );
+            assert!(
+                route.contains("certain") && !route.contains("likely"),
+                "{target}: with its hooks the match is certain: {route}"
+            );
+            assert!(route.contains("[history]"), "{target}: {route}");
+            assert!(text.contains("transcript: "), "{target}: {text}");
+        }
         run(&["integration", "uninstall", target], &dir).await.ok();
         let after = run(&["integration", "status", target, "--json"], &dir)
             .await

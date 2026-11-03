@@ -23,6 +23,7 @@ use hutan_core::insight::{
     ReportedFile, ReportedTool, ReportedTurn, TurnPhase,
 };
 use hutan_core::{NodeKind, SessionId};
+use hutan_protocol::checks::{AgentsFindings, AgentsFindingsRequest, detector};
 use hutan_protocol::history::{
     HistorySessionRow, HistorySessions, HistorySessionsRequest, HistorySetEnabled,
     HistoryStatusInfo,
@@ -856,5 +857,101 @@ async fn what_hooks_and_the_transcript_both_saw_is_counted_once() {
         source_of(&insight, InsightBlock::Context),
         Some(InsightSourceKind::Transcript)
     );
+    env.stop().await;
+}
+
+async fn coverage_of(
+    client: &Client,
+    session: SessionId,
+) -> hutan_protocol::checks::SessionCoverage {
+    let answer: AgentsFindings = client
+        .call(Request::AgentsFindings(AgentsFindingsRequest {
+            session_id: Some(session),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    answer
+        .coverage
+        .into_iter()
+        .find(|c| c.session_id == session)
+        .unwrap_or_else(|| panic!("no coverage of {session}"))
+}
+
+/// The detectors that read the insight run over a terminal agent once its transcript gives them
+/// a context window and tokens per turn, and say what turns it on while it is not read: a
+/// session with nothing but its state, and one whose hooks report tools.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_findings_coverage_says_the_detectors_ran_over_a_transcript_and_what_would_make_them() {
+    let env = start(false, true, true).await;
+    let cwd = env.work("coverage");
+    let path = env.claude_file(&cwd, CLAUDE_ID);
+    write(&path, &claude_transcript(&cwd, CLAUDE_ID));
+    let session = env.terminal(&cwd).await;
+    claude_hook(&env.client, session.id, 1, Some(CLAUDE_ID), Some(&path)).await;
+
+    // History is off: the agent reported its state and nothing else.
+    let off = coverage_of(&env.client, session.id).await;
+    let why = |c: &hutan_protocol::checks::SessionCoverage, detector: &str| {
+        c.gaps
+            .iter()
+            .find(|g| g.detectors.iter().any(|d| d == detector))
+            .map(|g| g.why.clone())
+            .unwrap_or_default()
+    };
+    for id in [detector::CONTEXT_PRESSURE, detector::COSTLY_TURN] {
+        assert!(!off.ran.iter().any(|r| r == id), "{id} cannot run yet");
+        assert!(
+            why(&off, id).contains("turn on Claude Code history"),
+            "{id}: {}",
+            why(&off, id)
+        );
+    }
+
+    // The agent's hooks report a tool: the insight has something, and says what is missing.
+    let mut hooks = base_report(session.id, "claude-hooks", "claude", 5, None);
+    hooks.state = None;
+    hooks.insight = Some(InsightReport {
+        source: InsightSourceKind::Hooks,
+        tools: vec![ReportedTool {
+            name: "Bash".into(),
+            calls: 1,
+            failed: 0,
+            ms: Some(10),
+        }],
+        ..InsightReport::default()
+    });
+    assert!(report(&env.client, hooks).await);
+    let hooked = coverage_of(&env.client, session.id).await;
+    assert!(
+        why(&hooked, detector::CONTEXT_PRESSURE).contains("turn on Claude Code history"),
+        "{}",
+        why(&hooked, detector::CONTEXT_PRESSURE)
+    );
+
+    // The user turns it on: the transcript gives the window and the tokens of each turn.
+    env.set_history(true).await;
+    let on = timeout(WAIT, async {
+        loop {
+            let c = coverage_of(&env.client, session.id).await;
+            if c.ran.iter().any(|r| r == detector::CONTEXT_PRESSURE) {
+                return c;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the detectors ran once the transcript was read");
+    assert!(on.ran.iter().any(|r| r == detector::COSTLY_TURN));
+    assert!(
+        !on.gaps
+            .iter()
+            .any(|g| g.why.contains("turn on Claude Code history")),
+        "{:?}",
+        on.gaps
+    );
+    // The turn detectors still need what a transcript read as counts cannot give.
+    let turn_gap = why(&on, detector::TESTS_WEAKENED);
+    assert!(turn_gap.contains("hooks and its transcript"), "{turn_gap}");
     env.stop().await;
 }

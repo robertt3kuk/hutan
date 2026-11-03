@@ -31,11 +31,13 @@ use super::facts::{
 };
 use super::{Draft, Thresholds, evidence, severity_of};
 use crate::agents_stats::normalise;
+use crate::insight::{TranscriptStatus, source_name};
 use crate::signs::{
     ClaimKind, FileRole, SeenFile, claims_pass, file_role, is_failed, is_passed, is_source_code,
     is_unknown, looks_like_a_check, looks_like_a_test, signals, sounds_done, unrecovered_failures,
     weakening,
 };
+use crate::transcript_tail::Why;
 
 /// The detectors that read a turn's commands, message or files: they need a chat's journal.
 const TURN_DETECTORS: &[&str] = &[
@@ -1191,6 +1193,32 @@ pub fn insight_gaps(insight: &Result<AgentInsight, String>, what: &str) -> Vec<C
     gaps
 }
 
+/// What a gap that the agent's transcript would close ends with while the transcript is not
+/// read: that the user can turn its history on, or why none was found.
+pub fn transcript_note(status: &TranscriptStatus) -> Option<String> {
+    match status {
+        TranscriptStatus::Off(source) => Some(format!(
+            "turn on {} history to read its transcript",
+            source_name(*source)
+        )),
+        TranscriptStatus::Searching(why) if *why != Why::Unsupported => {
+            Some(format!("its transcript was not found: {}", why.text()))
+        }
+        TranscriptStatus::Unreadable(why) => Some(format!("its transcript cannot be read: {why}")),
+        _ => None,
+    }
+}
+
+/// `gaps` with `note` after each reason.
+pub fn with_note(mut gaps: Vec<CoverageGap>, note: Option<&str>) -> Vec<CoverageGap> {
+    if let Some(note) = note {
+        for gap in &mut gaps {
+            gap.why = format!("{} — {note}", gap.why);
+        }
+    }
+    gaps
+}
+
 fn gap(detectors: &[&str], why: String) -> CoverageGap {
     CoverageGap {
         detectors: detectors.iter().map(|d| (*d).to_owned()).collect(),
@@ -1234,7 +1262,7 @@ pub fn coverage(live: &LiveFacts, journal: JournalCoverage<'_>) -> SessionCovera
         JournalCoverage::TerminalReported(insight_gaps) => {
             gaps.push(gap(
                 TURN_DETECTORS,
-                "terminal agent: its integration reports tools, files and tokens, not the commands with exit codes, the turns or the final message".to_owned(),
+                "terminal agent: Hutan reads what its hooks and its transcript report as counts — tools, files, tokens, the context — not the commands, the final message or the diffs these detectors read".to_owned(),
             ));
             gaps.extend_from_slice(insight_gaps);
         }

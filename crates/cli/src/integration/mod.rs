@@ -90,6 +90,9 @@ pub struct Report {
     pub reports: Vec<String>,
     /// What it cannot tell, and what would.
     pub not_reported: Vec<String>,
+    /// What the agent's transcript adds and how Hutan finds it (`claude`, `codex`; empty for
+    /// OMP): independent of the integration, which only makes the match certain.
+    pub transcript: Vec<String>,
 }
 
 impl Report {
@@ -105,6 +108,7 @@ impl Report {
             statusline: None,
             reports: Vec::new(),
             not_reported: Vec::new(),
+            transcript: Vec::new(),
         }
     }
 }
@@ -395,7 +399,44 @@ fn finish_status(layout: &Layout, report: &mut Report) -> Result<(), CliError> {
         report.status != Status::NotInstalled,
         report.statusline == Some(Status::Installed),
     );
+    report.transcript = transcript_route(report.target, report.status != Status::NotInstalled);
     Ok(())
+}
+
+/// What the agent's transcript tells Hutan about its insight and how Hutan finds it (INSIGHT-C):
+/// the route does not need an installed integration, but without its hooks Hutan can only guess by
+/// folder. Empty for an agent that reports through an extension.
+fn transcript_route(target: &str, hooks: bool) -> Vec<String> {
+    let (agent, route, root) = match target {
+        "claude" => (
+            "Claude Code",
+            if hooks {
+                "the transcript path its hooks name (certain)"
+            } else {
+                "the only transcript of its folder written since it started, when no other session runs it there (likely: install its hooks to be certain)"
+            },
+            "~/.claude/projects",
+        ),
+        "codex" => (
+            "Codex",
+            if hooks {
+                "the session id its hooks report, found in the history catalog (certain)"
+            } else {
+                "the only rollout of its folder written since it started, when no other session runs it there (likely: install its hooks to be certain)"
+            },
+            "~/.codex/sessions",
+        ),
+        _ => return Vec::new(),
+    };
+    vec![
+        format!(
+            "tokens per model call (input, output, cache), the context, the cost where {agent} writes one, tools with their times and failures, files changed, the model — read from its transcript under {root}"
+        ),
+        format!("route: {route}"),
+        format!(
+            "only when [history] has {agent} on (Settings → History, or `hutan index enable`), for the session you look at (one read a second, ending 30 s after you look away) or when a check asks"
+        ),
+    ]
 }
 
 /// What an installed integration tells Hutan about the agent's insight, and what it cannot
@@ -423,7 +464,10 @@ fn what_is_reported(target: &str, installed: bool, statusline: bool) -> (Vec<Str
                 "turns, from prompt to stop (hooks)",
                 "the context size, the cost and the API time (status line)",
             ]),
-            words(&["tokens per turn", "the context by category"]),
+            words(&[
+                "tokens per turn (hooks and the status line carry none; its transcript does)",
+                "the context by category (only after you ran /context in it: its transcript records that)",
+            ]),
         ),
         "claude" => (
             words(&[
@@ -432,9 +476,9 @@ fn what_is_reported(target: &str, installed: bool, statusline: bool) -> (Vec<Str
                 "turns, from prompt to stop (hooks)",
             ]),
             words(&[
-                "the context size, the cost and the API time (install with --statusline)",
-                "tokens per turn",
-                "the context by category",
+                "the context size, the cost and the API time (install with --statusline, or turn on Claude Code history)",
+                "tokens per turn (hooks carry none; its transcript does)",
+                "the context by category (only after you ran /context in it: its transcript records that)",
             ]),
         ),
         "codex" => (
@@ -444,7 +488,7 @@ fn what_is_reported(target: &str, installed: bool, statusline: bool) -> (Vec<Str
                 "turns, from prompt to stop (hooks)",
             ]),
             words(&[
-                "tool times, tokens, the context size and the cost (Codex's hooks carry none)",
+                "tool times, tokens, the context size and the cost (Codex's hooks carry none; its transcript has all but the cost)",
             ]),
         ),
         _ => (Vec::new(), Vec::new()),
@@ -771,6 +815,9 @@ pub fn describe(action: &str, report: &Report) -> String {
         }
         for item in &report.not_reported {
             text.push_str(&format!("\n  not reported: {item}"));
+        }
+        for item in &report.transcript {
+            text.push_str(&format!("\n  transcript: {item}"));
         }
     }
     text
