@@ -87,6 +87,7 @@ pub mod history;
 pub mod history_catalog;
 pub mod hooks;
 pub mod insight;
+pub mod insight_merge;
 pub mod lsp;
 pub mod mcp_wiring;
 pub mod memory;
@@ -120,6 +121,8 @@ pub mod terminal_search;
 pub mod terminals;
 #[cfg(feature = "test-support")]
 pub mod testing;
+pub mod transcript_file;
+pub mod transcript_fold;
 pub mod transcript_tail;
 pub mod tree;
 pub mod uihub;

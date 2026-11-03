@@ -5,8 +5,11 @@
 //! scratch the next time they are looked at (`docs/history-index.md`).
 
 mod claude;
+mod claude_usage;
 mod codex;
+mod codex_usage;
 mod omp;
+pub mod usage;
 
 use std::fmt::Debug;
 use std::path::Path;
@@ -74,6 +77,19 @@ pub trait Adapter: Debug + Send + Sync {
 
     /// Reads one line; may update `state` (cwd, title, session id).
     fn parse_line(&self, line: &str, state: &mut ParseState) -> Parsed;
+
+    /// Reads one line for the insight of the agent that wrote it: what it says about tokens,
+    /// context, cost, tools, files and turns, appended to `out` (INSIGHT-C). `false`: the line
+    /// is not valid JSON or not an object. A source whose transcript says none of it (OMP: its
+    /// extension reports) says nothing.
+    fn usage_line(
+        &self,
+        _line: &str,
+        _state: &mut usage::UsageState,
+        _out: &mut Vec<usage::UsageEvent>,
+    ) -> bool {
+        true
+    }
 
     /// The first line of a file changes in place (OMP's fixed-width title line): look at it
     /// again whenever the file changes.

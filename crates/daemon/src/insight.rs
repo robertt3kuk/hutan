@@ -17,17 +17,26 @@
 //!   coalescing task that sends the snapshot to the focused connections and ends; at most one
 //!   `agent.insight_updated` per session per [`MIN_GAP`]. A session nobody focuses is never
 //!   serialised.
+//! - **Transcripts of terminal agents** (INSIGHT-C). For a terminal that runs Claude Code or
+//!   Codex the hub also follows the agent's transcript (`transcript_tail`): only when the user
+//!   allowed that agent's `[history]` source, only while the session lives and a connection
+//!   focuses it (a task that reads once a second and ends 30 s after the focus was lost), or
+//!   when a request or a detector asks (one read, at most one a second). What it reads goes into a
+//!   reducer of its own, merged with the integrations' by source (`insight_merge`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use hutan_core::checkpoint::{CheckpointKind, CheckpointState};
 use hutan_core::insight::{
-    AgentInsight, InsightModel, InsightReducer, InsightReport, MAX_TURNS, SeedTurn, harness_insight,
+    AgentInsight, BreakdownRow, InsightModel, InsightReducer, InsightReport, MAX_TURNS, SeedTurn,
+    harness_insight,
 };
 use hutan_core::{AgentEvent, SessionId, TurnId};
+use hutan_index::Source;
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::Event;
 use hutan_protocol::{ControlMessage, MAX_PAYLOAD};
@@ -36,8 +45,12 @@ use tracing::{debug, warn};
 
 use crate::bus::EventBus;
 use crate::conn::{ConnHandle, ConnId, LocalSend};
-use crate::registry::now_ms;
-use crate::transcript_tail::TailHints;
+use crate::history::HistoryService;
+use crate::insight_merge::{self, Extras};
+use crate::registry::{WeakRegistry, now_ms};
+use crate::transcript_file::{CATCH_UP_BYTES, TailFile};
+use crate::transcript_fold::{self, Folded};
+use crate::transcript_tail::{self, Candidate, Lookup, Resolution, Route, TailHints, Why};
 
 /// Journal events a reducer is built from (the newest, of the kinds insight reads).
 pub const COLD_EVENTS: u32 = 5_000;
@@ -120,6 +133,8 @@ struct State {
     overflowed: Vec<SessionId>,
     focus: HashMap<ConnId, Focus>,
     tick: u64,
+    /// The transcript of each terminal session that has one looked at.
+    tails: HashMap<SessionId, Tail>,
 }
 
 impl State {
@@ -144,6 +159,7 @@ impl State {
             });
         if let Some(victim) = victim {
             self.entries.remove(&victim);
+            self.tails.remove(&victim);
         }
     }
 }
@@ -156,6 +172,15 @@ pub struct InsightHub {
     /// Builds are rare and read the journal: one at a time.
     building: tokio::sync::Mutex<()>,
     seq: AtomicU64,
+    /// What following a terminal agent's transcript asks of the daemon (set once, after the
+    /// registry and the history service exist; weak, because the registry owns this hub).
+    links: OnceLock<Links>,
+}
+
+#[derive(Debug)]
+struct Links {
+    registry: WeakRegistry,
+    history: Weak<HistoryService>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -171,7 +196,16 @@ impl InsightHub {
             state: Mutex::new(State::default()),
             building: tokio::sync::Mutex::new(()),
             seq: AtomicU64::new(0),
+            links: OnceLock::new(),
         })
+    }
+
+    /// Connects the hub to the services it asks for a terminal agent's transcript: the registry
+    /// (what the session runs, what its hooks reported) and the history service (whether the user
+    /// allowed reading it, and where the index found it). Without it no transcript is read.
+    pub fn wire(&self, registry: WeakRegistry, history: Weak<HistoryService>) {
+        // Set once at start-up; a second call changes nothing.
+        let _ = self.links.set(Links { registry, history });
     }
 
     fn next_seq(&self) -> u64 {
@@ -260,6 +294,11 @@ impl InsightHub {
             None => None,
         };
         if same_agent != Some(true) {
+            if same_agent == Some(false) {
+                // Another agent in the same terminal: what was read of the last one's
+                // transcript is not about this one.
+                state.tails.remove(&session);
+            }
             state.make_room(session);
             state.entries.insert(
                 session,
@@ -286,6 +325,7 @@ impl InsightHub {
     pub fn forget(&self, session: SessionId) {
         let mut state = lock(&self.state);
         state.entries.remove(&session);
+        state.tails.remove(&session);
         state.focus.retain(|_, focus| focus.session != session);
     }
 
@@ -437,6 +477,11 @@ impl InsightHub {
         target: &InsightTarget,
     ) -> Result<AgentInsight, ErrorBody> {
         self.build(session, target, false, false).await;
+        if target.terminal {
+            // A request (or a detector) asks: the transcript is read once, when the user allowed
+            // it and it was not read a moment ago.
+            self.sync(session, Some(target.clone()), Reason::Pull).await;
+        }
         let mut insight = {
             let mut state = lock(&self.state);
             state.tick += 1;
@@ -450,9 +495,14 @@ impl InsightHub {
             };
             entry.touched = tick;
             entry.model = target.model();
-            entry
-                .reducer
-                .snapshot(self.next_seq(), now_ms(), entry.model.clone())
+            let seq = self.next_seq();
+            let Some(insight) = state.snapshot_of(session, seq, now_ms()) else {
+                return Err(ErrorBody::new(
+                    ErrorCode::InvalidState,
+                    "the insight of this session could not be built just now; ask again",
+                ));
+            };
+            insight
         };
         self.add_checkpoints(session, &mut insight).await;
         Ok(insight)
@@ -508,12 +558,13 @@ impl InsightHub {
 
     // Telling ---------------------------------------------------------------------------------
 
-    /// `client.focus`: `conn` looks at `session` (`None`: at none).
-    pub fn focus(&self, conn: &ConnHandle, session: Option<SessionId>) {
+    /// `client.focus`: `conn` looks at `session` (`None`: at none). A terminal session that is
+    /// looked at has its agent's transcript followed (when the user allowed it).
+    pub fn focus(self: &Arc<Self>, conn: &ConnHandle, session: Option<SessionId>) {
         let mut state = lock(&self.state);
-        match session {
+        let before = match session {
             Some(session) => {
-                state.focus.insert(
+                let before = state.focus.insert(
                     conn.id(),
                     Focus {
                         conn: conn.clone(),
@@ -525,16 +576,28 @@ impl InsightHub {
                 if let Some(entry) = state.entries.get_mut(&session) {
                     entry.touched = tick;
                 }
+                before
             }
-            None => {
-                state.focus.remove(&conn.id());
-            }
+            None => state.focus.remove(&conn.id()),
+        };
+        if let Some(left) = before
+            .map(|focus| focus.session)
+            .filter(|left| Some(*left) != session)
+        {
+            state.lost_focus(left);
+        }
+        drop(state);
+        if let Some(session) = session {
+            self.start_tail(session);
         }
     }
 
     /// A connection closed: its focus goes with it.
     pub fn connection_closed(&self, conn: ConnId) {
-        lock(&self.state).focus.remove(&conn);
+        let mut state = lock(&self.state);
+        if let Some(focus) = state.focus.remove(&conn) {
+            state.lost_focus(focus.session);
+        }
     }
 
     /// An entry changed: when somebody looks at the session, one task sends the snapshot once
@@ -581,12 +644,10 @@ impl InsightHub {
             }
             entry.dirty = false;
             entry.last_sent = Some(Instant::now());
-            (
-                entry
-                    .reducer
-                    .snapshot(self.next_seq(), now_ms(), entry.model.clone()),
-                targets,
-            )
+            let Some(insight) = state.snapshot_of(session, self.next_seq(), now_ms()) else {
+                return;
+            };
+            (insight, targets)
         };
         self.add_checkpoints(session, &mut insight).await;
         let event = Event::AgentInsightUpdated {
@@ -626,6 +687,506 @@ impl InsightHub {
             .values()
             .map(|entry| entry.reducer.approx_bytes())
             .sum()
+    }
+}
+
+// Transcripts of terminal agents ----------------------------------------------------------------
+
+/// How often the transcript of a focused terminal session is looked at.
+pub const TAIL_POLL: Duration = Duration::from_secs(1);
+/// How long after the last connection lost its focus the transcript is still followed.
+pub const TAIL_GRACE: Duration = Duration::from_secs(30);
+/// At least this long between two reads of one transcript.
+const READ_GAP: Duration = Duration::from_secs(1);
+/// At least this long between two looks at the history catalog for one session.
+const CATALOG_GAP: Duration = Duration::from_secs(3);
+
+/// Where following the transcript of a terminal session stands (`hutan integration status`, the
+/// findings' coverage, tests).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranscriptStatus {
+    /// Nothing looked: nobody focused the session and no request asked.
+    NotLooked,
+    /// The user has not allowed Hutan to read this agent's transcripts (`[history]`).
+    Off(Source),
+    /// Allowed, but no transcript was found (yet), and why.
+    Searching(Why),
+    /// Found, and not written yet.
+    Waiting(Route),
+    /// Being read.
+    Reading {
+        route: Route,
+        /// Followed from the middle of a long transcript: older turns are not counted.
+        cut: bool,
+    },
+    Unreadable(String),
+}
+
+impl TranscriptStatus {
+    /// The status in a sentence.
+    pub fn text(&self) -> String {
+        match self {
+            Self::NotLooked => "its transcript has not been looked at".to_owned(),
+            Self::Off(source) => format!(
+                "{} history is off: Hutan does not read its transcript",
+                source_name(*source)
+            ),
+            Self::Searching(why) => format!("no transcript found: {}", why.text()),
+            Self::Waiting(route) => format!(
+                "transcript found through {} ({}); not written yet",
+                route.label(),
+                route.sureness()
+            ),
+            Self::Reading { route, cut } => format!(
+                "reading its transcript, found through {} ({}){}",
+                route.label(),
+                route.sureness(),
+                if *cut {
+                    "; only the end of a long transcript is counted"
+                } else {
+                    ""
+                }
+            ),
+            Self::Unreadable(why) => format!("its transcript cannot be read: {why}"),
+        }
+    }
+
+    /// Whether the transcript feeds the insight.
+    pub fn is_reading(&self) -> bool {
+        matches!(self, Self::Reading { .. })
+    }
+}
+
+/// What a source is called to the user.
+pub fn source_name(source: Source) -> &'static str {
+    match source {
+        Source::Claude => "Claude Code",
+        Source::Codex => "Codex",
+        Source::Omp => "OMP",
+        Source::Hutan => "Hutan",
+    }
+}
+
+/// What the transcript of one session gave the insight.
+#[derive(Debug)]
+struct Feed {
+    reducer: InsightReducer,
+    model: Option<String>,
+    /// The context by category of the newest `/context` record, and when it was written.
+    breakdown: Option<(Vec<BreakdownRow>, u64)>,
+    /// Followed from the middle of a long transcript.
+    cut: bool,
+}
+
+impl Feed {
+    fn new(session: SessionId, agent: &str, cwd: Option<&str>) -> Self {
+        Self {
+            reducer: InsightReducer::new_terminal(session, agent, cwd),
+            model: None,
+            breakdown: None,
+            cut: false,
+        }
+    }
+}
+
+/// The transcript of one terminal session.
+#[derive(Debug)]
+struct Tail {
+    /// The agent the transcript is of: another one starts again.
+    agent: String,
+    /// Out while a read runs (`busy`).
+    file: Option<TailFile>,
+    feed: Option<Feed>,
+    status: TranscriptStatus,
+    busy: bool,
+    /// A task follows the transcript.
+    running: bool,
+    last_read: Option<Instant>,
+    last_catalog: Option<Instant>,
+    /// The last time somebody looked at the session or asked for its insight.
+    demanded: Instant,
+}
+
+impl Tail {
+    fn new(agent: &str) -> Self {
+        Self {
+            agent: agent.to_owned(),
+            file: None,
+            feed: None,
+            status: TranscriptStatus::NotLooked,
+            busy: false,
+            running: false,
+            last_read: None,
+            last_catalog: None,
+            demanded: Instant::now(),
+        }
+    }
+}
+
+/// Why a transcript is looked at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reason {
+    /// The task that follows a focused session.
+    Loop,
+    /// A request or a detector asked for the insight.
+    Pull,
+}
+
+/// Whether the transcript of the session `hints` describe is not the one `file` is any more: its
+/// agent started another conversation (`/clear`, `/new`), or now says which file it is when
+/// the match was a guess.
+fn rebind_wanted(file: &TailFile, hints: &TailHints) -> bool {
+    let other_id = hints
+        .agent_session_id
+        .as_deref()
+        .is_some_and(|id| file.key.as_deref() != Some(id));
+    let other_path = hints
+        .transcript_path
+        .as_deref()
+        .is_some_and(|path| std::path::Path::new(path) != file.path);
+    let better_route = file.route == Route::Folder
+        && (hints.agent_session_id.is_some() || hints.transcript_path.is_some());
+    other_id || other_path || better_route
+}
+
+impl State {
+    /// `session` lost a viewer: its transcript is followed for [`TAIL_GRACE`] more.
+    fn lost_focus(&mut self, session: SessionId) {
+        if let Some(tail) = self.tails.get_mut(&session) {
+            tail.demanded = Instant::now();
+        }
+    }
+
+    /// Somebody focuses `session`, or looked at it less than [`TAIL_GRACE`] ago.
+    fn demanded(&self, session: SessionId) -> bool {
+        self.focus.values().any(|focus| focus.session == session)
+            || self
+                .tails
+                .get(&session)
+                .is_some_and(|tail| tail.demanded.elapsed() < TAIL_GRACE)
+    }
+
+    /// The insight of `session`: its integrations' reducer, merged with what its transcript
+    /// gave (`insight_merge`).
+    fn snapshot_of(&self, session: SessionId, seq: u64, as_of_ms: u64) -> Option<AgentInsight> {
+        let entry = self.entries.get(&session)?;
+        let base = entry.reducer.snapshot(seq, as_of_ms, entry.model.clone());
+        let Some(feed) = self.tails.get(&session).and_then(|tail| tail.feed.as_ref()) else {
+            return Some(base);
+        };
+        let transcript = feed.reducer.snapshot(seq, as_of_ms, None);
+        Some(insight_merge::merge(
+            &base,
+            &transcript,
+            Extras {
+                model: feed.model.as_deref(),
+                breakdown: feed
+                    .breakdown
+                    .as_ref()
+                    .map(|(rows, at)| (rows.as_slice(), *at)),
+                cut: feed.cut,
+            },
+        ))
+    }
+}
+
+impl InsightHub {
+    /// Where following the transcript of `session` stands.
+    pub fn transcript_status(&self, session: SessionId) -> TranscriptStatus {
+        lock(&self.state)
+            .tails
+            .get(&session)
+            .map_or(TranscriptStatus::NotLooked, |tail| tail.status.clone())
+    }
+
+    /// Starts the task that follows the transcript of `session` unless one runs. It ends by
+    /// itself: when nobody has looked at the session for [`TAIL_GRACE`], when the session is
+    /// not a terminal agent's, or when the user does not allow reading the transcript.
+    fn start_tail(self: &Arc<Self>, session: SessionId) {
+        if self.links.get().is_none() {
+            return;
+        }
+        let spawn = {
+            let mut state = lock(&self.state);
+            let tail = state.tails.entry(session).or_insert_with(|| Tail::new(""));
+            tail.demanded = Instant::now();
+            !std::mem::replace(&mut tail.running, true)
+        };
+        if spawn {
+            let hub = self.clone();
+            tokio::spawn(async move {
+                while hub.sync(session, None, Reason::Loop).await {
+                    tokio::time::sleep(TAIL_POLL).await;
+                }
+            });
+        }
+    }
+
+    /// The task of `session` ends. A tail that read nothing and means nothing is forgotten.
+    fn park(&self, session: SessionId) -> bool {
+        let mut state = lock(&self.state);
+        let idle = state.tails.get_mut(&session).is_some_and(|tail| {
+            tail.running = false;
+            tail.file.is_none() && tail.feed.is_none() && tail.status == TranscriptStatus::NotLooked
+        });
+        if idle {
+            state.tails.remove(&session);
+        }
+        false
+    }
+
+    /// The user did not allow reading the transcripts of `source` (or took it back): what was
+    /// read is dropped, and nothing is opened.
+    fn withdraw(self: &Arc<Self>, session: SessionId, agent: &str, source: Source) {
+        let mut guard = lock(&self.state);
+        let state = &mut *guard;
+        let tail = state
+            .tails
+            .entry(session)
+            .or_insert_with(|| Tail::new(agent));
+        let had = tail.feed.take().is_some();
+        tail.file = None;
+        tail.agent = agent.to_owned();
+        tail.status = TranscriptStatus::Off(source);
+        if had {
+            self.changed(state, session);
+        }
+    }
+
+    /// One look at the transcript of the terminal session `session`: consent, finding the file,
+    /// reading what was appended, folding it into the session's transcript reducer. Returns
+    /// whether the task of a focused session goes on.
+    async fn sync(
+        self: &Arc<Self>,
+        session: SessionId,
+        given: Option<InsightTarget>,
+        reason: Reason,
+    ) -> bool {
+        let Some(links) = self.links.get() else {
+            return self.park(session);
+        };
+        let Some(history) = links.history.upgrade() else {
+            return self.park(session);
+        };
+        let target = match given {
+            Some(target) => target,
+            None => match links.registry.insight_target(session).await {
+                Ok(target) => target,
+                Err(_) => {
+                    // The session is gone.
+                    lock(&self.state).tails.remove(&session);
+                    return false;
+                }
+            },
+        };
+        if !target.terminal {
+            return self.park(session);
+        }
+        let Some(source) = transcript_tail::source_of(&target.harness) else {
+            return self.park(session);
+        };
+        let Some(access) = history.transcript_access(source).await else {
+            self.withdraw(session, &target.harness, source);
+            return self.park(session);
+        };
+
+        // What this look starts from.
+        let (mut file, claimed, last_catalog) = {
+            let mut guard = lock(&self.state);
+            let state = &mut *guard;
+            if reason == Reason::Loop && !state.tails.contains_key(&session) {
+                return false;
+            }
+            let wanted = state.demanded(session);
+            let claimed: HashSet<PathBuf> = state
+                .tails
+                .iter()
+                .filter(|(id, _)| **id != session)
+                .filter_map(|(_, tail)| tail.file.as_ref().map(|file| file.path.clone()))
+                .collect();
+            let tail = state
+                .tails
+                .entry(session)
+                .or_insert_with(|| Tail::new(&target.harness));
+            if tail.agent != target.harness {
+                // Another agent in the same terminal.
+                let running = tail.running;
+                *tail = Tail::new(&target.harness);
+                tail.running = running;
+            }
+            if reason == Reason::Loop && !wanted {
+                tail.running = false;
+                return false;
+            }
+            if tail.busy
+                || (reason == Reason::Pull
+                    && tail.last_read.is_some_and(|at| at.elapsed() < READ_GAP))
+            {
+                return true;
+            }
+            tail.busy = true;
+            tail.last_read = Some(Instant::now());
+            let taken = (tail.file.take(), claimed, tail.last_catalog);
+            // The integrations' reducer exists (a transcript can be the only source), and is the
+            // agent's: a chat's never is.
+            state.tick += 1;
+            let tick = state.tick;
+            let current = state.entries.get(&session).is_some_and(|entry| {
+                entry.reducer.is_terminal() && entry.reducer.harness() == target.harness
+            });
+            if !current {
+                state.make_room(session);
+                state.entries.insert(
+                    session,
+                    Entry::new(
+                        InsightReducer::new_terminal(
+                            session,
+                            &target.harness,
+                            target.cwd.as_deref(),
+                        ),
+                        target.model(),
+                        tick,
+                    ),
+                );
+            }
+            taken
+        };
+
+        // Which file is it?
+        let mut reset = false;
+        let mut status: Option<TranscriptStatus> = None;
+        let mut catalog_asked = false;
+        if file
+            .as_ref()
+            .is_none_or(|held| rebind_wanted(held, &target.tail))
+        {
+            let resolve = |rows: Option<&[Candidate]>| {
+                transcript_tail::resolve(&Lookup {
+                    agent: &target.harness,
+                    hints: &target.tail,
+                    cwd: target.cwd.as_deref(),
+                    root: &access.root,
+                    rows,
+                    claimed: &claimed,
+                })
+            };
+            let mut resolution = resolve(None);
+            if resolution == Resolution::NeedsCatalog
+                && !last_catalog.is_some_and(|at| at.elapsed() < CATALOG_GAP)
+            {
+                catalog_asked = true;
+                match access.sessions(source).await {
+                    Ok(rows) => {
+                        let rows: Vec<Candidate> = rows.iter().filter_map(Candidate::of).collect();
+                        resolution = resolve(Some(&rows));
+                    }
+                    Err(error) => status = Some(TranscriptStatus::Unreadable(error.message)),
+                }
+            }
+            match resolution {
+                Resolution::Found { path, key, route } => {
+                    if let Some(held) = file.as_mut().filter(|held| held.path == path) {
+                        held.route = route;
+                        held.key = key;
+                    } else {
+                        file = Some(TailFile::new(path, key, route, source));
+                        reset = true;
+                    }
+                }
+                Resolution::Missing(why) => {
+                    reset |= file.take().is_some();
+                    status = Some(TranscriptStatus::Searching(why));
+                }
+                Resolution::NeedsCatalog => {}
+            }
+        }
+
+        // Read what was appended.
+        let mut read = None;
+        if let Some(mut open) = file.take() {
+            match tokio::task::spawn_blocking(move || {
+                let result = open.step(CATCH_UP_BYTES);
+                (open, result)
+            })
+            .await
+            {
+                Ok((open, result)) => {
+                    file = Some(open);
+                    read = Some(result);
+                }
+                Err(error) => {
+                    warn!(%session, %error, "reading a transcript failed");
+                    status = Some(TranscriptStatus::Unreadable("the read failed".to_owned()));
+                }
+            }
+        }
+
+        // Fold it in.
+        let mut guard = lock(&self.state);
+        let state = &mut *guard;
+        let Some(tail) = state.tails.get_mut(&session) else {
+            // Evicted meanwhile.
+            return false;
+        };
+        tail.busy = false;
+        if catalog_asked {
+            tail.last_catalog = Some(Instant::now());
+        }
+        let mut changed = false;
+        if reset {
+            changed |= tail.feed.take().is_some();
+        }
+        tail.file = file;
+        let found = tail.file.as_ref().map(|open| open.route);
+        match (read, found) {
+            (Some(Ok(step)), Some(route)) => {
+                if step.rotated {
+                    changed |= tail.feed.take().is_some();
+                }
+                let cut = tail.file.as_ref().is_some_and(|open| open.cut);
+                tail.status = TranscriptStatus::Reading { route, cut };
+                if !step.events.is_empty() {
+                    let mut folded = Folded::default();
+                    transcript_fold::fold(step.events, now_ms(), &mut folded);
+                    let feed = tail.feed.get_or_insert_with(|| {
+                        Feed::new(session, &target.harness, target.cwd.as_deref())
+                    });
+                    for (report, at) in &folded.reports {
+                        changed |= feed.reducer.apply_report(report, *at);
+                    }
+                    if let Some(model) = folded.model
+                        && feed.model.as_ref() != Some(&model)
+                    {
+                        feed.model = Some(model);
+                        changed = true;
+                    }
+                    if let Some(breakdown) = folded.breakdown {
+                        feed.breakdown = Some(breakdown);
+                        changed = true;
+                    }
+                    feed.cut = cut;
+                }
+            }
+            (Some(Err(error)), Some(route)) if error.kind() == std::io::ErrorKind::NotFound => {
+                tail.status = TranscriptStatus::Waiting(route);
+            }
+            (Some(Err(error)), _) => {
+                tail.status = TranscriptStatus::Unreadable(error.to_string());
+            }
+            (_, _) => {
+                if let Some(status) = status {
+                    tail.status = status;
+                }
+            }
+        }
+        let ended = reason == Reason::Loop && !target.tail.live;
+        if ended {
+            tail.running = false;
+        }
+        if changed {
+            self.changed(state, session);
+        }
+        !ended
     }
 }
 

@@ -427,6 +427,30 @@ pub struct RegistryHandle {
     auto: bool,
 }
 
+/// What a service the registry owns may ask of it ([`RegistryHandle::downgrade`]): no more than
+/// what that service needs.
+#[derive(Debug, Clone)]
+pub struct WeakRegistry {
+    tx: mpsc::WeakSender<Command>,
+}
+
+impl WeakRegistry {
+    /// What `agent.insight` needs to know of a session (the registry's own
+    /// [`RegistryHandle::insight_target`]).
+    pub(crate) async fn insight_target(
+        &self,
+        id: SessionId,
+    ) -> Result<crate::insight::InsightTarget, ErrorBody> {
+        let unavailable = || ErrorBody::new(ErrorCode::Internal, "session registry unavailable");
+        let tx = self.tx.upgrade().ok_or_else(unavailable)?;
+        let (reply, response) = oneshot::channel();
+        tx.send(Command::InsightTarget(id, reply))
+            .await
+            .map_err(|_| unavailable())?;
+        response.await.map_err(|_| unavailable())?
+    }
+}
+
 impl RegistryHandle {
     async fn ask<T>(&self, command: impl FnOnce(Reply<T>) -> Command) -> Result<T, ErrorBody> {
         let (reply, response) = oneshot::channel();
@@ -436,6 +460,14 @@ impl RegistryHandle {
             .await
             .map_err(|_| unavailable())?;
         response.await.map_err(|_| unavailable())?
+    }
+
+    /// A link to the registry that does not keep it alive: for services the registry owns (the
+    /// insight hub), which would otherwise hold the actor's mailbox open for ever.
+    pub fn downgrade(&self) -> WeakRegistry {
+        WeakRegistry {
+            tx: self.tx.downgrade(),
+        }
     }
 
     /// A workspace with the projects of `req.paths` (found or made) and `req.project_ids`.

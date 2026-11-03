@@ -426,6 +426,9 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         registry.clone(),
     );
     history.start().await;
+    // A terminal agent's transcript is followed through these two, weakly: both own or are
+    // owned by the registry, which owns the hub.
+    insight.wire(registry.downgrade(), Arc::downgrade(&history));
     let accounts = AccountService::new(
         registry.clone(),
         harnesses.clone(),

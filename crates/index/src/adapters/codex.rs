@@ -12,9 +12,10 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use super::usage::{UsageEvent, UsageState};
 use super::{
-    Adapter, ParseState, Parsed, content_text, fold_messages, is_uuid, summarize_arguments,
-    timestamp, title_from,
+    Adapter, ParseState, Parsed, codex_usage, content_text, fold_messages, is_uuid,
+    summarize_arguments, timestamp, title_from,
 };
 use crate::types::{Entry, Role, Source};
 
@@ -107,6 +108,10 @@ impl Adapter for CodexAdapter {
             }
             _ => Parsed::Skip,
         }
+    }
+
+    fn usage_line(&self, line: &str, state: &mut UsageState, out: &mut Vec<UsageEvent>) -> bool {
+        codex_usage::usage_line(line, state, out)
     }
 }
 
