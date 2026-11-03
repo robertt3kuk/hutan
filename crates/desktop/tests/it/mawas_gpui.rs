@@ -3152,7 +3152,9 @@ fn check_with_mawas_from_todays_page_brings_the_composer_into_view_and_a_second_
     });
     let first = model.read_with(cx, |m, _| m.draft_message());
     assert!(first.starts_with("Check the workspace alpha"), "{first}");
-    assert_eq!(panel.read_with(cx, |p, cx| p.focus(cx)), Some(alpha.id));
+    wait_until(cx, "the Focus", |cx| {
+        panel.read_with(cx, |p, cx| p.focus(cx) == Some(alpha.id))
+    });
 
     // The user adds a line of their own; a second *Check with Mawas* replaces the unsent ask
     // where it stands and keeps what they typed: one question, not two.
