@@ -235,7 +235,7 @@ For people who write an agent, a wrapper or a plugin and want Hutan to show its 
 | **L0 — recognised** | none | the program is known by name (`omp`, `claude`, `codex`, `gemini`, `opencode`, `aider`); its title and a braille spinner become *idle* / *working* | shipped (§ Agents that report in the terminal) |
 | **L1 — state** | **OSC 7501** written to the terminal | state (`working`, `blocked` with what it waits for, `error`, `done`, `idle`), the app name, a short message; works over `ssh`, containers and tmux | shipped (§ Agents that report in the terminal) |
 | **L2 — insight** | **`hutan agent report --insight-json`** (this section) | tokens, context, cost, tools, files, turns, API time | shipped (protocol 0.71) |
-| **L3 — OpenTelemetry** | OTLP/HTTP to a Hutan endpoint | what an agent already exports as OTel GenAI signals | **proposed, not built**: it needs the daemon's first TCP listener, which waits for ADR 0026 to be accepted. Nothing below L3 depends on it |
+| **L3 — OpenTelemetry** | OTLP/HTTP (protobuf or JSON) to `$HUTAN_OTLP_ENDPOINT`, a loopback receiver in the daemon | what an agent already exports as OTel signals: Claude Code's and Codex's log events, and GenAI-convention spans of any other agent | shipped (protocol 0.74, TEL-1): **off until you enable an agent** (§ L3). Starting an agent's export by itself is TEL-2 |
 
 ### L2: `hutan agent report --insight-json`
 
@@ -255,7 +255,7 @@ hutan chat insight "$HUTAN_SESSION_ID"                                          
 
 | Part | Meaning | Kind |
 |---|---|---|
-| `source` | who knows this: `extension` (default), `hooks`, `statusline` (`chat` is the daemon's own and is refused; `transcript` and `osc7501` are Hutan's own readers) | label |
+| `source` | who knows this: `extension` (default), `hooks`, `statusline` (`chat` is the daemon's own and is refused; `transcript`, `otlp` and `osc7501` are Hutan's own readers: `otlp` is what the OpenTelemetry receiver reports as) | label |
 | `turn` `{phase: start\|end, outcome?: completed\|failed\|cancelled, duration_ms?}` | a turn began or ended; the end of a turn is never `running` (the report is refused) | event |
 | `tokens` `{input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, reasoning_output_tokens, total_tokens}` | what **one model call** of the running turn used | **delta**: Hutan adds them |
 | `context` `{used, window?, fixed?, estimated?}` | tokens in the context now, the model's window, the part that is the same every turn (system prompt, tools, project files; with it the context splits in *fixed* and *messages*), whether it is your estimate | **level**: the latest wins |
@@ -284,9 +284,64 @@ integrations/examples/third-party-agent.sh && hutan chat insight "$HUTAN_SESSION
 
 Tests (`crates/cli/tests/it/insight_contract.rs`): the schema equals the fields, enums and limits of the type the daemon reads (a drift test fails on either side); every example validates and the daemon keeps it whole; the example script runs through the real `hutan` and a real daemon into the insight record (tokens add up, the cost and context are levels, tools and files appear, the turn closes, each block names its source); bad documents change nothing and never fail; inline JSON and standard input give the same insight; an insight sent before the first state report shows once the agent exists.
 
-### L3: OpenTelemetry (proposed, not built)
+### L3: OpenTelemetry (the loopback receiver; TEL-1, protocol 0.74, ADR 0026)
 
-Eight agents already export OpenTelemetry (Claude Code, Codex, OMP, Gemini CLI, Qwen Code, Copilot CLI, Goose, OpenCode; observed in the spike). The proposal: a loopback OTLP/HTTP endpoint in the daemon, **off unless the user enables an agent**, one capability token per session in the endpoint, only a fixed set of attributes read (the OpenTelemetry GenAI semantic conventions: model, `gen_ai.usage.*` tokens, `execute_tool` spans, `invoke_agent` turns, plus optional `hutan.cost.usd`, `hutan.context.*`, `hutan.files.changed`), everything else discarded unread. It would map into the same insight record as L2 and carry no authority. None of this exists: there is no listener, no `HUTAN_OTLP_ENDPOINT`, no setting. The decision, the threat model and the slices are in ADR 0026 and the spike; until it is accepted an agent that speaks OTel can use L2 from a small exporter or hook.
+Eight agents export OpenTelemetry on their own (Claude Code, Codex, OMP, Gemini CLI, Qwen Code, Copilot CLI, Goose, OpenCode; observed in the spike). The daemon can receive it and turn it into the same insight record as L2, live (a second or so behind the agent), with no per-agent file parser. It is the daemon's **first TCP listener**, so it is **off by default, enabled per agent, and bounded in every way that ADR 0026 lists**. Transcripts stay the primary source for Claude Code and Codex (`docs/history-index.md`); OTLP is the opt-in live upgrade, and for Gemini, Qwen, Copilot, Goose, OMP, OpenCode and any new agent it is the generic channel.
+
+```sh
+hutan telemetry enable claude        # turns on the receiver; [telemetry.agents] claude = true in daemon.toml
+hutan telemetry status               # listening on 127.0.0.1:<port>, agents on, what each session reported, counters (no token)
+hutan telemetry disable claude       # the receiver closes with the last agent
+```
+
+**Turning it on.** `[telemetry.agents] <agent> = true` of `daemon.toml`, `hutan telemetry enable <agent>`, or `hutan config set telemetry.agents.<agent> true`. The agents are `claude`, `codex`, `omp`, `gemini`, `qwen`, `copilot`, `goose`, `opencode` and `other` (any program that follows the GenAI conventions below). It is **the user's alone**: `daemon.settings.set` is refused to an agent over `hutan ui`, MCP or a CLI that runs inside an agent's session (`docs/control.md`). No socket exists until the first agent is on; it binds **`127.0.0.1` only** (never `localhost`, `::` or `0.0.0.0`) and closes with the last. `[telemetry] port = 0` (the default) means *pick once at random in 49152–65535 and write the port back into `daemon.toml`*, because Codex's endpoint lives in a config file; set a number (at least 1024) to choose it yourself. **A busy port leaves the receiver down and visible** (`hutan telemetry status` says why); it is never moved to another port silently, and it is tried again the next time a telemetry setting is applied or the daemon starts. A change of `port` while it is on moves the listener.
+
+**What reaches an agent.** A terminal that **starts while the receiver listens** gets `HUTAN_OTLP_ENDPOINT` (`http://127.0.0.1:<port>/s/<token>`, the base an exporter appends `/v1/<signal>` to) and `HUTAN_OTLP_TOKEN` (the token alone, for a client whose endpoint is fixed in a config file and sends it as the header `x-hutan-token`). Both names are Hutan's own, so nothing reads them by accident and no user program is hijacked; no standard `OTEL_*` variable is exported into a terminal. Terminals that were open when you enabled it keep what they had (restart them); a restored session after a daemon restart gets them again because the receiver listens before sessions are restored. **Starting the agent's own export is not automatic yet** (TEL-2 adds the shell functions and `hutan integration install <agent> --telemetry`); until then set the agent's variables yourself, for that command only, e.g.
+
+```sh
+# Claude Code: logs over OTLP/HTTP protobuf to the session's endpoint
+CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_LOGS_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+  OTEL_EXPORTER_OTLP_ENDPOINT="$HUTAN_OTLP_ENDPOINT" claude
+# Any program that follows the GenAI conventions, with the standard variables:
+OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf OTEL_EXPORTER_OTLP_ENDPOINT="$HUTAN_OTLP_ENDPOINT" my-agent
+```
+
+(Claude Code's `~/.claude/settings.json` `env` and managed settings beat the terminal's environment; Codex reads its endpoint from `config.toml` only, with the log exporter alone: spike § 2.1 and F2–F4.) The insight of a terminal session can be read once Hutan knows an agent runs there (the program's name, OSC 7501 or a state report); what OTLP sent earlier is kept and shows from then.
+
+**What the receiver checks, in this order, before it reads a body** — each refusal is an empty answer with `Connection: close`:
+
+| Check | Refused with |
+|---|---|
+| method is `POST` | `405` |
+| `Host` is `127.0.0.1` or `localhost`, on the listener's port (DNS rebinding) | `421` |
+| `Content-Type` is `application/x-protobuf` or `application/json` (what a web page can send without a preflight is none of them); `Content-Encoding` is absent, `identity` or `gzip` | `415` |
+| the token — in the path (`/s/<token>/v1/<signal>`), the header `x-hutan-token` or `Authorization: Bearer` — belongs to a live session; compared in constant time; the same answer for a missing, a malformed and a wrong one | `401` |
+| the signal is `v1/traces`, `v1/logs` or `v1/metrics` | `404` |
+| the declared `Content-Length` is at most 1 MiB (a chunked body is cut at 1 MiB while it is read) | `413` |
+| the session is under its rate (a bucket of 40 requests refilled at 20 a second; 2 MiB refilled at 1 MiB a second) and has fewer than 4 requests in flight | `429` + `Retry-After: 1` |
+
+Then the body is read (2 s) and handed to **one mapper task through a bounded queue of 64**, and the receiver answers `200` with the signal's empty `Export*ServiceResponse` (zero bytes for protobuf, `{}` for JSON) **before anything is decoded or mapped**: a stalled mapper never slows an agent (the spike's F5: a receiver that does not answer delays an agent's exit by up to 33 s); a full queue is `429`. Other limits: a header block of 8 KiB (`431`), 16 connections (the rest are closed), a head that does not complete in 30 s closes the connection, a gzip body is inflated to at most 4 MiB, at most 2 000 records per request and 64 attributes per record are read, strings are cut at 256 characters. Every request is counted once (`accepted`, `rejected`, `dropped`, `ignored` in `hutan telemetry status`).
+
+**Who can report as whom.** The token is 128 random bits from the operating system, made when the terminal starts, **held in memory only** (never in SQLite, events, logs, `hutan ps`, notifications or `hutan telemetry status`), replaced by a restart and dropped when the session is closed. It selects the session; **nothing inside a payload does**: `session.id`, `conversation.id` and every resource attribute are untrusted labels and are not read. A process of another session cannot report into this one without its token; a process of the *same* user can read another session's environment, the same trust boundary as the daemon's unix socket.
+
+**What is read — an allowlist, not a denylist.** The decoders keep only the attributes named in `crates/telemetry/src/allow.rs` and skip every other value unread (protobuf: kept as an undecoded slice of the request; JSON: skipped token by token). Prompts, tool arguments and outputs (Codex's `tool_result` carries both), system instructions, command lines (Gemini's `process.command_args` holds the `-p` prompt), `ai.prompt`, `function_args`, file contents and e-mail addresses are on no list, so they never reach a mapper, the insight, the status, a log or a notification. Nothing is persisted beyond the in-memory insight record, raw bodies are dropped after mapping, **nothing is forwarded**, and Hutan never injects a non-loopback endpoint. Telemetry carries **no authority**: its only output is an insight report with `source: otlp`; it cannot set an agent's state, an approval, a task, a notification or a grant, and paths it carries never go into notifications or user hooks.
+
+| Hutan reads | Claude Code (logs) | Codex (logs) | any other agent (spans of the GenAI conventions) |
+|---|---|---|---|
+| match | `service.name = claude-code` | `service.name` starting `codex` | everything else (`omp`, `gemini`, `qwen`, `copilot`, `goose`, `opencode` by name, the rest as `other`); **Claude Code's and Codex's spans and every agent's metrics are not read** (the same facts arrive in the logs; counting both would add them twice) |
+| turn | `user_prompt` begins one; it ends at the next `user_prompt` or after **30 s without a record** (the logs never say it ended) | the same | an `invoke_agent` span ends it (no begin: it is exported when it ends) |
+| tokens (delta per model call) | `api_request`: `input_tokens` (excludes the cache), `cache_read_tokens`, `cache_creation_tokens`, `output_tokens`; once per `request_id` | `sse_event` of `response.completed`: `input_token_count` (**includes** the cache), `cached_token_count`, `cache_write_token_count`, `output_token_count`, `reasoning_token_count` | `chat` spans: `gen_ai.usage.input_tokens`, `…output_tokens`, `…cache_read.input_tokens`, `…cache_creation.input_tokens`, `…reasoning.output_tokens`; **input is reported without the cache** (the conventions count it inside; say otherwise with the resource attribute `hutan.usage.input_includes_cache = false`); a `chat` span that wraps one already counted (Goose) adds nothing |
+| cost | `cost_usd` of each request, summed (Anthropic's list price, an estimate) | not reported | `hutan.cost.usd` (cumulative), optional |
+| API time | `duration_ms` of each request, summed | — | — |
+| tools | `tool_result`: `tool_name`, `success`, `duration_ms`; once per `tool_use_id` | `tool_result`: the same; once per `call_id` | `execute_tool` spans: `gen_ai.tool.name`, status or `error.type`, the span's duration; once per span id |
+| model | `model` | `model` | `gen_ai.response.model`, else `gen_ai.request.model` |
+| context, files | not reported | not reported | `hutan.context.used_tokens` + `hutan.context.window_tokens`, `hutan.files.changed` (`"<add|update|delete>:<path>"`, at most 32) on a `chat` or `invoke_agent` span, optional |
+
+An unknown program is reported under its own `service.name` (cleaned to letters, digits, `.`, `_`, `-`; at most 64), so two programs never share a record and the insight names the program. A shape that does not match maps to nothing: **"not reported", never zero**; a record that is not one of these is ignored and counted. Requests the exporter retried are counted once (ids as above; a Codex record has none, so its timestamp and counts identify it). A report is kept within the 4 KiB limit of L2 by dropping the last files, then tool rows.
+
+**Where it shows.** The same places as L2 (`hutan chat insight`, the Context panel, MCP `agent_insight`), each block named *OpenTelemetry*. Per block the best source wins: chat, extension, status line, hooks, **OpenTelemetry**, transcript, terminal status. A block is **never the sum of two sources**: a worse source never writes a block a better one reported, and a better source that takes over a block of counters (turns, tools, files) starts it again instead of adding to what the worse one counted; a session's cost shows the best source's cumulative figure only.
+
+**What does not work (yet).** Starting an agent's export without your variables (TEL-2); mappers for Gemini, Qwen, Copilot's context, Goose, OMP and OpenCode beyond the generic conventions (TEL-3); a Settings toggle and the Context panel's source chip (TEL-4); a terminal that was open before you enabled it; `ssh`, containers and another machine (`127.0.0.1` there is not the daemon's: use OSC 7501 or L2); gRPC and TLS (no agent seen needs them); forwarding to your own collector (a later, separate decision). A contained terminal (`docs/agents.md` § Contain) with the network on can reach the loopback port — that is the parser exposed to it, hence the limits above — and with the network off nothing can. The receiver and its decoders have property tests (`crates/telemetry/tests/it/props.rs`: arbitrary and mutated bytes never panic or pass a bound) and real-socket daemon tests (`crates/daemon/tests/it/telemetry.rs`), on the spike's recordings in both encodings.
 
 ## Observation tree
 

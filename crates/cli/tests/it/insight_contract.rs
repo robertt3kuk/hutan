@@ -350,12 +350,14 @@ fn wire_names<T: serde::Serialize>(values: &[T]) -> Vec<String> {
 
 #[test]
 fn the_schemas_enums_are_the_types_variants() {
-    use InsightSourceKind::{Chat, Extension, Hooks, Osc7501, Statusline, Transcript};
+    use InsightSourceKind::{Chat, Extension, Hooks, Osc7501, Otlp, Statusline, Transcript};
     // The matches stop compiling when a variant is added: add it here and to the schema.
-    let sources = [Chat, Extension, Hooks, Statusline, Transcript, Osc7501];
+    let sources = [
+        Chat, Extension, Hooks, Statusline, Otlp, Transcript, Osc7501,
+    ];
     for source in sources {
         match source {
-            Chat | Extension | Hooks | Statusline | Transcript | Osc7501 => {}
+            Chat | Extension | Hooks | Statusline | Otlp | Transcript | Osc7501 => {}
         }
     }
     let outcomes = [

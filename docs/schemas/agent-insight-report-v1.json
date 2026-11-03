@@ -5,8 +5,8 @@
   "type": "object",
   "properties": {
     "source": {
-      "description": "Who knows this. Default `extension`. `chat` is the daemon's own and is refused; `transcript` and `osc7501` are Hutan's own readers, listed because the daemon takes them.",
-      "enum": ["extension", "hooks", "statusline", "transcript", "osc7501"]
+      "description": "Who knows this. Default `extension`. `chat` is the daemon's own and is refused; `transcript`, `otlp` and `osc7501` are Hutan's own readers (`otlp` is what the daemon's OpenTelemetry receiver reports as), listed because the daemon takes them.",
+      "enum": ["extension", "hooks", "statusline", "otlp", "transcript", "osc7501"]
     },
     "turn": {
       "description": "A turn of the agent (from the user's prompt to the agent being idle again) began or ended.",
