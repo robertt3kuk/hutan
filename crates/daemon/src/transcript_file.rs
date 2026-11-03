@@ -6,8 +6,8 @@
 //! last [`MAX_REPLAY_BYTES`]. It owns what the history adapter remembers between two lines
 //! ([`UsageState`]). Blocking: callers run [`TailFile::step`] on a blocking thread.
 //!
-//! Bounds (`docs/integrations.md` § Insight): at most [`READ_BYTES`] in one read and
-//! [`CATCH_UP_BYTES`] in one step, lines over [`MAX_LINE_BYTES`] are skipped, and nothing is read
+//! Bounds (`docs/integrations.md` § Insight): [`READ_BYTES`] at a time and at most
+//! [`CATCH_UP_BYTES`] in one look, lines over [`MAX_LINE_BYTES`] are skipped, and nothing is read
 //! when the file did not grow.
 
 use std::fs::File;
@@ -23,8 +23,10 @@ use crate::transcript_tail::Route;
 
 /// Bytes read at a time.
 pub const READ_BYTES: usize = 256 * 1024;
-/// Bytes read in one step: a long transcript catches up over several steps.
-pub const CATCH_UP_BYTES: usize = 4 * 1024 * 1024;
+/// Bytes read in one look (in chunks of [`READ_BYTES`]): the first look at a transcript takes all
+/// of it (it is at most [`MAX_REPLAY_BYTES`]), so the numbers a request gets are the whole
+/// conversation's; later looks take what was appended.
+pub const CATCH_UP_BYTES: usize = 16 * 1024 * 1024;
 /// A transcript longer than this is followed from its last this many bytes: what came before
 /// is not counted (the insight says so).
 pub const MAX_REPLAY_BYTES: u64 = 16 * 1024 * 1024;
