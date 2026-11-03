@@ -86,6 +86,7 @@ Agents Hutan starts itself (Codex chats, ACP harnesses) get the server without a
 | | any tool or permission hook with an `agent_id` | that subagent\'s activity, working or blocked | — |
 | | `PostModelSwitch` | the main agent\'s model | — |
 | | `SessionEnd` | release | — |
+| | every event of the main agent | its `transcript_path` rides on the root node (INSIGHT-C, no wire change: `node.transcript_path` existed for subagents; *Open transcript* of the agent card now has it for the main agent too); a subagent's events never carry it | — |
 | OMP | `session_start`, `session_switch` | idle, node `ctx.agent.id` (kind, parent, name, model from `ctx`) | `omp --resume=<id>` |
 | | `agent_start` | working | same |
 | | `tool_approval_requested`, the `ask` tool | blocked, the reason or question | same |
@@ -100,7 +101,7 @@ A restart that runs a resume command says so on the session (`recovery.kind = ag
 
 ## Insight: tokens, tools, files and context of terminal agents (INSIGHT-B, protocol 0.71)
 
-A chat's context, tokens, tools and files come from the journal (`docs/agents.md` § Insight). A terminal agent has no journal, so the integrations above also tell Hutan what they can see, and the daemon folds it into the same record per terminal session (`hutan chat insight SESSION`, the Context panel, MCP `agent_insight`; every block says where it came from: *the OMP extension*, *hooks*, *the status line*). State is in memory: it starts again when the daemon restarts, and when another agent starts in the same terminal. Spike: `docs/spikes/2026-10-28-insight.md` § 3.2, 3.4, 3.6.
+A chat's context, tokens, tools and files come from the journal (`docs/agents.md` § Insight). A terminal agent has no journal, so the integrations above also tell Hutan what they can see, and the daemon folds it into the same record per terminal session (`hutan chat insight SESSION`, the Context panel, MCP `agent_insight`; every block says where it came from: *the OMP extension*, *hooks*, *the status line*, *the transcript*). State is in memory: it starts again when the daemon restarts, and when another agent starts in the same terminal. Spike: `docs/spikes/2026-10-28-insight.md` § 3.2, 3.4, 3.6.
 
 `hutan integration status <agent>` lists what the installed integration reports and what it cannot (`reports` / `not_reported` in `--json`):
 
@@ -115,7 +116,7 @@ A chat's context, tokens, tools and files come from the journal (`docs/agents.md
 | Turns | `agent_start` … `agent_end` (`willContinue` goes on), with the extension's own duration | `UserPromptSubmit` … `Stop` / `StopFailure` | same | `UserPromptSubmit` … `Stop` |
 | API time | not reported | not reported | `cost.total_api_duration_ms` | not reported |
 
-What **no** integration gives, and the panel and `hutan integration status` say so instead of drawing zeros: the context by category (OMP's `/context` stays on its own screen; Hutan never sends it to a terminal), Claude Code's and Codex's tokens per turn (their hooks carry none), Codex's cost, context size and tool times, and lines added and removed per file. OMP subagents report nothing of their own; their files and tools are not in the main agent's insight. Files are the ones the *agent's tools* named, not what `git` sees (a `bash` command that writes a file is not a file change here; `changes.*` and the checkpoints are the other view).
+What **no** integration gives, and the panel and `hutan integration status` say so instead of drawing zeros: the context by category (OMP's `/context` stays on its own screen; Hutan never sends it to a terminal; for Claude Code only a `/context` *you* ran, which its transcript records), Claude Code's and Codex's tokens per turn, context size and cost, and Codex's tool times (their hooks carry none; **their transcripts do**, § Transcripts below, when you allowed reading them), and lines added and removed per file. OMP subagents report nothing of their own; their files and tools are not in the main agent's insight. Files are the ones the *agent's tools* named, not what `git` sees (a `bash` command that writes a file is not a file change here; `changes.*` and the checkpoints are the other view).
 
 ### How a report travels
 
@@ -133,9 +134,47 @@ hutan integration install claude --statusline [--dir DIR]
 
 puts Hutan's `hooks/hutan-statusline.sh` in its place **and keeps yours**: the script hands the JSON to `hutan agent statusline` (in the background, bounded to 200 ms, only inside a Hutan session) and then runs your command with the same input, passing its output and exit status through. Your own entry is kept whole in `hooks/hutan-statusline.original.json` (its other keys, such as `padding`, stay on the new entry) and its command as text in `hooks/hutan-statusline.command`. Without the flag the status line is never touched; with no status line of yours, the tee prints nothing. A `statusLine` that is not a command is refused (nothing is written). `uninstall` puts your entry back, byte for byte, **while the tee is still in place**: a status line you set after the install is yours and stays. `status` shows `statusline: installed | partial | not_installed`.
 
+### Transcripts: tokens, context and cost of Claude Code and Codex (INSIGHT-C)
+
+Their hooks carry no tokens, context or cost; their **transcripts** carry all of it. For a terminal that runs Claude Code or Codex the daemon also follows the agent's own transcript and folds what it says into the same record (`sources` says *the transcript*). The same adapters that index the files for history read them (`Adapter::usage_line`, `crates/index/src/adapters/{claude,codex}_usage.rs`): no second parser.
+
+**Consent.** Hutan reads a transcript only when `[history]` has the index on **and** that agent's source on (`enabled = true`, `claude` / `codex`: `docs/history-index.md` § Privacy). With either off nothing is opened, listed or read for a session's insight, and what was read is dropped as soon as the consent is withdrawn. The Context panel says *Turn on Claude Code history to see tokens and context* with a button that sets `history.claude = true` and, when the index was off, turns it on **with only that source** (the other sources stay off until the History panel's card ticks them). Findings' coverage says the same while it is off (`turn on Claude Code history to read its transcript`).
+
+**Which transcript is the session's** (never a guess that could be another session's):
+
+| Route | How sure | When |
+|---|---|---|
+| The path its hook named (Claude Code's `transcript_path`, sent on the root node) | certain | the path is absolute, inside the folder of the `claude` source, and its file name is the conversation id the hooks reported |
+| The conversation id its hooks reported (`session_id`), found in the history catalog (Codex's route; Claude Code's when its hook named no path) | certain | the index has read that transcript (it lags a moment behind a new file) |
+| The folder | likely | no id and no path: the only transcript of the agent's source with that folder written since the agent was first seen (10 s of slack), and **no other live terminal runs the same agent in that folder** |
+
+A transcript another session has is never offered; a folder with a rival, or with two candidates, attaches nothing (and says why: `Why` in `transcript_tail.rs`). A session that reports a new conversation id (`/clear`, `/new`) is rebound to the new file and its numbers start again; another agent in the same terminal starts again too. `hutan integration status claude|codex` lists the route, what the transcript adds and the consent it needs (`transcript` in `--json`).
+
+**What is read.** Numbers, names, paths and times; no message text, tool output or diff is kept.
+
+| | Claude Code | Codex |
+|---|---|---|
+| Where | `~/.claude/projects/<folder>/<session>.jsonl` | `~/.codex/sessions/Y/M/D/rollout-<time>-<id>.jsonl` |
+| Context | the latest assistant message's input + cache read + cache write; `/context`'s record when you ran it: its total, **the window** and the categories (the breakdown) | `token_count.last_token_usage.total_tokens`, the latest request (not the thread's total), with `model_context_window` |
+| Tokens per model call | `message.usage` (input without cache, cache read, cache write, output). Claude Code writes one line per content block with the message's usage: a message is counted once, by its id, and a later line adds only the growth | the growth of the cumulative `total_token_usage` (input including the cached part, cached, output, reasoning); a repeated event adds nothing |
+| Cost | `cost-state.totalCostUSD` when Claude Code wrote one (a zero is no cost) | none (`unsupported`) |
+| Tools | `tool_use` and `tool_result` (`is_error` is a failure): the time from `toolUseResult.durationMs`, else from the two lines (it includes the time you took to approve) | `exec_command_end` (exit code ≠ 0 is a failure, duration), `patch_apply_end` (`apply_patch`), `mcp_tool_call_end` (`mcp__server__tool`), `web_search_end` |
+| Files | what `Edit`, `MultiEdit`, `Write`, `NotebookEdit` changed when the call succeeded (`Write` is `add` when its result says `create`) | `patch_apply_end.changes` (add, update, delete) |
+| Turns | a prompt (not the harness's own notices) to `stop_reason: end_turn`, `system` `turn_duration` or *[Request interrupted…]* | `task_started` to `task_complete` / `turn_aborted`; `user_message` when a Codex has no turn events |
+| Time | `cost-state.totalAPIDuration` | — |
+| Model | `message.model` | `turn_context.model` |
+
+Lines of a sidechain (a subagent's) and the harness's `<synthetic>` messages are not the main agent's and are skipped.
+
+**Merged by source, never added.** The transcript fills a reducer of its own (`InsightReducer`, source `transcript`); `crates/daemon/src/insight_merge.rs` puts it together with the integrations' block by block: the best source that reported a block wins it (extension, status line, hooks, transcript), so a tool the hooks and the transcript both saw is one tool, not two. A source that *has* the numbers is not hidden by a better one that does not: the hooks' turns carry no tokens, so the transcript's turns win; Codex's hooks name a tool and its transcript says how long it took, so the transcript's tools win. The cost is whichever source has one (the integrations' first). `/context`'s categories come from the transcript when nothing better reported them.
+
+**When, and how much.** While a connection focuses the session: one task, one look a second, ending 30 s after the last focus was lost or when the session ends; and once when a request or a detector asks for the insight (never more than one read a second). A read starts at the last byte offset, takes whole lines only, and is at most 256 KiB at a time and 4 MiB at once (a long transcript catches up over several seconds); a transcript over 16 MiB is followed from its last 16 MiB and says so (`turns_truncated`); a line over 4 MiB is skipped; nothing is read when the file did not grow. A file that was replaced, shortened or rewritten (the 64 bytes before the offset changed) is read again from its first line. No directory is scanned: the history index's catalog is asked for a file by its id.
+
+**What was and was not recorded.** Recorded from real Claude Code 2.1.312 (`-p /context`, scratch home): the `/context` record's `contextUsage` and the `cost-state` line (zeros: no call was made; where its keys sit in a session with calls is not known — read at the top level or under `costState`). Reported by the sibling spike AGENT-TELEMETRY from runs of Claude Code 2.1.316 and Codex 0.166 against a local mock: `assistant.message.usage` with `cache_creation_input_tokens`, `cache_read_input_tokens`, `requestId`, `isSidechain`; `cost-state` written when a `-p` run ends; Codex's new top-level `token_usage_record` (ignored: it repeats `token_count`'s numbers). **Not recorded** (built from the agents' public source and marked as such in `crates/index/tests/fixtures/usage/README.md`): Claude Code's per-block message lines in an interactive session, `toolUseResult.durationMs`, `system` `turn_duration`, the interrupted-prompt line; Codex's `exec_command_end`, `patch_apply_end`, `mcp_tool_call_end`, `task_started` / `task_complete`, `turn_aborted`. The first run against a real Claude Code or Codex may need a shape corrected; the readers ignore what they do not know, and a line that is not JSON is counted and skipped.
+
 Not verified against a live Claude Code: the exact JSON of a real session (the fixtures in `crates/cli/tests/fixtures/insight/` are built from the documented shape), whether `HUTAN_SESSION_ID` reaches the status-line command (hooks get it; the status line is assumed to), and the payload of a real `PostToolUse` (`duration_ms`, `tool_response.type`). Codex's `apply_patch` hook input is also from its documentation (the patch text is read from `tool_input.command`, `input` or `patch`). OMP's reports are recorded from a real OMP 18.14.1 run: `crates/daemon/tests/fixtures/insight-terminal/`.
 
-Tests: `crates/core/src/insight/` (the reducer's `apply_report`), `crates/cli/src/hook/insight.rs` and `integration/statusline.rs` (translation of payloads, the status-line entry), `crates/cli/tests/it/integration.rs` (install, chain, uninstall, `status`), `crates/daemon/tests/it/insight_terminal.rs` (the recorded OMP reports and the Claude/Codex shapes over the wire).
+Tests: `crates/core/src/insight/` (the reducer's `apply_report`), `crates/cli/src/hook/insight.rs` and `integration/statusline.rs` (translation of payloads, the status-line entry), `crates/cli/tests/it/integration.rs` (install, chain, uninstall, `status`), `crates/daemon/tests/it/insight_terminal.rs` (the recorded OMP reports and the Claude/Codex shapes over the wire); for transcripts: `crates/index/tests/it/usage.rs` (the readers on `crates/index/tests/fixtures/usage/`), `crates/daemon/src/transcript_{tail,file,fold}.rs` and `insight_merge.rs` (routes, bounded reads, reports, merge), `crates/daemon/tests/it/insight_transcript.rs` (a terminal Claude Code and a Codex through a real daemon: tokens, context, cost, tools with times and exit codes, files, consent, two agents in one folder, rotation, following a focused session, no double counting, the findings' coverage), `crates/desktop/tests/it/context_gpui.rs` (the offer and its click).
 
 ## Pasting images (`terminal.paste_images`)
 
