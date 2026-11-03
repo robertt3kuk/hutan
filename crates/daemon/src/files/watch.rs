@@ -288,7 +288,7 @@ impl WatchHub {
             if let Some(meta) = &meta {
                 births.lock().exists(&path, meta, false);
             }
-            let now = meta.as_ref().filter(|m| m.is_file()).map(|m| version_of(m));
+            let now = meta.as_ref().filter(|m| m.is_file()).map(version_of);
             // What exists is looked at again soon: the platform's stream may not be running
             // yet, and a write right after the watch is then never reported.
             let seen = if meta.as_ref().is_some_and(|m| m.is_dir()) {
