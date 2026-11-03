@@ -6,6 +6,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ### Added
 - **How any agent can report its stats to Hutan**: `docs/integrations.md` § *Report your agent's stats to Hutan* describes the levels — recognised by name, state over OSC 7501, insight (tokens, cost, context, tools, files, turns) with `hutan agent report --insight-json` — with a JSON Schema (`docs/schemas/agent-insight-report-v1.json`) and an example script (`integrations/examples/third-party-agent.sh`) that the tests run end to end.
+- **Full stats for Claude Code and Codex in a terminal**: tokens (with cache), context, cost (Claude Code), tools with their times, commands with exit codes and files, read from their own session transcripts while you look at the session — only when that agent's history source is on (the Context panel offers to turn it on with one click). Checks now cover these sessions too. `hutan integration status claude|codex` says how the transcript was found.
 
 ### Fixed
 - An edit of `settings.toml` or of a Mawas memory file could stay unapplied when macOS dropped or delayed the file event (it does under load); both are now read again every 5 seconds, so an edit applies within 5 s even when no event arrives.
