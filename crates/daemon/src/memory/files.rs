@@ -60,6 +60,11 @@ const FILE_MAX_BYTES: u64 = 1024 * 1024;
 const PROBLEMS_MAX: usize = 100;
 /// Signals the platform watchers may leave unread (a flood only needs to be remembered once).
 const SIGNALS: usize = 64;
+/// With no signal at all, the folders being watched are read again this often. The platform's
+/// stream (macOS FSEvents) starts asynchronously and under load reports late or never, so an
+/// edit of a memory file could wait for the next unrelated event; the read compares the files
+/// with what the daemon last saw and does nothing when they are the same.
+const SAFETY_POLL: Duration = Duration::from_secs(5);
 
 /// The files of every scope: what the daemon last read or wrote, and what it refused.
 #[derive(Debug, Default)]
@@ -1125,14 +1130,32 @@ pub(super) fn start(service: &Arc<MemoryService>) {
     }
     let me = Arc::downgrade(service);
     tokio::spawn(async move {
-        while let Some(first) = rx.recv().await {
-            tokio::time::sleep(DEBOUNCE).await;
-            let mut folders = vec![first];
-            while let Ok(more) = rx.try_recv() {
-                if !folders.contains(&more) {
-                    folders.push(more);
+        let mut poll = tokio::time::interval(SAFETY_POLL);
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        poll.tick().await; // the first tick is immediate: the daemon is just starting
+        loop {
+            let folders = tokio::select! {
+                first = rx.recv() => {
+                    let Some(first) = first else { break };
+                    tokio::time::sleep(DEBOUNCE).await;
+                    let mut folders = vec![first];
+                    while let Ok(more) = rx.try_recv() {
+                        if !folders.contains(&more) {
+                            folders.push(more);
+                        }
+                    }
+                    folders
                 }
-            }
+                _ = poll.tick() => {
+                    let Some(service) = me.upgrade() else { break };
+                    let folders: Vec<PathBuf> =
+                        service.files.state.lock().watchers.keys().cloned().collect();
+                    if folders.is_empty() {
+                        continue;
+                    }
+                    folders
+                }
+            };
             let Some(service) = me.upgrade() else { break };
             for folder in folders {
                 service.sync_folder(&folder).await;

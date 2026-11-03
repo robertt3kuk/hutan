@@ -22,6 +22,12 @@ const DEBOUNCE: Duration = Duration::from_millis(100);
 /// A steady stream of events (noisy workspace root) still reloads at least this often.
 const MAX_DELAY: Duration = Duration::from_millis(500);
 const QUEUE: usize = 64;
+/// With no event at all, the files are still read again this often. The platform's stream
+/// (macOS FSEvents) starts asynchronously, and under load reports late or never: a write right
+/// after the watch, or minutes into the session, may produce no event, and the edit would not
+/// apply until something else touched the folder. Reading the (at most four, small) files
+/// again is a string comparison per file; nothing is parsed or published unless one changed.
+const SAFETY_POLL: Duration = Duration::from_secs(5);
 
 enum Msg {
     Changed,
@@ -90,7 +96,7 @@ pub(crate) fn start(shared: &Arc<Shared>) -> Result<WatchGuard, SettingsError> {
     let weak = Arc::downgrade(shared);
     let thread = std::thread::Builder::new()
         .name("hutan-settings-watch".to_owned())
-        .spawn(move || run(&rx, &weak))
+        .spawn(move || run(&rx, &weak, SAFETY_POLL))
         .map_err(|e| watch_error(format!("cannot spawn watcher thread: {e}")))?;
 
     // Anything edited between `SettingsStore::new` and now.
@@ -102,11 +108,24 @@ pub(crate) fn start(shared: &Arc<Shared>) -> Result<WatchGuard, SettingsError> {
     })
 }
 
-fn run(rx: &mpsc::Receiver<Msg>, store: &Weak<Shared>) {
+fn run(rx: &mpsc::Receiver<Msg>, store: &Weak<Shared>, poll: Duration) {
     loop {
-        match rx.recv() {
+        match rx.recv_timeout(poll) {
             Ok(Msg::Changed) => {}
-            Ok(Msg::Stop) | Err(_) => return,
+            Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Timeout) => {
+                let Some(shared) = store.upgrade() else {
+                    return;
+                };
+                let mut changed = shared.reload_from_disk();
+                if rewatch(&shared) {
+                    changed |= shared.reload_from_disk();
+                }
+                if changed {
+                    tracing::debug!("settings changed on disk and the platform did not report it");
+                }
+                continue;
+            }
         }
         let started = Instant::now();
         loop {
@@ -155,4 +174,34 @@ pub(crate) fn rewatch(shared: &Shared) -> bool {
         }
     }
     added
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SettingsStore;
+
+    /// The platform may report nothing (FSEvents under load, or just after the watch started):
+    /// a file that changes with no event at all is still read by the safety poll.
+    #[test]
+    fn a_change_the_platform_never_reports_is_found_by_the_safety_poll() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::SettingsPaths::in_dir(dir.path());
+        let store = SettingsStore::new(paths.clone());
+        assert!(store.errors().is_empty());
+        // The worker as `start` runs it, but with no watcher behind the channel: no event can
+        // ever arrive, and the poll is short.
+        let (tx, rx) = mpsc::sync_channel::<Msg>(QUEUE);
+        let weak = Arc::downgrade(&store.shared_for_tests());
+        let worker = std::thread::spawn(move || run(&rx, &weak, Duration::from_millis(20)));
+
+        std::fs::write(&paths.user, "[no_such_namespace]\nx = 1\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while store.errors().is_empty() {
+            assert!(Instant::now() < deadline, "the write was never read");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        tx.send(Msg::Stop).unwrap();
+        worker.join().unwrap();
+    }
 }

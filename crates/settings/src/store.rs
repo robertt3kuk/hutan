@@ -587,14 +587,17 @@ impl Shared {
     }
 
     /// Re-reads all four files and publishes whatever changed. Called by the watcher thread.
-    pub(crate) fn reload_from_disk(&self) {
+    /// Returns whether anything was published (a new generation).
+    pub(crate) fn reload_from_disk(&self) -> bool {
         let mut state = self.state.write();
+        let generation = state.generation;
         state.user.refresh(Kind::User);
         let keymap_changed = state.keymap.refresh(Kind::Keymap);
         state.workspace.refresh(Kind::Workspace);
         state.project.refresh(Kind::Project);
         let changed = state.recompute();
         self.commit(&mut state, changed, keymap_changed);
+        state.generation != generation
     }
 
     /// Directories that must be watched for the current files to hot-reload.
@@ -1097,6 +1100,12 @@ impl SettingsStore {
     /// Creates the settings directory (`0700`) if missing so it can be watched.
     pub fn start_watching(&self) -> Result<WatchGuard, SettingsError> {
         crate::watch::start(&self.shared)
+    }
+
+    /// The shared state, for the watcher's unit tests.
+    #[cfg(test)]
+    pub(crate) fn shared_for_tests(&self) -> Arc<Shared> {
+        Arc::clone(&self.shared)
     }
 }
 
