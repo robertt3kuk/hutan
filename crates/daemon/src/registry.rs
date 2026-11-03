@@ -888,6 +888,10 @@ struct SessionEntry {
     launched_dirs: Vec<PathBuf>,
     /// The extra folders a running terminal agent was pasted `/add-dir` for (`paste`).
     pasted_dirs: Vec<PathBuf>,
+    /// The agent the daemon first saw running in the terminal (its program, or what it reported)
+    /// and when: the earliest moment its transcript can have been started
+    /// (`transcript_tail::TailHints::started_ms`).
+    agent_seen: Option<(String, u64)>,
 }
 
 /// A decided fork on its way to the registry (`chat.fork`).
@@ -2701,6 +2705,7 @@ impl SessionRegistry {
             close: None,
             launched_dirs: Vec::new(),
             pasted_dirs: Vec::new(),
+            agent_seen: None,
         });
         let index = self.sessions.len() - 1;
         // The new name may change what its namesakes are called (a named session counts too).
@@ -4245,6 +4250,7 @@ impl SessionRegistry {
             close: None,
             launched_dirs: Vec::new(),
             pasted_dirs: Vec::new(),
+            agent_seen: None,
         });
         let index = self.sessions.len() - 1;
         let workspace = self.sessions[index].info.workspace_id;
@@ -4963,6 +4969,81 @@ impl SessionRegistry {
         }
     }
 
+    /// The agent running in a terminal session: the one that reported, else the one the daemon
+    /// recognised.
+    fn terminal_agent_name(session: &SessionEntry) -> Option<&str> {
+        session
+            .tree
+            .tree()
+            .root()
+            .map(|root| root.agent.as_str())
+            .or_else(|| {
+                session
+                    .info
+                    .terminal_agent
+                    .as_ref()
+                    .map(|agent| agent.app.as_str())
+            })
+            .filter(|agent| !agent.is_empty())
+    }
+
+    /// Remembers when the agent of a terminal was first seen running there: the earliest moment
+    /// its transcript can have been started. Forgotten with the agent, so another one that
+    /// starts in the same terminal gets its own start.
+    fn note_agent_seen(&mut self, index: usize) {
+        let session = &mut self.sessions[index];
+        if session.chat.is_some() {
+            return;
+        }
+        let seen = Self::terminal_agent_name(session).map(str::to_owned);
+        match (seen, &session.agent_seen) {
+            (None, _) => session.agent_seen = None,
+            (Some(agent), Some((known, _))) if *known == agent => {}
+            (Some(agent), _) => session.agent_seen = Some((agent, now_ms())),
+        }
+    }
+
+    /// What finding the transcript of the terminal agent `agent` of `session` needs
+    /// (`transcript_tail`): the conversation id and transcript path its hooks reported, when it
+    /// started, and how many other live terminals run the same agent in the same folder.
+    fn tail_hints(
+        &self,
+        id: SessionId,
+        session: &SessionEntry,
+        agent: &str,
+    ) -> crate::transcript_tail::TailHints {
+        let root = session.tree.tree().root();
+        let started_ms = [
+            root.and_then(|root| root.started_at_ms),
+            session
+                .agent_seen
+                .as_ref()
+                .filter(|(seen, _)| seen == agent)
+                .map(|(_, at)| *at),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        let rivals = self
+            .sessions
+            .iter()
+            .filter(|other| {
+                other.info.id != id
+                    && other.chat.is_none()
+                    && other.info.state.is_live()
+                    && other.info.cwd == session.info.cwd
+                    && Self::terminal_agent_name(other) == Some(agent)
+            })
+            .count();
+        crate::transcript_tail::TailHints {
+            agent_session_id: session.agent_session_id.clone(),
+            transcript_path: root.and_then(|root| root.transcript_path.clone()),
+            started_ms,
+            rivals: u32::try_from(rivals).unwrap_or(u32::MAX),
+            live: session.info.state.is_live(),
+        }
+    }
+
     /// What insight needs to know of a session: of a chat, its harness and model; of a terminal,
     /// the agent it runs (the one that reported, else the one the daemon recognised) and no
     /// journal. `not_found` for an unknown session, `bad_request` for one that is no chat and
@@ -4980,6 +5061,7 @@ impl SessionRegistry {
                     format!("session {id} is neither a chat nor a terminal that runs an agent"),
                 ));
             };
+            let tail = self.tail_hints(id, session, &agent);
             return Ok(crate::insight::InsightTarget {
                 harness: agent,
                 model: root.and_then(|root| root.model.clone()),
@@ -4991,6 +5073,7 @@ impl SessionRegistry {
                     .map(|cwd| cwd.display().to_string()),
                 assistant: false,
                 terminal: true,
+                tail,
             });
         };
         let model = session
@@ -5026,6 +5109,7 @@ impl SessionRegistry {
                 .map(|cwd| cwd.display().to_string()),
             assistant: spec.assistant || spec.agent == AGENT_ASSISTANT,
             terminal: false,
+            tail: Default::default(),
         })
     }
 
@@ -5344,6 +5428,7 @@ impl SessionRegistry {
             close: None,
             launched_dirs: Vec::new(),
             pasted_dirs: Vec::new(),
+            agent_seen: None,
         });
         let index = self.sessions.len() - 1;
         self.refresh_dirs(index);
@@ -5581,6 +5666,7 @@ impl SessionRegistry {
                 close: None,
                 launched_dirs: Vec::new(),
                 pasted_dirs: Vec::new(),
+                agent_seen: None,
             });
             let index = self.sessions.len() - 1;
             self.refresh_dirs(index);
@@ -5775,6 +5861,7 @@ impl SessionRegistry {
     fn emit_session(&mut self, index: usize) {
         self.refresh_placement(index);
         self.refresh_dirs(index);
+        self.note_agent_seen(index);
         if self.retitle(index) {
             self.mark_dirty(index);
         }

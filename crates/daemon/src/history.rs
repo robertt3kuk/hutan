@@ -348,6 +348,23 @@ impl HistoryService {
         self.status().await
     }
 
+    /// What reading the transcripts of `source` needs, when the user allowed it: the index runs
+    /// (`[history] enabled`) and `source` is one of the sources it reads. `None` otherwise —
+    /// no transcript directory is opened, listed or read for a session's insight then
+    /// (`docs/history-index.md` § Privacy).
+    pub async fn transcript_access(&self, source: Source) -> Option<TranscriptAccess> {
+        let state = self.state.lock().await;
+        let running = state.running.as_ref()?;
+        let root = source_roots(&state.settings)
+            .into_iter()
+            .find(|(candidate, _)| *candidate == source)
+            .map(|(_, root)| root)?;
+        Some(TranscriptAccess {
+            root,
+            handle: running.handle.clone(),
+        })
+    }
+
     /// The `[history]` settings indexing runs by (or would run by, when it is off).
     pub async fn settings(&self) -> HistorySettings {
         self.state.lock().await.settings.clone()
@@ -396,6 +413,34 @@ impl HistoryService {
     /// Reads every transcript again, in the background.
     pub async fn rebuild(&self) -> Result<(), ErrorBody> {
         self.handle().await?.rebuild().map_err(index_error)
+    }
+}
+
+/// The user's consent to read one agent's transcripts, as the index holds it: the folder those
+/// transcripts are in and the index's catalog of them ([`HistoryService::transcript_access`]).
+#[derive(Debug, Clone)]
+pub struct TranscriptAccess {
+    /// The directory the source's transcripts are below (never read outside it).
+    pub root: PathBuf,
+    handle: IndexHandle,
+}
+
+impl TranscriptAccess {
+    /// The catalog rows of `source`: one per session the index has read, with the transcript's
+    /// path and folder. No transcript file is opened.
+    pub async fn sessions(
+        &self,
+        source: Source,
+    ) -> Result<Vec<hutan_index::CatalogRow>, ErrorBody> {
+        let handle = self.handle.clone();
+        let rows = tokio::task::spawn_blocking(move || handle.catalog())
+            .await
+            .map_err(internal)?
+            .map_err(index_error)?;
+        Ok(rows
+            .into_iter()
+            .filter(|row| row.source == source)
+            .collect())
     }
 }
 

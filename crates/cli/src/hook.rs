@@ -70,6 +70,18 @@ fn text<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|value| !value.is_empty())
 }
 
+/// The transcript file the main agent writes its conversation to: Claude Code's hooks name it
+/// (`transcript_path`) in every event of the main agent. Only a plain absolute path of a
+/// sensible length is passed on; the daemon reads it only inside the folder the user enabled
+/// for history (`docs/integrations.md` § Insight).
+fn transcript_of(input: &Value) -> Option<String> {
+    text(input, "transcript_path")
+        .filter(|path| {
+            path.starts_with('/') && path.len() <= 1024 && !path.chars().any(char::is_control)
+        })
+        .map(str::to_owned)
+}
+
 /// `Tool: first line of what it does`, short enough for a table cell.
 fn tool_activity(input: &Value) -> Option<String> {
     let tool = text(input, "tool_name")?;
@@ -119,6 +131,8 @@ pub fn plan(agent: HookAgentArg, input: &Value, env: &HookEnv<'_>) -> Option<Pla
         .then(|| text(input, "agent_id").filter(|id| is_plain_id(id)))
         .flatten();
     let agent_type = text(input, "agent_type").map(str::to_owned);
+    // Only the main agent's events name its own transcript (a subagent's file is another one).
+    let transcript = agent_id.is_none().then(|| transcript_of(input)).flatten();
     let node_of = |activity: Option<String>| -> Option<PlanNode> {
         (agent == HookAgentArg::Claude).then(|| match agent_id {
             Some(id) => PlanNode {
@@ -133,6 +147,7 @@ pub fn plan(agent: HookAgentArg, input: &Value, env: &HookEnv<'_>) -> Option<Pla
                 id: CLAUDE_ROOT_NODE.to_owned(),
                 kind: Some(NodeKind::Main),
                 agent_type: agent_type.clone(),
+                transcript_path: transcript.clone(),
                 activity,
                 ..PlanNode::default()
             },
@@ -144,6 +159,7 @@ pub fn plan(agent: HookAgentArg, input: &Value, env: &HookEnv<'_>) -> Option<Pla
             kind: Some(NodeKind::Main),
             agent_type: agent_type.clone(),
             model,
+            transcript_path: transcript.clone(),
             activity,
             ..PlanNode::default()
         })
@@ -462,5 +478,32 @@ mod tests {
             panic!("report");
         };
         assert!(resume_argv.is_empty());
+    }
+
+    #[test]
+    fn the_main_agents_transcript_path_rides_on_its_root_node_and_no_subagents() {
+        let path = "/c/projects/-w-app/5f3e-1c.jsonl";
+        for event in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"] {
+            let (_, node) = report(claude(json!({
+                "hook_event_name": event, "session_id": "5f3e-1c", "transcript_path": path,
+                "tool_name": "Read",
+            })));
+            let node = node.unwrap();
+            assert_eq!(node.id, CLAUDE_ROOT_NODE, "{event}");
+            assert_eq!(node.transcript_path.as_deref(), Some(path), "{event}");
+        }
+        // A subagent's hooks carry the main transcript's path too, but it is not theirs.
+        let (_, node) = report(claude(json!({
+            "hook_event_name": "PostToolUse", "session_id": "5f3e-1c", "agent_id": "agent-a",
+            "transcript_path": path, "tool_name": "Read",
+        })));
+        assert_eq!(node.unwrap().transcript_path, None);
+        // Only a plain absolute path is passed on.
+        for odd in ["relative.jsonl", "/a/b\nc.jsonl", ""] {
+            let (_, node) = report(claude(json!({
+                "hook_event_name": "Stop", "session_id": "5f3e-1c", "transcript_path": odd,
+            })));
+            assert_eq!(node.unwrap().transcript_path, None, "{odd:?}");
+        }
     }
 }

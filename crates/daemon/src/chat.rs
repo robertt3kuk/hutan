@@ -1965,6 +1965,7 @@ impl ChatManager {
             cwd: cwd.map(|cwd| cwd.display().to_string()),
             assistant: live.assistant || live.mawas,
             terminal: false,
+            tail: Default::default(),
         };
         self.insight.attach(live.id, &target, fresh).await;
     }

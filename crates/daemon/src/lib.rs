@@ -120,6 +120,7 @@ pub mod terminal_search;
 pub mod terminals;
 #[cfg(feature = "test-support")]
 pub mod testing;
+pub mod transcript_tail;
 pub mod tree;
 pub mod uihub;
 pub mod update;

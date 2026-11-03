@@ -37,6 +37,7 @@ use tracing::{debug, warn};
 use crate::bus::EventBus;
 use crate::conn::{ConnHandle, ConnId, LocalSend};
 use crate::registry::now_ms;
+use crate::transcript_tail::TailHints;
 
 /// Journal events a reducer is built from (the newest, of the kinds insight reads).
 pub const COLD_EVENTS: u32 = 5_000;
@@ -48,7 +49,7 @@ pub const MIN_GAP: Duration = Duration::from_secs(1);
 const MAX_BUFFERED: usize = 4_096;
 
 /// What the registry knows of a chat that insight needs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InsightTarget {
     /// `codex`, `omp`, `claude` or `direct` (an assistant that runs on a provider is `direct`).
     pub harness: String,
@@ -60,6 +61,8 @@ pub struct InsightTarget {
     /// The session is a terminal that runs an agent (protocol 0.71): no journal, only what the
     /// agent's integrations report; `harness` is the agent's program.
     pub terminal: bool,
+    /// A terminal's agent: what finding its transcript needs (empty for a chat).
+    pub tail: TailHints,
 }
 
 impl InsightTarget {
@@ -662,6 +665,7 @@ mod tests {
             cwd: Some("/work/app".into()),
             assistant: false,
             terminal: false,
+            tail: TailHints::default(),
         }
     }
 
