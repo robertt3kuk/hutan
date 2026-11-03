@@ -145,6 +145,10 @@ pub enum Write {
         id: String,
         at_ms: u64,
     },
+    /// Forgets that the user dismissed a finding (nothing when it was not dismissed).
+    RestoreFinding {
+        id: String,
+    },
     /// Inserts a question of an agent or replaces how it ended.
     UpsertQuestion(Box<QuestionRow>),
     /// Inserts a provider or replaces everything but its creation time.
@@ -385,6 +389,7 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
         Write::ClearAgentStates => crate::state_log::clear(conn)?,
         Write::AppendDigestRun(row) => crate::digest_runs::append(conn, row)?,
         Write::DismissFinding { id, at_ms } => crate::findings::dismiss(conn, id, *at_ms)?,
+        Write::RestoreFinding { id } => crate::findings::restore(conn, id)?,
         Write::UpsertQuestion(row) => upsert_question(conn, row)?,
         Write::UpsertProvider(row) => {
             conn.execute(

@@ -3203,3 +3203,23 @@ fn a_dismissed_finding_keeps_its_first_time_survives_a_restart_and_the_newest_20
     );
     storage.close();
 }
+
+#[test]
+fn a_restored_finding_is_forgotten_for_good_and_restoring_twice_is_harmless() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let findings = storage.dismissed_findings();
+    findings.dismiss("chk_0000000000000001", 1_000).unwrap();
+    findings.dismiss("chk_0000000000000002", 2_000).unwrap();
+    assert!(findings.restore("chk_0000000000000001").unwrap());
+    // Not dismissed any more: nothing to restore, nothing broken.
+    assert!(!findings.restore("chk_0000000000000001").unwrap());
+    assert!(!findings.restore("chk_00000000000000ff").unwrap());
+    storage.close();
+
+    let storage = Storage::open(db(&dir)).unwrap();
+    let kept = storage.dismissed_findings().all().unwrap();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept.get("chk_0000000000000002"), Some(&2_000));
+    storage.close();
+}

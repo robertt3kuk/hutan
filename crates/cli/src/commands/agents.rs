@@ -54,6 +54,9 @@ impl Ctx {
         if let Some(id) = &args.dismiss {
             return self.agents_dismiss(&client, id).await;
         }
+        if let Some(id) = &args.restore {
+            return self.agents_restore(&client, id).await;
+        }
         if args.ws.is_some() || args.since.is_some() || args.limit.is_some() {
             return Err(CliError::Usage(
                 "--ws, --since and --limit go with --board, --activity, --stats or --check"
@@ -258,6 +261,29 @@ impl Ctx {
                 dismissed.id,
                 hutan_client::time::local_time_text(dismissed.dismissed_at_ms)
             )
+        })
+    }
+
+    /// `--restore`: `agents.findings.restore` (protocol 0.73). Only the user's connection is
+    /// let through.
+    async fn agents_restore(&self, client: &Client, id: &str) -> Result<(), CliError> {
+        if !client.supports_agents_findings_restore() {
+            return Err(CliError::Failed(
+                "this daemon cannot restore a finding (it predates protocol 0.73); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let restored = client
+            .agents_findings_restore(id.to_owned())
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&restored, || {
+            if restored.restored {
+                format!("Restored {}: it is listed again.", restored.id)
+            } else {
+                format!("{} was not dismissed.", restored.id)
+            }
         })
     }
 }

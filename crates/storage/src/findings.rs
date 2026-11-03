@@ -36,6 +36,23 @@ impl DismissedFindings<'_> {
         })
     }
 
+    /// Forgets the dismissal of `id`, applied before it returns: the finding is listed again.
+    /// Answers whether it was dismissed.
+    pub fn restore(&self, id: &str) -> Result<bool> {
+        let key = id.to_owned();
+        let was_dismissed = self.0.read(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM dismissed_findings WHERE id = ?1",
+                [&key],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count > 0)
+            .map_err(StorageError::sqlite("reading a dismissed finding"))
+        })?;
+        self.0.write_checked(Write::RestoreFinding { id: id.to_owned() })?;
+        Ok(was_dismissed)
+    }
+
     /// Every dismissed id with the time it was dismissed.
     pub fn all(&self) -> Result<HashMap<String, u64>> {
         self.0.read(|conn| {
@@ -74,5 +91,11 @@ pub(crate) fn dismiss(conn: &Connection, id: &str, at_ms: u64) -> Result<()> {
         [i64::from(DISMISSED_FINDINGS_KEPT)],
     )
     .map_err(StorageError::sqlite(context))?;
+    Ok(())
+}
+
+pub(crate) fn restore(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM dismissed_findings WHERE id = ?1", [id])
+        .map_err(StorageError::sqlite("restoring a dismissed finding"))?;
     Ok(())
 }

@@ -26,8 +26,8 @@ use hutan_protocol::checkpoint::{
     CheckpointDiffRequest, CheckpointListRequest, DiffAgainst, LIST_MAX_LIMIT,
 };
 use hutan_protocol::checks::{
-    AgentsFindings, AgentsFindingsDismiss, AgentsFindingsRequest, CoverageGap, Finding,
-    FindingDismissed, SessionCoverage, is_finding_id,
+    AgentsFindings, AgentsFindingsDismiss, AgentsFindingsRequest, AgentsFindingsRestore,
+    CoverageGap, Finding, FindingDismissed, FindingRestored, SessionCoverage, is_finding_id,
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{AgentState, SessionInfo, SessionListFilter, TerminalAgentState};
@@ -421,6 +421,27 @@ impl ChecksService {
         Ok(FindingDismissed {
             id: req.id,
             dismissed_at_ms,
+        })
+    }
+
+    /// `agents.findings.restore`: the dismissal is forgotten, the finding is listed again.
+    pub async fn restore(&self, req: AgentsFindingsRestore) -> Result<FindingRestored, ErrorBody> {
+        if !is_finding_id(&req.id) {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                format!(
+                    "`{}` is not the id of a finding (chk_ and 16 hex digits)",
+                    req.id
+                ),
+            ));
+        }
+        let id = req.id.clone();
+        let restored = self
+            .blocking(move |s| s.dismissed_findings().restore(&id))
+            .await?;
+        Ok(FindingRestored {
+            id: req.id,
+            restored,
         })
     }
 

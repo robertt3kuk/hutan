@@ -462,6 +462,7 @@ impl Router {
             }
             Request::AgentsFindings(req) => ok(&self.findings.findings(req).await?),
             Request::AgentsFindingsDismiss(req) => ok(&self.findings.dismiss(req).await?),
+            Request::AgentsFindingsRestore(req) => ok(&self.findings.restore(req).await?),
             Request::AgentMeasureContext(req) => ok(&self.measure_context(req).await?),
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
@@ -1217,6 +1218,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentsFindings(_) => ("agents.findings", Read),
         // Dismissing a finding is the user's: an agent, Mawas included, must not hide a problem.
         Request::AgentsFindingsDismiss(_) => ("agents.findings.dismiss", UserOnly),
+        // … and so is undoing it: restoring lists what a dismissal hid.
+        Request::AgentsFindingsRestore(_) => ("agents.findings.restore", UserOnly),
         Request::AgentMeasureContext(_) => ("agent.measure_context", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         // The queue (protocol 0.36): what `chat.send` would do, later or now.

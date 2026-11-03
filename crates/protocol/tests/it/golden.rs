@@ -4134,6 +4134,12 @@ fn requests() -> Vec<(&'static str, Request)> {
             }),
         ),
         (
+            "agents_findings_restore",
+            Request::AgentsFindingsRestore(AgentsFindingsRestore {
+                id: "chk_0123456789abcdef".into(),
+            }),
+        ),
+        (
             "chat_create_dirs",
             Request::ChatCreate(ChatCreate {
                 extra_dirs: vec!["/work/api".into(), "/work/shared".into()],
@@ -10026,6 +10032,17 @@ fn responses_match_fixtures() {
                 &FindingDismissed {
                     id: "chk_0123456789abcdef".into(),
                     dismissed_at_ms: 1_791_894_400_000,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "agents_findings_restored",
+            ControlMessage::ok(
+                99,
+                &FindingRestored {
+                    id: "chk_0123456789abcdef".into(),
+                    restored: true,
                 },
             )
             .unwrap(),

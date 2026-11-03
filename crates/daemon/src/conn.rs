@@ -110,6 +110,7 @@ pub const CAPABILITIES: &[&str] = &[
     "digest.model",
     "agent.insight.report",
     "agents.findings",
+    "agents.findings.restore",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

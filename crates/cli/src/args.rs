@@ -2506,6 +2506,14 @@ pub struct AgentsArgs {
         conflicts_with_all = ["target", "watch", "board", "activity", "stats", "review", "verify"]
     )]
     pub dismiss: Option<String>,
+    /// List a dismissed finding again (its id, `chk_…`, as --check --include-dismissed prints
+    /// it). Only you can: an agent's connection is refused
+    #[arg(
+        long,
+        value_name = "FINDING",
+        conflicts_with_all = ["target", "watch", "board", "activity", "stats", "review", "verify", "check", "dismiss"]
+    )]
+    pub restore: Option<String>,
 }
 
 /// `hutan ps`: the processes of the live sessions.

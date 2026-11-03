@@ -943,6 +943,29 @@ exec sleep 600"#;
         .stdout;
     assert!(shown.contains("(dismissed)"), "{shown}");
 
+    // Restoring is the user's too: refused for an agent, listed again for the user, and a second
+    // restore says there was nothing to do.
+    let refused = finish(agent_command(
+        &t.paths.socket,
+        Some(&first),
+        &["agents", "--restore", &id],
+    ))
+    .await;
+    assert_ne!(refused.code, 0, "an agent restored: {}", refused.stdout);
+    assert!(
+        t.hutan(&["agents", "--check"])
+            .await
+            .ok()
+            .stdout
+            .contains("1 dismissed finding is hidden")
+    );
+    let said = t.hutan(&["agents", "--restore", &id]).await.ok().stdout;
+    assert!(said.starts_with(&format!("Restored {id}")), "{said}");
+    let back = t.hutan(&["agents", "--check"]).await.ok().stdout;
+    assert!(!back.contains("dismissed finding"), "{back}");
+    let said = t.hutan(&["agents", "--restore", &id]).await.ok().stdout;
+    assert!(said.contains("was not dismissed"), "{said}");
+
     // Errors say what is wrong; options that do not go together are refused.
     for args in [
         vec!["agents", "--dismiss", "not-an-id"],
@@ -951,6 +974,8 @@ exec sleep 600"#;
         vec!["agents", "--check", "--stats"],
         vec!["agents", "--check", "--session", &first, "--ws", "x"],
         vec!["agents", "--dismiss", &id, "--check"],
+        vec!["agents", "--restore", &id, "--dismiss", &id],
+        vec!["agents", "--restore", "not-an-id"],
         vec!["agents", "--include-dismissed"],
         vec!["agents", "--check", "--since", "soon"],
     ] {

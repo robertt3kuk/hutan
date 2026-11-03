@@ -12,7 +12,8 @@
 //!
 //! `agents.findings` is a read: bounded ([`FINDINGS_MAX`] findings, [`FINDINGS_MAX_BYTES`]),
 //! redacted, text of agents marked as data. `agents.findings.dismiss` is the user's alone: an
-//! agent, Mawas included, cannot hide a problem.
+//! agent, Mawas included, cannot hide a problem; so is `agents.findings.restore` (0.73), which
+//! undoes a dismissal.
 
 use hutan_core::{SessionId, TurnId, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -312,6 +313,22 @@ pub struct FindingDismissed {
     pub id: String,
     /// When the user dismissed it (the first time, when asked again).
     pub dismissed_at_ms: u64,
+}
+
+/// `agents.findings.restore` (protocol 0.73, capability `agents.findings.restore`): the user
+/// lists a dismissed finding again. User-only like the dismissal it undoes. Idempotent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentsFindingsRestore {
+    /// A finding's `id`; `bad_request` when it is not the shape of one.
+    pub id: String,
+}
+
+/// The answer to `agents.findings.restore`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindingRestored {
+    pub id: String,
+    /// The finding was dismissed and is listed again; `false` when it was not dismissed.
+    pub restored: bool,
 }
 
 /// Whether `id` has the shape of a finding's id: `chk_` and 16 lowercase hex digits.

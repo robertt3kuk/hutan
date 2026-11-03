@@ -1423,6 +1423,23 @@ impl Connection {
         client.agents_findings_dismiss(id).await
     }
 
+    /// True while connected to a daemon that advertised capability `agents.findings.restore`
+    /// ([`Client::supports_agents_findings_restore`]); false when disconnected.
+    pub fn supports_agents_findings_restore(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_agents_findings_restore())
+    }
+
+    /// `agents.findings.restore` ([`Client::agents_findings_restore`]).
+    pub async fn agents_findings_restore(
+        &self,
+        id: String,
+    ) -> Result<hutan_protocol::checks::FindingRestored, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.agents_findings_restore(id).await
+    }
+
     /// `agent.measure_context` ([`Client::agent_measure_context`]).
     pub async fn agent_measure_context(
         &self,

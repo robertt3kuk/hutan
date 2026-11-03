@@ -31,7 +31,7 @@ use crate::checkpoint::{
     CheckpointDiffRequest, CheckpointListRequest, CheckpointPreviewRequest, CheckpointRemove,
     CheckpointRestore,
 };
-use crate::checks::{AgentsFindingsDismiss, AgentsFindingsRequest};
+use crate::checks::{AgentsFindingsDismiss, AgentsFindingsRequest, AgentsFindingsRestore};
 use crate::control::{ErrorBody, ErrorCode};
 use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
@@ -328,6 +328,10 @@ pub enum Request {
     /// `FindingDismissed`. User-only: an agent cannot hide a problem.
     #[serde(rename = "agents.findings.dismiss")]
     AgentsFindingsDismiss(AgentsFindingsDismiss),
+    /// Capability `agents.findings.restore` (protocol 0.73): the user lists a dismissed finding
+    /// again; answered with `FindingRestored`. User-only, like the dismissal it undoes.
+    #[serde(rename = "agents.findings.restore")]
+    AgentsFindingsRestore(AgentsFindingsRestore),
     /// Capability `chat.codex`: the journal of a session; answered with `ChatHistory`.
     #[serde(rename = "chat.history")]
     ChatHistory(ChatHistoryRequest),

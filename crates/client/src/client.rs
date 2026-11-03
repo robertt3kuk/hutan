@@ -259,6 +259,8 @@ pub(crate) const AGENTS_REVIEW_CAPABILITY: &str = "agents.review";
 pub(crate) const AGENTS_VERIFY_CAPABILITY: &str = "agents.verify";
 /// Capability for `agents.findings` and `agents.findings.dismiss` (protocol 0.72).
 pub(crate) const AGENTS_FINDINGS_CAPABILITY: &str = "agents.findings";
+/// Capability for `agents.findings.restore` (protocol 0.73).
+pub(crate) const AGENTS_FINDINGS_RESTORE_CAPABILITY: &str = "agents.findings.restore";
 /// Capability for `digest.status` and `ChatInfo.digest` (protocol 0.69).
 pub(crate) const DIGEST_MODEL_CAPABILITY: &str = "digest.model";
 /// Capability for `ClientFocus.window_active`, `IntentKind::Digest` and `ui.open`'s `view`
@@ -340,6 +342,7 @@ const CAPABILITIES: &[&str] = &[
     AGENTS_VERIFY_CAPABILITY,
     AGENT_INSIGHT_REPORT_CAPABILITY,
     AGENTS_FINDINGS_CAPABILITY,
+    AGENTS_FINDINGS_RESTORE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -787,6 +790,26 @@ impl Client {
     ) -> Result<hutan_protocol::checks::FindingDismissed, ClientError> {
         self.call(Request::AgentsFindingsDismiss(
             hutan_protocol::checks::AgentsFindingsDismiss { id },
+        ))
+        .await
+    }
+
+    /// True when the daemon advertised capability `agents.findings.restore` (protocol 0.73).
+    pub fn supports_agents_findings_restore(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENTS_FINDINGS_RESTORE_CAPABILITY)
+    }
+
+    /// `agents.findings.restore`: the user lists a dismissed finding again (user-only, like the
+    /// dismissal).
+    pub async fn agents_findings_restore(
+        &self,
+        id: String,
+    ) -> Result<hutan_protocol::checks::FindingRestored, ClientError> {
+        self.call(Request::AgentsFindingsRestore(
+            hutan_protocol::checks::AgentsFindingsRestore { id },
         ))
         .await
     }
