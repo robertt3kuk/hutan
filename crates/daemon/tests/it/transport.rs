@@ -259,9 +259,12 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// ADR 0022: until device authentication exists no non-local byte stream is accepted. The
-/// crates that speak the protocol (daemon, client, CLI, protocol) open no TCP/UDP socket and
-/// pull in no HTTP/WebSocket server; the only listener is the daemon's Unix socket.
+/// ADR 0022: until device authentication exists no non-local byte stream is accepted — no
+/// remote access. The crates that speak the protocol (daemon, client, CLI, protocol) and the
+/// telemetry crate open no TCP/UDP socket and pull in no HTTP/WebSocket server, **except** the one
+/// listener ADR 0026 adds: the daemon's loopback OTLP receiver, which lives in
+/// `crates/daemon/src/telemetry/`, binds `127.0.0.1` only and is off until the user enables an
+/// agent. Everything else, the Unix socket aside, stays closed.
 #[test]
 fn no_network_listener_exists() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -274,14 +277,11 @@ fn no_network_listener_exists() {
         "tungstenite",
         "warp::",
     ];
-    for name in ["daemon", "client", "cli", "protocol"] {
-        let mut files = Vec::new();
-        rust_files(&crates.join(name).join("src"), &mut files);
-        assert!(!files.is_empty(), "no sources found for {name}");
+    let scan = |files: &[PathBuf], needles: &[&str]| {
         for file in files {
-            let text = std::fs::read_to_string(&file).unwrap();
+            let text = std::fs::read_to_string(file).unwrap();
             for line in text.lines().filter(|l| !l.trim_start().starts_with("//")) {
-                for needle in forbidden {
+                for needle in needles {
                     assert!(
                         !line.contains(needle),
                         "{} mentions `{needle}`: {line}",
@@ -290,8 +290,23 @@ fn no_network_listener_exists() {
                 }
             }
         }
+    };
+    for name in ["daemon", "client", "cli", "protocol", "telemetry"] {
+        let mut files = Vec::new();
+        rust_files(&crates.join(name).join("src"), &mut files);
+        assert!(!files.is_empty(), "no sources found for {name}");
+        // The one exception: the daemon's OTLP receiver.
+        let receiver = crates.join("daemon").join("src").join("telemetry");
+        files.retain(|file| !(name == "daemon" && file.starts_with(&receiver)));
+        scan(&files, &forbidden);
+        // Only the daemon may depend on an HTTP server (hyper, for the receiver).
         let manifest = std::fs::read_to_string(crates.join(name).join("Cargo.toml")).unwrap();
-        for dependency in ["hyper", "axum", "tungstenite", "warp"] {
+        let dependencies: &[&str] = if name == "daemon" {
+            &["axum", "tungstenite", "warp"]
+        } else {
+            &["hyper", "axum", "tungstenite", "warp"]
+        };
+        for dependency in dependencies {
             assert!(
                 !manifest
                     .lines()
@@ -300,4 +315,31 @@ fn no_network_listener_exists() {
             );
         }
     }
+
+    // The receiver binds the loopback address and nothing wider: no wildcard address, no IPv6,
+    // no UDP, no WebSocket.
+    let mut receiver = Vec::new();
+    rust_files(
+        &crates.join("daemon").join("src").join("telemetry"),
+        &mut receiver,
+    );
+    assert!(!receiver.is_empty());
+    scan(
+        &receiver,
+        &[
+            "UNSPECIFIED",
+            "Ipv6Addr",
+            "bind((\"0.0.0.0\"",
+            "\"[::]",
+            "UdpSocket",
+            "tungstenite",
+            "axum",
+            "warp::",
+        ],
+    );
+    let bind = std::fs::read_to_string(crates.join("daemon/src/telemetry/mod.rs")).unwrap();
+    assert!(
+        bind.matches("Ipv4Addr::LOCALHOST").count() >= 2,
+        "both binds name the loopback address"
+    );
 }

@@ -214,6 +214,22 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                 ],
             },
             Section {
+                title: words::SEC_TELEMETRY,
+                help: words::SEC_TELEMETRY_HELP,
+                keys: &[
+                    "telemetry.agents.claude",
+                    "telemetry.agents.codex",
+                    "telemetry.agents.omp",
+                    "telemetry.agents.gemini",
+                    "telemetry.agents.qwen",
+                    "telemetry.agents.copilot",
+                    "telemetry.agents.goose",
+                    "telemetry.agents.opencode",
+                    "telemetry.agents.other",
+                    "telemetry.port",
+                ],
+            },
+            Section {
                 title: words::SEC_LIMITS,
                 help: "",
                 keys: &["gateway.max_context_chars", "tasks.max_parallel"],

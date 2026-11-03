@@ -1767,6 +1767,67 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "Log the states agents report",
         "Keeps, for 14 days, each change of the state an agent reports about itself (working, blocked, idle, done, error), who said it, what a blocked agent waits for and a short message with secrets removed (at most 120 characters, never output). It is the only way to tell how long a terminal agent waited for you, which Mawas's flow statistics use. Turning it off stops the log and deletes what it holds. Chats do not need it: their waits are in their own records.",
     ),
+    // ---- OpenTelemetry (TEL-1: the keys have wording; the toggles' own page is TEL-4) ----
+    field(
+        "daemon",
+        "telemetry.port",
+        "OpenTelemetry port",
+        "The port of the receiver that agents' own OpenTelemetry goes to, on this Mac only (127.0.0.1). 0 picks a port once at random and keeps it, because Codex's config file needs a port that does not change; a number from 1024 on chooses it yourself. A busy port leaves the receiver down — it is never moved. Changing it moves the receiver.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.claude",
+        "Claude Code",
+        "Accept Claude Code's own OpenTelemetry (tokens, cost, tools, turns) as its insight. The receiver opens when the first agent is on and closes with the last. Terminals opened after that get its address in HUTAN_OTLP_ENDPOINT.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.codex",
+        "Codex",
+        "Accept Codex's own OpenTelemetry (tokens, tools, turns) as its insight. Prompts, tool arguments and tool output are never read.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.omp",
+        "OMP",
+        "Accept OMP's own OpenTelemetry (GenAI spans) as its insight.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.gemini",
+        "Gemini CLI",
+        "Accept Gemini CLI's own OpenTelemetry (GenAI spans) as its insight.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.qwen",
+        "Qwen Code",
+        "Accept Qwen Code's own OpenTelemetry (GenAI spans) as its insight.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.copilot",
+        "Copilot CLI",
+        "Accept Copilot CLI's own OpenTelemetry (GenAI spans) as its insight.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.goose",
+        "Goose",
+        "Accept Goose's own OpenTelemetry (GenAI spans) as its insight.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.opencode",
+        "OpenCode",
+        "Accept OpenCode's own OpenTelemetry (GenAI spans) as its insight.",
+    ),
+    field(
+        "daemon",
+        "telemetry.agents.other",
+        "Other agents",
+        "Accept the OpenTelemetry of any other program that follows the GenAI semantic conventions, under its own service name.",
+    ),
     field(
         "daemon",
         "history.hutan",
@@ -2342,6 +2403,8 @@ pub mod words {
         SEC_HISTORY_FOLDERS = "Where the transcripts are";
         SEC_STATE_LOG = "What agents report";
         SEC_STATE_LOG_HELP = "Hutan keeps a short log of the states agents report, so waits and failures can be told over days. Nothing leaves this machine.";
+        SEC_TELEMETRY = "OpenTelemetry from agents";
+        SEC_TELEMETRY_HELP = "Off until you turn an agent on. Hutan then listens on this Mac only, gives each terminal its own token, reads only counts, tool names and times, and never stores a prompt or a tool's output.";
         SEC_HISTORY_PANEL = "The History panel";
         EXPERIMENTAL_DOCS = "Read about remote hosts";
         SEC_OMP = "OMP";
