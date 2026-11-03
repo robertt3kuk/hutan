@@ -820,6 +820,11 @@ struct Tail {
     last_catalog: Option<Instant>,
     /// The last time somebody looked at the session or asked for its insight.
     demanded: Instant,
+    /// The transcript this session follows (kept while a read has `file` out): no other live
+    /// session is given it.
+    claim: Option<PathBuf>,
+    /// The session's process runs: only a live session's claim counts.
+    live: bool,
 }
 
 impl Tail {
@@ -834,6 +839,8 @@ impl Tail {
             last_read: None,
             last_catalog: None,
             demanded: Instant::now(),
+            claim: None,
+            live: true,
         }
     }
 }
@@ -906,6 +913,14 @@ impl State {
 }
 
 impl InsightHub {
+    /// The process of `session` ended: its agent is gone, and the transcript it followed is free
+    /// for another session (what it read stays as the session's last insight).
+    pub fn session_ended(&self, session: SessionId) {
+        if let Some(tail) = lock(&self.state).tails.get_mut(&session) {
+            tail.live = false;
+        }
+    }
+
     /// Where following the transcript of `session` stands.
     pub fn transcript_status(&self, session: SessionId) -> TranscriptStatus {
         lock(&self.state)
@@ -1013,11 +1028,13 @@ impl InsightHub {
                 return false;
             }
             let wanted = state.demanded(session);
+            // Transcripts other live sessions follow are theirs: a session that ended, and one
+            // that was restored from before, hold nothing.
             let claimed: HashSet<PathBuf> = state
                 .tails
                 .iter()
-                .filter(|(id, _)| **id != session)
-                .filter_map(|(_, tail)| tail.file.as_ref().map(|file| file.path.clone()))
+                .filter(|(id, tail)| **id != session && tail.live)
+                .filter_map(|(_, tail)| tail.claim.clone())
                 .collect();
             let tail = state
                 .tails
@@ -1029,6 +1046,7 @@ impl InsightHub {
                 *tail = Tail::new(&target.harness);
                 tail.running = running;
             }
+            tail.live = target.tail.live;
             if reason == Reason::Loop && !wanted {
                 tail.running = false;
                 return false;
@@ -1104,8 +1122,25 @@ impl InsightHub {
                         held.route = route;
                         held.key = key;
                     } else {
-                        file = Some(TailFile::new(path, key, route, source));
-                        reset = true;
+                        // Taken for this session unless a live one holds it now (claimed
+                        // between the look above and this one).
+                        let held_by_other = {
+                            let mut state = lock(&self.state);
+                            let other = state.tails.iter().any(|(id, tail)| {
+                                *id != session && tail.live && tail.claim.as_ref() == Some(&path)
+                            });
+                            if !other && let Some(tail) = state.tails.get_mut(&session) {
+                                tail.claim = Some(path.clone());
+                            }
+                            other
+                        };
+                        if held_by_other {
+                            reset |= file.take().is_some();
+                            status = Some(TranscriptStatus::Searching(Why::NoCandidate));
+                        } else {
+                            file = Some(TailFile::new(path, key, route, source));
+                            reset = true;
+                        }
                     }
                 }
                 Resolution::Missing(why) => {
@@ -1152,6 +1187,7 @@ impl InsightHub {
             changed |= tail.feed.take().is_some();
         }
         tail.file = file;
+        tail.claim = tail.file.as_ref().map(|open| open.path.clone());
         let found = tail.file.as_ref().map(|open| open.route);
         match (read, found) {
             (Some(Ok(step)), Some(route)) => {

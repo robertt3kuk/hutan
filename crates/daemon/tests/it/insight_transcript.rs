@@ -955,3 +955,35 @@ async fn the_findings_coverage_says_the_detectors_ran_over_a_transcript_and_what
     assert!(turn_gap.contains("hooks and its transcript"), "{turn_gap}");
     env.stop().await;
 }
+
+/// One conversation is one session's: a second terminal that names the same transcript gets
+/// nothing while the first lives, and gets it once the first has ended (a restored session that
+/// failed to start holds nothing either).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transcript_belongs_to_one_live_session_and_an_ended_one_holds_nothing() {
+    let env = start(true, true, true).await;
+    let cwd = env.work("claim");
+    let path = env.claude_file(&cwd, CLAUDE_ID);
+    write(&path, &claude_transcript(&cwd, CLAUDE_ID));
+    let (first, second) = (env.terminal(&cwd).await, env.terminal(&cwd).await);
+    claude_hook(&env.client, first.id, 1, Some(CLAUDE_ID), Some(&path)).await;
+    claude_hook(&env.client, second.id, 1, Some(CLAUDE_ID), Some(&path)).await;
+
+    assert!(env.insight(first.id).await.totals.is_some());
+    let other = env.insight(second.id).await;
+    assert!(
+        other.totals.is_none() && other.context.is_none(),
+        "the transcript is the first session's while it lives: {other:?}"
+    );
+
+    common::stop(&env.client, first.id).await.unwrap();
+    let now = env
+        .insight_where(
+            second.id,
+            "the transcript the first session let go of",
+            |i| i.totals.is_some(),
+        )
+        .await;
+    assert_eq!(now.totals.as_ref().map(|t| t.turns), Some(2));
+    env.stop().await;
+}

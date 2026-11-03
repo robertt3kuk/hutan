@@ -1381,8 +1381,9 @@ impl ContextPanel {
                 } else {
                     ""
                 };
-                // A terminal agent's extension splits the context in two parts itself; only a
-                // chat's breakdown is a `/context` answer.
+                // A terminal agent's extension splits the context in two parts itself; a chat's
+                // breakdown and a transcript's (the record of a `/context` the user ran) are a
+                // `/context` answer.
                 let from = insight
                     .sources
                     .iter()
@@ -1390,6 +1391,10 @@ impl ContextPanel {
                     .map(|source| source.source)
                     .filter(|source| *source != hutan_core::insight::InsightSourceKind::Chat);
                 match from {
+                    Some(hutan_core::insight::InsightSourceKind::Transcript) => format!(
+                        "as of /context at {when}, read from the transcript; the context has \
+                         moved since"
+                    ),
                     Some(source) => format!(
                         "the part before any message and the messages, estimated by {}, as of \
                          {when}; the split moves with the context",

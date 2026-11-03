@@ -3824,6 +3824,8 @@ impl SessionRegistry {
             return;
         };
         self.hub.mark_ended(terminal);
+        // Its agent is gone with it: a transcript it followed is free for another session.
+        self.insight.session_ended(self.sessions[index].info.id);
         let code = status.code;
         let signal = status.signal;
         let session = &mut self.sessions[index];
