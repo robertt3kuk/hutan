@@ -1,6 +1,6 @@
 # 0026. A loopback OTLP receiver for agents' own telemetry
 
-- Status: proposed (2026-11-03; awaits the user's answer to decision 1 of `docs/spikes/2026-11-03-agent-telemetry.md` § 6)
+- Status: accepted (2026-11-03; the user took the spike's § 6 decisions 1–4 as recommended: a receiver, off by default and enabled per agent; transcripts stay primary for Claude Code and Codex with OTLP as the opt-in live upgrade; automatic in Hutan's terminals for enabled agents and `--telemetry` for agents started elsewhere; a random persistent port in `daemon.toml`. Decision 5, an OSC 7501 `insight=` extension, is deferred)
 - Date: 2026-11-03
 - Milestone: M13 (agent and subagent monitor; agent insight) — slices TEL-1…TEL-4 of the spike
 - Relates to: ADR 0001 (the daemon owns state), ADR 0003 (dependency direction), ADR 0008 (no secrets in logs, events, SQLite), ADR 0016 (agent control surface), ADR 0022 (remote access: SSH is the authentication, **no listener**), `docs/integrations.md` § Insight, `docs/protocol.md` § Agent insight
