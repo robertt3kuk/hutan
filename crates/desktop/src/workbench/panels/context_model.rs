@@ -594,17 +594,32 @@ pub fn file_lines(insight: &AgentInsight) -> Vec<FileLine> {
         .collect()
 }
 
-/// `8 touched`, `8 touched · +120 −34`.
+/// How many of the files have no line counts: the agent named them without their text (a file a
+/// terminal agent's tool wrote, a write whose old text OMP did not send). The turn footer, which
+/// counts from the checkpoint, counts those lines too.
+pub fn files_without_counts(insight: &AgentInsight) -> usize {
+    insight
+        .files
+        .as_ref()
+        .map_or(0, |files| files.items.iter().filter(|f| f.added.is_none()).count())
+}
+
 /// Files the turns counted as changed, whether or not the agent named them.
 pub fn files_changed_in_turns(insight: &AgentInsight) -> u64 {
     insight.turns.iter().map(|turn| u64::from(turn.files)).sum()
 }
 
+/// `8 touched`, `8 touched · +120 −34`; when some files have no counts, the lines are said to be
+/// those of the others: `8 touched · +120 −34 in 5 of 8`.
 pub fn files_summary(insight: &AgentInsight) -> Option<String> {
     let files = insight.files.as_ref()?;
     let mut text = format!("{} touched", files.count);
     if files.added > 0 || files.removed > 0 {
         text.push_str(&format!(" · +{} −{}", files.added, files.removed));
+        let counted = files.items.iter().filter(|f| f.added.is_some()).count() as u64;
+        if counted < files.count {
+            text.push_str(&format!(" in {counted} of {}", files.count));
+        }
     }
     Some(text)
 }

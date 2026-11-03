@@ -298,7 +298,13 @@ fn time_tools_files_and_sources_read_as_written() {
         ],
         truncated: false,
     });
-    assert_eq!(files_summary(&i).as_deref(), Some("2 touched · +120 −34"));
+    // One of the two files has no text: the lines are those of the other, and the summary says so
+    // (the turn footer counts every changed file from the checkpoint).
+    assert_eq!(
+        files_summary(&i).as_deref(),
+        Some("2 touched · +120 −34 in 1 of 2")
+    );
+    assert_eq!(files_without_counts(&i), 1);
     let files = file_lines(&i);
     assert_eq!(files[0].kind, "edited");
     assert_eq!(files[0].stat.as_deref(), Some("+100 −30"));
