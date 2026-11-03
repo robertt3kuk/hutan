@@ -81,6 +81,37 @@ pub(crate) fn contrast(a: Hsla, b: Hsla) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
+/// `ink` when it reads at `min`:1 on every one of `grounds`, else `ink` stepped in lightness away
+/// from the grounds (darker on light ones, lighter on dark ones) until it does: a state colour
+/// (`warning`, `danger`) used as the colour of text keeps its hue and meets WCAG AA wherever the
+/// text sits.
+pub(crate) fn readable_on(ink: Hsla, grounds: &[Hsla], min: f32) -> Hsla {
+    let worst = |ink: Hsla| {
+        grounds
+            .iter()
+            .map(|ground| contrast(ink, *ground))
+            .fold(f32::INFINITY, f32::min)
+    };
+    if worst(ink) >= min {
+        return ink;
+    }
+    let light_grounds = grounds.iter().map(|g| luminance(*g)).sum::<f32>()
+        / grounds.len().max(1) as f32
+        > 0.4;
+    let mut stepped = ink;
+    for _ in 0..50 {
+        stepped.l = if light_grounds {
+            (stepped.l - 0.02).max(0.0)
+        } else {
+            (stepped.l + 0.02).min(1.0)
+        };
+        if worst(stepped) >= min {
+            break;
+        }
+    }
+    stepped
+}
+
 /// The ink of a mark on a `fill`: the warm near-black of the built-in packs or white, whichever
 /// reads better, so a user pack's `state.*` colours keep a legible mark.
 pub fn ink_on(fill: Hsla) -> Hsla {

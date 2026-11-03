@@ -35,6 +35,7 @@ pub use button::{
 };
 #[cfg(test)]
 pub(crate) use lane::contrast;
+pub(crate) use lane::readable_on;
 pub use lane::{BadgeState, row_lane, state_badge};
 pub use ring::ring;
 pub use splitter::{HANDLE as SPLITTER_HANDLE, SplitAxis, Splitter};

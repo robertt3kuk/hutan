@@ -1585,6 +1585,7 @@ impl ContextPanel {
         });
         let truncated = insight.files.as_ref().is_some_and(|files| files.truncated);
         let unnamed = total == 0;
+        let uncounted = model::files_without_counts(insight);
         let changed = model::files_changed_in_turns(insight);
         block(
             "Files touched",
@@ -1612,6 +1613,13 @@ impl ContextPanel {
                 .when(truncated, |s| {
                     s.child(muted_line(
                         "More files were touched than are listed.",
+                        &theme,
+                        &tokens,
+                    ))
+                })
+                .when(uncounted > 0, |s| {
+                    s.child(muted_line(
+                        "Lines are counted for the files the agent sent text for; a turn's footer counts every file it changed.",
                         &theme,
                         &tokens,
                     ))
@@ -2095,12 +2103,21 @@ impl ContextPanel {
         let scope = self.findings_scope();
         let connection = self.env.sessions.read(cx).connection().clone();
         let open = self.findings.open_findings(scope);
+        let titles = {
+            let sessions = self.env.sessions.read(cx);
+            findings_ui::titles(
+                self.findings.current(scope),
+                &|id| sessions.session(id).map(|s| s.title.clone()),
+                [session],
+            )
+        };
         let surface = Surface {
             theme: &theme,
             tokens: &tokens,
             regions: &self.env.regions,
             names: &CONTEXT,
             connection: &connection,
+            titles: &titles,
             show_session: false,
             now_ms: hutan_client::time::now_ms(),
         };
@@ -2158,7 +2175,7 @@ impl ContextPanel {
                         .tooltip("Run the project's tests in this session's folder; the command is shown first")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.findings
-                                .plan_verify(findings_state, cx, &verify, session);
+                                .plan_verify(findings_state, cx, &verify, session, None);
                         }))
                         .child(probe(
                             &self.env.regions,
@@ -2166,7 +2183,14 @@ impl ContextPanel {
                         )),
                 ),
             );
-            if let Some(step) = self.findings.verify.get(&session) {
+            // The result of the button's own run (and of a row's whose finding has gone) is
+            // here; a row's own run is on the row.
+            if let Some((_, step)) = self
+                .findings
+                .unplaced(&open)
+                .into_iter()
+                .find(|(id, _)| *id == session)
+            {
                 section = section.child(findings_ui::verify_step(
                     session,
                     step,

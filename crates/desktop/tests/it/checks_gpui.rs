@@ -450,3 +450,258 @@ fn check_with_mawas_sets_the_focus_and_fills_the_composer_with_the_findings_and_
         })
     });
 }
+
+/// An agent of the pair that changed `path`, as its integration reports it.
+fn report_changed_file(env: &AssistantEnv, session: SessionId, seq: u64, path: &str) {
+    use hutan_core::agent::FileChangeKind;
+    use hutan_core::insight::{InsightReport, InsightSourceKind, ReportedFile};
+    let _: AgentApplied = env.daemon.call(Request::AgentReport(AgentReportRequest {
+        session_id: session,
+        source: "test-hooks".into(),
+        agent: "claude".into(),
+        state: None,
+        message: None,
+        seq,
+        agent_session_id: None,
+        resume_argv: None,
+        pid: None,
+        node: None,
+        insight: Some(InsightReport {
+            source: InsightSourceKind::Hooks,
+            files: vec![ReportedFile {
+                path: path.into(),
+                kind: FileChangeKind::Update,
+            }],
+            ..InsightReport::default()
+        }),
+    }));
+}
+
+fn bounds_of(
+    view: &Entity<Workbench>,
+    cx: &VisualTestContext,
+    name: &'static str,
+    index: usize,
+) -> Option<gpui::Bounds<gpui::Pixels>> {
+    view.read_with(cx, |wb, _| wb.region_bounds(Region::Finding(name, index)))
+}
+
+/// The rows of the Checks tab that are about one of `members`.
+fn rows_of(
+    panel: &Entity<AssistantPanel>,
+    cx: &VisualTestContext,
+    members: &[SessionInfo],
+) -> Vec<usize> {
+    panel.read_with(cx, |p, cx| {
+        p.checks_rows(cx)
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| session_of(f).is_some_and(|id| members.iter().any(|m| m.id == id)))
+            .map(|(at, _)| at)
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn a_verify_shows_its_command_and_result_on_the_row_that_started_it_and_on_no_other_row_of_the_session(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let dir = project(&env, "shared", 0);
+    let pair = shared_pair(&env, &dir, AgentState::Working);
+    // Both changed one file in one checkout: two findings about the same agent.
+    for agent in &pair {
+        report_changed_file(&env, agent.id, 2, "shared.txt");
+    }
+    let (view, cx, panel) = open_wide(cx, &env);
+    click_tab(&view, cx, "today-tab-checks");
+    wait_until(cx, "two findings about the pair", |cx| {
+        rows_of(&panel, cx, &pair).len() >= 2
+    });
+    let rows = rows_of(&panel, cx, &pair);
+    let (a, b) = (rows[0], rows[1]);
+    let findings = panel.read_with(cx, |p, cx| p.checks_rows(cx));
+    let session = session_of(&findings[a]).unwrap();
+    assert_eq!(
+        session_of(&findings[b]),
+        Some(session),
+        "the two rows act on one session: {findings:?}"
+    );
+    for at in [a, b] {
+        wait_until(cx, "a Verify button", |cx| {
+            finding_painted(&view, cx, "checks-verify", at)
+        });
+    }
+
+    // Verify on the second row: its command is shown there, and nowhere else.
+    click_finding(&view, cx, "checks-verify", b);
+    wait_until(cx, "the command on its row", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.checks_verify_step(session)
+                .is_some_and(|s| s.starts_with("ready: make test"))
+        }) && finding_painted(&view, cx, "checks-verify-step", b)
+    });
+    draw(cx);
+    assert!(
+        !finding_painted(&view, cx, "checks-verify-step", a),
+        "the other row of the session shows nothing"
+    );
+    let run = if finding_painted(&view, cx, "checks-verify-run", b) {
+        "checks-verify-run"
+    } else {
+        "checks-verify-anyway"
+    };
+    click_finding(&view, cx, run, b);
+    wait_until(cx, "the result on its row", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.checks_verify_step(session)
+                .is_some_and(|s| s.starts_with("done:"))
+        }) && finding_painted(&view, cx, "checks-verify-step", b)
+    });
+    draw(cx);
+    assert!(!finding_painted(&view, cx, "checks-verify-step", a));
+
+    // Verify on the first row takes the state with it.
+    click_finding(&view, cx, "checks-verify", a);
+    wait_until(cx, "the state on the first row", |cx| {
+        finding_painted(&view, cx, "checks-verify-step", a)
+    });
+    draw(cx);
+    assert!(
+        !finding_painted(&view, cx, "checks-verify-step", b),
+        "one state, on the row that started it last"
+    );
+    click_finding(&view, cx, "checks-verify-cancel", a);
+    wait_until(cx, "the state closed", |cx| {
+        panel.read_with(cx, |p, _| p.checks_verify_step(session).is_none())
+    });
+}
+
+#[gpui::test]
+fn a_finding_about_two_agents_names_both_by_title_and_its_evidence_shows_no_session_id(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let dir = project(&env, "shared", 0);
+    let pair = shared_pair(&env, &dir, AgentState::Working);
+    let (view, cx, panel) = open_wide(cx, &env);
+    click_tab(&view, cx, "today-tab-checks");
+    wait_until(cx, "the finding", |cx| row_of(&panel, cx, &pair).is_some());
+    let at = row_of(&panel, cx, &pair).unwrap();
+    let (meta, evidence) = panel
+        .read_with(cx, |p, cx| p.checks_row_lines(at, cx))
+        .unwrap();
+    for agent in &pair {
+        assert!(meta.contains(&agent.title), "{meta}");
+        assert!(
+            evidence.iter().any(|line| line.contains(&agent.title)),
+            "{evidence:?}"
+        );
+        for line in evidence.iter().chain([&meta]) {
+            assert!(!line.contains(&agent.id.to_string()), "{line}");
+        }
+    }
+    assert_eq!(evidence.len(), 2, "one line for each agent: {evidence:?}");
+
+    // Opening the row shows the evidence: the row grows.
+    wait_until(cx, "the row", |cx| {
+        bounds_of(&view, cx, "checks-row", at).is_some()
+            && bounds_of(&view, cx, "checks-head", at).is_some()
+    });
+    let closed = bounds_of(&view, cx, "checks-row", at).unwrap().size.height;
+    click_finding(&view, cx, "checks-head", at);
+    wait_until(cx, "the evidence", |cx| {
+        bounds_of(&view, cx, "checks-row", at).is_some_and(|b| b.size.height > closed)
+    });
+}
+
+#[gpui::test]
+fn the_severity_word_stays_at_the_top_left_of_a_title_that_wraps(cx: &mut TestAppContext) {
+    let env = started();
+    let dir = project(&env, "shared", 0);
+    let pair = shared_pair(&env, &dir, AgentState::Working);
+    let (view, cx, panel) = open_wide(cx, &env);
+    // The narrowest rail the settings allow, so that the title wraps.
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user("assistant.rail_width_rem", toml::Value::Float(17.5))
+        .unwrap();
+    click_tab(&view, cx, "today-tab-checks");
+    wait_until(cx, "the finding", |cx| row_of(&panel, cx, &pair).is_some());
+    let at = row_of(&panel, cx, &pair).unwrap();
+    wait_until(cx, "the head and its severity word", |cx| {
+        bounds_of(&view, cx, "checks-head", at).is_some()
+            && bounds_of(&view, cx, "checks-severity", at).is_some()
+    });
+    let head = bounds_of(&view, cx, "checks-head", at).unwrap();
+    let word = bounds_of(&view, cx, "checks-severity", at).unwrap();
+    assert!(
+        head.size.height > word.size.height * 1.5,
+        "the title wraps in the narrow rail: head {head:?}, word {word:?}"
+    );
+    assert_eq!(
+        word.origin.y, head.origin.y,
+        "the word is on the first line, never on the last"
+    );
+    assert_eq!(word.origin.x, head.origin.x, "and at the start of it");
+}
+
+#[gpui::test]
+fn show_dismissed_lists_what_was_dismissed_and_restore_lists_it_again(cx: &mut TestAppContext) {
+    let env = started();
+    let dir = project(&env, "shared", 0);
+    let pair = shared_pair(&env, &dir, AgentState::Working);
+    let (view, cx, panel) = open_wide(cx, &env);
+    click_tab(&view, cx, "today-tab-checks");
+    wait_until(cx, "the finding", |cx| row_of(&panel, cx, &pair).is_some());
+    let at = row_of(&panel, cx, &pair).unwrap();
+    wait_until(cx, "its Dismiss button", |cx| {
+        finding_painted(&view, cx, "checks-dismiss", at)
+    });
+    click_finding(&view, cx, "checks-dismiss", at);
+    wait_until(cx, "the finding gone", |cx| {
+        row_of(&panel, cx, &pair).is_none()
+    });
+    assert!(!panel.read_with(cx, |p, _| p.checks_show_dismissed()));
+
+    // The tab says one is hidden and offers to show it.
+    wait_until(cx, "Show dismissed", |cx| {
+        painted(&view, cx, "checks-dismissed-toggle")
+    });
+    click_tab(&view, cx, "checks-dismissed-toggle");
+    wait_until(cx, "the dismissed finding with Restore", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.checks_show_dismissed()
+                && p.checks_dismissed_rows(cx)
+                    .iter()
+                    .any(|f| f.detector == "shared_checkout" && f.dismissed)
+        }) && finding_painted(&view, cx, "checks-restore", 7000)
+    });
+    // Listing it changed nothing at the daemon.
+    assert!(
+        daemon_findings(&env, false)
+            .findings
+            .iter()
+            .all(|f| f.detector != "shared_checkout")
+    );
+
+    // Restore: the row is back among the findings, the daemon lists it again.
+    click_finding(&view, cx, "checks-restore", 7000);
+    wait_until(cx, "the finding listed again", |cx| {
+        row_of(&panel, cx, &pair).is_some()
+            && panel.read_with(cx, |p, cx| p.checks_dismissed_rows(cx).is_empty())
+    });
+    assert!(
+        daemon_findings(&env, false)
+            .findings
+            .iter()
+            .any(|f| f.detector == "shared_checkout")
+    );
+    // Nothing is dismissed now; Hide dismissed turns the list off.
+    wait_until(cx, "Hide dismissed", |cx| {
+        painted(&view, cx, "checks-dismissed-toggle")
+    });
+    click_tab(&view, cx, "checks-dismissed-toggle");
+    wait_until(cx, "the list off", |cx| {
+        !panel.read_with(cx, |p, _| p.checks_show_dismissed())
+    });
+}

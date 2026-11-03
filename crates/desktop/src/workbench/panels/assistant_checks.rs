@@ -23,6 +23,7 @@ use super::findings_ui::{self, FindingsState, RAIL, Scope, Surface};
 use crate::settings::{AssistantSettings, RailTab};
 use crate::workbench::chat::Look;
 use crate::workbench::render::probe;
+use crate::workbench::ui::Button;
 use crate::workbench::view::Region;
 
 /// The findings a prepared ask lists.
@@ -69,6 +70,37 @@ impl AssistantPanel {
             .into_iter()
             .flat_map(|(_, group)| group.into_iter().cloned())
             .collect()
+    }
+
+    /// The findings the user dismissed that the tab lists (only while *Show dismissed* is on),
+    /// top to bottom (row `n` is the region `Finding(_, 7000 + n)`).
+    pub fn checks_dismissed_rows(&self, cx: &App) -> Vec<Finding> {
+        self.checks
+            .dismissed_findings(self.checks_scope(cx))
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Whether *Show dismissed* is on.
+    pub fn checks_show_dismissed(&self) -> bool {
+        self.checks.show_dismissed
+    }
+
+    /// What row `index` says under its title (the agents it is about, how often, how long ago)
+    /// and the lines its evidence shows when it is opened — the words the row draws.
+    pub fn checks_row_lines(&self, index: usize, cx: &App) -> Option<(String, Vec<String>)> {
+        let finding = self.checks_rows(cx).into_iter().nth(index)?;
+        let sessions = self.env.sessions.read(cx);
+        let titles = findings_ui::titles(
+            self.checks_findings(cx),
+            &|id| sessions.session(id).map(|s| s.title.clone()),
+            self.checks.verify.keys().copied(),
+        );
+        Some((
+            findings_ui::meta_text(&finding, &titles, true, hutan_client::time::now_ms()),
+            findings_ui::evidence_lines(&finding, &titles),
+        ))
     }
 
     /// Where the *Verify* of `session` stands, in words (tests wait on it): `planning`,
@@ -137,12 +169,21 @@ impl AssistantPanel {
                     .into_any_element(),
             );
             let connection = self.env.sessions.read(cx).connection().clone();
+            let titles = {
+                let sessions = self.env.sessions.read(cx);
+                findings_ui::titles(
+                    Some(answer),
+                    &|id| sessions.session(id).map(|s| s.title.clone()),
+                    self.checks.verify.keys().copied(),
+                )
+            };
             let surface = Surface {
                 theme: &theme,
                 tokens: &tokens,
                 regions: &self.env.regions,
                 names: &RAIL,
                 connection: &connection,
+                titles: &titles,
                 show_session: true,
                 now_ms: hutan_client::time::now_ms(),
             };
@@ -165,19 +206,12 @@ impl AssistantPanel {
                 ));
                 base += count;
             }
-            let titles: std::collections::HashMap<SessionId, String> =
-                self.checks
-                    .verify
-                    .keys()
-                    .map(|id| {
-                        let title = self.env.sessions.read(cx).session(*id).map_or_else(
-                            || "a session that is gone".to_owned(),
-                            |s| s.title.clone(),
-                        );
-                        (*id, title)
-                    })
-                    .collect();
-            let title_of = |id: SessionId| titles.get(&id).cloned().unwrap_or_default();
+            let title_of = |id: SessionId| {
+                titles
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| "a session that is gone".to_owned())
+            };
             sections.extend(findings_ui::orphan_steps(
                 &open,
                 &self.checks,
@@ -186,7 +220,60 @@ impl AssistantPanel {
                 &title_of,
                 cx,
             ));
-            if answer.dismissed_hidden > 0 {
+            let dismissed = self.checks.dismissed_findings(scope);
+            let can_restore = connection.supports_agents_findings_restore();
+            if can_restore && (answer.dismissed_hidden > 0 || self.checks.show_dismissed) {
+                let shown = self.checks.show_dismissed;
+                let count = answer.dismissed_hidden;
+                sections.push(
+                    div()
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .gap(px(tokens.spacing))
+                        .child(
+                            Button::new(
+                                "checks-dismissed-toggle",
+                                if shown {
+                                    "Hide dismissed".to_owned()
+                                } else {
+                                    format!("Show dismissed ({count})")
+                                },
+                                &theme,
+                                &tokens,
+                            )
+                            .ghost()
+                            .compact()
+                            .tooltip("The findings you dismissed, each with Restore")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.checks.set_show_dismissed(cx, !shown);
+                            }))
+                            .child(probe(
+                                &self.env.regions,
+                                Region::Assistant("checks-dismissed-toggle"),
+                            )),
+                        )
+                        .into_any_element(),
+                );
+                if shown {
+                    if dismissed.is_empty() {
+                        sections.push(muted("Nothing is dismissed here.".to_owned()));
+                    } else {
+                        sections.push(
+                            div()
+                                .text_size(px(tokens.font_size))
+                                .child(SharedString::from(format!(
+                                    "Dismissed · {}",
+                                    dismissed.len()
+                                )))
+                                .into_any_element(),
+                        );
+                        sections.extend(findings_ui::dismissed_rows(
+                            &dismissed, state_of, &surface, cx,
+                        ));
+                    }
+                }
+            } else if answer.dismissed_hidden > 0 {
                 sections.push(muted(format!(
                     "{} dismissed finding{} hidden.",
                     answer.dismissed_hidden,

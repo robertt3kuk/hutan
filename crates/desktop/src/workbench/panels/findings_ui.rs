@@ -34,7 +34,7 @@ use crate::theme::{Theme, Tokens};
 use crate::workbench::actions::{AskMawas, OpenSession, ReviewAt, ReviewTurn};
 use crate::workbench::regions::Regions;
 use crate::workbench::render::probe;
-use crate::workbench::ui::Button;
+use crate::workbench::ui::{Button, readable_on};
 use crate::workbench::view::Region;
 
 /// The shortest pause between two reads caused by the agents changing.
@@ -81,6 +81,11 @@ pub(super) struct FindingsState {
     /// Findings whose evidence is open.
     open: HashSet<String>,
     pub(super) verify: HashMap<SessionId, VerifyStep>,
+    /// The row each *Verify* started from, by finding id (`None`: the Context panel's own
+    /// button). Its plan and its result show there and nowhere else.
+    verify_from: HashMap<SessionId, Option<String>>,
+    /// The Checks tab lists what the user dismissed too, each with *Restore*.
+    pub(super) show_dismissed: bool,
 }
 
 impl FindingsState {
@@ -95,6 +100,14 @@ impl FindingsState {
     pub(super) fn open_findings(&self, scope: Scope) -> Vec<&Finding> {
         self.current(scope)
             .map(|answer| answer.findings.iter().filter(|f| !f.dismissed).collect())
+            .unwrap_or_default()
+    }
+
+    /// The findings the user dismissed, listed when [`show_dismissed`](Self::show_dismissed) is
+    /// on, of the answer for `scope`.
+    pub(super) fn dismissed_findings(&self, scope: Scope) -> Vec<&Finding> {
+        self.current(scope)
+            .map(|answer| answer.findings.iter().filter(|f| f.dismissed).collect())
             .unwrap_or_default()
     }
 
@@ -142,12 +155,14 @@ impl FindingsState {
         self.loading = true;
         self.stale = false;
         self.last_load = Some(Instant::now());
+        let include_dismissed = self.show_dismissed;
         let connection = connection.clone();
         cx.spawn(async move |this, cx| {
             let answer = connection
                 .agents_findings(AgentsFindingsRequest {
                     workspace_id: scope.workspace,
                     session_id: scope.session,
+                    include_dismissed,
                     ..Default::default()
                 })
                 .await;
@@ -183,7 +198,14 @@ impl FindingsState {
         id: String,
     ) {
         if let Some(answer) = self.answer.as_mut() {
-            answer.findings.retain(|finding| finding.id != id);
+            if self.show_dismissed {
+                if let Some(finding) = answer.findings.iter_mut().find(|f| f.id == id) {
+                    finding.dismissed = true;
+                }
+            } else {
+                answer.findings.retain(|finding| finding.id != id);
+                answer.dismissed_hidden += 1;
+            }
         }
         self.open.remove(&id);
         cx.notify();
@@ -203,6 +225,47 @@ impl FindingsState {
         .detach();
     }
 
+    /// *Restore*: the finding is listed again at once; the daemon forgets the dismissal and the
+    /// list is read again.
+    pub(super) fn restore<T: 'static>(
+        &mut self,
+        access: fn(&mut T) -> &mut FindingsState,
+        cx: &mut Context<T>,
+        connection: &Connection,
+        id: String,
+    ) {
+        if let Some(answer) = self.answer.as_mut()
+            && let Some(finding) = answer.findings.iter_mut().find(|f| f.id == id)
+        {
+            finding.dismissed = false;
+        }
+        cx.notify();
+        let connection = connection.clone();
+        cx.spawn(async move |this, cx| {
+            let result = connection.agents_findings_restore(id).await;
+            this.update(cx, |this, cx| {
+                let state = access(this);
+                state.stale = true;
+                if let Err(error) = result {
+                    state.error = Some(format!("Could not restore the finding: {error}"));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// *Show dismissed* / *Hide dismissed*: the next read asks for the dismissed findings too
+    /// (or no longer does).
+    pub(super) fn set_show_dismissed<T: 'static>(&mut self, cx: &mut Context<T>, shown: bool) {
+        if self.show_dismissed != shown {
+            self.show_dismissed = shown;
+            self.stale = true;
+            cx.notify();
+        }
+    }
+
     fn toggle(&mut self, id: &str) {
         if !self.open.remove(id) {
             self.open.insert(id.to_owned());
@@ -216,6 +279,7 @@ impl FindingsState {
         cx: &mut Context<T>,
         connection: &Connection,
         session: SessionId,
+        from: Option<String>,
     ) {
         if matches!(
             self.verify.get(&session),
@@ -224,6 +288,7 @@ impl FindingsState {
             return;
         }
         self.verify.insert(session, VerifyStep::Planning);
+        self.verify_from.insert(session, from);
         cx.notify();
         let connection = connection.clone();
         cx.spawn(async move |this, cx| {
@@ -288,6 +353,7 @@ impl FindingsState {
     /// Takes a plan (or a result) off the row.
     pub(super) fn forget_verify(&mut self, session: SessionId) {
         self.verify.remove(&session);
+        self.verify_from.remove(&session);
     }
 
     /// Where the *Verify* of `session` stands, in words (tests wait on it): `planning`,
@@ -317,15 +383,41 @@ impl FindingsState {
         })
     }
 
+    /// The step of `session`'s *Verify* when it started from the row of finding `id`.
+    pub(super) fn step_on_row(&self, session: SessionId, id: &str) -> Option<&VerifyStep> {
+        match self.verify_from.get(&session) {
+            Some(Some(from)) if from == id => self.verify.get(&session),
+            _ => None,
+        }
+    }
+
+    /// The steps no row of `shown` carries: the one the Context panel's own button started, and
+    /// those whose row is gone (the finding they started from went away, as findings do).
+    pub(super) fn unplaced(&self, shown: &[&Finding]) -> Vec<(SessionId, &VerifyStep)> {
+        self.verify
+            .iter()
+            .filter(|(session, _)| match self.verify_from.get(session) {
+                Some(Some(from)) => !shown.iter().any(|f| &f.id == from),
+                _ => true,
+            })
+            .map(|(session, step)| (*session, step))
+            .collect()
+    }
+
     /// A number that changes when what a surface draws of `scope` changes: the rows, the open
     /// evidence and the state of every *Verify*.
     pub(super) fn signature(&self, scope: Scope) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for finding in self.open_findings(scope) {
-            finding.id.hash(&mut hasher);
-            self.open.contains(&finding.id).hash(&mut hasher);
+        if let Some(answer) = self.current(scope) {
+            for finding in &answer.findings {
+                finding.id.hash(&mut hasher);
+                finding.dismissed.hash(&mut hasher);
+                self.open.contains(&finding.id).hash(&mut hasher);
+            }
+            answer.dismissed_hidden.hash(&mut hasher);
         }
+        self.show_dismissed.hash(&mut hasher);
         self.answer.is_some().hash(&mut hasher);
         self.unsupported.hash(&mut hasher);
         let mut runs = 0u64;
@@ -333,6 +425,7 @@ impl FindingsState {
             let mut each = std::collections::hash_map::DefaultHasher::new();
             session.to_string().hash(&mut each);
             self.step_text(*session).hash(&mut each);
+            self.verify_from.get(session).hash(&mut each);
             matches!(step, VerifyStep::Done(_)).hash(&mut each);
             runs = runs.wrapping_add(each.finish());
         }
@@ -354,6 +447,9 @@ pub(super) struct Names {
     pub dismiss: &'static str,
     pub ask: &'static str,
     pub step: &'static str,
+    pub head: &'static str,
+    pub severity: &'static str,
+    pub restore: &'static str,
 }
 
 /// The Checks tab of the rail.
@@ -368,6 +464,9 @@ pub(super) const RAIL: Names = Names {
     dismiss: "checks-dismiss",
     ask: "checks-ask",
     step: "checks-verify-step",
+    head: "checks-head",
+    severity: "checks-severity",
+    restore: "checks-restore",
 };
 
 /// The Findings section of the Context panel.
@@ -382,6 +481,9 @@ pub(super) const CONTEXT: Names = Names {
     dismiss: "findings-dismiss",
     ask: "findings-ask",
     step: "findings-verify-step",
+    head: "findings-head",
+    severity: "findings-severity",
+    restore: "findings-restore",
 };
 
 /// What a row is drawn with.
@@ -391,6 +493,8 @@ pub(super) struct Surface<'a> {
     pub regions: &'a Regions,
     pub names: &'static Names,
     pub connection: &'a Connection,
+    /// The titles of the sessions the findings are about ([`titles`]).
+    pub titles: &'a HashMap<SessionId, String>,
     /// The row names its session (the rail lists many; the Context panel one).
     pub show_session: bool,
     pub now_ms: u64,
@@ -398,11 +502,23 @@ pub(super) struct Surface<'a> {
 
 /// The words of a severity and its colour.
 fn severity_word(severity: FindingSeverity, theme: &Theme) -> (&'static str, gpui::Hsla) {
-    match severity {
+    // The word is text on whatever the surface it sits on: the colour of the state, stepped
+    // until it reads at AA (4.5:1) on every ground of the chrome.
+    let grounds = [
+        theme.bg,
+        theme.sidebar,
+        theme.surface,
+        theme.surface_hover,
+        theme.sidebar_accent,
+        theme.right_sidebar,
+        theme.right_sidebar_accent,
+    ];
+    let (word, color) = match severity {
         FindingSeverity::Alert => ("Alert", theme.danger),
         FindingSeverity::Warn => ("Warn", theme.warning),
         FindingSeverity::Info => ("Info", theme.muted),
-    }
+    };
+    (word, readable_on(color, &grounds, 4.5))
 }
 
 fn evidence_word(kind: EvidenceKind) -> &'static str {
@@ -417,7 +533,7 @@ fn evidence_word(kind: EvidenceKind) -> &'static str {
 }
 
 /// The question *Ask Mawas* puts in the composer about one finding.
-pub(super) fn ask_text(finding: &Finding, session_title: Option<&str>) -> String {
+pub(super) fn ask_text(finding: &Finding, session_titles: &[String]) -> String {
     let mut text = format!(
         "Check this finding of Hutan's checks and tell me whether it is real and what to do about it: \"{}\" ({} detector, {}, {}",
         finding.title,
@@ -425,8 +541,17 @@ pub(super) fn ask_text(finding: &Finding, session_title: Option<&str>) -> String
         severity_word_plain(finding.severity),
         finding.confidence.as_str()
     );
-    if let Some(title) = session_title {
-        text.push_str(&format!(", in the session \"{title}\""));
+    match session_titles {
+        [] => {}
+        [title] => text.push_str(&format!(", in the session \"{title}\"")),
+        titles => text.push_str(&format!(
+            ", in the sessions {}",
+            titles
+                .iter()
+                .map(|title| format!("\"{title}\""))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        )),
     }
     text.push(')');
     if let Some(session) = finding.scope.session_id {
@@ -495,15 +620,7 @@ fn row<T: 'static>(
 ) -> AnyElement {
     let (theme, tokens, names) = (surface.theme, surface.tokens, surface.names);
     let session = target_session(finding);
-    let title_of_session = session.and_then(|id| {
-        state.answer.as_ref().and_then(|answer| {
-            answer
-                .coverage
-                .iter()
-                .find(|c| c.session_id == id)
-                .map(|c| c.title.clone())
-        })
-    });
+    let involved_titles = involved_titles(finding, surface.titles);
     let (word, color) = severity_word(finding.severity, theme);
     let open = state.open.contains(&finding.id);
     let confidence = match finding.confidence {
@@ -511,36 +628,26 @@ fn row<T: 'static>(
         FindingConfidence::Heuristic => "heuristic",
     };
     let id = finding.id.clone();
-    let mut head = vec![
+    // The severity is the first thing of the row, at the top-left whatever the title's length:
+    // a title that wraps goes on under the title, never under the word.
+    let head = vec![
         div()
             .flex_none()
             .text_color(color)
+            .relative()
             .child(SharedString::from(word))
+            .child(probe(surface.regions, Region::Finding(names.severity, index)))
             .into_any_element(),
         div()
             .flex_1()
             .min_w_0()
             .child(SharedString::from(finding.title.clone()))
             .into_any_element(),
-    ];
-    head.push(
         dot(confidence, theme, tokens)
             .flex_none()
             .into_any_element(),
-    );
-    let mut meta = Vec::new();
-    if surface.show_session
-        && let Some(title) = &title_of_session
-    {
-        meta.push(title.clone());
-    }
-    if finding.count > 1 {
-        meta.push(format!("{} times", finding.count));
-    }
-    meta.push(hutan_client::time::relative_text(
-        surface.now_ms,
-        finding.last_at_ms,
-    ));
+    ];
+    let meta = meta_text(finding, surface.titles, surface.show_session, surface.now_ms);
 
     let mut body = div()
         .id((names.row, index))
@@ -551,8 +658,9 @@ fn row<T: 'static>(
         .child(
             div()
                 .id((names.step, index))
+                .relative()
                 .flex()
-                .items_baseline()
+                .items_start()
                 .gap(px(tokens.spacing))
                 .text_size(px(tokens.font_size))
                 .cursor_pointer()
@@ -563,34 +671,14 @@ fn row<T: 'static>(
                         cx.notify();
                     }
                 }))
-                .children(head),
+                .children(head)
+                .child(probe(surface.regions, Region::Finding(names.head, index))),
         )
-        .child(dot(meta.join(" · "), theme, tokens));
+        .child(dot(meta, theme, tokens));
 
     if open {
-        for evidence in &finding.evidence {
-            let reference = evidence
-                .reference
-                .as_deref()
-                .map(|r| format!(" ({r})"))
-                .unwrap_or_default();
-            body = body.child(
-                dot(
-                    format!(
-                        "{}{}: {}",
-                        evidence_word(evidence.kind),
-                        reference,
-                        if evidence.redacted {
-                            "(withheld)".to_owned()
-                        } else {
-                            evidence.excerpt.clone()
-                        }
-                    ),
-                    theme,
-                    tokens,
-                )
-                .pl(px(tokens.spacing * 2.0)),
-            );
+        for line in evidence_lines(finding, surface.titles) {
+            body = body.child(dot(line, theme, tokens).pl(px(tokens.spacing * 2.0)));
         }
         if finding.evidence.is_empty() {
             body = body.child(
@@ -653,6 +741,7 @@ fn row<T: 'static>(
         && surface.connection.supports_agents_verify()
     {
         let connection = surface.connection.clone();
+        let from = id.clone();
         actions = actions.child(
             Button::new((names.verify, index), "Verify", theme, tokens)
                 .ghost()
@@ -661,7 +750,7 @@ fn row<T: 'static>(
                     "Run the project's tests in the session's folder; the command is shown first",
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    access(this).plan_verify(access, cx, &connection, session);
+                    access(this).plan_verify(access, cx, &connection, session, Some(from.clone()));
                 }))
                 .child(probe(surface.regions, Region::Finding(names.verify, index))),
         );
@@ -683,7 +772,7 @@ fn row<T: 'static>(
                 ))
         })
         .child({
-            let text = ask_text(finding, title_of_session.as_deref());
+            let text = ask_text(finding, &involved_titles);
             Button::new((names.ask, index), "Ask Mawas", theme, tokens)
                 .ghost()
                 .compact()
@@ -695,9 +784,9 @@ fn row<T: 'static>(
         });
     body = body.child(actions);
 
-    if surface.show_session
-        && let Some(session) = session
-        && let Some(step) = state.verify.get(&session)
+    // A *Verify* shows its plan and its result on the row it started from, and only there.
+    if let Some(session) = session
+        && let Some(step) = state.step_on_row(session, &finding.id)
     {
         body = body.child(verify_step(
             session, step, index, state, access, surface, cx,
@@ -872,15 +961,7 @@ pub(super) fn orphan_steps<T: 'static>(
     title_of: &dyn Fn(SessionId) -> String,
     cx: &mut Context<T>,
 ) -> Vec<AnyElement> {
-    let mut orphans: Vec<(&SessionId, &VerifyStep)> = state
-        .verify
-        .iter()
-        .filter(|(session, _)| {
-            !shown
-                .iter()
-                .any(|finding| target_session(finding) == Some(**session))
-        })
-        .collect();
+    let mut orphans = state.unplaced(shown);
     orphans.sort_by_key(|(session, _)| session.to_string());
     orphans
         .into_iter()
@@ -895,11 +976,11 @@ pub(super) fn orphan_steps<T: 'static>(
                         .text_size(px(surface.tokens.font_size))
                         .child(SharedString::from(format!(
                             "Tests of {}",
-                            title_of(*session)
+                            title_of(session)
                         ))),
                 )
                 .child(verify_step(
-                    *session,
+                    session,
                     step,
                     ORPHAN_BASE + n,
                     state,
@@ -910,4 +991,224 @@ pub(super) fn orphan_steps<T: 'static>(
                 .into_any_element()
         })
         .collect()
+}
+
+/// The first row number of the dismissed findings (their rows and *Restore* buttons).
+pub(super) const DISMISSED_BASE: usize = 7000;
+
+/// The rows of the dismissed `findings`, each with *Restore*: the title in muted words, the
+/// agents it was about and when it was last seen. Numbered from [`DISMISSED_BASE`].
+pub(super) fn dismissed_rows<T: 'static>(
+    findings: &[&Finding],
+    access: fn(&mut T) -> &mut FindingsState,
+    surface: &Surface<'_>,
+    cx: &mut Context<T>,
+) -> Vec<AnyElement> {
+    let (theme, tokens, names) = (surface.theme, surface.tokens, surface.names);
+    findings
+        .iter()
+        .enumerate()
+        .map(|(n, finding)| {
+            let index = DISMISSED_BASE + n;
+            let (word, color) = severity_word(finding.severity, theme);
+            let titles = involved_titles(finding, surface.titles);
+            let mut meta = Vec::new();
+            if !titles.is_empty() {
+                meta.push(titles.join(" · "));
+            }
+            meta.push(hutan_client::time::relative_text(
+                surface.now_ms,
+                finding.last_at_ms,
+            ));
+            let connection = surface.connection.clone();
+            let id = finding.id.clone();
+            div()
+                .id((names.row, index))
+                .relative()
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing))
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap(px(tokens.spacing))
+                        .text_size(px(tokens.font_size))
+                        .child(div().flex_none().text_color(color).child(word))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(theme.muted)
+                                .child(SharedString::from(finding.title.clone())),
+                        ),
+                )
+                .child(dot(meta.join(" · "), theme, tokens))
+                .child(
+                    div().flex().gap(px(tokens.spacing)).child(
+                        Button::new((names.restore, index), "Restore", theme, tokens)
+                            .ghost()
+                            .compact()
+                            .tooltip("List this finding again")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                access(this).restore(access, cx, &connection, id.clone());
+                            }))
+                            .child(probe(surface.regions, Region::Finding(names.restore, index))),
+                    ),
+                )
+                .child(probe(surface.regions, Region::Finding(names.row, index)))
+                .into_any_element()
+        })
+        .collect()
+}
+
+/// The agents a finding is about: its own session, or — for one about a checkout or a file that
+/// several share, which has none — every session its evidence names (only those whose title is
+/// known: a turn's id parses like a session's).
+fn involved(finding: &Finding, titles: &HashMap<SessionId, String>) -> Vec<SessionId> {
+    if let Some(session) = finding.scope.session_id {
+        return vec![session];
+    }
+    let mut out: Vec<SessionId> = Vec::new();
+    for evidence in &finding.evidence {
+        if let Some(id) = evidence
+            .reference
+            .as_deref()
+            .and_then(|r| r.parse::<SessionId>().ok())
+            .filter(|id| titles.contains_key(id))
+            && !out.contains(&id)
+        {
+            out.push(id);
+        }
+    }
+    out
+}
+
+/// The titles of [`involved`], in the order the finding names them.
+fn involved_titles(finding: &Finding, titles: &HashMap<SessionId, String>) -> Vec<String> {
+    involved(finding, titles)
+        .iter()
+        .filter_map(|id| titles.get(id).cloned())
+        .collect()
+}
+
+/// The line under a row's title: every agent the finding is about (two that share a checkout,
+/// two that changed one file; one agent only where the list does not already say whose it is),
+/// how many times it happened, and when it was last seen.
+pub(super) fn meta_text(
+    finding: &Finding,
+    titles: &HashMap<SessionId, String>,
+    show_session: bool,
+    now_ms: u64,
+) -> String {
+    let agents = involved_titles(finding, titles);
+    let mut meta = Vec::new();
+    if agents.len() > 1 || (show_session && !agents.is_empty()) {
+        meta.push(agents.join(" · "));
+    }
+    if finding.count > 1 {
+        meta.push(format!("{} times", finding.count));
+    }
+    meta.push(hutan_client::time::relative_text(
+        now_ms,
+        finding.last_at_ms,
+    ));
+    meta.join(" · ")
+}
+
+/// The evidence lines of an opened row: the kind, where it comes from — a session by its title,
+/// never by its id — and what was seen.
+pub(super) fn evidence_lines(
+    finding: &Finding,
+    titles: &HashMap<SessionId, String>,
+) -> Vec<String> {
+    finding
+        .evidence
+        .iter()
+        .map(|evidence| {
+            let reference = match evidence.reference.as_deref() {
+                // The excerpt may already name the session.
+                Some(r) => match r
+                    .parse::<SessionId>()
+                    .ok()
+                    .and_then(|id| titles.get(&id))
+                {
+                    Some(title) if evidence.excerpt.contains(title.as_str()) => String::new(),
+                    Some(title) => format!(" ({title})"),
+                    None => format!(" ({r})"),
+                },
+                None => String::new(),
+            };
+            format!(
+                "{}{}: {}",
+                evidence_word(evidence.kind),
+                reference,
+                if evidence.redacted {
+                    "(withheld)".to_owned()
+                } else {
+                    evidence.excerpt.clone()
+                }
+            )
+        })
+        .collect()
+}
+
+/// The titles of every session `answer` names (its coverage) and of `extra`, as the sidebar
+/// shows them now (`live`), else as the daemon wrote them.
+pub(super) fn titles(
+    answer: Option<&AgentsFindings>,
+    live: &dyn Fn(SessionId) -> Option<String>,
+    extra: impl IntoIterator<Item = SessionId>,
+) -> HashMap<SessionId, String> {
+    let mut out = HashMap::new();
+    if let Some(answer) = answer {
+        for coverage in &answer.coverage {
+            out.insert(
+                coverage.session_id,
+                live(coverage.session_id).unwrap_or_else(|| coverage.title.clone()),
+            );
+        }
+    }
+    for id in extra {
+        if let Some(title) = live(id) {
+            out.insert(id, title);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workbench::ui::contrast;
+
+    #[test]
+    fn severity_words_read_at_aa_on_every_ground_of_both_built_in_themes() {
+        for theme in [Theme::dark(), Theme::light()] {
+            let grounds = [
+                theme.bg,
+                theme.sidebar,
+                theme.surface,
+                theme.surface_hover,
+                theme.sidebar_accent,
+                theme.right_sidebar,
+                theme.right_sidebar_accent,
+            ];
+            for severity in [
+                FindingSeverity::Alert,
+                FindingSeverity::Warn,
+                FindingSeverity::Info,
+            ] {
+                let (word, color) = severity_word(severity, &theme);
+                for ground in grounds {
+                    let ratio = contrast(color, ground);
+                    assert!(
+                        ratio >= 4.5,
+                        "{word} on a ground of the {} theme: {ratio:.2}:1",
+                        if theme.dark { "dark" } else { "light" }
+                    );
+                }
+            }
+        }
+    }
 }
