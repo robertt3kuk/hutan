@@ -1469,8 +1469,11 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    /// Puts the keyboard in the composer of the shown assistant (as soon as it is drawn).
+    /// Brings the composer of the shown assistant into view and puts the keyboard in it (as
+    /// soon as it is drawn). Below 640 pt, where Today is a page of its own, that page gives
+    /// way to the conversation: whoever asks for the composer is about to type in it.
     pub fn focus_composer(&mut self, cx: &mut Context<Self>) {
+        self.today_only = false;
         self.focus_wanted = true;
         cx.notify();
     }

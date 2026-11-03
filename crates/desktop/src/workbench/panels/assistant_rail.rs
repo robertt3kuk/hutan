@@ -1395,9 +1395,11 @@ impl AssistantPanel {
             .session(cx)
             .and_then(|session| self.chat_model(session))
         {
-            model.update(cx, |model, cx| model.add_note(&note, cx));
+            model.update(cx, |model, cx| {
+                model.add_prepared(super::assistant_checks::ASK_ANALYSE, &note, cx)
+            });
         }
-        self.focus_wanted = true;
+        self.focus_composer(cx);
         cx.notify();
     }
 
@@ -1418,9 +1420,11 @@ impl AssistantPanel {
             .session(cx)
             .and_then(|session| self.chat_model(session))
         {
-            model.update(cx, |model, cx| model.add_note(&note, cx));
+            model.update(cx, |model, cx| {
+                model.add_prepared(super::assistant_checks::ASK_SUMMARISE, &note, cx)
+            });
         }
-        self.focus_wanted = true;
+        self.focus_composer(cx);
         cx.notify();
     }
 

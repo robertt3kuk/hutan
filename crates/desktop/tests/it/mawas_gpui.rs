@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use common::assistant::{
-    AssistantEnv, Options, PATH, open, open_assistant, panel, pump_until, shown,
+    AssistantEnv, Options, PATH, open, open_assistant, panel, pump_until, shown, texts,
 };
 use common::{draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
@@ -3070,4 +3070,153 @@ fn the_model_digest_is_a_row_with_its_cost_and_status_and_its_chat_is_labelled_d
     wait_until(cx, "the Digest chat shown", |cx| {
         panel.read_with(cx, |p, cx| p.session(cx) == Some(digest_chat))
     });
+}
+
+// ---- FX-036-A: a prepared ask brings the composer into view ---------------------------------------
+
+/// A page below 640 pt (a 1000 × 700 pt window with the right panel open at 480 pt, as in the
+/// fold test above) with Mawas open and drawn.
+fn open_folded<'a>(
+    cx: &'a mut TestAppContext,
+    env: &AssistantEnv,
+) -> (
+    Entity<Workbench>,
+    &'a mut VisualTestContext,
+    Entity<AssistantPanel>,
+) {
+    let (view, cx) = open(cx, &env.daemon);
+    view.read_with(cx, |wb, _| wb.settings_store().clone())
+        .write_user("layout.rail_peek", toml::Value::Boolean(false))
+        .unwrap();
+    click(&view, cx, Region::Nav("assistant"));
+    let panel = panel(&view, cx);
+    wait_until(cx, "Mawas to open", |cx| {
+        panel.read_with(cx, |p, cx| p.session(cx).is_some())
+    });
+    cx.simulate_resize(gpui::size(gpui::px(1000.0), gpui::px(700.0)));
+    cx.dispatch_action(actions::OpenPanel("agents".into()));
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| s.resize_dock(DockPosition::Right, 480.0));
+    });
+    wait_until(cx, "the folded page", |cx| {
+        panel.read_with(cx, |p, _| p.folded())
+    });
+    (view, cx, panel)
+}
+
+#[gpui::test]
+fn check_with_mawas_from_todays_page_brings_the_composer_into_view_and_a_second_ask_replaces_the_first(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let (root_a, root_b) = (env.project("alpha"), env.project("beta"));
+    let alpha = env.daemon.create_workspace("alpha", &[&root_a]);
+    let beta = env.daemon.create_workspace("beta", &[&root_b]);
+    let (view, cx, panel) = open_folded(cx, &env);
+    let (_, model, chat) = shown(&panel, cx);
+
+    // Today is a page of its own: no conversation, no composer.
+    panel.update(cx, |p, cx| p.toggle_today_only(cx));
+    wait_until(cx, "Today in place of the conversation", |cx| {
+        painted(&view, cx, "today")
+            && view
+                .read_with(cx, |wb, _| wb.region_bounds(Region::Chat("composer")))
+                .is_none()
+    });
+    // The composer that had the keyboard is gone with the conversation: the window's own focus
+    // is what the next action is dispatched from, as for a click on the sidebar's ⋯.
+    view.update_in(cx, |wb, window, cx| {
+        use gpui::Focusable as _;
+        window.focus(&wb.focus_handle(cx), cx);
+    });
+    draw(cx);
+
+    // *Check with Mawas* sets the Focus, and the user lands where the ask is: the conversation
+    // with its composer, the ask in it, the keyboard there.
+    cx.dispatch_action(actions::CheckWithMawas(actions::CheckAt {
+        workspace: alpha.id,
+        session: None,
+    }));
+    wait_until(cx, "Today to give way to the conversation", |cx| {
+        !panel.read_with(cx, |p, _| p.today_only()) && !painted(&view, cx, "today")
+    });
+    wait_until(cx, "the composer drawn", |cx| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("composer")))
+            .is_some()
+    });
+    wait_until(cx, "the ask in the composer", |cx| {
+        model.read_with(cx, |m, _| m.draft_message().contains("agents_findings"))
+    });
+    wait_until(cx, "the keyboard in the composer", |cx| {
+        cx.update(|window, cx| chat.read(cx).focus_handle_is_focused(window))
+    });
+    let first = model.read_with(cx, |m, _| m.draft_message());
+    assert!(first.starts_with("Check the workspace alpha"), "{first}");
+    assert_eq!(panel.read_with(cx, |p, cx| p.focus(cx)), Some(alpha.id));
+
+    // The user adds a line of their own; a second *Check with Mawas* replaces the unsent ask
+    // where it stands and keeps what they typed: one question, not two.
+    model.update(cx, |m, cx| m.edit(|i| i.insert("\n\nMind the tests."), cx));
+    cx.dispatch_action(actions::CheckWithMawas(actions::CheckAt {
+        workspace: beta.id,
+        session: None,
+    }));
+    wait_until(cx, "the second ask in place of the first", |cx| {
+        model.read_with(cx, |m, _| {
+            m.draft_message().starts_with("Check the workspace beta")
+        })
+    });
+    let second = model.read_with(cx, |m, _| m.draft_message());
+    assert!(
+        !second.contains("workspace alpha") && second.ends_with("Mind the tests."),
+        "{second}"
+    );
+    assert_eq!(second.matches("agents_findings").count(), 1, "{second}");
+
+    // An ask the user has edited is theirs: the next one goes after it, whole.
+    model.update(cx, |m, cx| {
+        m.edit(
+            |i| {
+                let edited = i.text().replace("tell me", "tell us");
+                i.set(&edited);
+            },
+            cx,
+        );
+    });
+    cx.dispatch_action(actions::CheckWithMawas(actions::CheckAt {
+        workspace: alpha.id,
+        session: None,
+    }));
+    wait_until(cx, "the new ask after the edited one", |cx| {
+        model.read_with(cx, |m, _| m.draft_message().contains("workspace alpha"))
+    });
+    let stacked = model.read_with(cx, |m, _| m.draft_message());
+    assert!(
+        stacked.contains("workspace beta") && stacked.contains("tell us"),
+        "{stacked}"
+    );
+    assert_eq!(stacked.matches("agents_findings").count(), 2, "{stacked}");
+
+    // Another kind of ask is never replaced: *Ask Mawas* of a finding stacks, and asked twice
+    // keeps the last of its own kind.
+    panel.update(cx, |p, cx| {
+        p.ask_mawas("What about the first finding?".into(), cx)
+    });
+    wait_until(cx, "the finding's ask", |cx| {
+        model.read_with(cx, |m, _| m.draft_message().contains("first finding"))
+    });
+    panel.update(cx, |p, cx| {
+        p.ask_mawas("What about the second finding?".into(), cx)
+    });
+    wait_until(cx, "the second finding's ask", |cx| {
+        model.read_with(cx, |m, _| m.draft_message().contains("second finding"))
+    });
+    let last = model.read_with(cx, |m, _| m.draft_message());
+    assert!(
+        !last.contains("first finding") && last.contains("workspace alpha"),
+        "{last}"
+    );
+
+    // Nothing was sent.
+    assert!(texts(&model, cx).is_empty());
 }

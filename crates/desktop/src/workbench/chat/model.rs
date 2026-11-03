@@ -69,6 +69,9 @@ pub struct ChatModel {
     /// How much of the journal's front is loaded.
     earlier: Earlier,
     input: TextInput,
+    /// The prepared asks the composer was last given, by kind (`add_prepared`): what the next
+    /// ask of a kind replaces while it is still in the draft, as it was put there.
+    prepared: HashMap<&'static str, String>,
     /// Vim's modal state over `input` (idle unless `editor.vim_mode` is on).
     vim: Vim,
     chips: Vec<Chip>,
@@ -217,6 +220,7 @@ impl ChatModel {
             status: LoadStatus::Loading,
             earlier: Earlier::default(),
             input: TextInput::new(),
+            prepared: HashMap::new(),
             vim: Vim::new(),
             chips: Vec::new(),
             context: Vec::new(),
@@ -437,6 +441,26 @@ impl ChatModel {
             note.to_owned()
         } else {
             format!("{}\n\n{note}", self.input.text())
+        };
+        self.input.reset_to(&text);
+        cx.notify();
+    }
+
+    /// Puts a prepared ask (*Check with Mawas*, *Ask Mawas*, *Analyse*, *Summarise*) in the
+    /// composer for the user to send; `kind` says which one it is.
+    ///
+    /// An earlier ask of the same `kind` that is still in the draft *as it was put there*
+    /// (unsent, untouched; the user may have typed around it) is replaced in place: asking
+    /// twice leaves one question, not two. One the user has edited is theirs and stays, the
+    /// new one goes after it, and asks of another kind are never replaced.
+    pub fn add_prepared(&mut self, kind: &'static str, ask: &str, cx: &mut Context<Self>) {
+        let previous = self.prepared.insert(kind, ask.to_owned());
+        let draft = self.input.text();
+        let text = match previous.filter(|previous| draft.contains(previous.as_str())) {
+            Some(previous) => draft.replacen(&previous, ask, 1),
+            None if draft.contains(ask) => return,
+            None if draft.is_empty() => ask.to_owned(),
+            None => format!("{draft}\n\n{ask}"),
         };
         self.input.reset_to(&text);
         cx.notify();

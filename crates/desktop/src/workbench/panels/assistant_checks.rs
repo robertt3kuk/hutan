@@ -29,11 +29,22 @@ use crate::workbench::view::Region;
 /// The findings a prepared ask lists.
 const ASK_FINDINGS: usize = 8;
 
+/// The kinds of prepared ask, which a second ask of the same kind replaces while the first is
+/// still unsent: *Check with Mawas*, *Ask Mawas* of a finding, the Recent tab's *Analyse* and
+/// *Summarise*.
+const ASK_CHECK: &str = "check";
+const ASK_FINDING: &str = "finding";
+pub(super) const ASK_ANALYSE: &str = "analyse";
+pub(super) const ASK_SUMMARISE: &str = "summarise";
+
 /// A prepared ask waiting for Mawas's chat to be there.
 #[derive(Debug, Clone)]
 pub(super) struct PendingAsk {
     /// The Focus to set; `None`: leave it.
     pub focus: Option<WorkspaceId>,
+    /// Which kind of ask it is: a second one of the kind replaces an unsent first
+    /// ([`ChatModel::add_prepared`](crate::workbench::chat::ChatModel::add_prepared)).
+    pub kind: &'static str,
     pub text: String,
 }
 
@@ -373,6 +384,7 @@ impl AssistantPanel {
             this.update(cx, |this, cx| {
                 this.pending_ask = Some(PendingAsk {
                     focus: Some(workspace),
+                    kind: ASK_CHECK,
                     text,
                 });
                 cx.notify();
@@ -385,7 +397,11 @@ impl AssistantPanel {
     /// *Ask Mawas* of one finding: the prepared question waits for the composer.
     pub fn ask_mawas(&mut self, text: String, cx: &mut Context<Self>) {
         self.ensure_open(cx);
-        self.pending_ask = Some(PendingAsk { focus: None, text });
+        self.pending_ask = Some(PendingAsk {
+            focus: None,
+            kind: ASK_FINDING,
+            text,
+        });
         cx.notify();
     }
 
@@ -405,8 +421,10 @@ impl AssistantPanel {
         if let Some(workspace) = pending.focus {
             self.set_focus(Some(workspace), cx);
         }
-        model.update(cx, |model, cx| model.add_note(&pending.text, cx));
-        self.focus_wanted = true;
+        model.update(cx, |model, cx| {
+            model.add_prepared(pending.kind, &pending.text, cx)
+        });
+        self.focus_composer(cx);
         cx.notify();
     }
 }
