@@ -62,7 +62,7 @@ pub(crate) use common::{edit_text, field_box};
 pub use context::{
     ContextPanel, Empty as ContextEmpty, FOLD_WIDTH as CONTEXT_FOLD_WIDTH,
     ForkGate as ContextForkGate, Load as ContextLoad, Measure as ContextMeasure,
-    RewindOffer as ContextRewindOffer,
+    RewindOffer as ContextRewindOffer, Turning as ContextTurning,
 };
 pub use files::{
     AgentFile, DIAGNOSTICS_READ_EVERY as FILES_DIAGNOSTICS_READ_EVERY,

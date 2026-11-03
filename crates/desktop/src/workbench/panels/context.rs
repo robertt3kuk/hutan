@@ -29,7 +29,9 @@ use hutan_core::SessionId;
 use hutan_core::TurnId;
 use hutan_core::insight::{AgentInsight, BreakdownKind};
 use hutan_protocol::control::ErrorCode;
+use hutan_protocol::history::HistoryStatusInfo;
 use hutan_protocol::messages::SessionInfo;
+use serde_json::Value as Json;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::common::{panel_toolbar, session_icon_with};
@@ -78,6 +80,15 @@ pub enum Measure {
     Failed(String),
 }
 
+/// How *Turn on … history* stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Turning {
+    Idle,
+    /// The settings are being written.
+    Busy,
+    Failed(String),
+}
+
 /// What the panel has to say instead of an insight.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Empty {
@@ -103,6 +114,8 @@ pub enum Empty {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Item {
     Identity,
+    /// *Turn on Claude Code history to see tokens and context*, and its button.
+    Offer,
     Empty(Empty),
     Context,
     Chart,
@@ -154,6 +167,15 @@ pub struct ContextPanel {
     updates: u64,
     /// The daemon's findings about the followed session (the section *Findings*).
     findings: FindingsState,
+    /// What the daemon says of the history index: whether the followed terminal agent's
+    /// transcript is read (INSIGHT-C). Read once per connection, and after the user turns it on.
+    history: Option<HistoryStatusInfo>,
+    history_task: Option<Task<()>>,
+    /// The connection `history` was asked on.
+    history_asked: Option<u64>,
+    /// *Turn on … history*.
+    turning: Turning,
+    turning_task: Option<Task<()>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,6 +190,9 @@ struct Built {
     chart: bool,
     /// What the findings section shows (a hash of the rows and the runs).
     findings: u64,
+    /// The history source offered to turn on, when one is.
+    offer: Option<&'static str>,
+    turning: Turning,
 }
 
 impl std::fmt::Debug for ContextPanel {
@@ -215,6 +240,11 @@ impl ContextPanel {
             built_from: None,
             findings: FindingsState::default(),
             updates: 0,
+            history: None,
+            history_task: None,
+            history_asked: None,
+            turning: Turning::Idle,
+            turning_task: None,
         }
     }
 
@@ -346,6 +376,7 @@ impl ContextPanel {
         }
         self.listen(cx);
         self.ensure_findings(cx);
+        self.read_history_if_needed(cx);
         self.read_if_needed(cx);
         self.rebuild_if_changed(cx);
     }
@@ -522,6 +553,158 @@ impl ContextPanel {
         self.rebuild(cx);
     }
 
+    // ---- the transcript (INSIGHT-C) ---------------------------------------------------------------
+
+    /// What would show this terminal agent's tokens and context: turning its history on. `None`
+    /// for a chat, for an agent whose insight does not come from a transcript, while the daemon's
+    /// answer is not in, and once the transcript is read.
+    pub fn transcript_offer(&self, cx: &gpui::App) -> Option<model::TranscriptOffer> {
+        let info = self.info(cx)?;
+        if info.chat.is_some() {
+            return None;
+        }
+        let app = hutan_agents_view::attention::agent_app(info)
+            .or_else(|| info.terminal_agent.as_ref().map(|agent| agent.app.as_str()));
+        model::transcript_offer(app, self.history.as_ref())
+    }
+
+    /// What the panel knows of the history index (tests read it).
+    pub fn history_status(&self) -> Option<&HistoryStatusInfo> {
+        self.history.as_ref()
+    }
+
+    /// How *Turn on … history* stands.
+    pub fn turning_state(&self) -> &Turning {
+        &self.turning
+    }
+
+    /// Reads `history.status` once per connection while the followed session is a terminal agent
+    /// whose insight comes from a transcript: the answer decides whether the offer is made.
+    fn read_history_if_needed(&mut self, cx: &mut Context<Self>) {
+        let store = self.env.sessions.read(cx);
+        let Some(info) = self.session.and_then(|id| store.session(id)) else {
+            return;
+        };
+        let app = hutan_agents_view::attention::agent_app(info)
+            .or_else(|| info.terminal_agent.as_ref().map(|agent| agent.app.as_str()));
+        if info.chat.is_some()
+            || !matches!(app, Some("claude" | "codex"))
+            || store.connection_state() != ConnectionState::Connected
+            || !store.connection().supports_history()
+        {
+            return;
+        }
+        let generation = store.connection().generation();
+        if self.history_asked == Some(generation) {
+            return;
+        }
+        self.history_asked = Some(generation);
+        self.read_history(cx);
+    }
+
+    fn read_history(&mut self, cx: &mut Context<Self>) {
+        let connection = self.env.sessions.read(cx).connection().clone();
+        self.history_task = Some(cx.spawn(async move |this, cx| {
+            let answer = cx
+                .background_executor()
+                .spawn(async move { connection.history_status().await })
+                .await;
+            this.update(cx, |this, cx| {
+                this.history_task = None;
+                if let Ok(status) = answer {
+                    this.history = Some(status);
+                }
+                this.rebuild(cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// *Turn on Claude Code history*: the user's consent, one click. The source goes on in
+    /// `daemon.toml`, and when the index was off it goes on with only this source (the others
+    /// stay off until the History panel's card ticks them): the daemon reads this agent's
+    /// transcripts and nothing else. The insight is read again once it is on.
+    pub fn turn_on_history(&mut self, cx: &mut Context<Self>) {
+        let Some(offer) = self.transcript_offer(cx) else {
+            return;
+        };
+        if self.turning == Turning::Busy {
+            return;
+        }
+        let connection = self.env.sessions.read(cx).connection().clone();
+        if !connection.supports_daemon_settings() {
+            self.turning = Turning::Failed(
+                "This daemon cannot change its settings from here: use the History panel."
+                    .to_owned(),
+            );
+            self.rebuild(cx);
+            return;
+        }
+        let index_on = self.history.as_ref().is_some_and(|status| status.enabled);
+        self.turning = Turning::Busy;
+        self.rebuild(cx);
+        self.turning_task = Some(cx.spawn(async move |this, cx| {
+            let answer = cx
+                .background_executor()
+                .spawn(async move {
+                    let settings = connection.daemon_settings().await?;
+                    let is_on = |source: &str| {
+                        settings
+                            .entries
+                            .iter()
+                            .find(|entry| entry.key == format!("history.{source}"))
+                            .and_then(|entry| entry.value.as_bool())
+                            .unwrap_or(true)
+                    };
+                    if !is_on(offer.source) {
+                        connection
+                            .daemon_setting_set(
+                                &format!("history.{}", offer.source),
+                                Some(Json::Bool(true)),
+                            )
+                            .await?;
+                    }
+                    if !index_on {
+                        // The index was off: only the source asked for is read.
+                        for other in ["hutan", "claude", "codex", "omp"] {
+                            if other != offer.source && is_on(other) {
+                                connection
+                                    .daemon_setting_set(
+                                        &format!("history.{other}"),
+                                        Some(Json::Bool(false)),
+                                    )
+                                    .await?;
+                            }
+                        }
+                        connection.history_set_enabled(true).await
+                    } else {
+                        connection.history_status().await
+                    }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.turning_task = None;
+                match answer {
+                    Ok(status) => {
+                        this.history = Some(status);
+                        this.turning = Turning::Idle;
+                        // What the transcript says is read the next time the daemon is asked.
+                        this.asked = None;
+                        this.read_if_needed(cx);
+                    }
+                    Err(error) => {
+                        this.turning = Turning::Failed(format!(
+                            "Cannot turn on {} history: {error}",
+                            offer.who
+                        ));
+                    }
+                }
+                this.rebuild(cx);
+            })
+            .ok();
+        }));
+    }
+
     // ---- the list -------------------------------------------------------------------------------
 
     fn info<'a>(&self, cx: &'a gpui::App) -> Option<&'a SessionInfo> {
@@ -584,6 +767,8 @@ impl ContextPanel {
             sources: settings.show_sources,
             chart: settings.show_fill_chart,
             findings: self.findings.signature(self.findings_scope()),
+            offer: self.transcript_offer(cx).map(|offer| offer.source),
+            turning: self.turning.clone(),
         }
     }
 
@@ -608,6 +793,9 @@ impl ContextPanel {
                     let prompts = &self.prompts;
                     turns = model::turn_lines(insight, &|id| prompts.get(&id).cloned());
                     items.push(Item::Identity);
+                    if self.transcript_offer(cx).is_some() {
+                        items.push(Item::Offer);
+                    }
                     if insight.context.is_some() || insight.can_measure {
                         items.push(Item::Context);
                     }
@@ -759,6 +947,7 @@ impl ContextPanel {
         };
         let element = match item {
             Item::Identity => self.render_identity(cx),
+            Item::Offer => self.render_offer(cx),
             Item::Empty(empty) => self.render_empty(&empty, cx),
             Item::Context => self.render_context(cx),
             Item::Chart => self.render_chart(window, cx),
@@ -874,6 +1063,47 @@ impl ContextPanel {
             .into_any_element()
     }
 
+    /// *Turn on Claude Code history*: the one click that lets Hutan read the agent's transcript.
+    fn offer_button(&self, offer: model::TranscriptOffer, cx: &mut Context<Self>) -> AnyElement {
+        let style = UiStyle::get(cx);
+        let (theme, tokens) = (style.theme, style.density.ui());
+        ui::Button::new("context-history", offer.button(), &theme, &tokens)
+            .compact()
+            .disabled(self.turning == Turning::Busy)
+            .on_click(cx.listener(|this, _, _, cx| this.turn_on_history(cx)))
+            .child(probe(&self.env.regions, Region::Context("history")))
+            .into_any_element()
+    }
+
+    /// The offer above a terminal agent's blocks: they come from what its hooks reported, and
+    /// its tokens and context are one click away.
+    fn render_offer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let style = UiStyle::get(cx);
+        let (theme, tokens) = (style.theme, style.density.ui());
+        let Some(offer) = self.transcript_offer(cx) else {
+            return div().into_any_element();
+        };
+        let mut row = div()
+            .flex()
+            .flex_col()
+            .gap(px(tokens.spacing))
+            .px(px(tokens.spacing * 3.0))
+            .pt(px(tokens.spacing * 2.0))
+            .child(muted_line(offer.text(), &theme, &tokens))
+            .child(div().flex().child(self.offer_button(offer, cx)));
+        if let Turning::Failed(message) = &self.turning {
+            row = row.child(
+                div()
+                    .whitespace_normal()
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.danger)
+                    .child(SharedString::from(message.clone())),
+            );
+        }
+        row.child(probe(&self.env.regions, Region::Context("offer")))
+            .into_any_element()
+    }
+
     fn render_empty(&self, empty: &Empty, cx: &mut Context<Self>) -> AnyElement {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
@@ -895,7 +1125,7 @@ impl ContextPanel {
                 let who = app
                     .as_deref()
                     .map_or_else(|| "The agent".to_owned(), model::harness_label);
-                let detail = if *hooks {
+                let mut detail = if *hooks {
                     model::terminal_hint(app.as_deref(), &who)
                 } else {
                     format!(
@@ -905,7 +1135,14 @@ impl ContextPanel {
                          everything."
                     )
                 };
-                let action = (!*hooks).then(|| {
+                let offer = self.transcript_offer(cx);
+                if let Some(offer) = offer {
+                    detail = format!("{} {detail}", offer.text());
+                    if let Turning::Failed(message) = &self.turning {
+                        detail = format!("{message} {detail}");
+                    }
+                }
+                let integrations = (!*hooks).then(|| {
                     ui::Button::new(
                         "context-integrations",
                         "Agent integrations…",
@@ -921,6 +1158,15 @@ impl ContextPanel {
                     })
                     .child(probe(&self.env.regions, Region::Context("integrations")))
                     .into_any_element()
+                });
+                let history = offer.map(|offer| self.offer_button(offer, cx));
+                let action = (integrations.is_some() || history.is_some()).then(|| {
+                    div()
+                        .flex()
+                        .gap(px(tokens.spacing))
+                        .children(integrations)
+                        .children(history)
+                        .into_any_element()
                 });
                 ("Terminal agent".to_owned(), detail, action)
             }

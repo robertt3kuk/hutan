@@ -890,3 +890,112 @@ fn a_terminal_agent_shows_what_its_integration_reported_with_the_source_of_each_
     assert!(bounds(&view, cx, Region::Context("measure")).is_none());
     assert_eq!(turns, 1);
 }
+
+// ---- a terminal agent's transcript (INSIGHT-C) --------------------------------------------------
+
+/// A terminal Claude Code whose history is off: the panel says *Turn on Claude Code history to see
+/// tokens and context*, one click turns on that source and only that one, and the panel then
+/// shows what the transcript says (the `transcript` source). Nothing is read before the click.
+#[gpui::test]
+fn a_terminal_claude_offers_its_history_and_shows_its_transcript_once_it_is_on(
+    cx: &mut TestAppContext,
+) {
+    use hutan_core::NodeKind;
+    use hutan_core::insight::InsightSourceKind;
+    use hutan_desktop::workbench::panels::ContextTurning;
+    use hutan_protocol::messages::{AgentApplied, AgentReportRequest, AgentState};
+    use hutan_protocol::tree::NodeReport;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap().join("claude");
+    let id = "5f3e1c1a-8d51-4a7e-9c0d-1b2c3d4e5f60";
+    let path = root.join("-work-app").join(format!("{id}.jsonl"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../index/tests/fixtures/usage/claude-session.jsonl"),
+    )
+    .unwrap();
+    std::fs::write(&path, text).unwrap();
+
+    // The index is off (the default), the roots are the test's own.
+    let daemon = TestDaemon::start_with_config(&format!("[history.roots]\nclaude = {root:?}\n"));
+    let agent = daemon.create_session(&["sh", "-c", "exec cat"], None);
+    let applied: AgentApplied = daemon.call(Request::AgentReport(AgentReportRequest {
+        pid: None,
+        session_id: agent.id,
+        source: "claude-hooks".into(),
+        agent: "claude".into(),
+        state: Some(AgentState::Idle),
+        message: None,
+        seq: 1,
+        agent_session_id: Some(id.into()),
+        resume_argv: None,
+        node: Some(NodeReport {
+            id: "root".into(),
+            parent: None,
+            kind: NodeKind::Main,
+            name: None,
+            agent_type: None,
+            outcome: None,
+            model: None,
+            activity: None,
+            usage: None,
+            transcript_path: Some(path.display().to_string()),
+        }),
+        insight: None,
+    }));
+    assert!(applied.applied);
+
+    let (view, cx) = open(cx, &daemon);
+    let panel = panel(&view, cx);
+    show_chat(&view, cx, agent.id);
+    // The daemon says history is off: the panel offers to turn it on, in words.
+    wait_until(cx, "the offer", |cx| {
+        panel.read_with(cx, |p, cx| p.transcript_offer(cx).is_some())
+    });
+    let offer = panel.read_with(cx, |p, cx| p.transcript_offer(cx)).unwrap();
+    assert_eq!(
+        offer.text(),
+        "Turn on Claude Code history to see tokens and context."
+    );
+    assert!(
+        panel.read_with(cx, |p, _| p.insight().is_none_or(|i| i.totals.is_none())),
+        "nothing is read before the user says so"
+    );
+
+    click(&view, cx, Region::Context("history"));
+    wait_until(cx, "the transcript's numbers", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.insight().is_some_and(|i| {
+                i.totals.as_ref().is_some_and(|t| t.turns == 2)
+                    && i.sources
+                        .iter()
+                        .any(|s| s.source == InsightSourceKind::Transcript)
+            })
+        })
+    });
+    // Only that source went on, and the offer is gone.
+    let (sources, turning, offered) = panel.read_with(cx, |p, cx| {
+        (
+            p.history_status()
+                .map(|status| (status.enabled, status.sources.clone())),
+            p.turning_state().clone(),
+            p.transcript_offer(cx).is_some(),
+        )
+    });
+    let (enabled, sources) = sources.expect("the daemon's answer");
+    assert!(enabled);
+    assert_eq!(
+        sources.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+        ["claude"],
+        "the other sources stay off until the History panel ticks them"
+    );
+    assert_eq!(turning, ContextTurning::Idle);
+    assert!(!offered);
+    let tokens = panel.read_with(cx, |p, _| {
+        p.insight()
+            .and_then(|i| i.totals.as_ref().map(|t| (t.input, t.output)))
+    });
+    assert_eq!(tokens, Some((Some(19), Some(500))));
+}

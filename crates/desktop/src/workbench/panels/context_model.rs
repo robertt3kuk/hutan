@@ -400,7 +400,7 @@ pub fn unsupported_note(harness: &str, unsupported: &[InsightField]) -> Option<S
 }
 
 /// What an agent that runs in a terminal with its Hutan integration installed will show here, and
-/// what it cannot (INSIGHT-B): the empty state before anything was reported.
+/// what it cannot (INSIGHT-B, INSIGHT-C): the empty state before anything was reported.
 pub fn terminal_hint(app: Option<&str>, who: &str) -> String {
     match app {
         Some("omp") => format!(
@@ -408,19 +408,60 @@ pub fn terminal_hint(app: Option<&str>, who: &str) -> String {
              (its Hutan extension). Nothing has arrived yet: send it a prompt."
         ),
         Some("claude") => format!(
-            "{who}'s hooks report its tools and files once a tool has run. Its context size and \
-             cost need the status-line tee: hutan integration install claude --statusline. \
-             Tokens per turn and the context by category are not reported to a terminal."
+            "{who}'s hooks report its tools and files once a tool has run. Its tokens, context \
+             and cost come from its transcript when Claude Code history is on; the context size \
+             and cost also from the status-line tee: hutan integration install claude \
+             --statusline."
         ),
         Some("codex") => format!(
             "{who}'s hooks report its tools and files once a tool has run. Its hooks carry no \
-             tokens, context size or cost, so a terminal shows none; a chat shows all of them."
+             tokens, context size or cost: they come from its transcript when Codex history is \
+             on."
         ),
         _ => format!(
             "{who} reports its state to Hutan from this terminal, not its tokens, tools, files \
              or cost. A chat shows all of them."
         ),
     }
+}
+
+/// What the user can turn on to see a terminal agent's tokens, context and cost: Hutan reads
+/// the agent's transcript only when the user allowed that source in `[history]` (INSIGHT-C).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TranscriptOffer {
+    /// The `[history]` source: `claude` or `codex`.
+    pub source: &'static str,
+    /// What the user calls it.
+    pub who: &'static str,
+}
+
+impl TranscriptOffer {
+    /// `Turn on Claude Code history to see tokens and context.`
+    pub fn text(self) -> String {
+        format!("Turn on {} history to see tokens and context.", self.who)
+    }
+
+    /// The button's label.
+    pub fn button(self) -> String {
+        format!("Turn on {} history", self.who)
+    }
+}
+
+/// The offer for a terminal running `app` when `history` (the daemon's `history.status`) says its
+/// transcripts are not read: `None` for an agent whose insight does not come from a transcript,
+/// when the status is not known, and when the source is on already.
+pub fn transcript_offer(
+    app: Option<&str>,
+    history: Option<&hutan_protocol::history::HistoryStatusInfo>,
+) -> Option<TranscriptOffer> {
+    let (source, who) = match app? {
+        "claude" => ("claude", "Claude Code"),
+        "codex" => ("codex", "Codex"),
+        _ => return None,
+    };
+    let status = history?;
+    let on = status.enabled && status.sources.iter().any(|s| s.name == source);
+    (!on).then_some(TranscriptOffer { source, who })
 }
 
 /// The cost line: the harness's own figure, labelled; or why there is none.
