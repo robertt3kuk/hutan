@@ -140,6 +140,10 @@ pub struct InsightReducer {
     /// The source whose cost the session's totals show: a better source's cost is not replaced by
     /// a worse one's (two sources' cumulative figures are never mixed).
     cost_source: Option<InsightSourceKind>,
+    /// The source whose tokens the turns hold. A source that reports a turn's edges and no tokens
+    /// (Claude Code's hooks) does not keep the tokens another source has (OpenTelemetry); two
+    /// sources' token counts are never added.
+    token_source: Option<InsightSourceKind>,
 }
 
 /// The slot of `block` in [`InsightReducer::sources`].
@@ -189,6 +193,7 @@ impl InsightReducer {
             fixed: None,
             api_ms: None,
             cost_source: None,
+            token_source: None,
         }
     }
 
@@ -703,6 +708,23 @@ impl InsightReducer {
         }
     }
 
+    /// Whether `source` may add a call's tokens: the best source that counted tokens keeps them
+    /// (whoever holds the turns' edges); a better one that arrives later starts the turns again.
+    fn admit_tokens(&mut self, source: InsightSourceKind) -> bool {
+        match self.token_source {
+            Some(held) if held.rank() < source.rank() => return false,
+            Some(held) if held.rank() > source.rank() => self.restart_counters(InsightBlock::Turns),
+            _ => {}
+        }
+        self.token_source = Some(source);
+        // The turns are named for the better of their edges' source and this one.
+        let slot = &mut self.sources[block_ix(InsightBlock::Turns)];
+        if slot.is_none_or(|held| held.rank() > source.rank()) {
+            *slot = Some(source);
+        }
+        true
+    }
+
     /// Forgets what the counters of `block` hold (a levels block has nothing to forget).
     fn restart_counters(&mut self, block: InsightBlock) {
         match block {
@@ -716,6 +738,7 @@ impl InsightReducer {
                 self.ended.clear();
                 self.running = None;
                 self.stamps.turns = None;
+                self.token_source = None;
             }
             InsightBlock::Tools => {
                 self.tools.clear();
@@ -768,7 +791,7 @@ impl InsightReducer {
             changed = true;
         }
         if let Some(tokens) = report.tokens
-            && self.admit(InsightBlock::Turns, source)
+            && self.admit_tokens(source)
         {
             if self.running.is_none() {
                 self.start_turn(None, ts_ms);

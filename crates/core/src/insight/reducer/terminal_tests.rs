@@ -406,3 +406,55 @@ fn a_worse_sources_cost_does_not_replace_a_better_ones() {
         Some(12.5)
     );
 }
+
+#[test]
+fn hooks_that_report_turn_edges_without_tokens_do_not_hide_the_tokens_opentelemetry_has() {
+    let mut reducer = reducer("claude");
+    // Claude Code's hooks: the turn's edges and a tool, no tokens (INSIGHT-B).
+    reducer.apply_report(
+        &InsightReport {
+            turn: start(),
+            ..report(InsightSourceKind::Hooks)
+        },
+        T0,
+    );
+    // The receiver's tokens for the same turn count: nobody else counted any.
+    assert!(reducer.apply_report(&one_call(InsightSourceKind::Otlp, 100, "Read"), T0 + 1));
+    reducer.apply_report(
+        &InsightReport {
+            turn: end(None),
+            ..report(InsightSourceKind::Hooks)
+        },
+        T0 + 2,
+    );
+    let insight = reducer.snapshot(1, T0 + 3, None);
+    let totals = insight.totals.as_ref().unwrap();
+    assert_eq!((totals.turns, totals.input), (1, Some(100)));
+    assert_eq!(insight.tools.as_ref().map(|tools| tools.calls), Some(1));
+    // A second source with tokens never adds to the first's: hooks that did report tokens are
+    // better, and start the counters again instead of summing with OpenTelemetry's.
+    let reducer = reducer_with_hooks_tokens();
+    let insight = reducer.snapshot(1, T0 + 4, None);
+    assert_eq!(insight.totals.unwrap().input, Some(300));
+}
+
+fn reducer_with_hooks_tokens() -> InsightReducer {
+    let mut reducer = reducer("claude");
+    reducer.apply_report(&one_call(InsightSourceKind::Otlp, 100, "Read"), T0);
+    reducer.apply_report(
+        &InsightReport {
+            turn: end(None),
+            ..report(InsightSourceKind::Otlp)
+        },
+        T0 + 1,
+    );
+    reducer.apply_report(&one_call(InsightSourceKind::Hooks, 300, "Bash"), T0 + 2);
+    reducer.apply_report(
+        &InsightReport {
+            turn: end(None),
+            ..report(InsightSourceKind::Hooks)
+        },
+        T0 + 3,
+    );
+    reducer
+}

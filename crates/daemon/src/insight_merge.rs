@@ -4,7 +4,8 @@
 //! The integrations (the OMP extension, Claude Code's and Codex's hooks, the status-line tee) and
 //! the transcript each fill their own [`InsightReducer`]; this puts the two snapshots together
 //! block by block with the spike's rule (`docs/spikes/2026-10-28-insight.md` § 5): **the best
-//! source that reported a block wins it** — extension, status line, hooks, transcript — and a
+//! source that reported a block wins it** — extension, status line, hooks, OpenTelemetry (TEL-1:
+//! the loopback receiver's reports are in the integrations' reducer, `source: otlp`), transcript — and a
 //! lower source only fills a block a better one never reported. Two refinements, both about what
 //! a source *has*, not who it is:
 //!
@@ -580,6 +581,51 @@ mod tests {
         assert_eq!((totals.input, totals.output), (Some(5_000), Some(300)));
         assert_eq!(totals.cost_usd, Some(0.5));
         // The context only the transcript has.
+        assert_eq!(merged.context.as_ref().map(|c| c.used), Some(5_300));
+        assert_eq!(
+            source_of(&merged, InsightBlock::Context),
+            Some(InsightSourceKind::Transcript)
+        );
+    }
+
+    #[test]
+    fn opentelemetry_tokens_beat_the_transcripts_and_are_never_added_to_them() {
+        // Hooks give the turn's edges and a tool's time, the OTLP receiver its tokens; the
+        // transcript has the same turn's tokens too.
+        let mut base = reducer("claude");
+        let at = 1_000_000;
+        base.apply_report(
+            &InsightReport {
+                source: InsightSourceKind::Hooks,
+                turn: turn(TurnPhase::Start),
+                ..InsightReport::default()
+            },
+            at,
+        );
+        base.apply_report(
+            &InsightReport {
+                source: InsightSourceKind::Otlp,
+                tokens: Some(tokens(7_000, 200)),
+                ..InsightReport::default()
+            },
+            at + 5,
+        );
+        base.apply_report(
+            &InsightReport {
+                source: InsightSourceKind::Hooks,
+                tools: vec![tool("Bash", Some(2_000))],
+                turn: turn(TurnPhase::End),
+                ..InsightReport::default()
+            },
+            at + 10_000,
+        );
+        let merged = merge(&snapshot(&base), &snapshot(&transcript()), none());
+        let totals = merged.totals.as_ref().expect("totals");
+        // OpenTelemetry's numbers, not the transcript's 5 000 and not their sum.
+        assert_eq!((totals.input, totals.output), (Some(7_000), Some(200)));
+        assert_eq!(totals.turns, 1);
+        assert_eq!(merged.turns.len(), 1);
+        // The transcript still fills what the receiver never reports: the context.
         assert_eq!(merged.context.as_ref().map(|c| c.used), Some(5_300));
         assert_eq!(
             source_of(&merged, InsightBlock::Context),
