@@ -34,6 +34,11 @@ const SETTLE: Duration = Duration::from_millis(150);
 /// platform dropped an event while its stream restarted.
 const VERIFY: Duration = Duration::from_millis(1000);
 const MAX_SETTLE_ROUNDS: usize = 4;
+/// With no event at all, the themes folder and the icon packs are scanned again this often.
+/// The platform's stream (macOS FSEvents) starts asynchronously and, under load, reports late
+/// or never, so an edited pack could stay unapplied until the next unrelated event. A scan of
+/// unchanged packs compares fingerprints and publishes nothing.
+const SAFETY_POLL: Duration = Duration::from_secs(5);
 /// Pending filesystem events; a full queue already has a rescan coming.
 const QUEUE: usize = 64;
 
@@ -216,7 +221,7 @@ impl ThemeRegistry {
         let weak = Arc::downgrade(&self.shared);
         let thread = std::thread::Builder::new()
             .name("hutan-theme-watch".to_owned())
-            .spawn(move || run(&rx, &weak))
+            .spawn(move || run(&rx, &weak, SAFETY_POLL))
             .map_err(|e| fail(format!("cannot spawn the theme watcher thread: {e}")))?;
         // Anything edited between `new` and the watcher starting; the worker looks once more
         // after the first debounce, for what the stream's startup missed.
@@ -344,31 +349,30 @@ impl Shared {
     }
 }
 
-fn run(rx: &mpsc::Receiver<Msg>, shared: &Weak<Shared>) {
+fn run(rx: &mpsc::Receiver<Msg>, shared: &Weak<Shared>, poll: Duration) {
     // Set when the watched set changed: the platform may have dropped events while its stream
     // restarted (under load longer than SETTLE), so one more look follows even without an event.
     let mut verify = false;
     loop {
-        let first = if verify {
-            rx.recv_timeout(VERIFY)
-        } else {
-            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
-        };
-        match first {
-            Ok(Msg::Changed) | Err(RecvTimeoutError::Timeout) => {}
+        // Nothing at all within `poll` (and no verification due): look anyway.
+        let polled = match rx.recv_timeout(if verify { VERIFY } else { poll }) {
+            Ok(Msg::Changed) => false,
+            Err(RecvTimeoutError::Timeout) => !verify,
             Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => return,
-        }
+        };
         verify = false;
-        let started = Instant::now();
-        loop {
-            let left = MAX_DELAY.saturating_sub(started.elapsed());
-            if left.is_zero() {
-                break;
-            }
-            match rx.recv_timeout(DEBOUNCE.min(left)) {
-                Ok(Msg::Changed) => {}
-                Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => return,
-                Err(RecvTimeoutError::Timeout) => break,
+        if !polled {
+            let started = Instant::now();
+            loop {
+                let left = MAX_DELAY.saturating_sub(started.elapsed());
+                if left.is_zero() {
+                    break;
+                }
+                match rx.recv_timeout(DEBOUNCE.min(left)) {
+                    Ok(Msg::Changed) => {}
+                    Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => return,
+                    Err(RecvTimeoutError::Timeout) => break,
+                }
             }
         }
         let Some(shared) = shared.upgrade() else {
@@ -377,13 +381,50 @@ fn run(rx: &mpsc::Receiver<Msg>, shared: &Weak<Shared>) {
         // Starting or stopping a watch restarts the platform's event stream (FSEvents), and
         // what happens in that gap produces no event: look again once it has settled, until
         // the watched set stops changing.
-        for _ in 0..MAX_SETTLE_ROUNDS {
-            shared.rescan();
+        for round in 0..MAX_SETTLE_ROUNDS {
+            let changed = shared.rescan();
+            if polled && round == 0 && changed {
+                tracing::debug!("themes changed on disk and the platform did not report it");
+            }
             if !shared.rewatch() {
                 break;
             }
             verify = true;
             std::thread::sleep(SETTLE);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The platform may report nothing (FSEvents under load): a pack written with no event at
+    /// all is still found by the safety poll.
+    #[test]
+    fn a_pack_the_platform_never_reports_is_found_by_the_safety_poll() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ThemeRegistry::new(dir.path());
+        let before = registry.generation();
+        // The worker as `start_watching` runs it, with no watcher behind the channel.
+        let (tx, rx) = mpsc::sync_channel::<Msg>(QUEUE);
+        let weak = Arc::downgrade(&registry.shared);
+        let worker = std::thread::spawn(move || run(&rx, &weak, Duration::from_millis(20)));
+
+        let pack = registry.shared.themes_dir.join("polled");
+        std::fs::create_dir_all(&pack).unwrap();
+        std::fs::write(
+            pack.join("theme.toml"),
+            "schema_version = 1\nid = \"polled\"\nname = \"polled\"\nauthors = [\"t\"]\nlicense = \"MIT\"\nappearance = \"dark\"\nextends = \"builtin:hutan-dark\"\n\n[colors]\n\"ui.background\" = \"#101418\"\n",
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while registry.generation() == before {
+            assert!(Instant::now() < deadline, "the pack was never found");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(registry.snapshot().pack("polled").is_some());
+        tx.send(Msg::Stop).unwrap();
+        worker.join().unwrap();
     }
 }

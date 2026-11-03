@@ -64,6 +64,10 @@ const BIRTHS_MAX: usize = 1024;
 const SETTLE_PAUSES_MS: [u64; 3] = [400, 1_500, 4_000];
 /// The files of a folder a watch looks at again, at most.
 const SETTLE_FOLDER_MAX: usize = 4_096;
+/// How often the paths a root holds are looked at, whatever the platform reported ([`poll_paths`]).
+const POLL_EVERY: Duration = Duration::from_secs(5);
+/// Entries one such round looks at, at most; the rest follows in the next rounds.
+const POLL_BUDGET: usize = 20_000;
 /// Paths of restores remembered (a restore announces each file it writes or deletes).
 const RESTORES_MAX: usize = 4096;
 
@@ -97,6 +101,8 @@ struct RootEntry {
     /// What the watcher knows exists, for telling created from modified.
     births: Arc<Mutex<Births>>,
     generation: Arc<AtomicU64>,
+    /// What each watched path looked like when it was last looked at ([`poll_paths`]).
+    polled: Arc<Mutex<HashMap<PathBuf, Settling>>>,
     stop: CancellationToken,
 }
 
@@ -260,6 +266,7 @@ impl WatchHub {
             known: Option<FileVersion>,
             feed: Feed,
             births: Arc<Mutex<Births>>,
+            polled: Arc<Mutex<HashMap<PathBuf, Settling>>>,
         }
         let mut served = self.take_served(conn.id(), &added);
         let added: Vec<Added> = added
@@ -271,6 +278,7 @@ impl WatchHub {
                     path,
                     feed: entry.feed.clone(),
                     births: entry.births.clone(),
+                    polled: entry.polled.clone(),
                 })
             })
             .collect();
@@ -282,6 +290,7 @@ impl WatchHub {
             known,
             feed,
             births,
+            polled,
         } in added
         {
             let meta = std::fs::symlink_metadata(&path).ok();
@@ -297,12 +306,15 @@ impl WatchHub {
                 now.map(|version| Seen::File(Some(version)))
             };
             if let Some(seen) = seen {
-                settling.push(Settling {
+                let item = Settling {
                     path: path.clone(),
                     seen,
                     feed: feed.clone(),
                     births: births.clone(),
-                });
+                };
+                // Looked at again every few seconds for as long as the path is watched.
+                polled.lock().insert(path.clone(), item.clone());
+                settling.push(item);
             }
             let Some(known) = known else { continue };
             if now == Some(known) {
@@ -386,6 +398,22 @@ impl WatchHub {
             .filter(|(key, _)| path.starts_with(&key.path))
             .map(|(_, entry)| entry.generation.load(Ordering::Acquire))
             .max()
+    }
+
+    /// The paths any connection watches below `key`.
+    fn paths_of(&self, key: &RootKey) -> Vec<PathBuf> {
+        let state = self.state.lock();
+        state
+            .conns
+            .values()
+            .flat_map(|watch| {
+                watch
+                    .paths
+                    .iter()
+                    .filter(|(_, spec)| spec.root == *key)
+                    .map(|(path, _)| path.clone())
+            })
+            .collect()
     }
 
     // Attribution inputs -----------------------------------------------------------------------
@@ -522,6 +550,7 @@ impl WatchHub {
             )
         })?;
         let generation = Arc::new(AtomicU64::new(0));
+        let polled: Arc<Mutex<HashMap<PathBuf, Settling>>> = Arc::default();
         let stop = self.shutdown.child_token();
         tokio::spawn(run_root(
             self.clone(),
@@ -532,12 +561,21 @@ impl WatchHub {
             stop.clone(),
             births.clone(),
         ));
+        let hub = self.clone();
+        let wanted_key = key.clone();
+        tokio::spawn(poll_paths(
+            polled.clone(),
+            move || hub.paths_of(&wanted_key),
+            stop.clone(),
+            POLL_EVERY,
+        ));
         debug!(root = %key.path.display(), recursive = key.recursive, "watching");
         Ok(RootEntry {
             _watcher: watcher,
             feed,
             births,
             generation,
+            polled,
             stop,
         })
     }
@@ -943,7 +981,9 @@ impl Births {
     }
 }
 
-/// What a watch found at a path it added, to be looked at again soon ([`SETTLE_PAUSES_MS`]).
+/// What a watch found at a path it added, to be looked at again soon ([`SETTLE_PAUSES_MS`]) and
+/// then every [`POLL_EVERY`] for as long as the path is watched.
+#[derive(Clone)]
 enum Seen {
     /// A file: its version, `None` when it was not there.
     File(Option<FileVersion>),
@@ -951,6 +991,7 @@ enum Seen {
     Folder(HashMap<PathBuf, FileVersion>),
 }
 
+#[derive(Clone)]
 struct Settling {
     path: PathBuf,
     seen: Seen,
@@ -974,60 +1015,69 @@ fn files_in(folder: &Path) -> HashMap<PathBuf, FileVersion> {
     files
 }
 
-/// Looks again at the files and folders a watch added, a few times in the seconds after it:
-/// a change that the platform did not report is fed to its watcher's window like a change the
-/// platform had reported.
+/// Looks at one watched path again: a change since `watched.seen` that the platform did not
+/// report is fed to its watcher's window like a change the platform had reported. Returns how
+/// many entries it looked at.
+fn look(watched: &mut Settling) -> usize {
+    let mut raws = Vec::new();
+    let looked;
+    let births = watched.births.lock();
+    match &mut watched.seen {
+        Seen::File(seen) => {
+            looked = 1;
+            let now = std::fs::symlink_metadata(&watched.path)
+                .ok()
+                .filter(|meta| meta.is_file())
+                .map(|meta| version_of(&meta));
+            if now != *seen {
+                *seen = now;
+                if births.reported(&watched.path) != Some(now) {
+                    raws.push(if now.is_some() {
+                        Raw::Modified(watched.path.clone())
+                    } else {
+                        Raw::Removed(watched.path.clone())
+                    });
+                }
+            }
+        }
+        Seen::Folder(files) => {
+            let now = files_in(&watched.path);
+            looked = 1 + now.len();
+            for (path, version) in &now {
+                if files.get(path) == Some(version) || births.reported(path) == Some(Some(*version))
+                {
+                    continue;
+                }
+                raws.push(if files.contains_key(path) {
+                    Raw::Modified(path.clone())
+                } else {
+                    Raw::Created(path.clone())
+                });
+            }
+            for path in files.keys() {
+                if !now.contains_key(path) && births.reported(path) != Some(None) {
+                    raws.push(Raw::Removed(path.clone()));
+                }
+            }
+            *files = now;
+        }
+    }
+    drop(births);
+    if !raws.is_empty() {
+        debug!(path = %watched.path.display(), changes = raws.len(), "changed after the watch and not reported by the platform");
+        watched.feed.send(raws);
+    }
+    looked
+}
+
+/// Looks again at the files and folders a watch added, a few times in the seconds after it
+/// ([`poll_paths`] goes on after that).
 async fn settle(mut watching: Vec<Settling>, pauses: &[u64]) {
     for pause in pauses.iter().copied() {
         tokio::time::sleep(Duration::from_millis(pause)).await;
         let Ok(next) = tokio::task::spawn_blocking(move || {
             for watched in &mut watching {
-                let mut raws = Vec::new();
-                let births = watched.births.lock();
-                match &mut watched.seen {
-                    Seen::File(seen) => {
-                        let now = std::fs::symlink_metadata(&watched.path)
-                            .ok()
-                            .filter(|meta| meta.is_file())
-                            .map(|meta| version_of(&meta));
-                        if now != *seen {
-                            *seen = now;
-                            if births.reported(&watched.path) != Some(now) {
-                                raws.push(if now.is_some() {
-                                    Raw::Modified(watched.path.clone())
-                                } else {
-                                    Raw::Removed(watched.path.clone())
-                                });
-                            }
-                        }
-                    }
-                    Seen::Folder(files) => {
-                        let now = files_in(&watched.path);
-                        for (path, version) in &now {
-                            if files.get(path) == Some(version)
-                                || births.reported(path) == Some(Some(*version))
-                            {
-                                continue;
-                            }
-                            raws.push(if files.contains_key(path) {
-                                Raw::Modified(path.clone())
-                            } else {
-                                Raw::Created(path.clone())
-                            });
-                        }
-                        for path in files.keys() {
-                            if !now.contains_key(path) && births.reported(path) != Some(None) {
-                                raws.push(Raw::Removed(path.clone()));
-                            }
-                        }
-                        *files = now;
-                    }
-                }
-                drop(births);
-                if !raws.is_empty() {
-                    debug!(path = %watched.path.display(), changes = raws.len(), "changed after the watch and not reported by the platform");
-                    watched.feed.send(raws);
-                }
+                look(watched);
             }
             watching
         })
@@ -1036,6 +1086,58 @@ async fn settle(mut watching: Vec<Settling>, pauses: &[u64]) {
             return;
         };
         watching = next;
+    }
+}
+
+/// Looks every `every`, until `stop`, at the paths a root's watchers hold, whatever the platform
+/// reported: macOS FSEvents starts its stream late and, under load, reports late or never
+/// (measured: a write 3 s after the watch went unreported for 10 s in 6 of 15 tries at a load
+/// average of 26), so a file an editor tab shows could change on disk with no `fs.changed`.
+/// `known` holds each path as it was when last looked at (a watch adds its paths with the state
+/// it found); `wanted` says which paths are still watched. At most [`POLL_BUDGET`] entries are
+/// looked at per round, the rest in the next rounds.
+async fn poll_paths(
+    known: Arc<Mutex<HashMap<PathBuf, Settling>>>,
+    wanted: impl Fn() -> Vec<PathBuf> + Send + 'static,
+    stop: CancellationToken,
+    every: Duration,
+) {
+    let mut offset = 0usize;
+    loop {
+        tokio::select! {
+            () = stop.cancelled() => return,
+            () = tokio::time::sleep(every) => {}
+        }
+        let mut paths = wanted();
+        paths.sort();
+        paths.dedup();
+        let known = known.clone();
+        let Ok(next) = tokio::task::spawn_blocking(move || {
+            let mut known = known.lock();
+            known.retain(|path, _| paths.binary_search(path).is_ok());
+            let mut spent = 0usize;
+            let mut looked_at = 0usize;
+            for step in 0..paths.len() {
+                let path = &paths[(offset + step) % paths.len()];
+                if let Some(watched) = known.get_mut(path) {
+                    spent += look(watched);
+                }
+                looked_at += 1;
+                if spent >= POLL_BUDGET {
+                    break;
+                }
+            }
+            if paths.is_empty() {
+                0
+            } else {
+                (offset + looked_at) % paths.len()
+            }
+        })
+        .await
+        else {
+            return;
+        };
+        offset = next;
     }
 }
 
@@ -1697,6 +1799,47 @@ mod tests {
             matches!(told.as_slice(), [Raw::Modified(p)] if *p == path),
             "one change, once: {told:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_change_the_platform_never_reports_is_found_by_the_poll_for_as_long_as_it_is_watched()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "before").unwrap();
+        let (item, mut rx, _births, _seen) = settling(&path);
+        let known = Arc::new(Mutex::new(HashMap::from([(path.clone(), item)])));
+        let watched = Arc::new(Mutex::new(vec![path.clone()]));
+        let stop = CancellationToken::new();
+        let task = tokio::spawn(poll_paths(
+            known.clone(),
+            {
+                let watched = watched.clone();
+                move || watched.lock().clone()
+            },
+            stop.clone(),
+            Duration::from_millis(10),
+        ));
+        async fn next(rx: &mut mpsc::Receiver<Vec<Raw>>) -> Vec<Raw> {
+            tokio::time::timeout(Duration::from_secs(20), rx.recv())
+                .await
+                .expect("a change within 20 s")
+                .expect("open")
+        }
+        // Two changes, well apart: this is no "just after the watch" effect.
+        std::fs::write(&path, "after the watch").unwrap();
+        assert!(matches!(next(&mut rx).await.as_slice(), [Raw::Modified(p)] if *p == path));
+        std::fs::write(&path, "and later still, longer").unwrap();
+        assert!(matches!(next(&mut rx).await.as_slice(), [Raw::Modified(p)] if *p == path));
+        // A path nobody watches any more is forgotten, and a change to it is no news.
+        watched.lock().clear();
+        while !known.lock().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        std::fs::write(&path, "nobody is looking").unwrap();
+        assert!(rx.try_recv().is_err());
+        stop.cancel();
+        task.await.unwrap();
     }
 
     #[tokio::test]
