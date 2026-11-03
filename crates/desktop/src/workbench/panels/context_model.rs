@@ -671,6 +671,7 @@ pub fn source_word(source: InsightSourceKind) -> &'static str {
         InsightSourceKind::Extension => "the OMP extension",
         InsightSourceKind::Hooks => "hooks",
         InsightSourceKind::Statusline => "the status line",
+        InsightSourceKind::Otlp => "OpenTelemetry",
         InsightSourceKind::Transcript => "the transcript",
         InsightSourceKind::Osc7501 => "the terminal's status",
     }

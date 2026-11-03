@@ -356,22 +356,26 @@ pub enum InsightSourceKind {
     Extension,
     Hooks,
     Statusline,
+    /// An agent's own OpenTelemetry export, received by the daemon's loopback OTLP receiver
+    /// (protocol 0.74, ADR 0026): live, but a mapping of the agent's own attribute names.
+    Otlp,
     Transcript,
     Osc7501,
 }
 
 impl InsightSourceKind {
     /// How far a source is trusted for a block: the lower, the better (the spike's merge rule:
-    /// chat, extension, status line, hooks, transcript, terminal status). A lower source only
-    /// fills a block a better one never reported.
+    /// chat, extension, status line, hooks, OpenTelemetry, transcript, terminal status). A lower
+    /// source only fills a block a better one never reported.
     pub fn rank(self) -> u8 {
         match self {
             Self::Chat => 0,
             Self::Extension => 1,
             Self::Statusline => 2,
             Self::Hooks => 3,
-            Self::Transcript => 4,
-            Self::Osc7501 => 5,
+            Self::Otlp => 4,
+            Self::Transcript => 5,
+            Self::Osc7501 => 6,
         }
     }
 }

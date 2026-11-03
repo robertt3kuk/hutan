@@ -27,6 +27,7 @@ hutan-protocol = { path = "crates/protocol" }
 hutan-settings = { path = "crates/settings" }
 hutan-storage = { path = "crates/storage" }
 hutan-syntax = { path = "crates/syntax" }
+hutan-telemetry = { path = "crates/telemetry" }
 hutan-terminal = { path = "crates/terminal" }
 hutan-terminal-view = { path = "crates/terminal_view" }
 hutan-ui = { path = "crates/ui" }
@@ -46,7 +47,15 @@ crop = { version = "=0.4.3", features = ["utf16-metric"] }
 crossterm = { version = "0.29.0", default-features = false }
 # Hands work to the main thread's run loop (the daemon's Cocoa side, ADR 0007).
 dispatch2 = { version = "0.3.1", default-features = false, features = ["std", "alloc", "objc2"] }
+# gzip bodies of the OTLP receiver (hutan-telemetry), inflated under a byte limit (ADR 0026).
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 futures = "0.3.34"
+# Random per-session capability tokens and the random persistent port of the OTLP receiver (ADR 0026).
+getrandom = "0.3.4"
+# The loopback OTLP/HTTP receiver of hutand (ADR 0026): hyper's http1 server over tokio, no router, no TLS.
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
 # Honours .gitignore / .ignore when the daemon's file service lists, indexes and searches a
 # folder (hutan-daemon `fs`, E-3); the same rules ripgrep applies.
 ignore = "0.4.33"
@@ -79,6 +88,9 @@ parking_lot = "0.12.5"
 # Parses the bundle's property lists in the xtask bundle test (dev only).
 plist = "1.10.1"
 postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
+# The hand-written subset of OTLP's Export*ServiceRequest messages (hutan-telemetry, ADR 0026); not
+# `opentelemetry-proto`, which pulls tonic and the SDK. Derive only: no build step, no protoc.
+prost = { version = "0.14.4", default-features = false, features = ["derive", "std"] }
 # Property tests of hutan-buffer and of hutan-core's restore plan (dev only).
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 regex = "1.13.1"
@@ -106,6 +118,8 @@ serde_json = "1.0.154"
 sha2 = "0.10.9"
 # Minimal diff of an external file change (hutan-buffer `apply_external`).
 similar = { version = "3.2.0", default-features = false, features = ["std"] }
+# Constant-time comparison of a session's OTLP token (hutand, ADR 0026).
+subtle = { version = "2.6.1", default-features = false }
 svgtypes = "0.16.1"
 tempfile = "3.27.0"
 thiserror = "2.0.21"

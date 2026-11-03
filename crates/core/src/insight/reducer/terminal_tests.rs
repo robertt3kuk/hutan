@@ -315,3 +315,94 @@ fn tokens_of_a_call_without_a_turn_begin_one_and_an_empty_report_changes_nothing
     assert_eq!(insight.turns.len(), 1);
     assert_eq!(insight.turns[0].outcome, InsightOutcome::Running);
 }
+
+fn one_call(source: InsightSourceKind, input: u64, tool_name: &str) -> InsightReport {
+    InsightReport {
+        tokens: Some(call(input, 10, 0)),
+        tools: vec![tool(tool_name, 1, 0, None)],
+        ..report(source)
+    }
+}
+
+#[test]
+fn opentelemetry_ranks_between_hooks_and_the_transcript() {
+    assert!(InsightSourceKind::Hooks.rank() < InsightSourceKind::Otlp.rank());
+    assert!(InsightSourceKind::Otlp.rank() < InsightSourceKind::Transcript.rank());
+    assert_eq!(
+        serde_json::to_string(&InsightSourceKind::Otlp).unwrap(),
+        "\"otlp\""
+    );
+}
+
+#[test]
+fn a_worse_source_never_adds_to_the_counters_of_a_better_one() {
+    let mut reducer = reducer("claude");
+    reducer.apply_report(&one_call(InsightSourceKind::Hooks, 100, "Read"), T0);
+    // OpenTelemetry says the same call again: it ranks below hooks, so it adds nothing.
+    assert!(!reducer.apply_report(&one_call(InsightSourceKind::Otlp, 100, "Read"), T0 + 1));
+    let insight = reducer.snapshot(1, T0 + 2, None);
+    assert_eq!(insight.tools.as_ref().map(|tools| tools.calls), Some(1));
+    assert_eq!(
+        source_of(&insight, InsightBlock::Tools),
+        Some(InsightSourceKind::Hooks)
+    );
+}
+
+#[test]
+fn a_better_source_that_takes_over_counters_starts_them_again_instead_of_adding() {
+    let mut reducer = reducer("claude");
+    // OpenTelemetry arrives first and counts a call and a tool.
+    reducer.apply_report(&one_call(InsightSourceKind::Otlp, 100, "Read"), T0);
+    reducer.apply_report(
+        &InsightReport {
+            turn: end(None),
+            ..report(InsightSourceKind::Otlp)
+        },
+        T0 + 1,
+    );
+    // Hooks (a better source) then report the same call: they replace, never add.
+    reducer.apply_report(&one_call(InsightSourceKind::Hooks, 100, "Read"), T0 + 2);
+    reducer.apply_report(
+        &InsightReport {
+            turn: end(None),
+            ..report(InsightSourceKind::Hooks)
+        },
+        T0 + 3,
+    );
+    let insight = reducer.snapshot(1, T0 + 4, None);
+    assert_eq!(insight.tools.as_ref().map(|tools| tools.calls), Some(1));
+    assert_eq!(insight.totals.as_ref().map(|totals| totals.turns), Some(1));
+    assert_eq!(
+        insight.totals.as_ref().and_then(|totals| totals.input),
+        Some(100)
+    );
+    assert_eq!(insight.turns.len(), 1);
+    assert_eq!(
+        source_of(&insight, InsightBlock::Turns),
+        Some(InsightSourceKind::Hooks)
+    );
+}
+
+#[test]
+fn a_worse_sources_cost_does_not_replace_a_better_ones() {
+    let mut reducer = reducer("claude");
+    reducer.apply_report(
+        &InsightReport {
+            cost_usd: Some(12.5),
+            ..report(InsightSourceKind::Statusline)
+        },
+        T0,
+    );
+    reducer.apply_report(
+        &InsightReport {
+            cost_usd: Some(0.03),
+            ..report(InsightSourceKind::Otlp)
+        },
+        T0 + 1,
+    );
+    let insight = reducer.snapshot(1, T0 + 2, None);
+    assert_eq!(
+        insight.totals.and_then(|totals| totals.cost_usd),
+        Some(12.5)
+    );
+}

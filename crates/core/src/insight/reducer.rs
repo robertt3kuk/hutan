@@ -137,6 +137,9 @@ pub struct InsightReducer {
     fixed: Option<u64>,
     /// Time spent waiting for the model, as the agent said.
     api_ms: Option<u64>,
+    /// The source whose cost the session's totals show: a better source's cost is not replaced by
+    /// a worse one's (two sources' cumulative figures are never mixed).
+    cost_source: Option<InsightSourceKind>,
 }
 
 /// The slot of `block` in [`InsightReducer::sources`].
@@ -185,6 +188,7 @@ impl InsightReducer {
             sources: [None; 6],
             fixed: None,
             api_ms: None,
+            cost_source: None,
         }
     }
 
@@ -680,15 +684,55 @@ impl InsightReducer {
     }
 
     /// Whether `source` may write `block`: a better source that reported it keeps it (a lower
-    /// one only fills a block a better one never reported).
+    /// one only fills a block a better one never reported). A better source that takes over a
+    /// block of counters (turns, tools, files) starts it again: what a worse source counted is
+    /// not added to what the better one counts (two sources' counters are never summed).
     fn admit(&mut self, block: InsightBlock, source: InsightSourceKind) -> bool {
         let slot = &mut self.sources[block_ix(block)];
-        match slot {
+        match *slot {
             Some(held) if held.rank() < source.rank() => false,
+            Some(held) if held.rank() > source.rank() => {
+                *slot = Some(source);
+                self.restart_counters(block);
+                true
+            }
             _ => {
                 *slot = Some(source);
                 true
             }
+        }
+    }
+
+    /// Forgets what the counters of `block` hold (a levels block has nothing to forget).
+    fn restart_counters(&mut self, block: InsightBlock) {
+        match block {
+            InsightBlock::Turns => {
+                let cost = self.usage.cost_so_far();
+                self.usage = TurnUsage::new(false);
+                if let Some(cost) = cost {
+                    self.usage.cost_reported(cost);
+                }
+                self.sums = Sums::default();
+                self.ended.clear();
+                self.running = None;
+                self.stamps.turns = None;
+            }
+            InsightBlock::Tools => {
+                self.tools.clear();
+                self.tool_calls = 0;
+                self.tool_failed = 0;
+                self.tool_ms = None;
+                self.pending_tools.clear();
+                self.stamps.tools = None;
+            }
+            InsightBlock::Files => {
+                self.files.clear();
+                self.files_more = false;
+                self.files_added = 0;
+                self.files_removed = 0;
+                self.stamps.files = None;
+            }
+            InsightBlock::Context | InsightBlock::Breakdown | InsightBlock::Time => {}
         }
     }
 
@@ -770,7 +814,12 @@ impl InsightReducer {
             }
             changed = true;
         }
-        if let Some(cost) = report.cost_usd {
+        if let Some(cost) = report.cost_usd
+            && self
+                .cost_source
+                .is_none_or(|held| held.rank() >= source.rank())
+        {
+            self.cost_source = Some(source);
             self.usage.cost_reported(cost);
             changed = true;
         }
