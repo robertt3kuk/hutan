@@ -1,0 +1,7 @@
+[package]
+name = "otlp-decode-bench"
+version = "0.0.0"
+edition = "2021"
+[dependencies]
+opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic-messages", "trace", "logs", "metrics"] }
+prost = "0.14"
