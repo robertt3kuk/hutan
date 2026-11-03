@@ -86,6 +86,10 @@ impl Worker {
             self.shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
         }
         let enabled = self.shared.enabled();
+        // The mappers of sessions that were closed do not pile up.
+        if sessions.len() > 64 {
+            sessions.retain(|id, _| self.shared.env.has_token(*id));
+        }
         let state = sessions.entry(job.session).or_insert_with(|| SessionState {
             mapper: Mapper::new(),
             seq: 0,

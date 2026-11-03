@@ -333,6 +333,12 @@ fn time_tools_files_and_sources_read_as_written() {
 }
 
 #[test]
+fn the_opentelemetry_source_is_named_as_the_agents_own_export() {
+    // TEL-1 (protocol 0.74): blocks the loopback OTLP receiver filled say so.
+    assert_eq!(source_word(InsightSourceKind::Otlp), "OpenTelemetry");
+}
+
+#[test]
 fn exact_figures_are_grouped() {
     assert_eq!(thousands(7), "7");
     assert_eq!(thousands(11_200), "11 200");

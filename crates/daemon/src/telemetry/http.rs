@@ -231,6 +231,10 @@ async fn respond(
     let _slot = {
         let now = Instant::now();
         let mut limits = lock(&shared.limits);
+        // The state of sessions that were closed does not pile up.
+        if limits.len() > 128 {
+            limits.retain(|id, held| held.in_flight > 0 || shared.env.has_token(*id));
+        }
         let entry = limits.entry(session).or_insert_with(|| SessionLimits {
             requests: Bucket::new(shared.tuning.requests, now),
             bytes: Bucket::new(shared.tuning.bytes, now),

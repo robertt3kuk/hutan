@@ -394,6 +394,55 @@ async fn the_picked_port_is_kept_across_a_restart() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_session_restored_after_a_restart_gets_the_endpoint_again_with_a_new_token() {
+    let t = TestDaemon::start_with("[telemetry.agents]\nclaude = true\n", |_| {}).await;
+    let client = t.connect().await;
+    let port = port_of(&client).await;
+    // The session appends what it was given each time it starts: once now, once restored.
+    let out = t._dir.path().join("otlp-restored-env");
+    let script = format!(
+        "printf '%s %s\\n' \"$HUTAN_OTLP_ENDPOINT\" \"$HUTAN_OTLP_TOKEN\" >> {}; exec sleep 600",
+        out.display()
+    );
+    common::create(&client, sh(&script)).await;
+    let lines = |at_least: usize| {
+        let out = out.clone();
+        async move {
+            timeout(WAIT, async {
+                loop {
+                    let text = std::fs::read_to_string(&out).unwrap_or_default();
+                    if text.lines().count() >= at_least {
+                        return text;
+                    }
+                    sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the session never wrote its environment")
+        }
+    };
+    let first = lines(1).await;
+    drop(client);
+    let t = t.restart().await;
+    let both = lines(2).await;
+    let tokens: Vec<&str> = both
+        .lines()
+        .map(|line| line.split_whitespace().nth(1).unwrap())
+        .collect();
+    assert_eq!(tokens.len(), 2);
+    assert_ne!(tokens[0], tokens[1], "a new process gets a new token");
+    // The same port: the daemon listens before it restores sessions.
+    for line in both.lines() {
+        assert!(
+            line.starts_with(&format!("http://127.0.0.1:{port}/s/")),
+            "{line}"
+        );
+    }
+    assert!(first.lines().count() == 1);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_busy_persisted_port_leaves_the_receiver_down_and_visible_never_elsewhere() {
     let squatter = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = squatter.local_addr().unwrap().port();
