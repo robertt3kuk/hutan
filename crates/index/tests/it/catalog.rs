@@ -62,6 +62,9 @@ fn config(env: &Env, hutan: bool) -> IndexConfig {
             (Source::Omp, env.omp.clone()),
         ],
         hutan,
+        // What the daemon does (at a faster pace): a dropped file event costs a moment, not
+        // the test.
+        safety_poll: Some(Duration::from_millis(500)),
     }
 }
 

@@ -28,7 +28,7 @@ mod types;
 
 pub use adapters::{Adapter, ParseState, Parsed};
 pub use error::{IndexError, Result};
-pub use indexer::{IndexConfig, IndexHandle, Indexer};
+pub use indexer::{IndexConfig, IndexHandle, Indexer, SAFETY_POLL};
 pub use scan::Metrics;
 pub use summary::{FIRST_PROMPT_MAX_CHARS, LATEST_TURNS_MAX, Summary, TURN_TEXT_MAX_CHARS, Turn};
 pub use sys::process_cpu_micros;

@@ -2,9 +2,10 @@
 //! watcher that tells it which files changed, and the cloneable [`IndexHandle`] for everything
 //! else.
 //!
-//! Nothing runs on a timer. The worker sleeps in `recv` until a file event, a Hutan record, or
-//! a command arrives; at startup it does one `stat` pass over the source roots and reads only
-//! the files whose stamp changed.
+//! The worker sleeps in `recv` until a file event, a Hutan record, or a command arrives; at
+//! startup it does one `stat` pass over the source roots and reads only the files whose stamp
+//! changed. The only timer is the optional [`IndexConfig::safety_poll`], which repeats that
+//! pass for the events FSEvents never delivers.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,9 @@ const MAX_DELAY: Duration = Duration::from_secs(2);
 /// Messages waiting for the worker before producers drop (events) or wait (commands).
 const QUEUE: usize = 4096;
 const DAY_MS: u64 = 86_400_000;
+/// The daemon's [`IndexConfig::safety_poll`]: a stat pass over a transcript tree is cheap but
+/// not free, so it is far slower than the few-second look of the small user-file watchers.
+pub const SAFETY_POLL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct IndexConfig {
@@ -50,6 +54,11 @@ pub struct IndexConfig {
     pub roots: Vec<(Source, PathBuf)>,
     /// Accept Hutan records ([`IndexHandle::push_hutan`]).
     pub hutan: bool,
+    /// Run the stat pass again this often although no file event asked for it, so a file the
+    /// platform never reported (FSEvents under load) is read within about this long; `None`
+    /// never does. The pass is `readdir` + `stat` only and shows no "scanning" state when it
+    /// finds nothing. The daemon uses [`SAFETY_POLL`].
+    pub safety_poll: Option<Duration>,
 }
 
 enum Msg {
@@ -263,6 +272,8 @@ impl Indexer {
             pending: BTreeSet::new(),
             first_pending: None,
             last_event: None,
+            safety_poll: config.safety_poll,
+            next_poll: None,
         };
         let thread = std::thread::Builder::new()
             .name("hutan-index".to_owned())
@@ -355,14 +366,38 @@ struct Worker {
     pending: BTreeSet<PathBuf>,
     first_pending: Option<Instant>,
     last_event: Option<Instant>,
+    /// How often the stat pass runs again with no event ([`IndexConfig::safety_poll`]).
+    safety_poll: Option<Duration>,
+    next_poll: Option<Instant>,
 }
 
 impl Worker {
+    /// How long to sleep for a message: until the pending files are due or the next periodic
+    /// pass, whichever is first; `None` sleeps until something arrives.
+    fn wait_for_message(&self) -> Option<Duration> {
+        let until_poll = self
+            .next_poll
+            .map(|at| at.saturating_duration_since(Instant::now()));
+        match (self.next_deadline(), until_poll) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    fn poll_due(&self) -> bool {
+        self.next_poll.is_some_and(|at| at <= Instant::now())
+    }
+
+    fn schedule_poll(&mut self) {
+        self.next_poll = self.safety_poll.map(|every| Instant::now() + every);
+    }
+
     fn run(mut self, rx: &Receiver<Msg>) {
         sys::lower_current_thread_priority();
         self.startup();
+        self.schedule_poll();
         loop {
-            let message = match self.next_deadline() {
+            let message = match self.wait_for_message() {
                 None => match rx.recv() {
                     Ok(message) => message,
                     Err(_) => break,
@@ -370,7 +405,13 @@ impl Worker {
                 Some(wait) => match rx.recv_timeout(wait) {
                     Ok(message) => message,
                     Err(RecvTimeoutError::Timeout) => {
-                        self.read_pending();
+                        if self.next_deadline().is_some_and(|wait| wait.is_zero()) {
+                            self.read_pending();
+                        }
+                        if self.poll_due() {
+                            self.safety_pass();
+                            self.schedule_poll();
+                        }
                         continue;
                     }
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -395,6 +436,7 @@ impl Worker {
                 Msg::Refresh(reply) => {
                     self.read_pending();
                     self.stat_pass();
+                    self.schedule_poll();
                     let _ = reply.send(());
                 }
                 Msg::Stop => break,
@@ -489,9 +531,21 @@ impl Worker {
 
     /// One `stat` pass over every root; reads only the files whose stamp changed.
     fn stat_pass(&mut self) {
+        self.pass(true);
+    }
+
+    /// The periodic pass ([`IndexConfig::safety_poll`]): the same walk, but a pass that finds
+    /// nothing to read leaves the scan state (and so the "scanning" display) untouched.
+    fn safety_pass(&mut self) {
+        self.pass(false);
+    }
+
+    fn pass(&mut self, visible: bool) {
         let started = Instant::now();
         let cutoff_ms = self.cutoff_ms();
-        self.update_scan(|scan| scan.scanning = true);
+        if visible {
+            self.update_scan(|scan| scan.scanning = true);
+        }
         self.refresh_titles();
         let mut changed: Vec<(usize, PathBuf)> = Vec::new();
         let mut per_source: Vec<(Source, u64)> = Vec::new();
@@ -511,11 +565,20 @@ impl Worker {
         }
         let files: u64 = per_source.iter().map(|(_, count)| count).sum();
         let total = changed.len();
-        self.update_scan(|scan| {
-            scan.files = files;
-            scan.done = files.saturating_sub(total as u64);
-            scan.per_source = per_source;
-        });
+        if total > 0 {
+            debug!(
+                files = total,
+                "the periodic stat pass found files that no file event told of"
+            );
+        }
+        if visible || total > 0 {
+            self.update_scan(|scan| {
+                scan.scanning = true;
+                scan.files = files;
+                scan.done = files.saturating_sub(total as u64);
+                scan.per_source = per_source;
+            });
+        }
         let mut rows = 0;
         for (index, path) in changed {
             // A stop does not wait for the whole pass: the files not read yet keep their old
@@ -527,11 +590,13 @@ impl Worker {
             self.update_scan(|scan| scan.done = (scan.done + 1).min(scan.files));
             std::thread::yield_now();
         }
-        self.update_scan(|scan| {
-            scan.scanning = false;
-            scan.done = scan.files;
-            scan.finished_ms = Some(now_ms());
-        });
+        if visible || total > 0 {
+            self.update_scan(|scan| {
+                scan.scanning = false;
+                scan.done = scan.files;
+                scan.finished_ms = Some(now_ms());
+            });
+        }
         if total > 0 {
             info!(
                 files = total,

@@ -70,6 +70,7 @@ fn config(env: &Env, hutan: bool) -> IndexConfig {
         range_days: 0,
         roots: vec![(Source::Claude, env.claude.clone())],
         hutan,
+        safety_poll: None,
     }
 }
 
@@ -91,7 +92,12 @@ fn existing_files_are_indexed_at_start_and_new_ones_through_file_events() {
         &claude_line("an earlier conversation about kubernetes"),
     );
 
-    let indexer = Indexer::start(config(&env, false)).unwrap();
+    // (the periodic pass only bounds the time a missed event can cost; events normally win)
+    let indexer = Indexer::start(IndexConfig {
+        safety_poll: Some(Duration::from_millis(500)),
+        ..config(&env, false)
+    })
+    .unwrap();
     let handle = indexer.handle();
     wait_for("the startup pass", || {
         keys(&handle, "kubernetes") == ["old-session"]
@@ -129,6 +135,38 @@ fn existing_files_are_indexed_at_start_and_new_ones_through_file_events() {
     assert_eq!((claude.files, claude.rows, claude.errors), (2, 3, 0));
     assert!(claude.last_indexed_ms.is_some());
     assert!(status.db_bytes > 0);
+}
+
+/// The platform's events are not guaranteed (FSEvents under load drops them, and a root that
+/// did not exist at start is not watched at all): the periodic stat pass finds the files.
+#[test]
+fn files_no_event_told_of_are_found_by_the_periodic_stat_pass() {
+    let env = env();
+    let late_root = env.claude.parent().unwrap().join("late-projects");
+    let indexer = Indexer::start(IndexConfig {
+        roots: vec![(Source::Claude, late_root.clone())],
+        safety_poll: Some(Duration::from_millis(50)),
+        ..config(&env, false)
+    })
+    .unwrap();
+    let handle = indexer.handle();
+    handle.flush().unwrap(); // the startup pass is over: the root is not there
+    assert!(keys(&handle, "terraform").is_empty());
+
+    fs::create_dir_all(late_root.join("-work-app")).unwrap();
+    let file = late_root.join("-work-app/late.jsonl");
+    append(&file, &claude_line("a talk about terraform"));
+    wait_for("the file of an unwatched root", || {
+        keys(&handle, "terraform") == ["late"]
+    });
+    // Later appends to it are found the same way; nothing is read twice.
+    append(&file, &claude_line("and about prometheus"));
+    wait_for("the appended line", || {
+        keys(&handle, "prometheus") == ["late"]
+    });
+    assert_eq!(handle.metrics().reindexed(), 0);
+    // A pass that found something ended: the scan state is not stuck on "scanning".
+    wait_for("the scan to end", || !handle.scan_info().scanning);
 }
 
 #[test]
@@ -451,6 +489,7 @@ fn hits_of_every_transcript_source_carry_their_file_and_block_hits_their_block()
             (Source::Omp, omp),
         ],
         hutan: true,
+        safety_poll: None,
     })
     .unwrap();
     let handle = indexer.handle();

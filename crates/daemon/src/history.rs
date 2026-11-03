@@ -135,6 +135,7 @@ impl HistoryService {
             range_days: settings.range_days,
             roots: source_roots(&settings),
             hutan: settings.hutan,
+            safety_poll: Some(hutan_index::SAFETY_POLL),
         };
         let sources: Vec<_> = config.roots.iter().map(|(s, p)| (*s, p.clone())).collect();
         let indexer = tokio::task::spawn_blocking(move || Indexer::start(config))

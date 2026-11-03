@@ -210,6 +210,7 @@ fn main() {
         range_days: 0,
         roots: vec![(Source::Claude, corpus.clone())],
         hutan: false,
+        safety_poll: None,
     })
     .unwrap();
     let handle = indexer.handle();
