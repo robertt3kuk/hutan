@@ -301,7 +301,7 @@ impl WatchHub {
             // What exists is looked at again soon: the platform's stream may not be running
             // yet, and a write right after the watch is then never reported.
             let seen = if meta.as_ref().is_some_and(|m| m.is_dir()) {
-                Some(Seen::Folder(files_in(&path)))
+                Some(Seen::Folder(entries_in(&path)))
             } else {
                 now.map(|version| Seen::File(Some(version)))
             };
@@ -987,8 +987,8 @@ impl Births {
 enum Seen {
     /// A file: its version, `None` when it was not there.
     File(Option<FileVersion>),
-    /// A folder: the files directly in it.
-    Folder(HashMap<PathBuf, FileVersion>),
+    /// A folder: the files (with their versions) and folders (`None`) directly in it.
+    Folder(HashMap<PathBuf, Option<FileVersion>>),
 }
 
 #[derive(Clone)]
@@ -999,20 +999,23 @@ struct Settling {
     births: Arc<Mutex<Births>>,
 }
 
-/// The files directly in `folder` (at most [`SETTLE_FOLDER_MAX`]) and their versions.
-fn files_in(folder: &Path) -> HashMap<PathBuf, FileVersion> {
-    let mut files = HashMap::new();
-    if let Ok(entries) = std::fs::read_dir(folder) {
-        for entry in entries.flatten().take(SETTLE_FOLDER_MAX) {
+/// The files and folders directly in `folder` (at most [`SETTLE_FOLDER_MAX`]): a file with its
+/// version, a folder (`None`) by its presence only.
+fn entries_in(folder: &Path) -> HashMap<PathBuf, Option<FileVersion>> {
+    let mut entries = HashMap::new();
+    if let Ok(read) = std::fs::read_dir(folder) {
+        for entry in read.flatten().take(SETTLE_FOLDER_MAX) {
             let path = entry.path();
-            if let Ok(meta) = std::fs::symlink_metadata(&path)
-                && meta.is_file()
-            {
-                files.insert(path, version_of(&meta));
+            if let Ok(meta) = std::fs::symlink_metadata(&path) {
+                if meta.is_file() {
+                    entries.insert(path, Some(version_of(&meta)));
+                } else if meta.is_dir() {
+                    entries.insert(path, None);
+                }
             }
         }
     }
-    files
+    entries
 }
 
 /// Looks at one watched path again: a change since `watched.seen` that the platform did not
@@ -1040,26 +1043,32 @@ fn look(watched: &mut Settling) -> usize {
                 }
             }
         }
-        Seen::Folder(files) => {
-            let now = files_in(&watched.path);
+        Seen::Folder(entries) => {
+            let now = entries_in(&watched.path);
             looked = 1 + now.len();
             for (path, version) in &now {
-                if files.get(path) == Some(version) || births.reported(path) == Some(Some(*version))
-                {
+                let reported = births.reported(path);
+                let told = match version {
+                    // A file: the platform told of this very version.
+                    Some(version) => reported == Some(Some(*version)),
+                    // A folder is only there or not: its own times change with what is in it.
+                    None => reported.is_some_and(|version| version.is_some()),
+                };
+                if entries.get(path) == Some(version) || told {
                     continue;
                 }
-                raws.push(if files.contains_key(path) {
+                raws.push(if entries.contains_key(path) {
                     Raw::Modified(path.clone())
                 } else {
                     Raw::Created(path.clone())
                 });
             }
-            for path in files.keys() {
+            for path in entries.keys() {
                 if !now.contains_key(path) && births.reported(path) != Some(None) {
                     raws.push(Raw::Removed(path.clone()));
                 }
             }
-            *files = now;
+            *entries = now;
         }
     }
     drop(births);
@@ -1882,7 +1891,7 @@ mod tests {
         let births = Arc::new(Mutex::new(Births::new(SystemTime::now())));
         let settling = Settling {
             path: dir.path().to_owned(),
-            seen: Seen::Folder(files_in(dir.path())),
+            seen: Seen::Folder(entries_in(dir.path())),
             feed: Feed {
                 raws: tx,
                 lost: Arc::new(AtomicBool::new(false)),
@@ -1909,5 +1918,41 @@ mod tests {
         }
         told.sort();
         assert_eq!(told, ["created born.txt", "modified changed.txt"]);
+    }
+
+    #[test]
+    fn a_folder_made_or_removed_in_a_watched_folder_is_found_and_what_happens_inside_it_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let (old, new) = (dir.path().join("old"), dir.path().join("new"));
+        std::fs::create_dir(&old).unwrap();
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut settling = Settling {
+            path: dir.path().to_owned(),
+            seen: Seen::Folder(entries_in(dir.path())),
+            feed: Feed {
+                raws: tx,
+                lost: Arc::new(AtomicBool::new(false)),
+            },
+            births: Arc::new(Mutex::new(Births::new(SystemTime::now()))),
+        };
+        std::fs::create_dir(&new).unwrap();
+        std::fs::remove_dir(&old).unwrap();
+        look(&mut settling);
+        let batch = rx.try_recv().unwrap();
+        assert_eq!(batch.len(), 2, "{batch:?}");
+        assert!(
+            batch
+                .iter()
+                .any(|raw| matches!(raw, Raw::Created(p) if *p == new))
+        );
+        assert!(
+            batch
+                .iter()
+                .any(|raw| matches!(raw, Raw::Removed(p) if *p == old))
+        );
+        // A file written inside the new folder changes the folder's own times, not its presence.
+        std::fs::write(new.join("inner.txt"), "x").unwrap();
+        look(&mut settling);
+        assert!(rx.try_recv().is_err(), "nothing of the folder's own");
     }
 }
