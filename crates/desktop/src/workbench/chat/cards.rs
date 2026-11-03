@@ -1257,11 +1257,7 @@ pub(crate) struct FileRowPath {
 impl FileRowPath {
     /// `path` relative to `cwd` when it lies inside it (an agent may send it absolute), split into
     /// folder and file name.
-    pub(crate) fn new(
-        path: &str,
-        moved_from: Option<&str>,
-        cwd: Option<&std::path::Path>,
-    ) -> Self {
+    pub(crate) fn new(path: &str, moved_from: Option<&str>, cwd: Option<&std::path::Path>) -> Self {
         let inside = |path: &str| -> String {
             let path = std::path::Path::new(path);
             cwd.and_then(|cwd| path.strip_prefix(cwd).ok())

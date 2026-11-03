@@ -328,7 +328,11 @@ fn an_edit_naming_three_files_lists_three_rows_in_both_panels(cx: &mut TestAppCo
     );
     if uncounted > 0 && uncounted < lines.len() {
         assert!(
-            summary.ends_with(&format!(" in {} of {}", lines.len() - uncounted, lines.len())),
+            summary.ends_with(&format!(
+                " in {} of {}",
+                lines.len() - uncounted,
+                lines.len()
+            )),
             "{summary}"
         );
     } else {

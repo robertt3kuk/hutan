@@ -598,10 +598,9 @@ pub fn file_lines(insight: &AgentInsight) -> Vec<FileLine> {
 /// terminal agent's tool wrote, a write whose old text OMP did not send). The turn footer, which
 /// counts from the checkpoint, counts those lines too.
 pub fn files_without_counts(insight: &AgentInsight) -> usize {
-    insight
-        .files
-        .as_ref()
-        .map_or(0, |files| files.items.iter().filter(|f| f.added.is_none()).count())
+    insight.files.as_ref().map_or(0, |files| {
+        files.items.iter().filter(|f| f.added.is_none()).count()
+    })
 }
 
 /// Files the turns counted as changed, whether or not the agent named them.

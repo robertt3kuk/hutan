@@ -636,7 +636,10 @@ fn row<T: 'static>(
             .text_color(color)
             .relative()
             .child(SharedString::from(word))
-            .child(probe(surface.regions, Region::Finding(names.severity, index)))
+            .child(probe(
+                surface.regions,
+                Region::Finding(names.severity, index),
+            ))
             .into_any_element(),
         div()
             .flex_1()
@@ -647,7 +650,12 @@ fn row<T: 'static>(
             .flex_none()
             .into_any_element(),
     ];
-    let meta = meta_text(finding, surface.titles, surface.show_session, surface.now_ms);
+    let meta = meta_text(
+        finding,
+        surface.titles,
+        surface.show_session,
+        surface.now_ms,
+    );
 
     let mut body = div()
         .id((names.row, index))
@@ -1053,7 +1061,10 @@ pub(super) fn dismissed_rows<T: 'static>(
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 access(this).restore(access, cx, &connection, id.clone());
                             }))
-                            .child(probe(surface.regions, Region::Finding(names.restore, index))),
+                            .child(probe(
+                                surface.regions,
+                                Region::Finding(names.restore, index),
+                            )),
                     ),
                 )
                 .child(probe(surface.regions, Region::Finding(names.row, index)))
@@ -1128,11 +1139,7 @@ pub(super) fn evidence_lines(
         .map(|evidence| {
             let reference = match evidence.reference.as_deref() {
                 // The excerpt may already name the session.
-                Some(r) => match r
-                    .parse::<SessionId>()
-                    .ok()
-                    .and_then(|id| titles.get(&id))
-                {
+                Some(r) => match r.parse::<SessionId>().ok().and_then(|id| titles.get(&id)) {
                     Some(title) if evidence.excerpt.contains(title.as_str()) => String::new(),
                     Some(title) => format!(" ({title})"),
                     None => format!(" ({r})"),

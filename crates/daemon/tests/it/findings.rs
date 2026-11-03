@@ -772,9 +772,16 @@ async fn journals_of_three_harnesses_in_two_workspaces_give_findings_with_their_
     assert_eq!(rest(&all), ids(&after));
     // The user's restore lists it again — also after a restart; restoring twice says so.
     let restored: FindingRestored = client.call(restore(&done.id)).await.unwrap();
-    assert_eq!((restored.id.as_str(), restored.restored), (done.id.as_str(), true));
+    assert_eq!(
+        (restored.id.as_str(), restored.restored),
+        (done.id.as_str(), true)
+    );
     let back = findings(&client, AgentsFindingsRequest::default()).await;
-    assert!(back.findings.iter().any(|f| f.id == done.id && !f.dismissed));
+    assert!(
+        back.findings
+            .iter()
+            .any(|f| f.id == done.id && !f.dismissed)
+    );
     assert_eq!(back.dismissed_hidden, 0);
     assert_eq!(back.counts.alert, all.counts.alert);
     let again: FindingRestored = client.call(restore(&done.id)).await.unwrap();

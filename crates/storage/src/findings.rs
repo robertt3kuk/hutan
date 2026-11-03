@@ -49,7 +49,8 @@ impl DismissedFindings<'_> {
             .map(|count| count > 0)
             .map_err(StorageError::sqlite("reading a dismissed finding"))
         })?;
-        self.0.write_checked(Write::RestoreFinding { id: id.to_owned() })?;
+        self.0
+            .write_checked(Write::RestoreFinding { id: id.to_owned() })?;
         Ok(was_dismissed)
     }
 

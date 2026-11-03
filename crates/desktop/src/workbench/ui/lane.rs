@@ -95,9 +95,8 @@ pub(crate) fn readable_on(ink: Hsla, grounds: &[Hsla], min: f32) -> Hsla {
     if worst(ink) >= min {
         return ink;
     }
-    let light_grounds = grounds.iter().map(|g| luminance(*g)).sum::<f32>()
-        / grounds.len().max(1) as f32
-        > 0.4;
+    let light_grounds =
+        grounds.iter().map(|g| luminance(*g)).sum::<f32>() / grounds.len().max(1) as f32 > 0.4;
     let mut stepped = ink;
     for _ in 0..50 {
         stepped.l = if light_grounds {
