@@ -10,6 +10,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ### Fixed
 - An edit of `settings.toml` or of a Mawas memory file could stay unapplied when macOS dropped or delayed the file event (it does under load); both are now read again every 5 seconds, so an edit applies within 5 s even when no event arrives.
+- The same for themes and icon packs, the Files panel and everything that follows files through it (5 s), and new agent transcripts in the history index (30 s): a change macOS never reported is still picked up (ADR 0027).
 
 ## 0.3.6 — 2026-11-03
 

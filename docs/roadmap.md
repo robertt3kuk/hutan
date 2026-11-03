@@ -139,7 +139,7 @@ Exit demo: ⌥Space (or the assistant panel) opens a quick chat for questions wi
 Exit demo: enable indexing (opt-in), search "which session ran `cargo test -p daemon`" or a phrase from an old conversation and find Hutan sessions, terminal blocks, assistant chats, and external agent sessions (Claude Code, Codex, OMP, OpenCode, Cursor, Gemini); open a result or **Resume** it (runs the agent's resume command in a new terminal with the same cwd and session id); `hutan search "<query>" --json`.
 - Index: local SQLite FTS5 + BM25 with role weighting (user/assistant/tool) and a separate identifier column (paths, commands, symbols) — the approach Orca measured to beat dense vectors/rerankers on ~1M real messages; tool calls and commands indexed as text.
 - Sources: Hutan journals (blocks text, agent events, assistant chats) and external transcript stores (`~/.claude/projects`, `~/.codex/sessions` + `state_*.sqlite`, `~/.omp/agent/sessions`, OpenCode, Cursor, Gemini); adapters versioned per format.
-- Incremental, cheap scanning: FSEvents + per-file offsets/mtimes, never re-walking the whole tree on a timer (Orca issue #27008 is the counter-example); history range (all / 90 / 30 days), index size + Clear in settings; data never leaves the machine.
+- Incremental, cheap scanning: FSEvents + per-file offsets/mtimes, never re-walking the whole tree on a timer (Orca issue #27008 is the counter-example); a 30 s stat pass over known files and roots bounds what a dropped FSEvents event can miss (ADR 0027); history range (all / 90 / 30 days), index size + Clear in settings; data never leaves the machine.
 - Surfaces: History panel (filters: agent, project, date, role), ⌘K / jump palette integration, assistant `@search`, CLI.
 
 ## M13 — Agent and subagent monitor

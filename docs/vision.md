@@ -84,7 +84,7 @@ Inspirations and what we take from each:
 | Idle desktop RSS, 1 window, 4 terminals | ≤ 150 MB |
 | Idle daemon RSS, 10 sessions, 10k-line scrollback each | ≤ 120 MB |
 | Idle daemon RSS, 10 sessions at 200 columns, 10k-line scrollback each | ≤ 150 MB (ADR 0013) |
-| Idle CPU (daemon + desktop) | ≈ 0 %, no polling loops |
+| Idle CPU (daemon + desktop) | ≈ 0 %; no polling loops except the bounded safety rechecks of ADR 0027 |
 | Keystroke → glyph on screen (local), p95 | Hutan path ≤ 2 ms; on screen ≤ one display frame + 2 ms (ADR 0011) |
 | Sustained output `cat` 200 MB | UI stays interactive; daemon memory bounded |
 | Cold start to first terminal prompt | ≤ 500 ms with daemon running |
