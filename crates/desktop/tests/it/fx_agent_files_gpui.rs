@@ -315,6 +315,25 @@ fn an_edit_naming_three_files_lists_three_rows_in_both_panels(cx: &mut TestAppCo
     distinct.sort_unstable();
     distinct.dedup();
     assert_eq!(distinct.len(), 3, "three distinct rows");
+    // The header's line counts say which files they are of: where the agent sent no text for a
+    // file, its lines are not in them (the turn footer counts every changed file from the
+    // checkpoint), and the panel says so instead of passing the sum off as the whole.
+    let summary = context
+        .read_with(cx, |p, _| model::files_summary(p.insight().unwrap()))
+        .unwrap();
+    let uncounted = lines.iter().filter(|l| l.stat.is_none()).count();
+    assert_eq!(
+        uncounted,
+        context.read_with(cx, |p, _| model::files_without_counts(p.insight().unwrap()))
+    );
+    if uncounted > 0 && uncounted < lines.len() {
+        assert!(
+            summary.ends_with(&format!(" in {} of {}", lines.len() - uncounted, lines.len())),
+            "{summary}"
+        );
+    } else {
+        assert!(!summary.contains(" of "), "{summary}");
+    }
     settle(cx);
     for index in 0..3 {
         assert!(
