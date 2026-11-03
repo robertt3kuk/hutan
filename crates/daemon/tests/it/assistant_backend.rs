@@ -1747,49 +1747,54 @@ async fn omps_own_question_about_a_hutan_tools_device_is_answered_by_the_daemon_
         device.spec
     );
     deny(&t, &device).await;
-    t.wait_turn_end().await;
 
-    // The journal says who answered what.
+    // Every client was told of two questions only, the user's: the daemon's own answers were
+    // never cards (nothing blocked, nothing to notify).
+    let mut required = Vec::new();
+    tokio::time::timeout(common::WAIT, async {
+        loop {
+            match t.events.recv().await {
+                Ok((_, Event::QuestionRequired { question })) => {
+                    required.push(question.spec.prompt.clone());
+                }
+                Ok((_, Event::ChatEvent { event, .. })) if event.kind.ends_turn() => break,
+                Ok(_) => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+    })
+    .await
+    .expect("the turn to end");
+    assert_eq!(required.len(), 2, "{required:?}");
+    assert!(
+        required[0].starts_with("Path: notes.txt")
+            && required[1].starts_with("Path: xd://mcp__hutan_lsp_status"),
+        "{required:?}"
+    );
+
+    // Nor is the journal's transcript of the conversation cluttered by them: it holds the
+    // user's two questions with their answers, by a client, and no more.
     let history = t.history(session.id).await;
-    let mut asked = std::collections::HashMap::new();
-    let mut answers = Vec::new();
+    let mut asked = Vec::new();
+    let mut answered = Vec::new();
     for event in &history.events {
         match &event.kind {
-            AgentEventKind::QuestionRequested { question_id, spec } => {
-                asked.insert(*question_id, spec.prompt.clone());
+            AgentEventKind::QuestionRequested { spec, .. } => asked.push(spec.prompt.clone()),
+            AgentEventKind::QuestionResolved { decided_by, .. } => {
+                answered.push(decided_by.as_ref().map(|by| by.client_kind.clone()));
             }
-            AgentEventKind::QuestionResolved {
-                question_id,
-                outcome,
-                decided_by,
-            } => answers.push((
-                asked[question_id].clone(),
-                outcome.clone(),
-                decided_by.as_ref().map(|by| by.client_kind.clone()),
-            )),
             _ => {}
         }
     }
-    let by = |path: &str| {
-        answers
-            .iter()
-            .find(|(prompt, ..)| prompt.contains(path))
-            .unwrap_or_else(|| panic!("{path}: {answers:?}"))
-    };
-    for tool in ["agents_board", "chat_send"] {
-        let (_, outcome, decided_by) = by(&format!("xd://mcp__hutan_{tool}"));
-        assert!(
-            matches!(outcome, hutan_core::question::QuestionOutcome::Answered { values, .. }
-                if values.values().next() == Some(&serde_json::json!("Approve"))),
-            "{tool}: {outcome:?}"
-        );
-        assert_eq!(decided_by.as_deref(), Some("daemon"), "{tool}");
-    }
-    for other in ["notes.txt", "xd://mcp__hutan_lsp_status"] {
-        let (_, _, decided_by) = by(other);
-        assert_ne!(decided_by.as_deref(), Some("daemon"), "{other}");
-    }
-    // What OMP received, in order: Approve, Approve, Deny, Deny.
+    assert_eq!(asked, required, "only the user's questions are journaled");
+    assert_eq!(answered.len(), 2, "{answered:?}");
+    assert!(
+        answered.iter().all(Option::is_some),
+        "a client answered each: {answered:?}"
+    );
+
+    // What OMP received, in order: Approve (the read), Approve (the change, whose own card is
+    // Hutan's gate), Deny, Deny (the user's).
     let received = t.received("omp");
     let choice = |id: u64| -> String {
         received
