@@ -16,6 +16,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - A failed command always shows its exit code (`✗ 128`), even in a narrow pane where the full mark doesn't fit; and a window that fell behind on a busy terminal reloads its blocks instead of keeping stale ones.
 - A terminal resize no longer re-records its commands in the history index or makes the Changes view and Files panel re-read the checkout as if the commands had just finished.
 - The Files panel's filter could stay without an answer in a project that kept being written to; a file change macOS reported late or not at all right after a folder was opened is now picked up.
+- Checks and files polish: the severity word sits at the start of a finding; a Verify run shows only on the row that started it; findings name sessions by title and every agent involved; dismissed findings can be shown and restored in the Checks tab (`hutan agents --restore`); an edit card shows paths relative to the session folder; *Files touched* says which files its line counts cover; *Warn* and the other severity colours stay readable on every background.
 
 ## 0.3.5 — 2026-10-31
 
