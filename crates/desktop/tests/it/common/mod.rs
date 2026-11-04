@@ -351,6 +351,7 @@ impl TestDaemon {
             .build()
             .unwrap();
         let mut config = DaemonConfig::new(paths.clone());
+        config.history_rescan = Duration::from_millis(500);
         config.codex = codex;
         config.gateway = gateway;
         config.login_shell = login_shell;
@@ -733,6 +734,7 @@ impl TestDaemon {
     pub fn restart_with(&mut self, tweak: impl FnOnce(&mut DaemonConfig)) {
         assert!(self.daemon.is_none(), "daemon is already running");
         let mut config = DaemonConfig::new(self.paths.clone());
+        config.history_rescan = Duration::from_millis(500);
         config.fs_trash = Some(test_trash(self.dir.path()));
         tweak(&mut config);
         self.daemon = Some(self.rt().block_on(hutan_daemon::start(config)).unwrap());

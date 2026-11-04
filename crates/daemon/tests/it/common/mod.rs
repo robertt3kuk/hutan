@@ -51,6 +51,9 @@ impl TestDaemon {
             std::fs::write(&paths.config_file, toml).unwrap();
         }
         let mut config = DaemonConfig::new(paths.clone());
+        // Transcripts written after the start are found by the periodic pass at the latest:
+        // FSEvents is not a guarantee.
+        config.history_rescan = Duration::from_millis(500);
         tweak(&mut config);
         let daemon = hutan_daemon::start(config).await.unwrap();
         Self {

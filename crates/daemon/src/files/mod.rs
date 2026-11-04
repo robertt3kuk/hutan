@@ -507,6 +507,12 @@ impl FileService {
         self.hub.restoring(path, checkpoint);
     }
 
+    /// The restore of checkpoint `checkpoint` has changed everything it announced: what the
+    /// platform does not report of it is told to the watchers anyway.
+    pub fn restored(&self, checkpoint: hutan_core::CheckpointId) {
+        self.hub.restored(checkpoint);
+    }
+
     /// Drops the uploads that were idle too long (their temporary files go with them).
     fn sweep(&self, uploads: &mut HashMap<String, Slot>) {
         let idle = self.upload_idle;

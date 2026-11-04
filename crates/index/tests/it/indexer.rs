@@ -174,7 +174,11 @@ fn clear_empties_the_index_and_rebuild_reads_everything_again() {
     let env = env();
     let file = env.claude.join("-work-app/s.jsonl");
     append(&file, &claude_line("notes about elasticsearch"));
-    let indexer = Indexer::start(config(&env, true)).unwrap();
+    let indexer = Indexer::start(IndexConfig {
+        safety_poll: Some(Duration::from_millis(20)),
+        ..config(&env, true)
+    })
+    .unwrap();
     let handle = indexer.handle();
     wait_for("the startup pass", || {
         keys(&handle, "elasticsearch") == ["s"]
@@ -200,6 +204,10 @@ fn clear_empties_the_index_and_rebuild_reads_everything_again() {
         status.sources.iter().all(|s| s.rows == 0 && s.files == 0),
         "{status:?}"
     );
+    // The periodic pass (20 ms here) does not fill it again behind the user's back: it stays
+    // empty through a hundred of its periods (proof of an absence takes time), until asked.
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(keys(&handle, "elasticsearch").is_empty());
 
     // Reads the file again: rebuild restores transcript rows, Hutan rows are gone with clear.
     handle.rebuild().unwrap();

@@ -51,6 +51,9 @@ pub struct RestoreContext {
     /// The daemon's sessions (`session.list`): who works in the checkout, whose turn runs.
     pub sessions: Vec<SessionInfo>,
     pub announce: Announce,
+    /// Told when the restore of a checkpoint has changed everything it announced: the file
+    /// service's watchers report what the platform did not.
+    pub finished: Arc<dyn Fn(CheckpointId) + Send + Sync>,
 }
 
 impl Default for RestoreContext {
@@ -58,6 +61,7 @@ impl Default for RestoreContext {
         Self {
             sessions: Vec::new(),
             announce: Arc::new(|_, _| {}),
+            finished: Arc::new(|_| {}),
         }
     }
 }
@@ -507,6 +511,7 @@ impl TurnCheckpoints {
         let applied = self
             .apply(&chain, held.checkout(), id, &plan, &caps, &ctx.announce)
             .await;
+        (ctx.finished)(id);
         let post_label = Label::restore(session.to_string(), id.to_string(), Kind::RestorePost)
             .with_parent(pre_commit.clone());
         let post = held.snapshot(&post_label, &caps).await;
@@ -654,6 +659,7 @@ impl TurnCheckpoints {
         row.start_commit = Some(pre_commit.clone());
 
         let changed = change(id).await;
+        (ctx.finished)(id);
         let post_label = Label::restore(session.to_string(), id.to_string(), Kind::RestorePost)
             .with_parent(pre_commit.clone());
         let post = match &changed {

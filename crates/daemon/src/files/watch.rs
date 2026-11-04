@@ -64,6 +64,9 @@ const BIRTHS_MAX: usize = 1024;
 const SETTLE_PAUSES_MS: [u64; 3] = [400, 1_500, 4_000];
 /// The files of a folder a watch looks at again, at most.
 const SETTLE_FOLDER_MAX: usize = 4_096;
+/// How long after an operation of this daemon's own the platform has to report it before the
+/// daemon tells its watchers itself ([`confirm_own`]).
+const OWN_GRACE: Duration = Duration::from_millis(300);
 /// How often the paths a root holds are looked at, whatever the platform reported ([`poll_paths`]).
 const POLL_EVERY: Duration = Duration::from_secs(5);
 /// Entries one such round looks at, at most; the rest follows in the next rounds.
@@ -150,6 +153,10 @@ struct OwnWrite {
     /// Unknown until the write is done.
     version: Option<FileVersion>,
     at: StdInstant,
+    /// When the write was announced (`at` moves on when it finishes).
+    started: StdInstant,
+    /// What was at `path` before the write.
+    before: Stamp,
 }
 
 /// A file an agent said it changed.
@@ -175,6 +182,7 @@ struct Restored {
     path: PathBuf,
     checkpoint: CheckpointId,
     at: StdInstant,
+    before: Stamp,
 }
 
 #[derive(Debug)]
@@ -428,6 +436,7 @@ impl WatchHub {
         agent: Option<SessionId>,
         write_id: &str,
     ) {
+        let before = stamp_of(path);
         let mut writes = self.writes.lock();
         if writes.len() >= OWN_WRITES_MAX {
             writes.pop_front();
@@ -440,13 +449,17 @@ impl WatchHub {
             agent,
             version: None,
             at: StdInstant::now(),
+            started: StdInstant::now(),
+            before,
         });
     }
 
     /// A file operation (`fs.create`, `fs.move`, …) is done: what it announced counts as its own
-    /// for the time a change takes to arrive. There is no version to compare.
-    pub fn write_finished(&self, write_id: &str) {
+    /// for the time a change takes to arrive. There is no version to compare. What the platform
+    /// does not report of it is told to the watchers anyway ([`confirm_own`]).
+    pub fn write_finished(self: &Arc<Self>, write_id: &str) {
         let now = StdInstant::now();
+        let mut own = Vec::new();
         for write in self
             .writes
             .lock()
@@ -454,26 +467,49 @@ impl WatchHub {
             .filter(|w| w.write_id == write_id)
         {
             write.at = now;
+            own.push(Own {
+                path: write.path.clone(),
+                before: write.before,
+                started: write.started,
+                created: true,
+            });
         }
+        self.confirm(own);
     }
 
     /// The write is done and the file has `version`.
-    pub fn write_done(&self, write_id: &str, version: Option<FileVersion>) {
-        let mut writes = self.writes.lock();
-        match version {
-            Some(version) => {
-                if let Some(write) = writes.iter_mut().find(|w| w.write_id == write_id) {
-                    write.version = Some(version);
-                    write.at = StdInstant::now();
+    pub fn write_done(self: &Arc<Self>, write_id: &str, version: Option<FileVersion>) {
+        let own = {
+            let mut writes = self.writes.lock();
+            match version {
+                Some(version) => writes
+                    .iter_mut()
+                    .find(|w| w.write_id == write_id)
+                    .map(|write| {
+                        write.version = Some(version);
+                        write.at = StdInstant::now();
+                        Own {
+                            path: write.path.clone(),
+                            before: write.before,
+                            started: write.started,
+                            created: false,
+                        }
+                    })
+                    .into_iter()
+                    .collect(),
+                None => {
+                    writes.retain(|w| w.write_id != write_id);
+                    Vec::new()
                 }
             }
-            None => writes.retain(|w| w.write_id != write_id),
-        }
+        };
+        self.confirm(own);
     }
 
     /// A restore of checkpoint `checkpoint` is about to change `path` (canonical): a file it
     /// writes or deletes, or a folder it makes or removes. Registered before the change.
     pub fn restoring(&self, path: &Path, checkpoint: CheckpointId) {
+        let before = stamp_of(path);
         let mut restores = self.restores.lock();
         if restores.len() >= RESTORES_MAX {
             restores.pop_front();
@@ -482,7 +518,53 @@ impl WatchHub {
             path: path.to_owned(),
             checkpoint,
             at: StdInstant::now(),
+            before,
         });
+    }
+
+    /// The restore of `checkpoint` has changed what it announced: what the platform does not
+    /// report of it is told to the watchers anyway ([`confirm_own`]).
+    pub fn restored(self: &Arc<Self>, checkpoint: CheckpointId) {
+        let own = self
+            .restores
+            .lock()
+            .iter()
+            .filter(|r| r.checkpoint == checkpoint)
+            .map(|r| Own {
+                path: r.path.clone(),
+                before: r.before,
+                started: r.at,
+                created: false,
+            })
+            .collect();
+        self.confirm(own);
+    }
+
+    /// Looks at `own` once the platform has had its say, and feeds the running watchers what it
+    /// did not report ([`confirm_own`]).
+    fn confirm(self: &Arc<Self>, own: Vec<Own>) {
+        if own.is_empty() {
+            return;
+        }
+        let roots: Vec<(RootKey, Feed, Arc<Mutex<Births>>)> = self
+            .state
+            .lock()
+            .roots
+            .iter()
+            .filter(|(key, _)| own.iter().any(|o| covers(key, &o.path)))
+            .map(|(key, entry)| (key.clone(), entry.feed.clone(), entry.births.clone()))
+            .collect();
+        if roots.is_empty() {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let targets = roots
+            .into_iter()
+            .map(|(key, feed, births)| Target { key, feed, births })
+            .collect();
+        runtime.spawn(confirm_own(targets, own, OWN_GRACE));
     }
 
     /// Notes the files of a chat's `file_diff` event.
@@ -937,6 +1019,8 @@ struct Births {
     /// The version each path had when its change was last reported (`None`: gone); cleared when
     /// full.
     delivered: HashMap<PathBuf, Option<FileVersion>>,
+    /// When that was; cleared with `delivered`.
+    delivered_at: HashMap<PathBuf, StdInstant>,
 }
 
 impl Births {
@@ -945,6 +1029,7 @@ impl Births {
             since,
             known: HashMap::new(),
             delivered: HashMap::new(),
+            delivered_at: HashMap::new(),
         }
     }
 
@@ -971,8 +1056,15 @@ impl Births {
     fn record(&mut self, path: &Path, version: Option<FileVersion>) {
         if self.delivered.len() >= BIRTHS_MAX && !self.delivered.contains_key(path) {
             self.delivered.clear();
+            self.delivered_at.clear();
         }
+        self.delivered_at.insert(path.to_owned(), StdInstant::now());
         self.delivered.insert(path.to_owned(), version);
+    }
+
+    /// Whether `path` was reported at or after `since`.
+    fn reported_since(&self, path: &Path, since: StdInstant) -> bool {
+        self.delivered_at.get(path).is_some_and(|at| *at >= since)
     }
 
     /// What was last reported of `path`, when anything was (`Some(None)`: that it is gone).
@@ -1324,6 +1416,89 @@ pub fn canonical_lenient(path: &Path) -> PathBuf {
         current = parent;
     }
     path.to_owned()
+}
+
+// Operations of this daemon's own ---------------------------------------------------------------
+
+/// What is at a path, for telling whether an operation changed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stamp {
+    Gone,
+    File(FileVersion),
+    Dir(u64),
+    /// A link or something else: its inode.
+    Other(u64),
+}
+
+fn stamp_of(path: &Path) -> Stamp {
+    use std::os::unix::fs::MetadataExt;
+    match std::fs::symlink_metadata(path) {
+        Err(_) => Stamp::Gone,
+        Ok(meta) if meta.is_file() => Stamp::File(version_of(&meta)),
+        Ok(meta) if meta.is_dir() => Stamp::Dir(meta.ino()),
+        Ok(meta) => Stamp::Other(meta.ino()),
+    }
+}
+
+/// A path an operation of this daemon's own announced, as it was before the operation.
+#[derive(Debug, Clone)]
+struct Own {
+    path: PathBuf,
+    before: Stamp,
+    /// When the operation began (it announced the path).
+    started: StdInstant,
+    /// It is probably new where it is now (an operation's target), not an overwrite.
+    created: bool,
+}
+
+/// One running watcher an operation's paths may belong to.
+struct Target {
+    key: RootKey,
+    feed: Feed,
+    births: Arc<Mutex<Births>>,
+}
+
+/// Whether a watcher with `key` is to report `path`.
+fn covers(key: &RootKey, path: &Path) -> bool {
+    if key.recursive {
+        path.starts_with(&key.path)
+    } else {
+        path == key.path || path.parent() == Some(key.path.as_path())
+    }
+}
+
+/// Feeds the watchers the paths of an operation of this daemon's own that the platform did not
+/// report within `grace` and that really are different from before it. Hutan knows what it just
+/// did: it does not depend on the platform's stream (macOS FSEvents starts it late and, under
+/// load, reports late or never) to tell its clients. What the platform did report is left to it.
+async fn confirm_own(targets: Vec<Target>, own: Vec<Own>, grace: Duration) {
+    tokio::time::sleep(grace).await;
+    let _ = tokio::task::spawn_blocking(move || {
+        let now: Vec<Stamp> = own.iter().map(|o| stamp_of(&o.path)).collect();
+        for target in &targets {
+            let births = target.births.lock();
+            let mut raws = Vec::new();
+            for (o, now) in own.iter().zip(&now) {
+                if !covers(&target.key, &o.path)
+                    || *now == o.before
+                    || births.reported_since(&o.path, o.started)
+                {
+                    continue;
+                }
+                raws.push(match now {
+                    Stamp::Gone => Raw::Removed(o.path.clone()),
+                    _ if o.created => Raw::Created(o.path.clone()),
+                    _ => Raw::Modified(o.path.clone()),
+                });
+            }
+            drop(births);
+            if !raws.is_empty() {
+                debug!(root = %target.key.path.display(), changes = raws.len(), "own change the platform did not report");
+                target.feed.send(raws);
+            }
+        }
+    })
+    .await;
 }
 
 // One watcher's task ---------------------------------------------------------------------------
@@ -1954,5 +2129,102 @@ mod tests {
         std::fs::write(new.join("inner.txt"), "x").unwrap();
         look(&mut settling);
         assert!(rx.try_recv().is_err(), "nothing of the folder's own");
+    }
+
+    fn own_target(root: &Path) -> (Target, mpsc::Receiver<Vec<Raw>>) {
+        let (tx, rx) = mpsc::channel(8);
+        let target = Target {
+            key: RootKey {
+                path: root.to_owned(),
+                recursive: true,
+            },
+            feed: Feed {
+                raws: tx,
+                lost: Arc::new(AtomicBool::new(false)),
+            },
+            births: Arc::new(Mutex::new(Births::new(SystemTime::now()))),
+        };
+        (target, rx)
+    }
+
+    fn own(path: &Path, created: bool) -> Own {
+        Own {
+            path: path.to_owned(),
+            before: stamp_of(path),
+            started: StdInstant::now(),
+            created,
+        }
+    }
+
+    #[tokio::test]
+    async fn what_this_daemon_did_and_the_platform_never_reported_is_fed_to_the_watcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let (made, changed, removed, same, outside) = (
+            dir.path().join("made.txt"),
+            dir.path().join("changed.txt"),
+            dir.path().join("removed.txt"),
+            dir.path().join("same.txt"),
+            tempfile::tempdir().unwrap(),
+        );
+        for path in [&changed, &removed, &same] {
+            std::fs::write(path, "before").unwrap();
+        }
+        let announced = vec![
+            own(&made, true),
+            own(&changed, false),
+            own(&removed, true),
+            own(&same, false),
+            own(&outside.path().join("elsewhere.txt"), true),
+        ];
+        // The operations, none of which the platform reports (nothing here feeds its stream).
+        std::fs::write(&made, "new").unwrap();
+        std::fs::write(&changed, "after, and longer").unwrap();
+        std::fs::remove_file(&removed).unwrap();
+        std::fs::write(outside.path().join("elsewhere.txt"), "x").unwrap();
+        let (target, mut rx) = own_target(dir.path());
+        confirm_own(vec![target], announced, Duration::from_millis(1)).await;
+        let mut told: Vec<String> = rx
+            .try_recv()
+            .unwrap()
+            .into_iter()
+            .map(|raw| match raw {
+                Raw::Created(p) => format!("created {}", p.file_name().unwrap().to_string_lossy()),
+                Raw::Modified(p) => {
+                    format!("modified {}", p.file_name().unwrap().to_string_lossy())
+                }
+                Raw::Removed(p) => format!("removed {}", p.file_name().unwrap().to_string_lossy()),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        told.sort();
+        // Nothing of the file that did not change, nor of the path outside the watcher's root.
+        assert_eq!(
+            told,
+            [
+                "created made.txt",
+                "modified changed.txt",
+                "removed removed.txt"
+            ]
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn what_the_platform_reported_since_the_operation_began_is_left_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let announced = own(&path, true);
+        std::fs::write(&path, "x").unwrap();
+        let (target, mut rx) = own_target(dir.path());
+        let version = stamp_of(&path);
+        target.births.lock().record(
+            &path,
+            match version {
+                Stamp::File(version) => Some(version),
+                _ => None,
+            },
+        );
+        confirm_own(vec![target], vec![announced], Duration::from_millis(1)).await;
+        assert!(rx.try_recv().is_err(), "the platform's report counts");
     }
 }

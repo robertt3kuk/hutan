@@ -119,6 +119,10 @@ pub struct DaemonConfig {
     /// 60 s): how long an idle harness assistant keeps its agent process. `None` reads the
     /// setting. Tests shorten it.
     pub assistant_idle_stop: Option<Duration>,
+    /// How often the history index looks at the transcript files again although no file event
+    /// said so (default 30 s, [`hutan_index::SAFETY_POLL`]). Tests that write transcripts after
+    /// the daemon started shorten it.
+    pub history_rescan: Duration,
     /// The bounds of the file service (protocol 0.33): 500 changes per `fs.changed` event,
     /// 30 s without a chunk before an upload is discarded. Tests lower them.
     pub fs_limits: crate::files::Limits,
@@ -164,6 +168,7 @@ impl DaemonConfig {
             ui_command_timeout: Duration::from_millis(hutan_protocol::ui::COMMAND_TIMEOUT_MS),
             socket_check_interval: SOCKET_CHECK_INTERVAL,
             assistant_idle_stop: None,
+            history_rescan: hutan_index::SAFETY_POLL,
             fs_limits: crate::files::Limits::default(),
             fs_trash: None,
             checkpoints: checkpoint_turns::Tuning::default(),
@@ -442,6 +447,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         bus.clone(),
         hub.clone(),
         registry.clone(),
+        config.history_rescan,
     );
     history.start().await;
     // A terminal agent's transcript is followed through these two, weakly: both own or are

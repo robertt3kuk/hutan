@@ -43,7 +43,9 @@ impl Workbench {
         )?;
         let theme = self.theme;
         let tokens = self.density.ui();
-        let connected = self.daemon_connected(cx);
+        // The daemon the user stopped is stopped even while the socket still looks connected
+        // (the supervisor learns of the close a moment later): offer Start, not Restart/Stop.
+        let connected = self.daemon_connected(cx) && !self.daemon.stopped;
         let busy = self.daemon.busy.is_some();
         let (line, tone) = self.daemon_line(cx);
         let dot = match tone {

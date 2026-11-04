@@ -57,6 +57,9 @@ struct State {
 
 pub struct HistoryService {
     paths: Paths,
+    /// How often the index looks at the transcript files again whatever FSEvents said
+    /// ([`hutan_index::IndexConfig::safety_poll`]).
+    rescan: Duration,
     bus: Arc<EventBus>,
     hub: Arc<TerminalHub>,
     registry: RegistryHandle,
@@ -94,9 +97,11 @@ impl HistoryService {
         bus: Arc<EventBus>,
         hub: Arc<TerminalHub>,
         registry: RegistryHandle,
+        rescan: Duration,
     ) -> Arc<Self> {
         Arc::new(Self {
             paths,
+            rescan,
             bus,
             hub,
             registry,
@@ -135,7 +140,7 @@ impl HistoryService {
             range_days: settings.range_days,
             roots: source_roots(&settings),
             hutan: settings.hutan,
-            safety_poll: Some(hutan_index::SAFETY_POLL),
+            safety_poll: Some(self.rescan),
         };
         let sources: Vec<_> = config.roots.iter().map(|(s, p)| (*s, p.clone())).collect();
         let indexer = tokio::task::spawn_blocking(move || Indexer::start(config))

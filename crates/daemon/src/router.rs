@@ -946,10 +946,11 @@ impl Router {
             .await
             .map(|list| list.sessions)
             .unwrap_or_default();
-        let files = Arc::clone(&self.files);
+        let (files, finished) = (Arc::clone(&self.files), Arc::clone(&self.files));
         RestoreContext {
             sessions,
             announce: Arc::new(move |checkpoint, path| files.restoring(path, checkpoint)),
+            finished: Arc::new(move |checkpoint| finished.restored(checkpoint)),
         }
     }
 

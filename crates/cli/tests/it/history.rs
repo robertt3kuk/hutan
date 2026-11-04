@@ -41,9 +41,12 @@ async fn start(enabled: bool) -> Env {
     )
     .unwrap();
     let paths = Paths::in_home(&home);
-    let daemon = hutan_daemon::start(DaemonConfig::new(paths.clone()))
-        .await
-        .unwrap();
+    let daemon = hutan_daemon::start(DaemonConfig {
+        history_rescan: Duration::from_millis(500),
+        ..DaemonConfig::new(paths.clone())
+    })
+    .await
+    .unwrap();
     Env {
         _tmp: tmp,
         claude,

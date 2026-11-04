@@ -569,7 +569,11 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
         Some(target)
     );
     cx.simulate_keystrokes("down enter");
-    pump_until(cx, "the terminal to scroll to the block", |cx| {
+    // The window retries the jump for 5 s of its clock (50 × 100 ms) while the terminal view
+    // comes to know its blocks; `pump_until` runs that clock ten times faster than real time,
+    // which under load gave up before the daemon had answered. 10 ms per turn is real time.
+    wait_until(cx, "the terminal to scroll to the block", |cx| {
+        cx.executor().advance_clock(Duration::from_millis(10));
         view.read_with(cx, |wb, _| wb.terminal_view_of(block_session.id))
             .is_some_and(|v| v.read_with(cx, |v, _| v.highlighted_block() == Some(block.id)))
     });

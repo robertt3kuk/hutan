@@ -63,6 +63,7 @@ impl TestDaemon {
         // Sessions find this build of the CLI through `HUTAN_BIN`, as in a real install.
         let mut config = DaemonConfig {
             hutan_bin: Some(PathBuf::from(HUTAN)),
+            history_rescan: std::time::Duration::from_millis(500),
             ..DaemonConfig::new(paths.clone())
         };
         tweak(&mut config);

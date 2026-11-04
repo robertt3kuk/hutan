@@ -72,6 +72,7 @@ async fn resume_opens_a_session_in_the_hits_cwd_with_the_resume_command() {
     let paths = Paths::in_home(&home);
     let daemon = hutan_daemon::start(DaemonConfig {
         login_shell: Some(shell),
+        history_rescan: Duration::from_millis(500),
         ..DaemonConfig::new(paths.clone())
     })
     .await

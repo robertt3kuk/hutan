@@ -274,6 +274,7 @@ impl Indexer {
             last_event: None,
             safety_poll: config.safety_poll,
             next_poll: None,
+            cleared: false,
         };
         let thread = std::thread::Builder::new()
             .name("hutan-index".to_owned())
@@ -369,6 +370,9 @@ struct Worker {
     /// How often the stat pass runs again with no event ([`IndexConfig::safety_poll`]).
     safety_poll: Option<Duration>,
     next_poll: Option<Instant>,
+    /// The index was cleared and nobody asked for it to be filled again: only a refresh, a
+    /// rebuild or a start does.
+    cleared: bool,
 }
 
 impl Worker {
@@ -409,7 +413,9 @@ impl Worker {
                             self.read_pending();
                         }
                         if self.poll_due() {
-                            self.safety_pass();
+                            if !self.cleared {
+                                self.safety_pass();
+                            }
                             self.schedule_poll();
                         }
                         continue;
@@ -544,6 +550,7 @@ impl Worker {
         let started = Instant::now();
         let cutoff_ms = self.cutoff_ms();
         if visible {
+            self.cleared = false;
             self.update_scan(|scan| scan.scanning = true);
         }
         self.refresh_titles();
@@ -565,7 +572,7 @@ impl Worker {
         }
         let files: u64 = per_source.iter().map(|(_, count)| count).sum();
         let total = changed.len();
-        if total > 0 {
+        if !visible && total > 0 {
             debug!(
                 files = total,
                 "the periodic stat pass found files that no file event told of"
@@ -792,6 +799,9 @@ impl Worker {
             scan.done = 0;
             scan.per_source.clear();
         });
+        // Empty until the user asks for a rebuild or a refresh: the periodic pass must not
+        // read every transcript again behind their back.
+        self.cleared = true;
         info!("history index cleared");
         Ok(())
     }
