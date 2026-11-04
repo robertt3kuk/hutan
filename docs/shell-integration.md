@@ -57,6 +57,18 @@ The injection is consumed and undone in the integrated shell (zsh and bash funct
 - A user's own OSC 133 in `PS1` (zsh/bash) disables Hutan's prompt marks for that shell.
 - fish < 4.0 is expected to work through the fallback path but is not tested here; fish 4.9 uses its own marks.
 
+## Agents' own OpenTelemetry (TEL-2, ADR 0026)
+
+While the daemon's loopback OTLP receiver listens (`hutan telemetry enable <agent>`, `docs/integrations.md` § L3), a terminal that started then has `HUTAN_OTLP_ENDPOINT`, `HUTAN_OTLP_TOKEN` and `HUTAN_BIN`, and each of the three scripts defines two functions, **`claude`** and **`codex`**, once the user's startup files have run:
+
+- the function asks `"$HUTAN_BIN" telemetry env <agent>` — a hidden command that prints `env NAME=value` and `arg VALUE` lines, or nothing — and runs the program found on `PATH` (`env … claude …`) with the variables and the arguments in front of the user's own, which are passed on whole and in order (`claude --flag 'a b'` reaches Claude Code as two arguments). Nothing is exported into the shell: the variables belong to that one launch;
+- nothing printed means *run it as typed*: the agent is not enabled, nothing is listening, the daemon did not answer in 2 s, or an `OTEL_*` variable of the user's, a managed policy's or the agent's own settings is already there (Hutan never overrides one: `hutan integration status` says which);
+- a `claude` or `codex` function or alias of the user's own is **never replaced**: zsh and bash check at load (after the user's files), fish checks `functions -q` (a `config.fish` that defines it later replaces ours);
+- without `HUTAN_OTLP_ENDPOINT` (a terminal that started while the receiver was off, `HUTAN_SHELL_INTEGRATION=0`, a nested shell) no function exists and `claude` is the program;
+- `command claude` runs the program without the function (a backslash only skips an alias); the program is looked up on `PATH` at each launch, so a missing one still says *command not found*.
+
+Code: the end of each script in `crates/terminal/shell-integration/`, `crates/cli/src/commands/telemetry.rs` (`env`), `crates/cli/src/integration/telemetry.rs` (what is put in front, and the conflicts). Tests: `crates/terminal/tests/it/shell_integration.rs` runs the three shells over real PTYs with a stand-in `hutan` and stand-in agents (variables and arguments in front of one launch with a space in an argument, nothing left in the shell, a user's own function untouched, nothing printed means plain, no function without the receiver); `crates/cli/tests/it/telemetry_agents.rs` runs the real agents through the real function.
+
 ## Prior art
 
 Mechanisms were chosen after studying Ghostty (MIT) and WezTerm (MIT) and the FinalTerm/iTerm2 OSC 133 semantics; the scripts here are written from scratch (no kitty or Warp code, which are GPL/AGPL).

@@ -15,7 +15,7 @@ macOS-first Rust agentic development environment: `hutand` (Tokio daemon, source
 - `docs/architecture.md` — components, crates, data flows, state ownership
 - `docs/protocol.md` — IPC framing, handshake, sequencing, message catalog (incl. § Files: the daemon's file service, `hutan fs`)
 - `docs/roadmap.md` — milestones, slices (checkboxes), risk register
-- `docs/shell-integration.md` — automatic OSC 133/OSC 7 injection for zsh, bash, fish
+- `docs/shell-integration.md` — automatic OSC 133/OSC 7 injection for zsh, bash, fish; the `claude` and `codex` functions that switch on an agent's own OpenTelemetry for one launch (TEL-2, ADR 0026)
 - `docs/history-index.md` — opt-in session history index and search, and the session catalog behind `hutan history sessions` (sources, formats, ranking, titles, scopes, privacy — including the transcripts a terminal Claude Code's or Codex's insight reads —, performance)
 - `docs/editor.md` — the code editor: what each E-slice added, file tabs (buffer store, reads through the daemon, syntax only while shown, large-file mode, drawing only the lines in view, find), settings, tests
 - `docs/lsp.md` — language servers in the daemon: which servers are found (never fetched), `[lsp]` config, the root of a server, trust per folder (user-only), documents and diagnostics, `hutan lsp` / `hutan diagnostics`, MCP `diagnostics`, limits, troubleshooting (protocol 0.39)

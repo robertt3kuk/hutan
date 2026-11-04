@@ -474,9 +474,9 @@ async fn telemetry_status(t: &TestDaemon) -> Value {
 
 /// What a failed wait shows: the agent's own output and what the mock and the receiver saw.
 async fn evidence(t: &TestDaemon, f: &Fixture) -> String {
+    let seen = f.mock.seen.lock().unwrap().clone();
     let mut text = format!(
-        "mock saw: {:?}\nreceiver: {}\n",
-        f.mock.seen.lock().unwrap(),
+        "mock saw: {seen:?}\nreceiver: {}\n",
         telemetry_status(t).await
     );
     for entry in std::fs::read_dir(&f.out).unwrap().flatten() {
