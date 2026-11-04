@@ -65,6 +65,7 @@ impl Env {
         let store = Arc::new(MemoryStore::new());
         let mut config = DaemonConfig {
             hutan_bin: Some(PathBuf::from(HUTAN)),
+            history_rescan: Duration::from_millis(500),
             ..DaemonConfig::new(paths.clone())
         };
         config.gateway = GatewayConfig {

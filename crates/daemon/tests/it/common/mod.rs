@@ -118,6 +118,7 @@ impl TestDaemon {
         daemon.shutdown();
         timeout(WAIT, daemon.wait()).await.unwrap().unwrap();
         let mut config = DaemonConfig::new(paths.clone());
+        config.history_rescan = Duration::from_millis(500);
         tweak(&mut config);
         let daemon = start_when_free(config).await;
         Self {

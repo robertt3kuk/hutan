@@ -169,16 +169,46 @@ fn files_no_event_told_of_are_found_by_the_periodic_stat_pass() {
     wait_for("the scan to end", || !handle.scan_info().scanning);
 }
 
+/// An emptied index is not read in again by the periodic pass. The root appears after the
+/// start, so no file event can refill it either: only the pass could.
+#[test]
+fn a_cleared_index_is_not_filled_again_by_the_periodic_stat_pass_until_asked() {
+    let env = env();
+    let late_root = env.claude.parent().unwrap().join("late-projects");
+    let indexer = Indexer::start(IndexConfig {
+        roots: vec![(Source::Claude, late_root.clone())],
+        safety_poll: Some(Duration::from_millis(20)),
+        ..config(&env, false)
+    })
+    .unwrap();
+    let handle = indexer.handle();
+    handle.flush().unwrap();
+    fs::create_dir_all(late_root.join("-work-app")).unwrap();
+    append(
+        &late_root.join("-work-app/late.jsonl"),
+        &claude_line("notes about elasticsearch"),
+    );
+    wait_for("the pass to find the file", || {
+        keys(&handle, "elasticsearch") == ["late"]
+    });
+
+    handle.clear().unwrap();
+    assert!(keys(&handle, "elasticsearch").is_empty());
+    // A hundred periods of the pass go by (proof of an absence takes time).
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(keys(&handle, "elasticsearch").is_empty());
+
+    // A refresh reads it in again, and the pass goes on from there.
+    assert!(handle.refresh(WAIT).unwrap());
+    assert_eq!(keys(&handle, "elasticsearch"), ["late"]);
+}
+
 #[test]
 fn clear_empties_the_index_and_rebuild_reads_everything_again() {
     let env = env();
     let file = env.claude.join("-work-app/s.jsonl");
     append(&file, &claude_line("notes about elasticsearch"));
-    let indexer = Indexer::start(IndexConfig {
-        safety_poll: Some(Duration::from_millis(20)),
-        ..config(&env, true)
-    })
-    .unwrap();
+    let indexer = Indexer::start(config(&env, true)).unwrap();
     let handle = indexer.handle();
     wait_for("the startup pass", || {
         keys(&handle, "elasticsearch") == ["s"]
@@ -204,10 +234,6 @@ fn clear_empties_the_index_and_rebuild_reads_everything_again() {
         status.sources.iter().all(|s| s.rows == 0 && s.files == 0),
         "{status:?}"
     );
-    // The periodic pass (20 ms here) does not fill it again behind the user's back: it stays
-    // empty through a hundred of its periods (proof of an absence takes time), until asked.
-    std::thread::sleep(Duration::from_secs(2));
-    assert!(keys(&handle, "elasticsearch").is_empty());
 
     // Reads the file again: rebuild restores transcript rows, Hutan rows are gone with clear.
     handle.rebuild().unwrap();

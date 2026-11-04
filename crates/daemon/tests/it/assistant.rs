@@ -107,6 +107,7 @@ impl Env {
         let paths = Paths::in_home(&home);
         let store = Arc::new(MemoryStore::new());
         let mut daemon_config = DaemonConfig::new(paths.clone());
+        daemon_config.history_rescan = Duration::from_millis(500);
         daemon_config.gateway = gateway(&store);
         let running = hutan_daemon::start(daemon_config).await.unwrap();
         let daemon = TestDaemon {
