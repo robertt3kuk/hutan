@@ -174,3 +174,38 @@ if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4))); 
   unset __hutan_trap_file __hutan_previous_body
 fi
 unset -f __hutan_trap_body
+
+# Agents' own OpenTelemetry (TEL-2, ADR 0026). While the daemon's loopback receiver listens, a
+# Hutan terminal has HUTAN_OTLP_ENDPOINT and HUTAN_OTLP_TOKEN; `claude` and `codex` then become
+# functions that ask `hutan telemetry env <agent>` what to put in front of that one launch (nothing
+# unless the agent is enabled and nothing of yours, a managed policy's or the agent's own is in the
+# way: it never overrides an OTEL_* variable or a setting) and run the program found on PATH with
+# it. A `claude` or `codex` function or alias of your own is left alone.
+if [ -n "${HUTAN_OTLP_ENDPOINT-}" ] && [ -n "${HUTAN_BIN-}" ]; then
+  __hutan_otlp_launch() {
+    local agent=$1 line
+    shift
+    local -a launch_env launch_args
+    launch_env=()
+    launch_args=()
+    if [ -x "$HUTAN_BIN" ] && [ -n "$(type -P "$agent" 2>/dev/null)" ]; then
+      while IFS= read -r line; do
+        case $line in
+          "env "*) launch_env[${#launch_env[@]}]=${line#env } ;;
+          "arg "*) launch_args[${#launch_args[@]}]=${line#arg } ;;
+        esac
+      done <<<"$("$HUTAN_BIN" telemetry env "$agent" 2>/dev/null)"
+    fi
+    if [ "${#launch_env[@]}" -gt 0 ]; then
+      command env "${launch_env[@]}" "$agent" ${launch_args[@]+"${launch_args[@]}"} "$@"
+    else
+      command "$agent" "$@"
+    fi
+  }
+  for __hutan_agent in claude codex; do
+    if ! declare -F "$__hutan_agent" >/dev/null 2>&1 && ! alias "$__hutan_agent" >/dev/null 2>&1; then
+      eval "$__hutan_agent() { __hutan_otlp_launch $__hutan_agent \"\$@\"; }"
+    fi
+  done
+  unset __hutan_agent
+fi

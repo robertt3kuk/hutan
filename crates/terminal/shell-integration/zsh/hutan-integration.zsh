@@ -57,3 +57,36 @@ add-zsh-hook preexec _hutan_preexec
 # This is the first prompt: precmd hooks were snapshotted before we registered, so run ours
 # now. (A prompt framework that rewrites PS1 later in this very cycle hides the marks once.)
 _hutan_precmd
+
+# Agents' own OpenTelemetry (TEL-2, ADR 0026). While the daemon's loopback receiver listens, a
+# Hutan terminal has HUTAN_OTLP_ENDPOINT and HUTAN_OTLP_TOKEN; `claude` and `codex` then become
+# functions that ask `hutan telemetry env <agent>` what to put in front of that one launch (nothing
+# unless the agent is enabled and nothing of yours, a managed policy's or the agent's own is in the
+# way: it never overrides an OTEL_* variable or a setting) and run the program found on PATH with
+# it. A `claude` or `codex` function or alias of your own is left alone.
+if [[ -n ${HUTAN_OTLP_ENDPOINT-} && -n ${HUTAN_BIN-} ]]; then
+  _hutan_otlp_launch() {
+    builtin local agent=$1 line
+    shift
+    builtin local -a launch_env launch_args
+    if [[ -x $HUTAN_BIN ]] && (( ${+commands[$agent]} )); then
+      for line in ${(f)"$("$HUTAN_BIN" telemetry env "$agent" 2>/dev/null)"}; do
+        case $line in
+          'env '*) launch_env+=("${line#env }") ;;
+          'arg '*) launch_args+=("${line#arg }") ;;
+        esac
+      done
+    fi
+    if (( ${#launch_env} )); then
+      builtin command env "${launch_env[@]}" "$agent" "${launch_args[@]}" "$@"
+    else
+      builtin command "$agent" "$@"
+    fi
+  }
+  for _hutan_agent in claude codex; do
+    if (( ! ${+functions[$_hutan_agent]} && ! ${+aliases[$_hutan_agent]} )); then
+      eval "$_hutan_agent() { _hutan_otlp_launch $_hutan_agent \"\$@\"; }"
+    fi
+  done
+  builtin unset _hutan_agent
+fi

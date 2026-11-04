@@ -74,3 +74,42 @@ if test $__hutan_native_marks -eq 0
         printf '\e]133;D;%s\a' $status
     end
 end
+
+# Agents' own OpenTelemetry (TEL-2, ADR 0026). While the daemon's loopback receiver listens, a
+# Hutan terminal has HUTAN_OTLP_ENDPOINT and HUTAN_OTLP_TOKEN; `claude` and `codex` then become
+# functions that ask `hutan telemetry env <agent>` what to put in front of that one launch (nothing
+# unless the agent is enabled and nothing of yours, a managed policy's or the agent's own is in the
+# way: it never overrides an OTEL_* variable or a setting) and run the program found on PATH with
+# it. A `claude` or `codex` function of your own (in functions/ or defined before this file) is left
+# alone; one that config.fish defines afterwards replaces ours.
+if set -q HUTAN_OTLP_ENDPOINT; and test -n "$HUTAN_OTLP_ENDPOINT"; and set -q HUTAN_BIN
+    function __hutan_otlp_launch
+        set -l agent $argv[1]
+        set -e argv[1]
+        set -l launch_env
+        set -l launch_args
+        if test -x "$HUTAN_BIN"; and command -sq $agent
+            for line in ("$HUTAN_BIN" telemetry env $agent 2>/dev/null)
+                switch $line
+                    case 'env *'
+                        set launch_env $launch_env (string sub -s 5 -- $line)
+                    case 'arg *'
+                        set launch_args $launch_args (string sub -s 5 -- $line)
+                end
+            end
+        end
+        if set -q launch_env[1]
+            command env $launch_env $agent $launch_args $argv
+        else
+            command $agent $argv
+        end
+    end
+    for agent in claude codex
+        if not functions -q $agent
+            eval "function $agent --wraps=$agent --description 'Hutan: report $agent to its session'
+                __hutan_otlp_launch $agent \$argv
+            end"
+        end
+    end
+    set -e agent
+end

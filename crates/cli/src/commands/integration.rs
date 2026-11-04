@@ -25,7 +25,21 @@ pub(super) fn run(json: bool, command: IntegrationCommand) -> Result<(), CliErro
         }
     } else {
         match action {
-            "install" => integration::install(args.target, &dir, args.statusline)?,
+            "install" => {
+                let port = if args.telemetry {
+                    Some(integration::telemetry::persisted_port().ok_or_else(|| {
+                        let agent = integration::name(args.target);
+                        CliError::Failed(format!(
+                            "the receiver has no port yet: run `hutan telemetry enable {agent}` \
+                             first (it picks a port once and keeps it in daemon.toml), then \
+                             install again"
+                        ))
+                    })?)
+                } else {
+                    None
+                };
+                integration::install(args.target, &dir, args.statusline, port)?
+            }
             "uninstall" => integration::uninstall(args.target, &dir)?,
             _ => integration::status(args.target, &dir)?,
         }

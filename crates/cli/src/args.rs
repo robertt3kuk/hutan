@@ -949,6 +949,13 @@ pub enum TelemetryCommand {
     Enable(TelemetryAgentArgs),
     /// Stop accepting an agent's OpenTelemetry; the receiver closes with the last agent
     Disable(TelemetryAgentArgs),
+    /// What to put in front of one launch of an agent so that it reports to this terminal's
+    /// session: `env NAME=value` and `arg VALUE` lines, nothing when the agent is not enabled,
+    /// the terminal has no `HUTAN_OTLP_*`, or any OpenTelemetry setting of yours, a managed policy
+    /// or the agent's own configuration is already there. The shell functions of Hutan's shell
+    /// integration call this; run by hand it shows what they would do
+    #[command(hide = true)]
+    Env(TelemetryAgentArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2688,6 +2695,14 @@ pub struct IntegrationArgs {
     /// `uninstall claude` puts your own back. Without this flag the status line is never touched
     #[arg(long, conflicts_with = "mcp")]
     pub statusline: bool,
+    /// With `install claude|codex`: also point the agent's own OpenTelemetry at Hutan's receiver
+    /// (Claude Code: `env` and `otelHeadersHelper` of settings.json; Codex: an `[otel]` block
+    /// with a log exporter only in config.toml), for an agent started where Hutan's shell
+    /// functions are not. Needs `hutan telemetry enable <agent>` first (it picks the port).
+    /// Nothing is written when the user, a managed policy or the agent already decides its
+    /// OpenTelemetry; `uninstall` removes exactly what this added
+    #[arg(long, conflicts_with = "mcp")]
+    pub telemetry: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

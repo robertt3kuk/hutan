@@ -20,6 +20,7 @@ use crate::error::CliError;
 mod hooks_json;
 pub mod mcp;
 mod statusline;
+pub mod telemetry;
 
 /// The script both hook-based integrations run (`integrations/hooks/`).
 const HOOK_SCRIPT: &str = include_str!("../../../../integrations/hooks/hutan-agent-state.sh");
@@ -93,6 +94,9 @@ pub struct Report {
     /// What the agent's transcript adds and how Hutan finds it (`claude`, `codex`; empty for
     /// OMP): independent of the integration, which only makes the match certain.
     pub transcript: Vec<String>,
+    /// Claude Code and Codex: where the agent's own OpenTelemetry stands (`--telemetry`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<telemetry::TelemetryReport>,
 }
 
 impl Report {
@@ -109,6 +113,7 @@ impl Report {
             reports: Vec::new(),
             not_reported: Vec::new(),
             transcript: Vec::new(),
+            telemetry: None,
         }
     }
 }
@@ -149,12 +154,49 @@ pub fn config_dir(target: IntegrationTarget, explicit: Option<&Path>) -> Result<
 }
 
 /// Installs the hooks or the extension of `target`. With `statusline` (Claude Code only, opt-in)
-/// also puts the status-line tee in place of the user's `statusLine`, keeping their command.
+/// also puts the status-line tee in place of the user's `statusLine`, keeping their command. With
+/// `telemetry` (the receiver's port; Claude Code and Codex) also writes the agent's own
+/// OpenTelemetry settings for Hutan's receiver, unless something of the user's, a managed
+/// policy's or the agent's already decides them: then nothing is written at all.
 pub fn install(
     target: IntegrationTarget,
     dir: &Path,
     statusline: bool,
+    telemetry: Option<u16>,
 ) -> Result<Report, CliError> {
+    let layout = Layout::of(target, dir);
+    if statusline && layout.statusline.is_none() {
+        return Err(CliError::Usage(format!(
+            "--statusline is for Claude Code's status line; {} has none",
+            name(target)
+        )));
+    }
+    let telemetry = match telemetry {
+        Some(port) => {
+            let agent = telemetry::Agent::of(target).ok_or_else(|| {
+                CliError::Usage(format!(
+                    "--telemetry is for Claude Code and Codex; {} has no settings of Hutan's for it",
+                    name(target)
+                ))
+            })?;
+            let found = telemetry::conflicts(
+                agent,
+                dir,
+                &|variable| std::env::var(variable).ok(),
+                &telemetry::System::from_env(),
+            )?;
+            if !found.items.is_empty() {
+                return Err(CliError::Failed(format!(
+                    "{} already decides its OpenTelemetry and Hutan does not override that: {}. \
+                     Nothing was changed",
+                    telemetry::Agent::of(target).map_or("the agent", |agent| agent.id()),
+                    found.items.join("; ")
+                )));
+            }
+            Some((agent, port))
+        }
+        None => None,
+    };
     let layout = Layout::of(target, dir);
     if statusline && layout.statusline.is_none() {
         return Err(CliError::Usage(format!(
@@ -179,9 +221,15 @@ pub fn install(
                     changed |= found.changed;
                     kept = found.original;
                 }
+                if let Some((telemetry::Agent::Claude, port)) = telemetry {
+                    changed |= telemetry::claude_set(doc, port, &telemetry::helper_path(dir))?;
+                }
                 Ok(changed)
             })?;
             write_managed(&layout.script, layout.script_text, 0o755, &mut report)?;
+            if let Some((telemetry::Agent::Claude, _)) = telemetry {
+                telemetry::write_helper(dir, &mut report)?;
+            }
             if let Some(tee) = tee {
                 // The user's own status line is on disk before the settings point at the tee.
                 if let Some(original) = &kept {
@@ -199,6 +247,9 @@ pub fn install(
                 write_managed(&tee.script, STATUSLINE_SCRIPT, 0o755, &mut report)?;
             }
             edit.apply(&mut report)?;
+            if let Some((telemetry::Agent::Codex, port)) = telemetry {
+                telemetry::codex_install(dir, port, &mut report)?;
+            }
         }
         None => write_managed(&layout.script, layout.script_text, 0o644, &mut report)?,
     }
@@ -224,11 +275,19 @@ pub fn uninstall(target: IntegrationTarget, dir: &Path) -> Result<Report, CliErr
             if tee.is_some() {
                 changed |= statusline::uninstall(doc, original)?;
             }
+            if telemetry::Agent::of(target) == Some(telemetry::Agent::Claude) {
+                changed |= telemetry::claude_remove(doc)?;
+            }
             Ok(changed)
         })?
         .apply(&mut report)?;
     }
     remove_managed(&layout.script, &mut report)?;
+    match telemetry::Agent::of(target) {
+        Some(telemetry::Agent::Claude) => telemetry::remove_helper(dir, &mut report)?,
+        Some(telemetry::Agent::Codex) => telemetry::codex_uninstall(dir, &mut report)?,
+        None => {}
+    }
     if let Some(tee) = &layout.statusline {
         remove_managed(&tee.script, &mut report)?;
         remove_kept(&tee.command_file, &mut report)?;
@@ -400,6 +459,17 @@ fn finish_status(layout: &Layout, report: &mut Report) -> Result<(), CliError> {
         report.statusline == Some(Status::Installed),
     );
     report.transcript = transcript_route(report.target, report.status != Status::NotInstalled);
+    report.telemetry = match telemetry::Agent::parse(report.target) {
+        Some(agent) => Some(telemetry::report(
+            agent,
+            &report.dir,
+            &|variable| std::env::var(variable).ok(),
+            &telemetry::System::from_env(),
+            telemetry::persisted_port(),
+            telemetry::persisted_enabled(agent),
+        )?),
+        None => None,
+    };
     Ok(())
 }
 
@@ -818,6 +888,26 @@ pub fn describe(action: &str, report: &Report) -> String {
         }
         for item in &report.transcript {
             text.push_str(&format!("\n  transcript: {item}"));
+        }
+        if let Some(telemetry) = &report.telemetry {
+            text.push_str(&format!(
+                "\n  telemetry: {}",
+                match telemetry.status {
+                    Status::Installed =>
+                        "installed (the agent's own OpenTelemetry points at Hutan)",
+                    Status::Partial => "partially installed",
+                    Status::NotInstalled => "not installed",
+                }
+            ));
+            for item in &telemetry.conflicts {
+                text.push_str(&format!("\n  telemetry conflict: {item}"));
+            }
+            for item in &telemetry.missing {
+                text.push_str(&format!("\n  telemetry missing: {item}"));
+            }
+            for item in &telemetry.notes {
+                text.push_str(&format!("\n  telemetry: {item}"));
+            }
         }
     }
     text

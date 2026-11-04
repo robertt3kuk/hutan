@@ -4,18 +4,29 @@
 //!
 //! `status` contacts nothing and shows no token. `enable` and `disable` set
 //! `telemetry.agents.<agent>` of `daemon.toml` through `daemon.settings.set`, which is the
-//! user's alone: refused for a command that runs inside an agent's session.
+//! user's alone: refused for a command that runs inside an agent's session. `env` (hidden) is what
+//! the shell functions of Hutan's shell integration ask before launching `claude` or `codex`
+//! (TEL-2): the lines to put in front of that one command, or nothing.
+
+use std::time::Duration;
 
 use hutan_protocol::telemetry::{ListenerState, TelemetryStatus};
 use serde_json::json;
 
-use super::Ctx;
 use super::sessions::{age_text, now_ms};
+use super::{Ctx, print_line};
 use crate::args::{TelemetryAgentArgs, TelemetryCommand};
 use crate::error::CliError;
+use crate::integration::{self, telemetry as agent_telemetry};
+
+/// How long a shell function waits for the daemon's answer before it launches the agent plain.
+const ENV_WAIT: Duration = Duration::from_secs(2);
 
 impl Ctx {
     pub(super) async fn telemetry(&self, command: TelemetryCommand) -> Result<(), CliError> {
+        if let TelemetryCommand::Env(TelemetryAgentArgs { agent }) = &command {
+            return self.telemetry_env(agent).await;
+        }
         let client = self.connect().await?;
         if !client.supports_telemetry() {
             return Err(CliError::Failed(
@@ -25,7 +36,7 @@ impl Ctx {
             ));
         }
         match command {
-            TelemetryCommand::Status => {}
+            TelemetryCommand::Status | TelemetryCommand::Env(_) => {}
             TelemetryCommand::Enable(TelemetryAgentArgs { agent }) => {
                 client
                     .daemon_setting_set(&format!("telemetry.agents.{agent}"), Some(json!(true)))
@@ -41,6 +52,62 @@ impl Ctx {
         }
         let status = client.telemetry_status().await.map_err(|e| self.fail(e))?;
         self.print(&status, || status_text(&status, now_ms()))
+    }
+
+    /// The lines `env` prints, one per line: `env NAME=value` and `arg VALUE`. Nothing, and
+    /// success, whenever Hutan has nothing to add: the shell function then runs the agent as it
+    /// is. Never prints a message and never starts a daemon.
+    async fn telemetry_env(&self, agent: &str) -> Result<(), CliError> {
+        let Some(agent) = agent_telemetry::Agent::parse(agent) else {
+            return Ok(());
+        };
+        let (Some(endpoint), Some(token)) = (
+            std::env::var("HUTAN_OTLP_ENDPOINT")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            std::env::var("HUTAN_OTLP_TOKEN")
+                .ok()
+                .filter(|v| !v.is_empty()),
+        ) else {
+            return Ok(());
+        };
+        let asked = tokio::time::timeout(ENV_WAIT, async {
+            let client = self.connect().await.ok()?;
+            client.telemetry_status().await.ok()
+        })
+        .await;
+        let Ok(Some(status)) = asked else {
+            return Ok(());
+        };
+        let enabled = status
+            .agents
+            .iter()
+            .any(|entry| entry.id == agent.id() && entry.enabled);
+        if status.listener != ListenerState::Listening || !enabled {
+            return Ok(());
+        }
+        let Ok(dir) = integration::config_dir(agent.target(), None) else {
+            return Ok(());
+        };
+        let Ok(found) = agent_telemetry::conflicts(
+            agent,
+            &dir,
+            &|variable| std::env::var(variable).ok(),
+            &agent_telemetry::System::from_env(),
+        ) else {
+            return Ok(());
+        };
+        let Some(launch) = agent_telemetry::launch(agent, &found, &endpoint, &token) else {
+            return Ok(());
+        };
+        let mut text = String::new();
+        for (name, value) in &launch.env {
+            text.push_str(&format!("env {name}={value}\n"));
+        }
+        for arg in &launch.args {
+            text.push_str(&format!("arg {arg}\n"));
+        }
+        print_line(text.trim_end())
     }
 }
 

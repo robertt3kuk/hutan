@@ -611,3 +611,263 @@ async fn other_programs_get_no_injection_env() {
         assert!(!screen.contains(forbidden), "{forbidden} leaked:\n{screen}");
     }
 }
+
+// ---- agents' own OpenTelemetry: the shell functions (TEL-2, ADR 0026) ---------------------------
+
+/// A stand-in `hutan` that answers `telemetry env <agent>` the way the real one does: lines of
+/// `env NAME=value` and `arg VALUE`, or nothing (a conflict, an agent that is not enabled). It
+/// logs what it was asked.
+const FAKE_HUTAN: &str = r#"#!/bin/sh
+echo "$*" >> "$OUT/hutan.log"
+[ "$1 $2" = "telemetry env" ] || exit 0
+[ -e "$OUT/quiet" ] && exit 0
+case $3 in
+  claude) printf 'env FAKE_A=1\nenv FAKE_B=x y z\n' ;;
+  codex) printf 'env FAKE_C=tok\narg -c\narg otel.exporter={a="b c"}\n' ;;
+esac
+"#;
+
+/// A stand-in agent that records the variables and the arguments it was started with.
+const FAKE_AGENT: &str = r#"#!/bin/sh
+name=$(basename "$0")
+{
+  printf 'A=[%s] B=[%s] C=[%s]\n' "$FAKE_A" "$FAKE_B" "$FAKE_C"
+  for a in "$@"; do printf 'arg=[%s]\n' "$a"; done
+} > "$OUT/$name.out"
+echo "RAN-$name"
+"#;
+
+struct Launching {
+    kind: Kind,
+    shell: PathBuf,
+    /// What the shell is started with (an explicit program: no login files, so `PATH` stays).
+    argv: Vec<String>,
+    /// The terminal has `HUTAN_OTLP_ENDPOINT` (the receiver listened when it started).
+    otlp: bool,
+    /// The user's own startup file defines a `codex` function.
+    users_codex: bool,
+}
+
+fn executable(path: &Path, text: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    write(path, text);
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod");
+}
+
+fn appended(path: &Path, text: &str) {
+    use std::io::Write as _;
+    fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .expect("append");
+}
+
+async fn type_and_wait(term: &Terminal, line: &str, what: &str, seen: impl Fn(&str) -> bool) {
+    term.write_input(format!("{line}\n").as_bytes())
+        .expect("write");
+    wait_for(term, what, seen).await;
+}
+
+async fn launching(l: Launching) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().canonicalize().expect("canonicalize");
+    let home = root.join("home");
+    let bin = root.join("bin");
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("out");
+    executable(&bin.join("hutan"), FAKE_HUTAN);
+    executable(&bin.join("claude"), FAKE_AGENT);
+    executable(&bin.join("codex"), FAKE_AGENT);
+    let s = Scenario::new(l.kind, &l.shell.to_string_lossy(), &[], &[]);
+    write_user_files(&s, &home, &home);
+    if l.users_codex {
+        let (rc, function) = match l.kind {
+            Kind::Zsh => (home.join(".zshrc"), "codex() { echo USERS-CODEX; }\n"),
+            Kind::Bash => (home.join(".bashrc"), "codex() { echo USERS-CODEX; }\n"),
+            Kind::Fish => (
+                home.join(".config/fish/config.fish"),
+                "function codex\n    echo USERS-CODEX\nend\n",
+            ),
+        };
+        appended(&rc, function);
+    }
+    let hutan_home = root.join("hutan-home");
+    let integration_dir = shell_integration::install(&hutan_home).expect("install");
+    let path = format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", bin.display());
+    let mut env: BTreeMap<String, String> = BTreeMap::from([
+        ("HOME".into(), home.to_string_lossy().into_owned()),
+        ("SHELL".into(), l.shell.to_string_lossy().into_owned()),
+        ("PATH".into(), path),
+        ("OUT".into(), out.to_string_lossy().into_owned()),
+        (
+            "HUTAN_TEST_LOG".into(),
+            root.join("rc.log").to_string_lossy().into_owned(),
+        ),
+        (
+            "XDG_CONFIG_HOME".into(),
+            home.join(".config").to_string_lossy().into_owned(),
+        ),
+        (
+            "HISTFILE".into(),
+            home.join(".hist").to_string_lossy().into_owned(),
+        ),
+        (
+            "HUTAN_BIN".into(),
+            bin.join("hutan").to_string_lossy().into_owned(),
+        ),
+    ]);
+    if l.otlp {
+        env.insert(
+            "HUTAN_OTLP_ENDPOINT".into(),
+            "http://127.0.0.1:50123/s/0123456789abcdef0123456789abcdef".into(),
+        );
+        env.insert(
+            "HUTAN_OTLP_TOKEN".into(),
+            "0123456789abcdef0123456789abcdef".into(),
+        );
+    }
+    let term = Terminal::spawn(TerminalConfig {
+        argv: l.argv.clone(),
+        cwd: Some(home.clone()),
+        env,
+        size: TerminalSize {
+            cols: 400,
+            rows: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+        shell_integration: true,
+        shell_integration_dir: Some(integration_dir),
+        ..TerminalConfig::default()
+    })
+    .expect("spawn shell");
+    wait_for(&term, "custom prompt", |screen| screen.contains(PROMPT)).await;
+
+    let read = |name: &str| fs::read_to_string(out.join(name)).unwrap_or_default();
+    let asked = || read("hutan.log");
+
+    // `claude` with an argument that has a space: the variables are in front of that one launch.
+    type_and_wait(&term, "claude --flag 'a b'", "claude ran", |screen| {
+        screen.matches("RAN-claude").count() == 1
+    })
+    .await;
+    if l.otlp {
+        assert_eq!(
+            read("claude.out"),
+            "A=[1] B=[x y z] C=[]\narg=[--flag]\narg=[a b]\n"
+        );
+        assert_eq!(asked(), "telemetry env claude\n");
+    } else {
+        // No receiver when the terminal started: no function, the program as it is.
+        assert_eq!(
+            read("claude.out"),
+            "A=[] B=[] C=[]\narg=[--flag]\narg=[a b]\n"
+        );
+        assert_eq!(asked(), "");
+        return finish_shell(term).await;
+    }
+    // ...and the shell itself has none of them.
+    type_and_wait(
+        &term,
+        "echo \"SHELL_A=[$FAKE_A]\"",
+        "no variable left",
+        |screen| screen.contains("SHELL_A=[]"),
+    )
+    .await;
+
+    if l.users_codex {
+        // A function of the user's is never replaced, and Hutan is not even asked.
+        type_and_wait(&term, "codex exec 'x y'", "the user's codex", |screen| {
+            screen.contains("USERS-CODEX")
+        })
+        .await;
+        assert_eq!(asked(), "telemetry env claude\n");
+        assert!(!out.join("codex.out").exists());
+    } else {
+        // Arguments in front of the user's, whole, in order.
+        type_and_wait(&term, "codex exec 'x y'", "codex ran", |screen| {
+            screen.matches("RAN-codex").count() == 1
+        })
+        .await;
+        assert_eq!(
+            read("codex.out"),
+            "A=[] B=[] C=[tok]\narg=[-c]\narg=[otel.exporter={a=\"b c\"}]\narg=[exec]\narg=[x y]\n"
+        );
+        // Nothing from Hutan (a conflict, an agent not enabled): the agent as it is.
+        fs::write(out.join("quiet"), "").expect("quiet");
+        type_and_wait(&term, "claude again", "claude ran again", |screen| {
+            screen.matches("RAN-claude").count() == 2
+        })
+        .await;
+        assert_eq!(read("claude.out"), "A=[] B=[] C=[]\narg=[again]\n");
+    }
+    finish_shell(term).await;
+}
+
+async fn finish_shell(term: Terminal) {
+    term.write_input(b"exit\n").expect("write");
+    let _ = timeout(LIMIT, term.wait_exit())
+        .await
+        .expect("exit in time");
+}
+
+async fn each_shell(otlp: bool, users_codex: bool) {
+    let mut ran = false;
+    if have("/bin/zsh") {
+        ran = true;
+        launching(Launching {
+            kind: Kind::Zsh,
+            shell: PathBuf::from("/bin/zsh"),
+            argv: vec!["/bin/zsh".into()],
+            otlp,
+            users_codex,
+        })
+        .await;
+    } else {
+        skip("zsh");
+    }
+    for bash in bash_candidates() {
+        ran = true;
+        eprintln!("bash: {bash}");
+        launching(Launching {
+            kind: Kind::Bash,
+            shell: PathBuf::from(&bash),
+            argv: vec![bash],
+            otlp,
+            users_codex,
+        })
+        .await;
+    }
+    if let Some(fish) = fish_path() {
+        ran = true;
+        launching(Launching {
+            kind: Kind::Fish,
+            shell: PathBuf::from(fish),
+            argv: vec![fish.to_owned()],
+            otlp,
+            users_codex,
+        })
+        .await;
+    } else {
+        skip("fish");
+    }
+    if !ran {
+        skip("any shell");
+    }
+}
+
+#[tokio::test]
+async fn the_agent_functions_put_what_hutan_says_in_front_of_that_one_launch() {
+    each_shell(true, false).await;
+}
+
+#[tokio::test]
+async fn a_function_of_the_users_own_is_never_replaced() {
+    each_shell(true, true).await;
+}
+
+#[tokio::test]
+async fn without_the_receiver_there_are_no_functions() {
+    each_shell(false, false).await;
+}
