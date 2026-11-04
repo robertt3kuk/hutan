@@ -20,6 +20,7 @@ mod hosts;
 mod insight_contract;
 mod integration;
 mod integration_mcp;
+mod integration_telemetry;
 mod lsp;
 mod mcp;
 mod memory;
