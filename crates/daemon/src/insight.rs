@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 
 use hutan_core::checkpoint::{CheckpointKind, CheckpointState};
 use hutan_core::insight::{
-    AgentInsight, BreakdownRow, InsightModel, InsightReducer, InsightReport, MAX_TURNS, SeedTurn,
-    harness_insight,
+    AgentInsight, BreakdownRow, InsightModel, InsightReducer, InsightReport, InsightSourceKind,
+    MAX_TURNS, SeedTurn, harness_insight,
 };
 use hutan_core::{AgentEvent, SessionId, TurnId};
 use hutan_index::Source;
@@ -104,6 +104,10 @@ struct Entry {
     /// A task will flush this entry.
     armed: bool,
     last_sent: Option<Instant>,
+    /// What the agent's own OpenTelemetry gave (TEL-2): its reports come late (a batch every few
+    /// seconds, after the hooks' end of the turn), so they are folded in a reducer of their own
+    /// and put together with the integrations' by source (`insight_merge`), like a transcript.
+    otlp: Option<InsightReducer>,
 }
 
 impl Entry {
@@ -115,6 +119,7 @@ impl Entry {
             dirty: false,
             armed: false,
             last_sent: None,
+            otlp: None,
         }
     }
 }
@@ -315,7 +320,14 @@ impl InsightHub {
         if model.is_some() {
             entry.model = model;
         }
-        if entry.reducer.apply_report(&report, now_ms()) {
+        let reducer = if report.source == InsightSourceKind::Otlp {
+            entry
+                .otlp
+                .get_or_insert_with(|| InsightReducer::new_terminal(session, agent, cwd))
+        } else {
+            &mut entry.reducer
+        };
+        if reducer.apply_report(&report, now_ms()) {
             entry.touched = tick;
             self.changed(state, session);
         }
@@ -700,7 +712,10 @@ impl InsightHub {
         lock(&self.state)
             .entries
             .values()
-            .map(|entry| entry.reducer.approx_bytes())
+            .map(|entry| {
+                entry.reducer.approx_bytes()
+                    + entry.otlp.as_ref().map_or(0, InsightReducer::approx_bytes)
+            })
             .sum()
     }
 }
@@ -892,7 +907,20 @@ impl State {
     /// gave (`insight_merge`).
     fn snapshot_of(&self, session: SessionId, seq: u64, as_of_ms: u64) -> Option<AgentInsight> {
         let entry = self.entries.get(&session)?;
-        let base = entry.reducer.snapshot(seq, as_of_ms, entry.model.clone());
+        let mut base = entry.reducer.snapshot(seq, as_of_ms, entry.model.clone());
+        if let Some(otlp) = &entry.otlp {
+            // The best source of each block wins; OpenTelemetry's tokens fill the turns that
+            // the hooks edge without counting.
+            base = insight_merge::merge(
+                &base,
+                &otlp.snapshot(seq, as_of_ms, None),
+                Extras {
+                    model: None,
+                    breakdown: None,
+                    cut: false,
+                },
+            );
+        }
         let Some(feed) = self.tails.get(&session).and_then(|tail| tail.feed.as_ref()) else {
             return Some(base);
         };

@@ -589,42 +589,54 @@ mod tests {
     }
 
     #[test]
-    fn opentelemetry_tokens_beat_the_transcripts_and_are_never_added_to_them() {
-        // Hooks give the turn's edges and a tool's time, the OTLP receiver its tokens; the
-        // transcript has the same turn's tokens too.
-        let mut base = reducer("claude");
-        let at = 1_000_000;
-        base.apply_report(
-            &InsightReport {
-                source: InsightSourceKind::Hooks,
-                turn: turn(TurnPhase::Start),
-                ..InsightReport::default()
-            },
-            at,
-        );
-        base.apply_report(
-            &InsightReport {
-                source: InsightSourceKind::Otlp,
-                tokens: Some(tokens(7_000, 200)),
-                ..InsightReport::default()
-            },
-            at + 5,
-        );
-        base.apply_report(
-            &InsightReport {
-                source: InsightSourceKind::Hooks,
-                tools: vec![tool("Bash", Some(2_000))],
-                turn: turn(TurnPhase::End),
-                ..InsightReport::default()
-            },
-            at + 10_000,
-        );
-        let merged = merge(&snapshot(&base), &snapshot(&transcript()), none());
+    fn opentelemetry_arrives_after_the_hooks_ended_the_turn_and_is_merged_not_added() {
+        // Claude Code's logs come in a batch every few seconds: after the hooks' Stop. The
+        // receiver's reducer counts its own turn (from the prompt to the idle close).
+        let mut otlp = reducer("claude");
+        let at = 1_012_000;
+        for (report, t) in [
+            (
+                InsightReport {
+                    source: InsightSourceKind::Otlp,
+                    turn: turn(TurnPhase::Start),
+                    ..InsightReport::default()
+                },
+                at,
+            ),
+            (
+                InsightReport {
+                    source: InsightSourceKind::Otlp,
+                    tokens: Some(tokens(7_000, 200)),
+                    tools: vec![tool("Bash", Some(1_900))],
+                    turn: turn(TurnPhase::End),
+                    ..InsightReport::default()
+                },
+                at + 100,
+            ),
+        ] {
+            otlp.apply_report(&report, t);
+        }
+        let integrations = merge(&snapshot(&hooks()), &snapshot(&otlp), none());
+        let merged = merge(&integrations, &snapshot(&transcript()), none());
         let totals = merged.totals.as_ref().expect("totals");
-        // OpenTelemetry's numbers, not the transcript's 5 000 and not their sum.
+        // OpenTelemetry's numbers, not the transcript's 5 000 and not their sum, in one turn.
         assert_eq!((totals.input, totals.output), (Some(7_000), Some(200)));
         assert_eq!(totals.turns, 1);
         assert_eq!(merged.turns.len(), 1);
+        assert_eq!(
+            source_of(&merged, InsightBlock::Turns),
+            Some(InsightSourceKind::Otlp)
+        );
+        // The hooks keep the tool, with their time: counted once.
+        assert_eq!(merged.tools.as_ref().map(|t| t.calls), Some(1));
+        assert_eq!(
+            merged.tools.as_ref().map(|t| t.by_name[0].ms),
+            Some(Some(2_000))
+        );
+        assert_eq!(
+            source_of(&merged, InsightBlock::Tools),
+            Some(InsightSourceKind::Hooks)
+        );
         // The transcript still fills what the receiver never reports: the context.
         assert_eq!(merged.context.as_ref().map(|c| c.used), Some(5_300));
         assert_eq!(

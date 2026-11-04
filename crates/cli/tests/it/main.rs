@@ -36,6 +36,7 @@ mod ssh_host;
 mod staging;
 mod tasks;
 mod telemetry;
+mod telemetry_agents;
 mod terminal_search;
 mod theme;
 mod update;
